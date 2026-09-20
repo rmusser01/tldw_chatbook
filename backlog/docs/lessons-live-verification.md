@@ -155,6 +155,13 @@ mount boundary, and keep its teardown guard. Test a yielding Mount handler,
 not just an immediately completing fixture. Verify real route entry; passing
 tests that await an already-mounted screen cannot alone qualify that ordering.
 
+**PR #2743 Windows CI, 2026-09-19.** A lazy GGUF selector was queryable before
+its SelectCurrent label mounted; an inventory callback then crashed on `#label`.
+A controlled child-mount barrier reproduced it. Gate selector writes on completed
+mounting and replay retained results from the existing mount-ready callback,
+including when the user has already left that pane; queryability alone is not
+readiness. Exact-reference handoffs need the same boundary.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an

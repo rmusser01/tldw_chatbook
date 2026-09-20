@@ -1,0 +1,1203 @@
+Tests/Agents/test_builtin_tool_gate.py:594:16: SIM211 Use `not ...` instead of `False if ... else True`
+Tests/Agents/test_builtin_tool_gate.py:681:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/Agents/test_builtin_tool_gate.py:709:16: SIM211 Use `not ...` instead of `False if ... else True`
+Tests/Notes/test_notes_library_unit.py:2:1: I001 [*] Import block is un-sorted or un-formatted
+Tests/Notes/test_notes_library_unit.py:84:20: BLE001 Do not catch blind exception: `Exception`
+Tests/Notes/test_notes_library_unit.py:521:9: UP012 [*] Unnecessary UTF-8 `encoding` argument to `encode`
+Tests/UI/test_app_quit_guard.py:103:5: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:1:1: N999 Invalid module name: 'ChaChaNotes_DB'
+tldw_chatbook/DB/ChaChaNotes_DB.py:38:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:51:1: UP035 [*] Import from `collections.abc` instead: `Sequence`, `Iterable`, `Mapping`, `Callable`
+tldw_chatbook/DB/ChaChaNotes_DB.py:51:1: UP035 `typing.List` is deprecated, use `list` instead
+tldw_chatbook/DB/ChaChaNotes_DB.py:51:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+tldw_chatbook/DB/ChaChaNotes_DB.py:51:1: UP035 `typing.Set` is deprecated, use `set` instead
+tldw_chatbook/DB/ChaChaNotes_DB.py:51:1: UP035 `typing.Tuple` is deprecated, use `tuple` instead
+tldw_chatbook/DB/ChaChaNotes_DB.py:73:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:364:5: PIE790 [*] Unnecessary `pass` statement
+tldw_chatbook/DB/ChaChaNotes_DB.py:370:5: PIE790 [*] Unnecessary `pass` statement
+tldw_chatbook/DB/ChaChaNotes_DB.py:376:5: PIE790 [*] Unnecessary `pass` statement
+tldw_chatbook/DB/ChaChaNotes_DB.py:395:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:494:43: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:511:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:704:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:706:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:707:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:708:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:709:12: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:710:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:711:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:723:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:724:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:725:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:726:12: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:727:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:728:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:3331:18: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:3508:25: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/DB/ChaChaNotes_DB.py:3942:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/DB/ChaChaNotes_DB.py:3977:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/DB/ChaChaNotes_DB.py:3989:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:3989:26: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:3989:39: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:4111:40: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:4112:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:4347:61: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8615:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/DB/ChaChaNotes_DB.py:8615:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/DB/ChaChaNotes_DB.py:8707:26: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/DB/ChaChaNotes_DB.py:8777:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8777:30: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8777:36: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8777:42: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8777:48: UP006 [*] Use `set` instead of `Set` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8778:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8792:29: UP006 [*] Use `set` instead of `Set` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8797:46: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8798:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8798:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8832:35: RUF012 Mutable default value for class attribute
+tldw_chatbook/DB/ChaChaNotes_DB.py:8841:35: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8900:31: RUF012 Mutable default value for class attribute
+tldw_chatbook/DB/ChaChaNotes_DB.py:8910:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8910:24: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8910:30: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8910:36: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8910:42: UP006 [*] Use `set` instead of `Set` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8911:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:8943:29: UP006 [*] Use `set` instead of `Set` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8948:45: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:8948:64: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:9054:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9181:62: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:9181:71: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9341:56: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:9341:65: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9410:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9410:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9502:58: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9534:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9534:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9617:47: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9634:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9700:45: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:9701:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:9996:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10050:27: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/DB/ChaChaNotes_DB.py:10208:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10296:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10297:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10297:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10365:49: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10400:52: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10415:35: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10416:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10426:32: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10445:32: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10446:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10462:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10471:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10472:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10473:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10473:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10494:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10505:64: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10521:57: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10560:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10562:9: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10563:9: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10564:9: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10565:9: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10566:9: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10643:17: SIM114 [*] Combine `if` branches using logical `or` operator
+tldw_chatbook/DB/ChaChaNotes_DB.py:10774:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10774:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:10786:43: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:10786:62: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11133:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11133:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11226:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11226:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11279:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11279:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11301:18: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11301:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11335:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11335:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11508:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11510:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11514:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11515:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11516:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11517:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11518:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11519:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11520:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11522:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11523:38: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11524:45: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11525:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11525:21: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11531:18: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11532:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11537:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11538:14: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11538:23: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11554:33: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11554:42: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11555:49: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11555:55: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11556:41: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11653:38: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11700:21: ISC004 Unparenthesized implicit string concatenation in collection
+tldw_chatbook/DB/ChaChaNotes_DB.py:11730:17: ISC004 Unparenthesized implicit string concatenation in collection
+tldw_chatbook/DB/ChaChaNotes_DB.py:11771:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11773:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11777:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11778:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11779:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11780:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11781:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11782:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11783:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11785:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11786:38: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11787:45: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11791:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11791:16: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11791:21: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11838:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11840:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11844:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11845:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11846:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11847:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11848:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11849:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11852:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:11852:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:11958:43: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12014:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12025:27: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12029:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12055:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:12055:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12068:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12101:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12101:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12129:21: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12133:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12133:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12157:44: C409 Unnecessary list literal passed to `tuple()` (rewrite as a tuple literal)
+tldw_chatbook/DB/ChaChaNotes_DB.py:12166:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12166:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12220:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12220:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12238:17: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12238:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12257:50: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:12258:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:12809:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:12861:27: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/DB/ChaChaNotes_DB.py:12908:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:13000:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:13004:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13004:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13050:22: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13071:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:13074:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13074:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13239:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13240:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:13247:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13252:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:13273:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:13278:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14154:53: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14154:62: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14183:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14183:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14435:30: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14640:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14640:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14696:27: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14700:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14700:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14700:25: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14778:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14783:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14830:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14836:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:14897:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:14902:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:15003:17: LOG015 `warning()` call on root logger
+tldw_chatbook/DB/ChaChaNotes_DB.py:15359:47: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15428:57: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15428:62: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15578:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15635:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:15636:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:15682:49: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:15683:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15733:60: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15788:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:15837:27: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/DB/ChaChaNotes_DB.py:15889:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:15889:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16087:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16087:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16141:9: SIM102 Use a single `if` statement instead of nested `if` statements
+tldw_chatbook/DB/ChaChaNotes_DB.py:16155:25: RUF013 PEP 484 prohibits implicit `Optional`
+tldw_chatbook/DB/ChaChaNotes_DB.py:16157:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16293:56: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16293:61: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16412:52: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16413:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16413:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16465:22: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16495:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16497:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16500:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16663:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16663:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16690:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16690:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16724:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16724:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16753:18: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16754:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16756:25: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:16758:34: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16761:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16920:18: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16925:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:16973:27: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/DB/ChaChaNotes_DB.py:17048:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17048:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17104:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17152:53: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17152:62: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17164:57: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17164:66: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17179:67: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17179:72: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17237:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17237:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17275:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17278:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17310:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17310:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17322:60: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17322:69: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17338:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17338:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17356:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17425:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17425:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17465:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17500:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17503:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17603:47: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17603:56: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17611:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17611:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17634:17: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17634:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17651:48: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17651:57: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17669:64: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17669:69: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17688:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17782:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17782:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17835:57: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:17852:51: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17853:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17853:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17866:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17866:37: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17874:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17874:37: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17875:31: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17875:41: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17876:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17895:51: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17896:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17896:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17947:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17947:37: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17947:42: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17948:25: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17959:26: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17959:36: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17959:41: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17960:24: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17980:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17980:32: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:17980:37: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18076:17: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18076:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18126:70: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18180:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18181:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18182:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18185:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18224:27: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18225:25: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18226:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18249:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18250:26: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18381:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18381:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18468:65: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18485:59: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18486:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18486:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18499:35: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18499:45: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18507:59: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18507:69: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18508:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18529:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18584:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18615:13: ISC004 Unparenthesized implicit string concatenation in collection
+tldw_chatbook/DB/ChaChaNotes_DB.py:18619:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18712:33: UP012 [*] Unnecessary UTF-8 `encoding` argument to `encode`
+tldw_chatbook/DB/ChaChaNotes_DB.py:18717:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18746:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18748:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:18748:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18806:21: UP012 [*] Unnecessary UTF-8 `encoding` argument to `encode`
+tldw_chatbook/DB/ChaChaNotes_DB.py:18872:35: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18931:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18931:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:18952:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19041:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19045:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:19198:27: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/DB/ChaChaNotes_DB.py:19287:68: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:19366:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:19368:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:19369:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19369:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19402:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19442:28: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19549:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19549:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19562:33: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19563:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19563:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19563:25: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19576:18: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19576:28: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19576:33: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19586:50: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19676:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19676:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19727:66: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19727:71: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19741:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19741:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19791:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19791:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19803:54: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19803:68: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19803:78: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19842:31: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19842:41: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19856:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19856:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:19888:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:19959:42: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/DB/ChaChaNotes_DB.py:20088:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:20222:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:20347:33: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/DB/ChaChaNotes_DB.py:20592:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20592:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20603:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/ChaChaNotes_DB.py:20651:22: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20651:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20745:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:20746:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:20747:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20747:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20750:22: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20830:33: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20830:39: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20856:35: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20856:41: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20864:68: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:20900:51: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21138:10: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21278:43: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21338:46: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21338:55: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21378:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21379:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21380:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21382:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21383:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21383:28: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21384:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21385:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21386:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21550:13: PLR1730 [*] Replace `if` statement with `ease_factor = max(ease_factor, 1.3)`
+tldw_chatbook/DB/ChaChaNotes_DB.py:21556:40: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/DB/ChaChaNotes_DB.py:21582:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21583:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21583:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21626:41: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21626:50: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21642:64: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21642:69: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21670:51: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21690:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21691:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21692:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21747:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21798:68: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21850:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21913:59: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21934:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21935:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21936:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21937:34: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21937:43: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21937:48: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21938:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21978:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:21999:59: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:21999:68: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22017:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22018:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22019:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22020:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22021:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22022:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22023:34: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22023:43: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22023:48: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22024:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22025:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22025:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22137:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22138:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22140:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22181:63: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22199:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22200:12: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22203:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22203:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22218:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22254:63: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22272:18: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22283:55: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22285:16: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22285:21: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22330:21: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22339:63: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22365:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22365:19: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22365:24: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22367:17: PIE810 Call `startswith` once with a `tuple`
+tldw_chatbook/DB/ChaChaNotes_DB.py:22400:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22400:19: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22422:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22422:15: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22432:26: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22432:31: UP006 [*] Use `tuple` instead of `Tuple` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22515:58: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22515:67: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22521:63: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22521:72: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22573:47: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22573:66: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22597:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22598:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22599:29: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22600:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22638:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22638:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22647:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22656:12: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22657:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22661:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22665:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22715:38: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22726:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22727:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22774:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22819:25: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22819:41: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22819:52: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22820:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22820:27: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22821:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22822:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22824:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22824:36: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22824:41: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22827:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22827:24: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22901:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22901:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22911:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22921:12: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22923:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:22925:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22929:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22948:23: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22956:16: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22956:21: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22971:42: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22988:20: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:22989:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23084:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23124:74: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23183:41: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23183:46: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23184:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23213:33: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23213:38: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23307:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23307:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23339:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23342:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23345:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23367:39: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23400:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23417:40: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23444:55: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23477:36: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23478:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23478:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23503:50: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23507:35: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/DB/ChaChaNotes_DB.py:23583:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23585:33: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23586:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23587:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23588:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23593:30: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23594:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23646:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23686:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23686:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23703:50: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23703:59: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23721:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23721:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23768:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23772:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23773:30: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23774:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23815:17: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23847:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:23847:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23873:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23873:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23894:53: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23894:67: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23911:17: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/DB/ChaChaNotes_DB.py:23957:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/DB/ChaChaNotes_DB.py:24120:31: TRY201 Use `raise` without specifying exception name
+tldw_chatbook/Notes/Notes_Library.py:1:1: N999 Invalid module name: 'Notes_Library'
+tldw_chatbook/Notes/Notes_Library.py:20:1: UP035 [*] Import from `collections.abc` instead: `Sequence`
+tldw_chatbook/Notes/Notes_Library.py:20:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+tldw_chatbook/Notes/Notes_Library.py:20:1: UP035 `typing.List` is deprecated, use `list` instead
+tldw_chatbook/Notes/Notes_Library.py:76:28: UP007 [*] Use `X | Y` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:78:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:79:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:88:29: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:194:24: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/Notes/Notes_Library.py:200:24: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/Notes/Notes_Library.py:263:64: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:309:61: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:309:70: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:331:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:331:20: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:343:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:405:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:405:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:455:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:473:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:473:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:493:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:530:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:531:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:532:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:533:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:536:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:573:42: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:617:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:618:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:619:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:622:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:625:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:660:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:702:18: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:706:22: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:707:22: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:747:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:747:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:782:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:783:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:785:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:786:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:787:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:788:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:789:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:790:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:793:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:870:21: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/Notes/Notes_Library.py:917:24: RUF010 [*] Use explicit conversion flag
+tldw_chatbook/Notes/Notes_Library.py:1143:27: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1144:35: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1173:28: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1242:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1295:13: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/Notes/Notes_Library.py:1296:21: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1313:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1314:21: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1315:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1315:31: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1365:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1366:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1395:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1396:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1397:16: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1519:32: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1520:35: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1523:20: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1661:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1662:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1663:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1664:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1666:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1667:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1668:18: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1669:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1797:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1798:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1807:17: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1820:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1960:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1962:23: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:1963:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:1963:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2076:40: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2097:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2098:19: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2098:28: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2099:10: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2135:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2137:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2137:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2162:63: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2176:68: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2176:73: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2186:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2186:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2199:63: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2205:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2205:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2212:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2212:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2219:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2219:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2237:10: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2237:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2248:45: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2249:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2249:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2271:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2272:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2273:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/Notes/Notes_Library.py:2273:19: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/Notes/Notes_Library.py:2302:28: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/Notes/Notes_Library.py:2321:28: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:48:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:48:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:63:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:85:1: UP035 [*] Import from `collections.abc` instead: `Callable`, `Iterable`, `Mapping`
+tldw_chatbook/app.py:85:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+tldw_chatbook/app.py:85:1: UP035 `typing.List` is deprecated, use `list` instead
+tldw_chatbook/app.py:392:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:446:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:591:63: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:592:66: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:593:69: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:594:52: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:599:83: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:600:48: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:604:50: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:608:58: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:612:47: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:617:45: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:622:51: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:627:90: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:628:36: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:633:64: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:636:89: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:637:77: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:638:58: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:639:80: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:640:79: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:641:77: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:642:64: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:645:44: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:653:86: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:654:54: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:658:69: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:661:52: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:665:47: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:670:53: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:674:86: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:675:45: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:682:63: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:690:43: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:698:89: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:699:80: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:700:53: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:704:54: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:708:50: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:712:51: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:716:41: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:724:44: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:729:57: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:733:69: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:736:77: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:739:50: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:743:54: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:747:50: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:752:55: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:757:65: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:760:60: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:764:64: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:769:64: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:772:65: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:776:63: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:777:77: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:778:72: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:779:84: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:780:51: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:784:53: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:789:62: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tldw_chatbook/app.py:792:5: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:1126:5: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:1129:5: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:1270:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1305:21: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:1502:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1586:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1731:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1812:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1904:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:1995:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2059:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2110:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2190:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2204:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2285:53: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:2285:68: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:2329:56: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:2330:6: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:2361:15: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:2402:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2466:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2524:40: SIM115 Use a context manager for opening files
+tldw_chatbook/app.py:2671:45: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:2680:35: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:2681:47: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:2752:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2801:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2815:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2833:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2860:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2865:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2891:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2900:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2918:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2937:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:2981:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:3005:38: UP017 [*] Use `datetime.UTC` alias
+tldw_chatbook/app.py:3011:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3018:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3026:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3035:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3290:27: C408 Unnecessary `dict()` call (rewrite as a literal)
+tldw_chatbook/app.py:3386:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3499:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:3578:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3603:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3625:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3638:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:3694:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:3810:13: RET501 [*] Do not explicitly `return None` in function if it is the only possible return value
+tldw_chatbook/app.py:3816:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:3931:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:4033:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:4056:59: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:4082:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:4110:61: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:4851:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5417:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5474:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5537:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5548:63: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:5569:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5697:53: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:5764:13: S112 `try`-`except`-`continue` detected, consider logging the exception
+tldw_chatbook/app.py:5764:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:5790:53: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:5852:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:5953:46: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:6057:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6062:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6067:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6079:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6091:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6111:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6122:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6132:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6140:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6147:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6159:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6166:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6235:13: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/app.py:6252:13: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/app.py:6427:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6489:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6563:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6592:9: PLW0120 [*] `else` clause on loop without a `break` statement; remove the `else` and dedent its contents
+tldw_chatbook/app.py:6638:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6719:10: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:6719:43: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:6947:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:6991:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:7352:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:7387:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:7482:16: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:7536:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:7626:27: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:7648:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7672:29: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7677:41: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7680:26: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/app.py:7680:38: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:7683:25: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/app.py:7683:37: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:7684:15: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7685:37: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/app.py:7686:31: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/app.py:7686:36: UP006 [*] Use `dict` instead of `Dict` for type annotation
+tldw_chatbook/app.py:7686:54: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:7687:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7689:34: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7690:34: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7692:27: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7694:30: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7695:31: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7696:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7697:28: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7698:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7699:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:7799:41: UP037 [*] Remove quotes from type annotation
+tldw_chatbook/app.py:7869:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:7886:41: UP037 [*] Remove quotes from type annotation
+tldw_chatbook/app.py:8018:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:8053:9: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:8065:33: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8144:44: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8151:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:8155:17: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:8159:13: LOG015 `warning()` call on root logger
+tldw_chatbook/app.py:8171:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:8176:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:8180:17: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:8240:41: UP037 [*] Remove quotes from type annotation
+tldw_chatbook/app.py:8250:41: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8251:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8252:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8389:49: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:8392:50: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:8553:51: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:8584:54: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:8588:55: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:8830:24: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8832:26: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:8833:17: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:9244:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9261:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9278:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9583:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9616:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9626:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9627:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:9653:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9713:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9742:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9770:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9771:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:9813:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9909:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:9934:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10002:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10095:25: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/app.py:10110:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10163:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10178:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10234:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10333:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10432:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:10580:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11199:34: PIE807 [*] Prefer `dict` over useless lambda
+tldw_chatbook/app.py:11440:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11451:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11515:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11528:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11579:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11660:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11698:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11727:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11740:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11756:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11789:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11797:60: C414 Unnecessary `list()` call within `sorted()`
+tldw_chatbook/app.py:11803:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11817:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11833:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11857:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:11898:25: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:11898:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11908:25: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:11908:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11910:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:11976:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:11993:21: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:11997:17: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:12001:17: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:12001:25: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:12011:9: LOG015 `debug()` call on root logger
+tldw_chatbook/app.py:12021:9: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:12034:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:12049:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:12061:9: UP028 Replace `yield` over `for` loop with `yield from`
+tldw_chatbook/app.py:12064:42: UP006 [*] Use `list` instead of `List` for type annotation
+tldw_chatbook/app.py:12098:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12107:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12116:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12124:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12133:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12142:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12170:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12188:68: RUF012 Mutable default value for class attribute
+tldw_chatbook/app.py:12250:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12283:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12383:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12479:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12508:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:12995:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:13147:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13275:9: LOG015 `warning()` call on root logger
+tldw_chatbook/app.py:13317:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13381:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13385:13: S112 `try`-`except`-`continue` detected, consider logging the exception
+tldw_chatbook/app.py:13385:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13390:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13532:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13605:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13712:28: UP041 [*] Replace aliased errors with `TimeoutError`
+tldw_chatbook/app.py:13721:20: UP041 [*] Replace aliased errors with `TimeoutError`
+tldw_chatbook/app.py:13738:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:13738:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13741:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13754:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:13754:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13781:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13795:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:13795:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13882:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13911:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13972:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:13989:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14018:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14061:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14100:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14235:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14269:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14270:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:14283:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14284:17: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:14303:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14304:17: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:14369:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14370:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:14379:81: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:14405:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14435:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14452:36: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14494:33: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:14494:40: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14520:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14546:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14552:81: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:14576:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14614:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14624:9: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:14710:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14732:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:14732:24: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:14742:9: TRY203 Remove exception handler; error is immediately re-raised
+tldw_chatbook/app.py:14829:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14849:17: TRY004 Prefer `TypeError` exception for invalid type
+tldw_chatbook/app.py:14900:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:14976:67: RUF100 [*] Unused `noqa` directive (non-enabled: `PLC0415`)
+tldw_chatbook/app.py:15070:20: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:15075:16: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:15080:16: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:15120:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:15237:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:15237:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15264:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:15264:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15282:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15405:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15461:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15536:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15537:17: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:15571:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15586:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15641:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15676:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15710:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15733:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15836:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15942:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:15984:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16019:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16049:9: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:16082:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16172:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16183:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16406:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16490:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16508:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16522:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16534:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16554:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16624:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16743:40: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:16784:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:16864:62: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:16941:47: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:16992:25: UP045 [*] Use `X | None` for type annotations
+tldw_chatbook/app.py:16995:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17080:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:17197:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17228:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17283:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17312:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17437:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17438:17: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:17481:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17544:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17545:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:17655:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:17699:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17721:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17788:9: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:17803:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:17856:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17901:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:17928:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18256:20: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:18265:16: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:18368:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:18368:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18425:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:18425:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18448:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18459:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18473:9: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:18483:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18484:13: PLE1205 Too many arguments for `logging` format string
+tldw_chatbook/app.py:18496:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:18496:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18500:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18538:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18561:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18568:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18576:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18596:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18615:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18625:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18635:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18649:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18656:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18658:16: BLE001 Do not catch blind exception: `BaseException`
+tldw_chatbook/app.py:18689:13: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:18703:21: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:18704:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18705:21: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:18709:13: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:18740:29: PLW1510 `subprocess.run` without explicit `check` argument
+tldw_chatbook/app.py:18744:32: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18796:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18822:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18826:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18930:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:18966:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:18966:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19050:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19124:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19129:48: RUF010 [*] Use explicit conversion flag
+tldw_chatbook/app.py:19293:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19351:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19361:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:19361:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19383:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19393:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:19393:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19436:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19446:21: S110 `try`-`except`-`pass` detected, consider logging the exception
+tldw_chatbook/app.py:19446:28: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19533:24: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19539:20: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19552:16: UP041 [*] Replace aliased errors with `TimeoutError`
+tldw_chatbook/app.py:19554:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19558:16: UP041 [*] Replace aliased errors with `TimeoutError`
+tldw_chatbook/app.py:19560:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19582:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19587:16: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19617:5: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:19636:81: FURB167 [*] Use of regular expression alias `re.M`
+tldw_chatbook/app.py:19936:9: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:19936:17: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:19947:9: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:19947:17: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:19961:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:19973:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:20002:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20005:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20009:26: PLW1510 `subprocess.run` without explicit `check` argument
+tldw_chatbook/app.py:20016:21: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20018:21: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:20021:13: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:20021:21: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:20032:13: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:20096:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:20158:12: BLE001 Do not catch blind exception: `Exception`
+tldw_chatbook/app.py:20196:5: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/app.py:20272:9: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:20272:17: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:20297:29: RUF059 Unpacked variable `reason` is never used
+tldw_chatbook/app.py:20299:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20302:17: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20306:26: PLW1510 `subprocess.run` without explicit `check` argument
+tldw_chatbook/app.py:20313:21: LOG015 `info()` call on root logger
+tldw_chatbook/app.py:20315:21: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:20318:13: LOG015 `error()` call on root logger
+tldw_chatbook/app.py:20318:21: G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+tldw_chatbook/app.py:20373:12: BLE001 Do not catch blind exception: `Exception`
+Found 1201 errors.
+[*] 825 fixable with the `--fix` option (19 hidden fixes can be enabled with the `--unsafe-fixes` option).

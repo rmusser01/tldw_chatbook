@@ -118,3 +118,65 @@ both resize directions) in `Tests/UI/test_modal_wide_tier.py`; the visual
 SVG capture above was not re-run for the eight. A new reverse-sweep contract
 also guarantees no other `ModalScreen` class can sit outside the tier
 without an explicit skip entry.
+
+## Wave 2 — skip-list follow-ups + base-rule gaps (2026-09-19)
+
+Branch `feat/modal-wide-tier-wave2` (worktree `/tmp/wave2`, dev `cccf0acdad`).
+Six surfaces the PR #2742 triage report named as skip-list follow-ups joined
+the tier, plus the TemplateSelectorDialog base-width-rule gap; the two
+wave-1 FAILED_TO_MOUNT surfaces were both retried and are now visually
+verified. Registry now carries 91 anchors. Same harness method as the main
+table (real `WideViewportTierMixin` toggle, consolidated CSS, (200,50) wide
+/ (120,40) narrow, SVG per mount — 18 captures at `/tmp/wave2/qa-captures/`,
+harness `/tmp/wave2/qa_modal_wide_tier_wave2.py`, both uncommitted).
+
+Results: 9/9 mounted, 9/9 wide widths exactly `min(cap, 85% of 200)`; narrow
+widths equal the untouched base geometry.
+
+| Anchor | Narrow (120col) | Wide (200col) | Cap | Status |
+|---|---|---|---|---|
+| `#notes-recovery-dialog` | 100 | 170 | 170 | OK |
+| `#skills-recovery-review` | 108 | 170 | 170 | OK |
+| `ChatbookCreationWindow > Container` | 108 | 170 | 170 | OK * |
+| `ChatbookExportManagementWindow > Container` | 108 | 170 | 170 | OK |
+| `ChatbookTemplatesWindow > Container` | 96 | 170 | 170 | OK |
+| `#prompt-collection-manager` | 96 | 150 | 150 | OK |
+| `TemplateSelectorDialog .template-selector-dialog` | 76 | 120 | 120 | OK ** |
+| `NoteCreationModal > Container` | 80 | 120 | 120 | OK *** |
+| `AudioTroubleshootingDialog .dialog-container` | 80 | 120 | 120 | OK **** |
+
+\* Mounted via a harness subclass shadowing the read-only `Widget.app`
+property: the shipped `ChatbookCreationWindow.__init__` assigns
+`self.app = app_instance`, which raises `AttributeError` on every
+construction (its only call site, `Tools_Settings_Window.py:6568`, is the
+deprecated legacy settings window). Pre-existing bug, out of wave-2 scope;
+CSS verification is unaffected (identical class, `app` only stores a
+reference).
+
+\** First width rule this surface has ever had: base `width: 76;
+max-width: 95%` shipped in a new `BUNDLED_CSS` on the widget (numeric
+literals, not `$ds-*` tokens — BUNDLED_CSS must resolve in bare-App test
+harnesses that never load the token file). Previously the dialog rendered
+full-width (`Container` default 1fr).
+
+\*** Wave-1 retry, now verified: the harness pre-seeds Textual's
+tree-sitter language cache for "markdown" from the installed
+`tree_sitter_language_pack` (Textual only auto-resolves dedicated
+`tree_sitter_<lang>` modules, which this venv lacks — the language itself
+IS available in the pack, so this is purely a resolution gap, not missing
+data).
+
+\**** Wave-1 retry, now verified: root cause pinned — `on_mount` calls
+`self.run_worker(self._initialize_audio())`, but `_initialize_audio` is
+`@work`-decorated, so it already starts its worker and returns the `Worker`
+object; re-passing that Worker to `run_worker` always raises
+`WorkerError("Unsupported attempt to run an async worker")`. The harness
+stubs `run_worker` on the instance (geometry needs no device data). This
+failure occurs whenever the dialog mounts, headless or not — production
+bug candidate, out of wave-2 scope.
+
+The skills passphrase dialogs (`SkillTrustPassphraseModal`,
+`SkillTrustBootstrapModal`) moved from the module skip to per-class skips
+(PasswordDialog family, base width 64); `#notes-recovery-dialog` is
+additionally pinned by a live spot-geometry test (base 85%/100 -> 170 at
+wide, both resize directions) in `Tests/UI/test_modal_wide_tier.py`.

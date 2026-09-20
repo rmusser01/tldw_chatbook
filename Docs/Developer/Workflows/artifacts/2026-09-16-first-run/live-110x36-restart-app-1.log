@@ -1,0 +1,291 @@
+2026-09-16 07:44:14 [INFO    ] root:378 - Private rotating file logging installed at level INFO.
+2026-09-16 07:44:14 [INFO    ] tldw_chatbook.diagnostics.logging:247 - event=persistent_sink_installed component=logging status=ok
+2026-09-16 07:44:14 [INFO    ] root:751 - Standard Logging: Final Root logger level is: INFO
+2026-09-16 07:44:14 [INFO    ] root:759 - Logging setup complete.
+2026-09-16 07:44:14 [INFO    ] root:760 - --- _setup_logging END ---
+2026-09-16 07:44:14 [INFO    ] tldw_chatbook.app:463 - on_mount completed in 0.011 seconds
+2026-09-16 07:44:14 [INFO    ] tldw_chatbook.DB.base_db:463 - LibraryIngestJobsDB initialized with path: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/library_ingest_jobs_db_path.db [Client: default]
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Screen navigation: Pushed initial WorkflowsScreen (target=workflows)
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Binding Select widgets and populating dynamic content...
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - _post_mount_setup completed in 0.000 seconds
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Post-mount setup completed.
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - UI loading completed in 0.570 seconds
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - === APPLICATION STARTUP COMPLETE ===
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Total startup time: 2.666 seconds
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 -   - Backend init: 2.096s
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 -   - UI composition: 0.570s
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 -   - Post-mount setup: 0.001s
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - ===================================
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Scheduling media cleanup after startup idle delay
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Scheduled media cleanup every 24 hours
+2026-09-16 07:44:15 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:44:15 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:44:15 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-16 07:44:15 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: home
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen home mounted
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Notes.Notes_Library:178 - Creating new CharactersRAGDB instance for context of user 'default_user'. DB File: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/chachanotes_db_path.db, Client ID for ops: 'default_user'.
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Initializing CharactersRAGDB db_sha256=5924c30f6021 [Client ID: default_user]
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Successfully switched to home screen
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - AppFooterStatus widget instance acquired.
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Started periodic DB size updates every 120 seconds
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - DB size update timer started for the shell status line (interval: 2 minutes).
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Initializing TTS service...
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Event_Handlers.TTS_Events.tts_events:463 - TTS service initialized successfully
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - TTS service initialized successfully
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Initializing S/TT/S service...
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Event_Handlers.STTS_Events.stts_events:463 - S/TT/S service initialized successfully
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - S/TT/S service initialized successfully
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: workflows
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Scheduling.scheduler.loop:463 - Scheduler starting: 4 handler(s) registered (automation_definition, briefing_job, reminder, watchlist_job), poll interval 30s, 0 task(s) queued
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.diagnostics.scheduling:247 - event=scheduler_configured component=scheduling item_count=4 status=ok
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Checking DB schema 'rag_char_chat_schema'. Current version: 73. Code supports: 73
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Notes.Notes_Library:189 - Successfully initialized dynamic CharactersRAGDB instance for user context 'default_user'.
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.app:463 - Successfully switched to workflows screen
+2026-09-16 07:44:15 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - DB sizes: Prompts: 148.0 KB | Chats/Notes: 8.2 MB | Media: 404.0 KB
+2026-09-16 07:44:20 [INFO    ] tldw_chatbook.app:463 - No media items eligible for cleanup
+2026-09-16 07:45:13 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: home
+2026-09-16 07:45:13 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:45:13 [INFO    ] tldw_chatbook.app:463 - Successfully switched to home screen
+2026-09-16 07:45:13 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:13 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:13 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:45:14 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:14 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: workflows
+2026-09-16 07:45:14 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:45:14 [INFO    ] tldw_chatbook.app:463 - Successfully switched to workflows screen
+2026-09-16 07:45:15 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Added note ID: 40dbcb35-d7a4-4a2d-8add-696cb5b69dfe.
+2026-09-16 07:45:15 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: library
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen library mounted
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.app:463 - Successfully switched to library screen
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Attempting to save setting: [library.rail_state].lifecycle = 'graduated'
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:463 - Media search completed (mode=%s, limit=%s, offset=%s, sort=%s, summary=true).
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Attempting to apply literal settings mutation: sets={"('library', 'rail_state')": ['lifecycle']}, deletes={}
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Successfully replaced settings file at ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Determined APP_COMPONENT_ROOT for config files: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:45:16 [INFO    ] tldw_chatbook.config:463 - Global configuration caches invalidated and reloaded.
+2026-09-16 07:45:17 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: workflows
+2026-09-16 07:45:17 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:45:17 [INFO    ] tldw_chatbook.app:463 - Successfully switched to workflows screen
+2026-09-16 07:45:20 [INFO    ] tldw_chatbook.DB.base_db:463 - AgentRunsDB initialized with path: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/agent_runs.db [Client: default]
+2026-09-16 07:45:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.config:463 - Attempting to load CLI config from: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.config:463 - Successfully loaded and merged CLI config from ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.config:463 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.config:463 - Determined APP_COMPONENT_ROOT for config files: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:45:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.Chat.console_runtime:463 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen library unmounted
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen home unmounted
+2026-09-16 07:45:26 [INFO    ] root:18473 - --- App Unmounting ---
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.diagnostics.app:247 - event=app_stopping component=app
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - Local MCP client sessions disconnected
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - Artifact share stopped (if running)
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - Media cleanup timer stopped
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - Server context provider cached client closed
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - TTS resources cleaned up properly
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Stopped periodic DB size updates
+2026-09-16 07:45:26 [INFO    ] tldw_chatbook.app:463 - DB size update timer stopped during unmount.
+2026-09-16 07:46:50 [INFO    ] root:378 - Private rotating file logging installed at level INFO.
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.diagnostics.logging:247 - event=persistent_sink_installed component=logging status=ok
+2026-09-16 07:46:50 [INFO    ] root:751 - Standard Logging: Final Root logger level is: INFO
+2026-09-16 07:46:50 [INFO    ] root:759 - Logging setup complete.
+2026-09-16 07:46:50 [INFO    ] root:760 - --- _setup_logging END ---
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - on_mount completed in 0.009 seconds
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.DB.base_db:463 - LibraryIngestJobsDB initialized with path: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/library_ingest_jobs_db_path.db [Client: default]
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - Screen navigation: Pushed initial WorkflowsScreen (target=workflows)
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Binding Select widgets and populating dynamic content...
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - _post_mount_setup completed in 0.000 seconds
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Post-mount setup completed.
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - UI loading completed in 0.499 seconds
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - === APPLICATION STARTUP COMPLETE ===
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - Total startup time: 0.954 seconds
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 -   - Backend init: 0.456s
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 -   - UI composition: 0.499s
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 -   - Post-mount setup: 0.001s
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - ===================================
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - Scheduling media cleanup after startup idle delay
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - Scheduled media cleanup every 24 hours
+2026-09-16 07:46:50 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:46:50 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:46:50 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-16 07:46:50 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - AppFooterStatus widget instance acquired.
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Started periodic DB size updates every 120 seconds
+2026-09-16 07:46:50 [INFO    ] tldw_chatbook.app:463 - DB size update timer started for the shell status line (interval: 2 minutes).
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.app:463 - Initializing TTS service...
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.Event_Handlers.TTS_Events.tts_events:463 - TTS service initialized successfully
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.app:463 - TTS service initialized successfully
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.app:463 - Initializing S/TT/S service...
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.Event_Handlers.STTS_Events.stts_events:463 - S/TT/S service initialized successfully
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.app:463 - S/TT/S service initialized successfully
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.Scheduling.scheduler.loop:463 - Scheduler starting: 4 handler(s) registered (automation_definition, briefing_job, reminder, watchlist_job), poll interval 30s, 0 task(s) queued
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.diagnostics.scheduling:247 - event=scheduler_configured component=scheduling item_count=4 status=ok
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - DB sizes: Prompts: 148.0 KB | Chats/Notes: 4.2 MB | Media: 404.0 KB
+2026-09-16 07:46:51 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:46:51 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.config:463 - Attempting to load CLI config from: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.config:463 - Successfully loaded and merged CLI config from ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.config:463 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:46:51 [INFO    ] tldw_chatbook.config:463 - Determined APP_COMPONENT_ROOT for config files: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:46:51 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.Chat.console_runtime:463 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:46:52 [INFO    ] root:18473 - --- App Unmounting ---
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.diagnostics.app:247 - event=app_stopping component=app
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - Local MCP client sessions disconnected
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - Artifact share stopped (if running)
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - Media cleanup timer stopped
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - Server context provider cached client closed
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - TTS resources cleaned up properly
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Stopped periodic DB size updates
+2026-09-16 07:46:52 [INFO    ] tldw_chatbook.app:463 - DB size update timer stopped during unmount.
+2026-09-16 07:47:36 [INFO    ] root:378 - Private rotating file logging installed at level INFO.
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.diagnostics.logging:247 - event=persistent_sink_installed component=logging status=ok
+2026-09-16 07:47:36 [INFO    ] root:751 - Standard Logging: Final Root logger level is: INFO
+2026-09-16 07:47:36 [INFO    ] root:759 - Logging setup complete.
+2026-09-16 07:47:36 [INFO    ] root:760 - --- _setup_logging END ---
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - on_mount completed in 0.011 seconds
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.DB.base_db:463 - LibraryIngestJobsDB initialized with path: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/library_ingest_jobs_db_path.db [Client: default]
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - Screen navigation: Pushed initial WorkflowsScreen (target=workflows)
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Binding Select widgets and populating dynamic content...
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - _post_mount_setup completed in 0.000 seconds
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Post-mount setup completed.
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - UI loading completed in 0.479 seconds
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - === APPLICATION STARTUP COMPLETE ===
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - Total startup time: 1.020 seconds
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 -   - Backend init: 0.540s
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 -   - UI composition: 0.479s
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 -   - Post-mount setup: 0.001s
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - ===================================
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - Scheduling media cleanup after startup idle delay
+2026-09-16 07:47:36 [INFO    ] tldw_chatbook.app:463 - Scheduled media cleanup every 24 hours
+2026-09-16 07:47:37 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:37 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:37 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-16 07:47:37 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - AppFooterStatus widget instance acquired.
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Started periodic DB size updates every 120 seconds
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - DB size update timer started for the shell status line (interval: 2 minutes).
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - Initializing TTS service...
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Event_Handlers.TTS_Events.tts_events:463 - TTS service initialized successfully
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - TTS service initialized successfully
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - Initializing S/TT/S service...
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Event_Handlers.STTS_Events.stts_events:463 - S/TT/S service initialized successfully
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.app:463 - S/TT/S service initialized successfully
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Scheduling.scheduler.loop:463 - Scheduler starting: 4 handler(s) registered (automation_definition, briefing_job, reminder, watchlist_job), poll interval 30s, 0 task(s) queued
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.diagnostics.scheduling:247 - event=scheduler_configured component=scheduling item_count=4 status=ok
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - DB sizes: Prompts: 148.0 KB | Chats/Notes: 4.2 MB | Media: 404.0 KB
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Notes.Notes_Library:178 - Creating new CharactersRAGDB instance for context of user 'default_user'. DB File: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/chachanotes_db_path.db, Client ID for ops: 'default_user'.
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Initializing CharactersRAGDB db_sha256=5924c30f6021 [Client ID: default_user]
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Checking DB schema 'rag_char_chat_schema'. Current version: 73. Code supports: 73
+2026-09-16 07:47:37 [INFO    ] tldw_chatbook.Notes.Notes_Library:189 - Successfully initialized dynamic CharactersRAGDB instance for user context 'default_user'.
+2026-09-16 07:47:41 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: home
+2026-09-16 07:47:41 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen home mounted
+2026-09-16 07:47:41 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:47:41 [INFO    ] tldw_chatbook.app:463 - Successfully switched to home screen
+2026-09-16 07:47:41 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:41 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:41 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:47:42 [INFO    ] tldw_chatbook.app:463 - No media items eligible for cleanup
+2026-09-16 07:47:42 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:42 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: workflows
+2026-09-16 07:47:42 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:47:42 [INFO    ] tldw_chatbook.app:463 - Successfully switched to workflows screen
+2026-09-16 07:47:42 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:463 - Added note ID: 154e4fbe-02ce-4555-8e16-06279cf484d6.
+2026-09-16 07:47:43 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: library
+2026-09-16 07:47:43 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen library mounted
+2026-09-16 07:47:43 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:47:43 [INFO    ] tldw_chatbook.app:463 - Successfully switched to library screen
+2026-09-16 07:47:43 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:463 - Media search completed (mode=%s, limit=%s, offset=%s, sort=%s, summary=true).
+2026-09-16 07:47:44 [INFO    ] tldw_chatbook.app:463 - Navigating to screen: workflows
+2026-09-16 07:47:44 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:47:44 [INFO    ] tldw_chatbook.app:463 - Successfully switched to workflows screen
+2026-09-16 07:47:52 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:52 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:52 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.config:463 - Attempting to load CLI config from: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.config:463 - Successfully loaded and merged CLI config from ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.config:463 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.config:463 - Determined APP_COMPONENT_ROOT for config files: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:47:53 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.Chat.console_runtime:463 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen library unmounted
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen home unmounted
+2026-09-16 07:47:53 [INFO    ] root:18473 - --- App Unmounting ---
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.diagnostics.app:247 - event=app_stopping component=app
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - Local MCP client sessions disconnected
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - Artifact share stopped (if running)
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - Media cleanup timer stopped
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - Server context provider cached client closed
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - TTS resources cleaned up properly
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Stopped periodic DB size updates
+2026-09-16 07:47:53 [INFO    ] tldw_chatbook.app:463 - DB size update timer stopped during unmount.
+2026-09-16 07:47:57 [INFO    ] root:378 - Private rotating file logging installed at level INFO.
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.diagnostics.logging:247 - event=persistent_sink_installed component=logging status=ok
+2026-09-16 07:47:57 [INFO    ] root:751 - Standard Logging: Final Root logger level is: INFO
+2026-09-16 07:47:57 [INFO    ] root:759 - Logging setup complete.
+2026-09-16 07:47:57 [INFO    ] root:760 - --- _setup_logging END ---
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - on_mount completed in 0.010 seconds
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.DB.base_db:463 - LibraryIngestJobsDB initialized with path: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/data/library_ingest_jobs_db_path.db [Client: default]
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows mounted
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - Screen navigation: Pushed initial WorkflowsScreen (target=workflows)
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Binding Select widgets and populating dynamic content...
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - _post_mount_setup completed in 0.000 seconds
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - App _post_mount_setup: Post-mount setup completed.
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - UI loading completed in 0.598 seconds
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - === APPLICATION STARTUP COMPLETE ===
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - Total startup time: 1.092 seconds
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 -   - Backend init: 0.494s
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 -   - UI composition: 0.598s
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 -   - Post-mount setup: 0.001s
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - ===================================
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - Scheduling media cleanup after startup idle delay
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - Scheduled media cleanup every 24 hours
+2026-09-16 07:47:57 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:57 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:57 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-16 07:47:57 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - AppFooterStatus widget instance acquired.
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Started periodic DB size updates every 120 seconds
+2026-09-16 07:47:57 [INFO    ] tldw_chatbook.app:463 - DB size update timer started for the shell status line (interval: 2 minutes).
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.app:463 - Initializing TTS service...
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.Event_Handlers.TTS_Events.tts_events:463 - TTS service initialized successfully
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.app:463 - TTS service initialized successfully
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.app:463 - Initializing S/TT/S service...
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.Event_Handlers.STTS_Events.stts_events:463 - S/TT/S service initialized successfully
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.app:463 - S/TT/S service initialized successfully
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.Scheduling.scheduler.loop:463 - Scheduler starting: 4 handler(s) registered (automation_definition, briefing_job, reminder, watchlist_job), poll interval 30s, 0 task(s) queued
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.diagnostics.scheduling:247 - event=scheduler_configured component=scheduling item_count=4 status=ok
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - DB sizes: Prompts: 148.0 KB | Chats/Notes: 4.2 MB | Media: 404.0 KB
+2026-09-16 07:47:58 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:58 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.app:463 - Application quit initiated
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.config:463 - Attempting to load CLI config from: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.config:463 - Successfully loaded and merged CLI config from ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-b/config/config.toml
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.config:463 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:47:58 [INFO    ] tldw_chatbook.config:463 - Determined APP_COMPONENT_ROOT for config files: ~/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook
+2026-09-16 07:47:58 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.Chat.console_runtime:463 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen workflows unmounted
+2026-09-16 07:47:59 [INFO    ] root:18473 - --- App Unmounting ---
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.diagnostics.app:247 - event=app_stopping component=app
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - Local MCP client sessions disconnected
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - Artifact share stopped (if running)
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - Media cleanup timer stopped
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - Server context provider cached client closed
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - TTS resources cleaned up properly
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.Utils.db_status_manager:463 - Stopped periodic DB size updates
+2026-09-16 07:47:59 [INFO    ] tldw_chatbook.app:463 - DB size update timer stopped during unmount.

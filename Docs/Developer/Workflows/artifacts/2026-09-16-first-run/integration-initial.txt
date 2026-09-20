@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_saved_file_controls_real_http_edited_local_note _____________
+Tests/Workflows/test_file_to_note_integration.py:176: in test_saved_file_controls_real_http_edited_local_note
+    async with _listener(_response(_answer("Generated response canary"))) as (origin, requests):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+Tests/LLM_Calls/test_llamacpp_bounded.py:60: in _listener
+    async with await asyncio.start_server(
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/streams.py:84: in start_server
+    return await loop.create_server(factory, host, port, **kwds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:1584: in create_server
+    raise OSError(err.errno, msg) from None
+E   PermissionError: [Errno 1] error while attempting to bind on address ('127.0.0.1', 0): [errno 1] operation not permitted
+=============================== warnings summary ===============================
+Tests/Workflows/test_file_to_note_integration.py::test_saved_file_controls_real_http_edited_local_note
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/Workflows/test_file_to_note_integration.py::test_saved_file_controls_real_http_edited_local_note
+1 failed, 1 warning in 1.32s

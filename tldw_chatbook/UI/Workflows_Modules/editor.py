@@ -130,12 +130,22 @@ class WorkflowEditor(Vertical):
 
     def restore_view(self, *, focus=True):
         view = self.views.get(self.section, {})
+        focused_when_queued = self.app.focused
         for identifier, collapsed in view.get("sections", {}).items():
             matches = self.query("#" + identifier)
             if matches:
                 matches.first(Collapsible).collapsed = collapsed
 
         def after_layout():
+            current_focus = self.app.focused
+            if (
+                current_focus is not focused_when_queued
+                and current_focus is not None
+                and current_focus.is_attached
+                and self in current_focus.ancestors
+            ):
+                # A newer field selection owns both focus and its scroll.
+                return
             self.query_one("#workflow-form").scroll_to(
                 y=view.get("scroll", 0), animate=False, force=True
             )

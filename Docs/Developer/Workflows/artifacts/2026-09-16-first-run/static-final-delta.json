@@ -1,0 +1,328 @@
+[
+  {
+    "file": "Tests/Agents/test_builtin_tool_gate.py",
+    "lint_baseline": 3,
+    "lint_current": 3,
+    "introduced_lint": [],
+    "format_baseline": 2,
+    "format_current": 2,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/LLM_Calls/test_llamacpp_bounded.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Notes/test_notes_library_unit.py",
+    "lint_baseline": 3,
+    "lint_current": 3,
+    "introduced_lint": [],
+    "format_baseline": 14,
+    "format_current": 14,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/ProductionApp/test_workflows_session_lifecycle.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/UI/test_app_quit_guard.py",
+    "lint_baseline": 1,
+    "lint_current": 1,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/UI/test_workflows_run.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/UI/test_workflows_stylesheet_loading.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_authoring.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_local_steps.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_session.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_session_admission.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_session_lifecycle.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_session_permissions.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Agents/builtin_tool_gate.py",
+    "lint_baseline": 1,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "lint_baseline": 595,
+    "lint_current": 595,
+    "introduced_lint": [],
+    "format_baseline": 23,
+    "format_current": 23,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/LLM_Calls/llamacpp_bounded.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Notes/Notes_Library.py",
+    "lint_baseline": 116,
+    "lint_current": 115,
+    "introduced_lint": [
+      {
+        "cell": null,
+        "code": "UP035",
+        "end_location": {
+          "column": 77,
+          "row": 20
+        },
+        "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook/Notes/Notes_Library.py",
+        "fix": null,
+        "location": {
+          "column": 1,
+          "row": 20
+        },
+        "message": "`typing.Dict` is deprecated, use `dict` instead",
+        "name": "deprecated-import",
+        "noqa_row": 20,
+        "severity": "error",
+        "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+      },
+      {
+        "cell": null,
+        "code": "UP035",
+        "end_location": {
+          "column": 77,
+          "row": 20
+        },
+        "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook/Notes/Notes_Library.py",
+        "fix": null,
+        "location": {
+          "column": 1,
+          "row": 20
+        },
+        "message": "`typing.List` is deprecated, use `list` instead",
+        "name": "deprecated-import",
+        "noqa_row": 20,
+        "severity": "error",
+        "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+      },
+      {
+        "cell": null,
+        "code": "UP035",
+        "end_location": {
+          "column": 77,
+          "row": 20
+        },
+        "filename": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook/Notes/Notes_Library.py",
+        "fix": {
+          "applicability": "safe",
+          "edits": [
+            {
+              "content": "from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union\nfrom collections.abc import Sequence",
+              "end_location": {
+                "column": 77,
+                "row": 20
+              },
+              "location": {
+                "column": 1,
+                "row": 20
+              }
+            }
+          ],
+          "message": "Import from `collections.abc`"
+        },
+        "location": {
+          "column": 1,
+          "row": 20
+        },
+        "message": "Import from `collections.abc` instead: `Sequence`",
+        "name": "deprecated-import",
+        "noqa_row": 20,
+        "severity": "error",
+        "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+      }
+    ],
+    "format_baseline": 14,
+    "format_current": 14,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Screens/workflows_screen.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Workflows_Modules/run_controls.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Workflows/authoring.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Workflows/draft_session.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Workflows/local_steps.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Workflows/session.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Workflows/session_permissions.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/app.py",
+    "lint_baseline": 484,
+    "lint_current": 484,
+    "introduced_lint": [],
+    "format_baseline": 37,
+    "format_current": 37,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_file_to_note_integration.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Chat/test_sensitive_llm_logging.py",
+    "lint_baseline": 24,
+    "lint_current": 24,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+    "lint_baseline": 5,
+    "lint_current": 5,
+    "introduced_lint": [],
+    "format_baseline": 11,
+    "format_current": 11,
+    "introduced_format": []
+  }
+]

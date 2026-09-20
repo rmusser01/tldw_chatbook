@@ -1,0 +1,116 @@
+unformatted: File would be reformatted
+    --> tldw_chatbook/Notes/Notes_Library.py:67:12
+     |
+66   | def _is_internal_research_keyword(row: Any) -> bool:
+     -     return isinstance(row, dict) and re.fullmatch(
+     -         rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+     -         str(row.get("keyword") or ""),
+     -     ) is not None
+67   +     return (
+68   +         isinstance(row, dict)
+69   +         and re.fullmatch(
+70   +             rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+71   +             str(row.get("keyword") or ""),
+72   +         )
+73   +         is not None
+74   +     )
+75   |
+--------------------------------------------------------------------------------
+401  |                         item
+     -                         for item in json.loads(
+     -                             str(receipt["requested_keywords_json"])
+     -                         )
+402  +                         for item in json.loads(str(receipt["requested_keywords_json"]))
+403  |                         if isinstance(item, str)
+--------------------------------------------------------------------------------
+817  |         organization_requested = bool(requested_keywords or folder or folder_sync_id)
+     -         if note_id is not None and organization_requested and not expected_organization_version:
+818  +         if (
+819  +             note_id is not None
+820  +             and organization_requested
+821  +             and not expected_organization_version
+822  +         ):
+823  |             raise ValueError(
+--------------------------------------------------------------------------------
+853  |                     authority_organization_version = str(
+     -                         db._library_organization_for_notes(cursor, [note_id])[
+     -                             note_id
+     -                         ]["organization_version"]
+854  +                         db._library_organization_for_notes(cursor, [note_id])[note_id][
+855  +                             "organization_version"
+856  +                         ]
+857  |                     )
+--------------------------------------------------------------------------------
+891  |                         is _AgentLessonApprovalAuthority
+     -                         and type(_agent_lesson_context.issuer)
+     -                         is LibraryToolProvider
+892  +                         and type(_agent_lesson_context.issuer) is LibraryToolProvider
+893  |                     )
+--------------------------------------------------------------------------------
+969  |             if unresolved_receipt is not None:
+     -                 stored_keywords = self._receipt_requested_keywords(
+     -                     unresolved_receipt
+     -                 )
+970  +                 stored_keywords = self._receipt_requested_keywords(unresolved_receipt)
+971  |                 requested_keywords = tuple(
+972  |                     dict.fromkeys((*stored_keywords, *requested_keywords))
+973  |                 )
+974  |                 if folder is None and folder_sync_id is None:
+     -                     stored_folder_name = unresolved_receipt[
+     -                         "requested_folder_name"
+     -                     ]
+975  +                     stored_folder_name = unresolved_receipt["requested_folder_name"]
+976  |                     stored_folder_sync_id = unresolved_receipt[
+--------------------------------------------------------------------------------
+1049 |                 ).fetchone()
+     -                 if current_note is None or int(current_note["version"]) != expected_version:
+1050 +                 if (
+1051 +                     current_note is None
+1052 +                     or int(current_note["version"]) != expected_version
+1053 +                 ):
+1054 |                     raise ConflictError(
+--------------------------------------------------------------------------------
+1205 |                         object_id=str(folder_row["sync_id"]),
+     -                         payload={"name": str(folder_row["name"]), "parent_sync_id": None},
+1206 +                         payload={
+1207 +                             "name": str(folder_row["name"]),
+1208 +                             "parent_sync_id": None,
+1209 +                         },
+1210 |                         source_version=int(folder_row["version"]),
+--------------------------------------------------------------------------------
+1328 |         if (server_profile_id is None) != (dataset_id is None):
+     -             raise ValueError("server_profile_id and dataset_id must be supplied together")
+1329 +             raise ValueError(
+1330 +                 "server_profile_id and dataset_id must be supplied together"
+1331 +             )
+1332 |         if server_profile_id is None:
+--------------------------------------------------------------------------------
+1339 |                 raise NotesOrganizationRepositoryError(
+     -                     "ambiguous_profile", "multiple Notes organization profiles require routing"
+1340 +                     "ambiguous_profile",
+1341 +                     "multiple Notes organization profiles require routing",
+1342 |                 )
+--------------------------------------------------------------------------------
+1761 |     @staticmethod
+     -     def _validate_receipt_target(
+     -         cursor: sqlite3.Cursor, receipt: sqlite3.Row
+     -     ) -> None:
+1762 +     def _validate_receipt_target(cursor: sqlite3.Cursor, receipt: sqlite3.Row) -> None:
+1763 |         note = cursor.execute(
+--------------------------------------------------------------------------------
+1919 |
+     -     def restore_note(
+     -         self, user_id: str, note_id: str, expected_version: int
+     -     ) -> bool:
+1920 +     def restore_note(self, user_id: str, note_id: str, expected_version: int) -> bool:
+1921 |         """Restore a soft-deleted note through the per-user database seam.
+--------------------------------------------------------------------------------
+1939 |             db = self._get_db(user_id)
+     -             result = db.restore_note(
+     -                 note_id=note_id, expected_version=expected_version
+     -             )
+1940 +             result = db.restore_note(note_id=note_id, expected_version=expected_version)
+1941 |             duration = time.time() - start_time
+     |
+
+1 file would be reformatted, 3 files already formatted

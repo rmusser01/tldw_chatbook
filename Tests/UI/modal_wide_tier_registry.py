@@ -76,7 +76,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleModelPopover": "ships its own per-surface wide tier (PR #2672)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
-    "TemplateSelectorDialog": "no base width rule to override",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",
     "DeleteConfirmDialog": "tiny media delete confirm (inventory section B)",
     # -- stragglers verified against the tree 2026-09-19 (not inventoried) --
@@ -91,6 +90,11 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConfirmDisableDialog": "tiny confirm (deprecated legacy settings window)",
     "_VllmProfileDeleteConfirmationDialog": "tiny delete confirm (LLM screen)",
     "_SettlingGuardedConfirmationDialog": "tiny wizard confirmation",
+    # -- wave 2 (2026-09-19): skills_screen left the module skip list when
+    # SkillRecoveryReviewModal joined the tier; the passphrase dialogs stay
+    # tiny-by-design (PasswordDialog family, base width 64) --
+    "SkillTrustPassphraseModal": "single-input passphrase dialog (base width 64), PasswordDialog family",
+    "SkillTrustBootstrapModal": "two-input passphrase bootstrap dialog (base width 64), PasswordDialog family",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -99,13 +103,9 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
 #: they are documented gaps queued for a second wide-tier pass, not verdicts
 #: that they never need scaling.
 MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
-    "UI/ChatbookCreationWindow.py": "Chatbook work window (base cap 120) -- follow-up wave",
-    "UI/ChatbookExportManagementWindow.py": "Chatbook work window (base cap 120) -- follow-up wave",
-    "UI/ChatbookTemplatesWindow.py": "Chatbook work window (base cap 100) -- follow-up wave",
     "UI/Chunking_Lab_Modules/dialogs.py": "chunking-lab dev dialogs -- follow-up wave",
     "UI/CodeRepoCopyPasteWindow.py": "full-viewport paste surface, no width rule",
     "UI/Library_Modules/library_character_repair_controller.py": "repair dialog (base width 76) -- follow-up wave",
-    "UI/Library_Modules/prompt_collection_manager_modal.py": "collection manager (base width 96) -- follow-up wave",
     "UI/Library_Modules/skill_import_choice_modal.py": "choice dialog (base width 88) -- follow-up wave",
     "UI/Navigation/character_conversation_navigation.py": "navigation dialogs (base 72) -- follow-up wave",
     "UI/Navigation/nav_overflow_menu.py": "fixed-column overflow menu",
@@ -120,7 +120,6 @@ MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
     "UI/Screens/scheduling/forms/automation_definition_form.py": "scheduling form (base width 84) -- follow-up wave",
     "UI/Screens/scheduling/forms/new_task_choice_modal.py": "choice modal (base width 64) -- follow-up wave",
     "UI/Screens/scheduling/forms/reminder_form.py": "scheduling form (base width 80) -- follow-up wave",
-    "UI/Screens/skills_screen.py": "skills trust/recovery modals (base up to 110) -- follow-up wave",
     "UI/Screens/trajectory_screen.py": "full-viewport trajectory viewer",
     "UI/Screens/video_player_screen.py": "full-viewport video player",
     "UI/Speech/speech_settings_pane.py": "tiny leave confirmation",
@@ -136,7 +135,6 @@ MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
     "UI/Wizards/FirstRunSetupWizard.py": "tiny wizard confirmation",
     "UI/Wizards/first_run_recovery_dialog.py": "recovery dialog (base width 72) -- follow-up wave",
     "UI/stts_profile_library.py": "STTS profile library modals (base caps 64-76) -- follow-up wave",
-    "Widgets/Library/notes_recovery_dialog.py": "recovery browser (base cap 100) -- missed by inventory, follow-up wave",
     "Widgets/workspace_create_modal.py": "workspace create form (base width 72) -- follow-up wave",
     "Widgets/workspace_persona_default.py": "assistant-defaults form (base width 68) -- follow-up wave",
 }
@@ -191,6 +189,13 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ),
     # cap 170 -- PR #2742 review: missed by the 2026-09-13 inventory (base 140)
     ("#speech-voice-profile-picker", 170, "UI/STTS_Window.py"),
+    # cap 170 -- wave 2 (2026-09-19): skip-list follow-ups the triage report
+    # named (base caps 100-120 the ladder relaxes at wide viewports)
+    ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
+    ("#skills-recovery-review", 170, "UI/Screens/skills_screen.py"),
+    ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
+    ("ChatbookExportManagementWindow > Container", 170, "UI/ChatbookExportManagementWindow.py"),
+    ("ChatbookTemplatesWindow > Container", 170, "UI/ChatbookTemplatesWindow.py"),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-scope-picker-modal", 150, "css/features/_console_panels.tcss"),
@@ -219,26 +224,12 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # surfaces missed by the 2026-09-13 inventory (bases 86-96)
     ("#buddy-review", 150, "Widgets/Persona_Widgets/buddy_character_review.py"),
     ("#petdex-review", 150, "Widgets/Persona_Widgets/petdex_import_review.py"),
-    (
-        "#tool-pack-export-review",
-        150,
-        "Widgets/Settings_Widgets/tool_pack_import_review.py",
-    ),
-    (
-        "#tool-pack-import-options",
-        150,
-        "Widgets/Settings_Widgets/tool_pack_import_review.py",
-    ),
-    (
-        "#tool-pack-import-review",
-        150,
-        "Widgets/Settings_Widgets/tool_pack_import_review.py",
-    ),
-    (
-        "#tool-profile-bind-review",
-        150,
-        "Widgets/Settings_Widgets/tool_pack_import_review.py",
-    ),
+    ("#tool-pack-export-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    ("#tool-pack-import-options", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    ("#tool-pack-import-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    ("#tool-profile-bind-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    # cap 150 -- wave 2 (2026-09-19): skip-list follow-up (base width 96)
+    ("#prompt-collection-manager", 150, "UI/Library_Modules/prompt_collection_manager_modal.py"),
     # cap 120 -- base width <= 80
     (
         "NoteCreationModal > Container",
@@ -401,6 +392,9 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("FeedbackDialog > Container", 120, "Widgets/feedback_dialog.py"),
     ("#console-composer-menu", 120, "Widgets/Console/console_composer_menu_modal.py"),
     ("#prompt-variables-dialog", 120, "Widgets/Console/prompt_variables_dialog.py"),
+    # cap 120 -- wave 2 (2026-09-19): base-width-rule gap closed (dialog had
+    # no width rule at all; base geometry shipped with this wave)
+    ("TemplateSelectorDialog .template-selector-dialog", 120, "Widgets/template_selector.py"),
 )
 
 #: Cap -> one representative anchor pinned by a live geometry test.

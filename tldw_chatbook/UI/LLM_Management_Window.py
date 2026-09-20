@@ -754,6 +754,16 @@ class LLMManagementWindow(Container):
         if view_name == "ollama":
             self._autofill_ollama_path()
             self._schedule_ollama_api_state()
+        if (
+            view_name in {"llama-cpp", "llamafile"}
+            and self._managed_gguf_inventory_started
+        ):
+            self._apply_managed_gguf_inventory(
+                self._managed_gguf_inventory_generation,
+                self._managed_gguf_choices,
+                self._managed_gguf_inventory_error,
+                settle_handoff=False,
+            )
         self._try_commit_pending_managed_gguf_handoff()
         self.post_message(self.DeferredViewsMounted())
 
@@ -1627,11 +1637,14 @@ class LLMManagementWindow(Container):
             )
             return
         try:
-            self.query_one(f"#{provider}-gguf-source-mode", Select)
-            self.query_one(f"#{provider}-gguf-managed-select", Select)
+            mode = self.query_one(f"#{provider}-gguf-source-mode", Select)
+            managed = self.query_one(f"#{provider}-gguf-managed-select", Select)
         except QueryError:
             view_name = "llama-cpp" if provider == "llamacpp" else "llamafile"
             self.ensure_view_populated(view_name)
+            return
+        if not mode.is_mounted or not managed.is_mounted:
+            # The existing population-ready callback retries after child mount.
             return
         self._commit_managed_gguf_handoff(provider, reference)
 
@@ -1847,8 +1860,10 @@ class LLMManagementWindow(Container):
         generation: int,
         choices: tuple[ManagedGGUFChoice, ...],
         error: bool | None,
+        *,
+        settle_handoff: bool = True,
     ) -> None:
-        """Apply one current inventory result to the current destination only."""
+        """Apply inventory; cached hydration cannot settle a fresh read's handoff."""
 
         if (
             generation != self._managed_gguf_inventory_generation
@@ -1899,6 +1914,10 @@ class LLMManagementWindow(Container):
             except QueryError:
                 # The sibling GGUF pane has not been selected/mounted yet.
                 continue
+            if not select.is_mounted:
+                # query_one can see Select before its nested label exists.
+                # Population-ready replays this retained inventory after mount.
+                continue
             with select.prevent(Select.Changed):
                 select.set_options(self._gguf_managed_options())
                 select.value = (
@@ -1908,7 +1927,7 @@ class LLMManagementWindow(Container):
                 )
             self._sync_process_controls(provider)
         pending = self._pending_managed_gguf_handoff
-        if pending is not None:
+        if pending is not None and settle_handoff:
             provider, reference = pending
             if not error and reference in references:
                 self._try_commit_pending_managed_gguf_handoff()
@@ -2210,6 +2229,7 @@ class LLMManagementWindow(Container):
                     self._managed_gguf_inventory_generation,
                     self._managed_gguf_choices,
                     self._managed_gguf_inventory_error,
+                    settle_handoff=False,
                 )
         provider = "mlx" if view_name == "mlx-lm" else view_name.replace("-cpp", "cpp")
         if provider in self.SERVER_CONTROLS:
