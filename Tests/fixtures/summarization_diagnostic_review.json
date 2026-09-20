@@ -11030,18 +11030,10 @@
                 ],
                 "captures_exception": false
             },
-            "outcome": "metadata",
-            "current": {
-                "method": "error",
-                "event": "Groq: API request failed; status_code=%s",
-                "occurrence": 1,
-                "message_shape": "Constant(value='Groq: API request failed; status_code=%s')",
-                "expressions": [
-                    "response.status_code"
-                ],
-                "captures_exception": false
-            },
-            "navigation_line": 1625
+            "outcome": "deleted",
+            "current": null,
+            "navigation_line": 1625,
+            "deletion_reason": "TASK-32853 groq summarizer migration onto the hosted engine: the non-200 branch (and its status_code log) is gone; failures now raise typed, redacted Chat errors handled by the existing broad except."
         },
         {
             "site_id": "general-5fe157d9e3962c0c",
