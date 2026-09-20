@@ -2353,6 +2353,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2439,6 +2440,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> eaae3fd04a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+>>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2465,6 +2468,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+>>>>>>> a31aaaf3ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 4aa3599028 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2488,6 +2493,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+>>>>>>> 70a8f901d0 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
 >>>>>>> e5d67b55d1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 70ccc20e9e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2502,9 +2509,20 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 =======
 >>>>>>> 433a3c6b22 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> eaae3fd04a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+=======
+=======
+>>>>>>> 2f24e06621 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> 70a8f901d0 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> a31aaaf3ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
         # TASK-32853 groq migration: the non-200 status log site joined
         # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
         # status logs verbatim (bound to the typed error) per the freeze.
@@ -2567,11 +2585,14 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 =======
 =======
+=======
+>>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
+<<<<<<< HEAD
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -2646,10 +2667,24 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 =======
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> eaae3fd04a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> d1352eb5d6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+=======
+=======
+=======
+>>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> 70a8f901d0 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> a31aaaf3ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> 2af135a0cd (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
