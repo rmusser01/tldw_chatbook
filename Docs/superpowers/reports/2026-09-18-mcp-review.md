@@ -1,17 +1,17 @@
 # MCP component review
 
-## Current checkpoint — compact restored-root review saved in PR2759
+## Current checkpoint — PR2759 visual approval received
 
-[Draft PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
 repairs the restored MCP root review at 80×24: keyboard-scrollable,
 left-aligned complete paths and persistent Cancel/Use fresh MCP defaults actions.
 [116 targeted passes, two reproduced dev failures, seven preflight guards and
 16 inspected native captures](../qa/2026-09-20-mcp-compact-review/README.md)
 qualify this bounded slice. The catalog test now waits for actual review completion.
 Existing approval ownership and native recovery writes remain unchanged.
-[Visual gallery](../qa/2026-09-20-mcp-compact-review/GALLERY.md) is ready for this
-PR’s own final approval. Current-head CI, accumulated review and current dev/conflict
-review remain before merge. Connected-runtime journeys and other unqualified MCP
+The owner approved the [visual gallery](../qa/2026-09-20-mcp-compact-review/GALLERY.md).
+Current product/style hashes still match the approved native capture. Current-head
+CI, accumulated review and current dev/conflict review remain before merge. Connected-runtime journeys and other unqualified MCP
 controls remain separate; PR2707’s heartbeat stays paused.
 
 ## Current checkpoint — PR2757 merged; compact review next

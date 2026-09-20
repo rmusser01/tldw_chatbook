@@ -6,8 +6,8 @@
       "exported_sha256": "e32bed6288757af37b724e681ef141f42915ffd477e6a6c6e5216af47a46e8bb"
     },
     "README.md": {
-      "original_sha256": "59f5c9b076e9a989de12dc55d795b576ff1441a90a816e1cbc3bccea7ef99c06",
-      "exported_sha256": "59f5c9b076e9a989de12dc55d795b576ff1441a90a816e1cbc3bccea7ef99c06"
+      "original_sha256": "da21f99e38a3f99e4432496b3e09f21c2305e008a8a56e3975b8478330b37485",
+      "exported_sha256": "da21f99e38a3f99e4432496b3e09f21c2305e008a8a56e3975b8478330b37485"
     },
     "allocation-census.json": {
       "original_sha256": "c381bd4ae3debe87bc63f522882f312106de7fb6442ff6ec5725a88ffc56102b",
@@ -204,6 +204,10 @@
     "visual-inspection.json": {
       "original_sha256": "8f222b07cf5f3d86b4e46c3bc105c4eb51e1018e229d433fdd29a5e3112fda32",
       "exported_sha256": "8f222b07cf5f3d86b4e46c3bc105c4eb51e1018e229d433fdd29a5e3112fda32"
+    },
+    "approval.json": {
+      "original_sha256": "c58aeb3dde5c27fd4a1ae1c7b2573ea3d19f078aac8dacd145b6b52670103cb2",
+      "exported_sha256": "c58aeb3dde5c27fd4a1ae1c7b2573ea3d19f078aac8dacd145b6b52670103cb2"
     }
   }
 }

@@ -57,6 +57,8 @@ The first native run also passed; run 002 repeats qualification after runner lin
 cleanup. An initial lifecycle reader expected the ordinary profile's DB filename;
 its corrected check reads the actual restored ChaChaNotes database.
 
-The gallery is ready for owner visual approval. Current-head CI, accumulated PR
-review, current dev/conflict review and final approval remain before merge.
+The owner approved the sixteen-capture gallery at head `518143252e`.
+[Approval receipt](approval.json) verifies the current product/style hashes still
+match that gallery. Current-head CI, accumulated PR review and current dev/conflict
+review remain before the authorized merge.
 Connected-runtime journeys and other unqualified MCP screens remain separate.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-20 18:22'
-updated_date: '2026-09-20 18:40'
+updated_date: '2026-09-20 18:44'
 labels: []
 dependencies: []
 ---
@@ -36,4 +36,6 @@ Let compact-terminal users read every restored-root path and reach safe confirma
 Implemented a recovery-specific ConfirmationDialog with a keyboard-scrollable, left-aligned body and persistent standard actions. Existing ADR-126/150/161, owner checks and native writes are preserved; no new ADR. Four meaningful red tests now pass; 116 distinct targeted passes, two reproduced baseline failures and seven passing preflight guards. Fixed the catalog test wait to follow token retirement plus busy settlement without weakening assertions. Sixteen inspected native captures qualify dark/light 80x24 and 170x48 using actual restored owners, normal shutdown, healthy private DBs and unchanged defaults. Independent review found no blockers. Evidence: Docs/superpowers/qa/2026-09-20-mcp-compact-review/README.md. Current-head CI, accumulated PR review and owner visual approval remain before merge; task stays In Progress until closeout.
 
 Saved as draft PR2759 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2759. No merge performed; current-head CI/review and final owner visual approval remain.
+
+Owner visual approval received for head 518143252e and the sixteen-capture gallery. Current native source/style hashes match. origin/dev is unchanged at 62d43190ce, with no rebase or conflict choices needed. Advancing PR2759 to review and current-head CI before the authorized merge.
 <!-- SECTION:NOTES:END -->
