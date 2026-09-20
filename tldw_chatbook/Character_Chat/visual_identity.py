@@ -2004,7 +2004,9 @@ def create_visual_identity_candidate(
         raise ValueError("visual_identity_source_kind_unsupported")
     try:
         source_context = json.loads(
-            pack["source_context_json"], parse_constant=_reject_json_constant
+            pack["source_context_json"],
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         raise ValueError("visual_identity_source_context_invalid") from None
@@ -3362,6 +3364,7 @@ def _find_builtin_samira_card_by_scan(db: Any) -> dict[str, Any] | None:
             extensions = json.loads(
                 candidate.get("extensions") or "{}",
                 parse_constant=_reject_json_constant,
+                object_pairs_hook=_reject_duplicate_json_keys,
             )
         except (TypeError, ValueError):
             continue
@@ -3384,6 +3387,7 @@ def _find_builtin_samira_pack(db: Any) -> dict[str, Any] | None:
             context = json.loads(
                 candidate.get("source_context_json") or "{}",
                 parse_constant=_reject_json_constant,
+                object_pairs_hook=_reject_duplicate_json_keys,
             )
         except (TypeError, ValueError):
             continue
@@ -3420,7 +3424,9 @@ def _binding_is_terminal(db: Any, binding: Mapping[str, Any]) -> bool:
         return False
     try:
         context = json.loads(
-            pack["source_context_json"], parse_constant=_reject_json_constant
+            pack["source_context_json"],
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
     except (TypeError, ValueError):
         return False
