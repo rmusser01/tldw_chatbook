@@ -1064,8 +1064,6 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_groq_openrouter_migration_characterization.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
-            "test_summarization_diagnostic_privacy.py",
-            "test_summarization_model_capabilities.py",
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
