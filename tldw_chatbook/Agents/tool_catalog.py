@@ -291,9 +291,10 @@ def build_chat_create_schema(
             "type": "string",
             "description": (
                 "Optional: the model for the new chat on the chosen "
-                "provider. Pick one of the models enumerated under your "
-                "chosen provider above; allowlist globs are NOT expanded "
-                "here, so a model that is not listed will be refused."
+                "provider. Prefer one of the models enumerated under your "
+                "chosen provider above; an unlisted model is still accepted "
+                "when it matches an allowlist glob (globs are not expanded "
+                "here) and refused otherwise."
             ),
         }
     return ToolSchema(

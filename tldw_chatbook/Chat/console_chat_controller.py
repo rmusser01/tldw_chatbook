@@ -17372,6 +17372,18 @@ class ConsoleChatController:
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
         instructions = str(payload.get("instructions") or "")
+        # Qodo round finding 4: same strict-type contract as the bridge
+        # closures -- the executor is reachable from callers other than the
+        # closures, so a non-string routing input is a clear refusal here
+        # too, never a str() coercion.
+        for _name in ("provider", "model", "preset"):
+            _value = payload.get(_name, "")
+            if not isinstance(_value, str):
+                return {
+                    "ok": False,
+                    "kind": "invalid_args",
+                    "error": f"{_name} must be a string, got {type(_value).__name__}",
+                }
         req_provider = str(payload.get("provider") or "").strip()
         req_model = str(payload.get("model") or "").strip()
         req_preset = str(payload.get("preset") or "").strip()
@@ -17457,10 +17469,19 @@ class ConsoleChatController:
                 )
             except _RoutingError as exc:
                 return {"ok": False, "kind": str(exc.code), "error": str(exc)}
+            # Qodo round finding 2: the resolver's merged params (preset
+            # params above registry-entry params above defaults) ride the
+            # ADR-147 extra_sources seam so a routed chat keeps the
+            # preset/endpoint tuning, not just provider/model.
             routed_settings = _build_settings(
                 app_config,
                 provider=target.provider,
                 model=target.model or None,
+                extra_sources=(
+                    (dict(getattr(target, "params", None) or ()),)
+                    if getattr(target, "params", None)
+                    else ()
+                ),
             )
 
         source_conv: str | None = None
@@ -17475,7 +17496,9 @@ class ConsoleChatController:
         elif not title:
             title = "New Chat"
 
-        def _handoff_metadata(source_metadata: str | None) -> dict[str, Any]:
+        def _handoff_metadata(
+            source_metadata: str | None, settings_snapshot: Any = None
+        ) -> dict[str, Any]:
             """PR review #9: MERGE the handoff key into the source's own
             metadata (speech/roleplay/canvas prefs ride along) instead of
             replacing it with a handoff-only mapping."""
@@ -17492,6 +17515,18 @@ class ConsoleChatController:
                 "created_via": tool,
                 "source_run_id": str(payload.get("run_id") or ""),
             }
+            if settings_snapshot is not None:
+                # Qodo round finding 3: the routed generation snapshot is
+                # DURABLE -- merged under the same generation-settings
+                # metadata key every reopened conversation reads, so the
+                # routing survives a failed completion or a later reopen,
+                # not just the in-memory restore.
+                from tldw_chatbook.Chat.console_generation_settings_metadata import (
+                    merge_console_generation_settings as _merge_gen,
+                    snapshot_from_session_settings as _snap,
+                )
+
+                merged = _merge_gen(merged, _snap(settings_snapshot))
             return merged
 
         try:
@@ -17528,7 +17563,10 @@ class ConsoleChatController:
                     assistant_kind=source_row.get("assistant_kind"),
                     assistant_id=source_row.get("assistant_id"),
                     assistant_authority_id=source_row.get("assistant_authority_id"),
-                    metadata=_handoff_metadata(source_row.get("metadata")),
+                    metadata=_handoff_metadata(
+                        source_row.get("metadata"),
+                        settings_snapshot=routed_settings,
+                    ),
                     parent_conversation_id=source_conv,
                     forked_from_message_id=source_leaf,
                 )
@@ -17548,7 +17586,7 @@ class ConsoleChatController:
                     scope_type=scope,
                     workspace_id=None if scope == "global" else workspace_id,
                     system_prompt=instructions or None,
-                    metadata=_handoff_metadata(None),
+                    metadata=_handoff_metadata(None, routed_settings),
                 )
         except ValueError as exc:
             if new_conv is not None:

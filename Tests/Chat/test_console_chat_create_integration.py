@@ -640,3 +640,35 @@ def test_execute_routing_preset_rides_definition(real_db_controller, monkeypatch
     assert outcome["ok"], outcome
     settings = completed[0]["settings"]
     assert settings.provider == "llama_cpp" and settings.model == "m1"
+
+
+def test_execute_routing_snapshot_is_durable(real_db_controller, monkeypatch):
+    """Qodo round finding 3: the routed generation snapshot is merged into
+    the conversation's metadata -- the routing survives reopen/crash."""
+    import json as _json
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+    conv = controller.store.persistence.create_conversation(conversation_title="R")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": "", "model": "m2"})
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    meta = _json.loads(row["metadata"])
+    assert any("m2" in str(v) for v in meta.values()), meta
+
+
+def test_execute_routing_rejects_non_string_inputs(real_db_controller):
+    """Qodo round finding 4: executor-side strict types (callable is
+    reachable from callers other than the closures)."""
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="S")
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "provider": ["x"]})
+    assert not outcome["ok"] and outcome["kind"] == "invalid_args"
