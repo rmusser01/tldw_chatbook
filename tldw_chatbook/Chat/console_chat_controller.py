@@ -17372,6 +17372,9 @@ class ConsoleChatController:
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
         instructions = str(payload.get("instructions") or "")
+        req_provider = str(payload.get("provider") or "").strip()
+        req_model = str(payload.get("model") or "").strip()
+        req_preset = str(payload.get("preset") or "").strip()
         # Mirrors the bridge closures' cap (CHAT_CREATE_PAYLOAD_MAX in
         # agent_models -- the single shared constant, PR review #5);
         # duplicated here so the executor stays safe even if wired to a
@@ -17389,6 +17392,76 @@ class ConsoleChatController:
         if persistence is None or db is None:
             return {"ok": False, "kind": "execution_failed",
                     "error": "persistence unavailable"}
+
+        # TASK-32874: optional routing for the CREATED chat. Resolved
+        # BEFORE anything is created; every RoutingError surfaces as the
+        # outcome's kind with nothing created (ADR-147 vocabulary).
+        routed_settings: Any = None
+        if req_provider or req_model or req_preset:
+            from dataclasses import replace as _dc_replace
+
+            from tldw_chatbook.Agents.agent_models import definition_from_row
+            from tldw_chatbook.Agents.agent_routing import (
+                RoutingError as _RoutingError,
+                load_agents_routing_config as _load_routing,
+                resolve_spawn_target as _resolve_target,
+            )
+            from tldw_chatbook.Chat.console_session_settings import (
+                build_default_console_session_settings as _build_settings,
+            )
+            from tldw_chatbook.config import load_settings as _load_app_config
+
+            app_config = _load_app_config()
+            routing_cfg = _load_routing()
+            preset_def = None
+            if req_preset:
+                agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
+                rows = (
+                    agent_db.list_agent_definitions(enabled_only=True)
+                    if agent_db is not None
+                    else []
+                )
+                match = next(
+                    (r for r in rows if str(r.get("name") or "") == req_preset), None
+                )
+                if match is None:
+                    return {"ok": False, "kind": "unknown_preset",
+                            "error": f"no enabled agent preset named '{req_preset}'"}
+                preset_def = definition_from_row(match)
+                if not (preset_def.provider or preset_def.model):
+                    return {"ok": False, "kind": "preset_unrouted",
+                            "error": f"preset '{req_preset}' sets no provider/model"}
+            try:
+                # The [agents] SUB-AGENT default level does not apply to
+                # chat creation (this is not a spawn): clear it so the
+                # levels are exactly ad-hoc -> preset -> parent-fill.
+                target = _resolve_target(
+                    app_config,
+                    parent_provider=(
+                        session.settings.provider if session.settings else ""
+                    ),
+                    parent_model=(
+                        session.settings.model if session.settings else ""
+                    ),
+                    preset=preset_def,
+                    override_provider=req_provider,
+                    override_model=req_model,
+                    # The [agents] sub-agent default level never applies
+                    # here (uniformly cleared for every chat-create
+                    # request): levels are ad-hoc -> preset -> parent-fill.
+                    routing=_dc_replace(
+                        routing_cfg,
+                        subagent_default_provider="",
+                        subagent_default_model="",
+                    ),
+                )
+            except _RoutingError as exc:
+                return {"ok": False, "kind": str(exc.code), "error": str(exc)}
+            routed_settings = _build_settings(
+                app_config,
+                provider=target.provider,
+                model=target.model or None,
+            )
 
         source_conv: str | None = None
         source_row: dict[str, Any] | None = None
@@ -17554,6 +17627,7 @@ class ConsoleChatController:
                 workspace_id=completion_workspace_id,
                 nodes=nodes,
                 active_leaf_persisted_id=new_leaf,
+                settings=routed_settings,
                 **identity,
             )
         return {

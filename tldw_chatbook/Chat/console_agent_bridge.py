@@ -10547,10 +10547,16 @@ def build_chat_create_tool_closures(
         raw_title = args.get("title", "")
         raw_prompt = args.get("opening_prompt", "")
         raw_instructions = args.get("instructions", "")
+        raw_provider = args.get("provider", "")
+        raw_model = args.get("model", "")
+        raw_preset = args.get("preset", "")
         for name, value in (
             ("title", raw_title),
             ("opening_prompt", raw_prompt),
             ("instructions", raw_instructions),
+            ("provider", raw_provider),
+            ("model", raw_model),
+            ("preset", raw_preset),
         ):
             if not isinstance(value, str):
                 return ToolResult(
@@ -10561,6 +10567,9 @@ def build_chat_create_tool_closures(
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
+        provider = raw_provider.strip()
+        model = raw_model.strip()
+        preset = raw_preset.strip()
         if (
             len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
             or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
@@ -10579,6 +10588,9 @@ def build_chat_create_tool_closures(
             "title": title,
             "opening_prompt": opening_prompt,
             "instructions": instructions,
+            "provider": provider,
+            "model": model,
+            "preset": preset,
         }
         if tool not in remembered:
             try:

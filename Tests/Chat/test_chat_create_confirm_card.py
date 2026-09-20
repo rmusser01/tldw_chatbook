@@ -325,3 +325,18 @@ def test_console_view_hooks_exposes_chat_create_sinks(mock_chat_host):
     assert "set_pending_chat_create" in hooks
     assert "complete_agent_chat_create" in hooks
     assert callable(hooks["complete_agent_chat_create"])
+
+
+def test_card_renders_requested_routing_target():
+    """TASK-32874: the card shows the requested provider/model/preset
+    before allow — model-chosen routing is always visible."""
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload(provider="llama_cpp", model="m2", preset="localy"))
+    body = card._body_text()
+    assert "Runs on: preset 'localy', provider llama_cpp / m2" in body
+
+
+def test_card_omits_routing_line_when_unset():
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload())
+    assert "Runs on:" not in card._body_text()
