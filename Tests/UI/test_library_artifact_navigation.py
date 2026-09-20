@@ -25,6 +25,10 @@ class Controller:
         self.generation = 0
         self.profile_identity = (1, 2, 3)
         self.opened = []
+        self.shell = None
+
+    def stop_timer(self):
+        pass
 
     def profile(self):
         return self.profile_identity

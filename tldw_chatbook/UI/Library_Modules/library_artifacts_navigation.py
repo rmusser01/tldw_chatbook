@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from textual.widgets import Input
+
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_ARTIFACT_CHATBOOK_ID,
     LIBRARY_NAV_CONTEXT_MODE,
@@ -134,7 +136,12 @@ class LibraryArtifactsNavigation:
         try:
             controller.enter_view("chatbooks")
             # An exact source target takes precedence over restored filters.
+            controller.stop_timer()
             controller.scope = ArtifactScope(view="chatbooks")
+            if controller.shell is not None and controller.shell.is_mounted:
+                field = controller.shell.query_one("#library-artifacts-search", Input)
+                with field.prevent(Input.Changed):
+                    field.value = ""
             controller.open_target(key)
             self._request = _TargetRequest(
                 claim, key, controller, controller.generation, controller.profile()

@@ -1,9 +1,10 @@
 """Exact handoffs through the mounted Library and real Chatbook registry."""
 
 import threading
-from dataclasses import replace
 
 import pytest
+from textual.screen import Screen
+from textual.widgets import Input
 
 from Tests.Chatbooks.test_artifact_registry_snapshot import seed_registry
 from Tests.private_profile import private_profile_test
@@ -52,9 +53,9 @@ async def test_exact_target_beyond_first_page_is_consumed_only_after_applied(
                 and controller.page.scope.view == "chatbooks"
             ),
         )
-        controller.request_scope(
-            replace(controller.scope, query="excluding-restored-filter")
-        )
+        screen.query_one(
+            "#library-artifacts-search", Input
+        ).value = "excluding-restored-filter"
         await settled(
             pilot, lambda: controller.page is not None and controller.page.total == 0
         )
@@ -87,6 +88,13 @@ async def test_exact_target_beyond_first_page_is_consumed_only_after_applied(
             assert controller.selected == target
             assert controller.scope.view == "chatbooks"
             assert store.exact_revision_status(CHANNEL, 1) == "settled"
+            assert screen.query_one("#library-artifacts-search", Input).value == ""
+            await screen.app.push_screen(Screen())
+            await pilot.pause()
+            screen.app.pop_screen()
+            await pilot.pause(0.3)
+            assert controller.scope.query == ""
+            assert controller.selected == target
         finally:
             release.set()
 
@@ -138,3 +146,53 @@ async def test_failed_exact_source_retry_retains_target_and_then_applies(
         assert controller.page.start == 40
         assert controller.selected == target
         assert store.exact_revision_status(CHANNEL, 1) == "settled"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_scripts_delete_refreshes_retained_kept_selection(tmp_path, request):
+    from tldw_chatbook.UI.Watchlists_Modules.kept_briefings_modal import (
+        KeptBriefingsModal,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    async with artifact_library(tmp_path) as (screen, pilot):
+        controller = screen._artifacts_controller
+        controller.action("keep")
+        await settled(
+            pilot,
+            lambda: (
+                controller.selected is not None
+                and controller.selected.source == "kept_report"
+                and controller.detail is not None
+                and not controller.busy
+            ),
+        )
+        target = controller.selected
+        controller.action("scripts")
+        await settled(pilot, lambda: isinstance(screen.app.screen, KeptBriefingsModal))
+        modal = screen.app.screen
+        await settled(
+            pilot, lambda: modal.is_mounted and modal._selected_kept() is not None
+        )
+        modal._dispatch_delete()
+        await settled(pilot, lambda: isinstance(screen.app.screen, ConfirmationDialog))
+        await pilot.pause()
+        screen.app.screen.dismiss(True)
+        await settled(
+            pilot,
+            lambda: (
+                not modal._delete_in_flight
+                and modal.chacha_db.get_kept_briefing(target.native_id) is None
+            ),
+        )
+        modal.dismiss(None)
+        await settled(
+            pilot,
+            lambda: (
+                controller.page is not None
+                and all(row.key != target for row in controller.page.items)
+            ),
+        )
+        assert controller.selected != target
+        assert controller.detail is None or controller.detail.key != target
