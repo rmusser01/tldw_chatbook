@@ -1,0 +1,34 @@
+{
+  "pid": 62878,
+  "cells": [],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.Utils.path_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/path_validation.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "d4e0a0bf7cf2a38a312e7d5032a23f4556fa0c2f0664e41391703264d1eeaf70",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "747150ec5baed036db7010819b45e4e4cab16c0f66e18ef39dac6b0654d5ffe9",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3ce0e4f05ba7997a9e0bbf9d7ef5993fbbe5ef263c30c5f6a878c088a113ad13",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a"
+  },
+  "runner_sha256": "0cda0b48c82f1f55c68d43271ee7e8e27ba21abc3092789750a96d27388fa2f6",
+  "fixture_scope": "Controlled collector changes replace one real built-in tool definition in the UI. The real service prepares/revokes permission previews; no tool runs. This does not qualify external MCP discovery or connected runtime behavior.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "MCP loaded",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/native_check.py\", line 201, in journey\n    target = next(t for t in collect() if t.name == \"calculator\")\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nStopIteration\n",
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

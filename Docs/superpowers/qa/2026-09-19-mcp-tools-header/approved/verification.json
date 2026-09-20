@@ -1,0 +1,59 @@
+{
+  "approved_head": "35c254040d32b234119ba0eea73f2fa869a64a0e",
+  "new_base": "b91340a5dba92429b041400da0d6fb304e58317a",
+  "conflicts": [
+    {
+      "path": "backlog/docs/lessons-testing-evidence.md",
+      "choice": "Retain the entire current-dev document, then append the complete approved Tools composed-screen lesson. No product conflict or discarded lesson.",
+      "preserves_current_dev_as_exact_prefix": true,
+      "approved_addition_sha256": "e08fd0b542f93deb36525eed56b2be914efe151d51bbd0c2c5be389699315b1b",
+      "resolved_sha256": "f4f56278c6196bad1037d238c33f79d458dbd97bacef53729ee249840063c281"
+    }
+  ],
+  "tested_head": "83b3eb2748c80d16daf5a1f3811e6bb3b1239600",
+  "owner_visual_approval": true,
+  "approved_product_test_and_runner_sources_unchanged": true,
+  "targeted_tests": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "152",
+    "time": "118.292",
+    "timestamp": "2026-09-19T21:53:48.204359-07:00",
+    "hostname": "Roberts-MacBook-Pro-2.local"
+  },
+  "artifact_guards_passed": 7,
+  "visual_comparisons": [
+    {
+      "capture": "textual-dark-120x40-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-approved-previews/textual-dark-120x40-tools.svg.png",
+      "png_sha256": "eefcced38597f57fa907a37888cd3c39dfb504a92c2238009fd0b5d1ea7cb37a"
+    },
+    {
+      "capture": "textual-dark-170x48-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-approved-previews/textual-dark-170x48-tools.svg.png",
+      "png_sha256": "aee852dfdfd1f7cd9eb1f51c993381f5387ceec88c1fb63efcef9a6baf0268b4"
+    },
+    {
+      "capture": "textual-light-120x40-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-approved-previews/textual-light-120x40-tools.svg.png",
+      "png_sha256": "2452761986e35760aac5ab7ef61fc948e29e4d042703087da922a4c5f1991924"
+    },
+    {
+      "capture": "textual-light-170x48-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-approved-previews/textual-light-170x48-tools.svg.png",
+      "png_sha256": "781f853ffc2e4c748db029d617260e9cc97dbef622e64ea1c3b251998a1910e0"
+    }
+  ],
+  "independent_code_base_review": "No blockers. Exact conflict preservation and unchanged Tools sources verified; incoming workflow selectors do not target Tools and unused-session shutdown behavior is retained.",
+  "merge_gate": "Current-head CI/review and fresh live-dev check remain before the authorized merge."
+}

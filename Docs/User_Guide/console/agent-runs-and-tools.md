@@ -1933,6 +1933,27 @@ proposes chats.
   as a tool error the agent can fix and re-propose (a fresh card, since
   nothing was created).
 
+### Routing a created chat onto a specific provider (TASK-32874)
+
+`fork_chat` and `new_chat` accept two OPTIONAL routing argument groups;
+without them the new chat uses your normal defaults (nothing changes from
+the base behavior):
+
+- `preset` — the name of a routed agent preset (Settings > Agents); the
+  new chat starts on that preset's provider/model. Presets are
+  user-authored, so this is always available when routed presets exist.
+- `provider` / `model` — ad-hoc target selection. These are
+  model-generated and therefore gated exactly like `spawn_subagent`
+  overrides: they require `[agents] spawn_override_enabled = true` AND the
+  target to match `[agents] spawn_override_allowlist`. When the gate is
+  on, the tool description enumerates the allowed targets.
+
+The confirmation card always shows the requested target ("Runs on: …")
+before you allow, and every refusal uses the routing error vocabulary
+(`override_disabled`, `provider_not_allowlisted`, `unknown_provider`,
+`unknown_endpoint_slug`, `provider_not_ready`, `no_model_resolved`,
+`unknown_preset`, `preset_unrouted`) with nothing created.
+
 ### MCP tools
 
 Servers you configure on the [MCP screen](../mcp.md) surface in Console as

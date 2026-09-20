@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook u█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+   Servers    Tools     Permissions    Audit █                                                                              █
+╭────────────────────────────────────────────█                          Review restored MCP roots                           █────────────────────────────────────────────╮
+│                                            █                                                                              █                                            │
+│ Source                                     █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  █Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ █  ▊/private/tmp/tldw-32879-native-002/home/restored/config/config.toml     ▎  █ Pick a server, tool, or entry to see       │
+│ ▊  Local                              ▼  ▎ █  ▊mcp.local:                                                              ▎  █ what's wrong and what you can do.          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/local_mcp_s ▎  █                                            │
+│                                            █  ▊tore.json →                                                             ▎  █                                            │
+│ Servers                                    █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp-recover ▎  █   Advanced…                                │
+│  ○ needs setup · ◦ off (opt-in) · ⌂        █  ▊y-4dd6e409e5a6491f805c408c3aaa39e3/local_mcp_store.json                ▃▎  █                                            │
+│  built-in                                  █  ▊mcp.permissions:                                                        ▎  █                                            │
+│    All servers                             █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_permiss ▎  █                                            │
+│  ◦ ⌂ tldw_chatbook (built-in)              █  ▊ions.json →                                                             ▎  █                                            │
+│  ○ demo                                    █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp-recover ▎  █                                            │
+│                                            █  ▊y-4dd6e409e5a6491f805c408c3aaa39e3/mcp_permissions.json                 ▎  █                                            │
+│                                            █  ▊history:                                                                ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_permiss ▎  █                                            │
+│                                            █  ▊ions.json.bak →                                                         ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_permiss ▎  █                                            │
+│                                            █  ▊ions.json.bak                                                           ▎  █                                            │
+│                                            █  ▊mcp.targets:                                                            ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_server_ ▎  █                                            │
+│                                            █  ▊targets.json →                                                          ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_server_ ▎  █                                            │
+│                                            █  ▊targets.json                                                            ▎  █                                            │
+│                                            █  ▊mcp.context:                                                            ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/unified_mcp ▎  █                                            │
+│                                            █  ▊_context.json →                                                         ▎  █                                            │
+│                                            █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp-recover ▎  █                                            │
+│                                            █  ▊y-4dd6e409e5a6491f805c408c3aaa39e3/unified_mcp_context.json             ▎  █                                            │
+│                                            █  ▊                                                                        ▎  █                                            │
+│                                            █  ▊Create fresh Ask/local permission state for these MCP roots? Historical ▎  █                                            │
+│                                            █  ▊rules, grants and context remain retained and inactive. No server will  ▎  █                                            │
+│                                            █  ▊connect and no tool permission will be granted.                         ▎  █                                            │
+│                                            █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  █                                            │
+│                                            █                                                                              █                                            │
+│                                            █                       Cancel     Use fresh MCP defaults                      █                                            │
+│                                            █                                                                              █                                            │
+│                                            █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                                            │
+│                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │
+│                                            ││ allows · (session) approved until Chatbook exits · Space cycles Inherit   ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

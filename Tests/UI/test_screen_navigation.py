@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import replace
 from types import SimpleNamespace
 
+from Tests.private_profile import private_profile_test
+
 import pytest
 from textual.app import ComposeResult
 
@@ -496,7 +498,8 @@ def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     assert unresolved == []
 
 
-def test_lazy_screen_registry_resolves_visible_shell_destinations():
+@private_profile_test
+def test_lazy_screen_registry_resolves_visible_shell_destinations(request):
     from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -505,7 +508,6 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "chat": "ChatScreen",
         "library": "LibraryScreen",
         "research_workspace": "ResearchWorkspaceScreen",
-        "artifacts": "ArtifactsScreen",
         "personas": "PersonasScreen",
         "watchlists_collections": "WatchlistsCollectionsScreen",
         "schedules": "SchedulesWorkbench",
@@ -4103,14 +4105,14 @@ async def test_persona_buddy_app_reconcile_excludes_modal_screen():
 
 
 @pytest.mark.asyncio
-async def test_main_navigation_copy_and_order():
+@private_profile_test
+async def test_main_navigation_copy_and_order(request):
     expected_button_order = [
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
         ("nav-personas", "\u23034 Roleplay"),
         ("nav-watchlists_collections", "\u23035 Watchlists"),
-        ("nav-artifacts", "\u23036 Artifacts"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
         ("nav-mcp", "\u23039 MCP"),

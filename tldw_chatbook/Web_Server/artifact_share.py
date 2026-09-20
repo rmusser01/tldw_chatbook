@@ -13,9 +13,10 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -59,12 +60,30 @@ class ArtifactShareController:
         self._share_dir: Path | None = None
         self._status: ShareStatus | None = None
         self._status_callback = status_callback
+        self._status_listener_lock = threading.RLock()
+        self._status_listeners: list[Callable[[ShareStatus | None], None]] = []
 
     @property
     def status(self) -> ShareStatus | None:
         """The running share's status, or None when no share is active."""
         with self._lock:
             return self._status
+
+    def add_status_listener(
+        self, listener: Callable[[ShareStatus | None], None]
+    ) -> None:
+        """Observe future transitions on the starting/stopping thread, once per sink."""
+        with self._status_listener_lock:
+            if listener not in self._status_listeners:
+                self._status_listeners.append(listener)
+
+    def remove_status_listener(
+        self, listener: Callable[[ShareStatus | None], None]
+    ) -> None:
+        """Detach a sink; an already-emitting snapshot may still call it once."""
+        with self._status_listener_lock:
+            if listener in self._status_listeners:
+                self._status_listeners.remove(listener)
 
     def startup_sweep(self) -> list[Path]:
         """Remove share directories left behind by dead server processes.
@@ -74,7 +93,9 @@ class ArtifactShareController:
         """
         removed = sweep_stale_shares()
         if removed:
-            logger.info(f"Artifact share sweep removed {len(removed)} stale share dir(s)")
+            logger.info(
+                f"Artifact share sweep removed {len(removed)} stale share dir(s)"
+            )
         return removed
 
     def start_share(
@@ -118,9 +139,7 @@ class ArtifactShareController:
         with self._lock:
             self.stop_share()  # single active share; starting a new one stops the old
             auth = (
-                build_share_auth(username, password)
-                if username and password
-                else None
+                build_share_auth(username, password) if username and password else None
             )
             manifest = stage_share(
                 records, share_name=share_name, auth=auth, share_root=share_root_dir()
@@ -167,7 +186,9 @@ class ArtifactShareController:
                     if status_path.is_file():
                         try:
                             url = str(
-                                json.loads(status_path.read_text(encoding="utf-8"))["url"]
+                                json.loads(status_path.read_text(encoding="utf-8"))[
+                                    "url"
+                                ]
                             )
                             break
                         except (ValueError, KeyError, OSError):
@@ -242,16 +263,20 @@ class ArtifactShareController:
         Qodo #7: the failure log names the share (never credentials) so a
         broken UI callback can be tied to the session it belongs to.
         """
-        callback = self._status_callback
-        if callback is None:
-            return
-        share_name = self._status.share_name if self._status is not None else "<stopped>"
-        try:
-            callback(self._status)
-        except Exception:  # noqa: BLE001 - UI callback must not break sharing
-            logger.exception(
-                f"Artifact share status callback failed (share='{share_name}')"
-            )
+        with self._lock:
+            status = self._status
+        with self._status_listener_lock:
+            callbacks = tuple(self._status_listeners)
+            if self._status_callback is not None:
+                callbacks = (self._status_callback, *callbacks)
+        share_name = status.share_name if status is not None else "<stopped>"
+        for callback in callbacks:
+            try:
+                callback(status)
+            except Exception:  # noqa: BLE001 - UI callback must not break sharing
+                logger.exception(
+                    f"Artifact share status callback failed (share='{share_name}')"
+                )
 
 
 def compute_display_urls(bind: str, port: int) -> list[str]:

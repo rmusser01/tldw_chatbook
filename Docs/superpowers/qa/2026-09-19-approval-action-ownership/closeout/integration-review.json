@@ -1,0 +1,17 @@
+{
+  "approved_head": "fd3827540e173db190a05d3fa6bb15f1eb926b82",
+  "base": "d1a0649cd2eaead3beabdb3d510077a2114f940f",
+  "upstream_pr": 2754,
+  "rebase_conflicts": [],
+  "unchanged_approved_files": [
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py",
+    "Tests/UI/test_approval_action_ownership.py",
+    "Tests/Utils/test_mcp_native_qa_args.py"
+  ],
+  "visual_difference": "Only main navigation: upstream dev folds Artifacts into Library. All eight rendered comparisons are pixel-identical outside the navigation bar. Four final submit views inspected across both themes/sizes; all eight approved card views remain pixel-identical.",
+  "merge_authorization": "Owner approved PR2730 gallery and merge. Rebase preserves the approved Console behavior and appearance.",
+  "qualification": "211 passes and 18 failures in the targeted run. All 18 failures reproduce unchanged on current dev. The previously failing human-input-wait case passes in both current integrated and current baseline runs; no claim that this PR repaired it."
+}

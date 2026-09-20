@@ -1,0 +1,31 @@
+production diagnostic owners or persistent-sink topology changed; review the diff below before running --write
+summary:
+    task_494_calls: 7760 -> 7761
+owners:
+  ~ changed: tldw_chatbook/UI/MCP_Modules/mcp_workbench.py 46/ba4968e0a73e17c57b1f -> 47/fa361ab527bfb5b237bc  (+1 diagnostic call(s))
+Next: read every row above and confirm each change is one you intended.
+  - a call_count delta means a diagnostic was added or deleted;
+  - an unchanged count with a changed digest means one was reworded,
+    re-levelled, given different arguments, or merely RE-INDENTED -- check
+    it does not now interpolate user content, secrets, or paths into a
+    persistent sink;
+  - a sink-topology row means a new file/handler destination appeared.
+The pin stores only an aggregate per-file digest, so the rows above can name
+WHICH files changed and by how much, never the statement text -- and the
+interpolation check just above needs that text. Recover it with:
+  base=$(git log -1 --format=%H -- Docs/security/production-diagnostic-inventory.json)
+  python scripts/check_persistent_diagnostic_inventory.py \
+      --statements <each path listed above> --since $base
+That prints the added and removed STATEMENTS themselves, and separates the
+ones that only moved or re-indented from the ones whose text really changed.
+Do NOT reach for `git diff` here: the digest covers a statement's own source
+text, indentation included, so a call that merely shifted nesting level
+reports as changed, and a line diff buries it in unrelated edits -- measured
+on tldw_chatbook/Chat/console_fleet_wake.py, whose row changed inside a
+328-line diff in which not one statement had actually changed.
+Treat that base revision as a LOWER BOUND, not the truth: the pin has been
+committed stale before (TASK-19572 review found two rows whose drift predated
+the pin's own commit), so if a listed file shows no logger change in that
+range, widen it rather than assuming the row is noise.
+Only then run:  python scripts/check_persistent_diagnostic_inventory.py --write
+and commit Docs/security/production-diagnostic-inventory.json with the review recorded in the task/PR notes.

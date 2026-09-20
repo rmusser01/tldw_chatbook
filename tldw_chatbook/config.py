@@ -2256,6 +2256,7 @@ def _load_settings_uncached(
         "notes_reader",
         "prompts_reader",
         "skills_reader",
+        "artifacts_reader",
     ):
         raw_destination = (
             library_section.get(section_name, {})
@@ -3786,6 +3787,12 @@ items_width = 50
 
 [library.skills_reader]
 # Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
+items_open = true
+items_width = 50
+
+[library.artifacts_reader]
+# Local artifacts share Library visibility; Items preferences belong here.
+# Environment overrides use TLDW_LIBRARY_ARTIFACTS_READER_<KEY>.
 items_open = true
 items_width = 50
 

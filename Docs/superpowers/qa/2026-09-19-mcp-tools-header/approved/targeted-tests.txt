@@ -1,0 +1,48 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 120.0s
+timeout method: signal
+timeout func_only: False
+collected 152 items
+
+Tests/UI/test_mcp_tools_header_alignment.py ....                         [  2%]
+Tests/UI/test_mcp_tools_column_readability.py .....                      [  5%]
+Tests/UI/test_mcp_table_refresh_selection.py ..............              [ 15%]
+Tests/UI/test_mcp_tools_mode.py ........................................ [ 41%]
+..................                                                       [ 53%]
+Tests/UI/test_design_token_governance.py ........                        [ 58%]
+Tests/Utils/test_mcp_native_qa_args.py ................................. [ 80%]
+..............................                                           [100%]
+
+--------- generated xml file: /private/tmp/mcp-header-approved-001.xml ---------
+============================= slowest 25 durations =============================
+10.70s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-light]
+9.88s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-dark]
+6.50s call     Tests/UI/test_mcp_tools_column_readability.py::test_catalog_size_and_scrollbar_changes_keep_complete_allow_state
+5.91s call     Tests/UI/test_mcp_tools_header_alignment.py::test_catalog_filter_theme_and_resize_keep_header_and_selection[True]
+5.89s call     Tests/UI/test_mcp_tools_header_alignment.py::test_catalog_filter_theme_and_resize_keep_header_and_selection[False]
+5.20s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[True]
+5.19s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[False]
+2.36s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-click-row]
+2.17s call     Tests/UI/test_mcp_tools_header_alignment.py::test_header_painted_before_measurement_aligns_with_new_catalog[textual-light]
+2.11s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+2.10s call     Tests/UI/test_mcp_tools_header_alignment.py::test_header_painted_before_measurement_aligns_with_new_catalog[textual-dark]
+2.10s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.08s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+2.08s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-cell]
+2.03s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-enter-row]
+2.03s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-enter-row]
+2.02s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-down-row]
+1.99s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-click-row]
+1.99s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-row]
+1.96s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-click-row]
+1.95s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-down-row]
+1.93s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+1.93s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-enter-row]
+1.81s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.78s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+======================= 152 passed in 118.29s (0:01:58) ========================

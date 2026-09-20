@@ -1,0 +1,140 @@
+{
+  "baseRefName": "dev",
+  "headRefOid": "fdea30559204dcb8703411151ef754f92a6812ea",
+  "mergeCommit": {
+    "oid": "802809947b0161f9d589d73412fb497516a87f27"
+  },
+  "mergedAt": "2026-09-20T16:47:05Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2730",
+  "recorded_at": "2026-09-20T16:47:33.973357+00:00",
+  "verified_head": "fdea30559204dcb8703411151ef754f92a6812ea",
+  "merge_parents": [
+    "d1a0649cd2eaead3beabdb3d510077a2114f940f",
+    "fdea30559204dcb8703411151ef754f92a6812ea"
+  ],
+  "verified_tree": "d511b1c53a90c468858ff3c73b99f4400b688147",
+  "actual_merge_tree": "d511b1c53a90c468858ff3c73b99f4400b688147",
+  "actual_merge_tree_equals_verified": true,
+  "premerge": {
+    "baseRefName": "dev",
+    "baseRefOid": "d1a0649cd2eaead3beabdb3d510077a2114f940f",
+    "headRefOid": "fdea30559204dcb8703411151ef754f92a6812ea",
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:30:06Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906608/job/106109976576",
+        "name": "platform-evidence",
+        "startedAt": "2026-09-20T16:30:07Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-19637 pinned workspace platform evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:30:06Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906570/job/106109976259",
+        "name": "Linux storage - Python ${{ matrix.python }}",
+        "startedAt": "2026-09-20T16:30:07Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-32011 one-off Linux storage evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:30:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906842/job/106109976171",
+        "name": "No duplicate backlog task IDs",
+        "startedAt": "2026-09-20T16:30:09Z",
+        "status": "COMPLETED",
+        "workflowName": "Backlog Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:30:44Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906533/job/106109975246",
+        "name": "CSS bundle reproduces from its sources",
+        "startedAt": "2026-09-20T16:30:28Z",
+        "status": "COMPLETED",
+        "workflowName": "CSS Bundle Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:42:43Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906541/job/106109975360",
+        "name": "PR Fast Lane",
+        "startedAt": "2026-09-20T16:30:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:35:35Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906648/job/106109975608",
+        "name": "UI latency guardrails",
+        "startedAt": "2026-09-20T16:30:09Z",
+        "status": "COMPLETED",
+        "workflowName": "Perf Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:46:04Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35522906541/job/106111728339",
+        "name": "Derived artifacts reproduce from their sources",
+        "startedAt": "2026-09-20T16:42:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T16:30:07Z",
+        "conclusion": "NEUTRAL",
+        "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2730",
+        "name": "cubic \u00b7 AI code reviewer",
+        "startedAt": "2026-09-20T16:30:07Z",
+        "status": "COMPLETED",
+        "workflowName": ""
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "CodeRabbit",
+        "startedAt": "2026-09-20T16:30:08Z",
+        "state": "SUCCESS",
+        "targetUrl": ""
+      }
+    ]
+  },
+  "review_threads": [
+    {
+      "id": "PRRT_kwDOOcyyl86kH2zo",
+      "isResolved": true
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kH2zs",
+      "isResolved": true
+    }
+  ],
+  "qodo": {
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2730#issuecomment-5748527934",
+    "body_sha256": "ae83ef85562e4496a6dd884b1b48a0630335497e9c0fed87e19baab5826ca292",
+    "head": "fdea30559204dcb8703411151ef754f92a6812ea",
+    "bugs": 0,
+    "rule_violations": 0
+  },
+  "local_targeted": {
+    "passed": 211,
+    "existing_failures_reproduced_on_base": 18,
+    "full_sweep": false
+  },
+  "visual_approval": "User approved gallery and merge; approved Console code and pixels unchanged after conflict-free current-dev rebase. Only upstream Library navigation differs.",
+  "next": "Resume saved TASK-32823 on a fresh branch from merged dev."
+}

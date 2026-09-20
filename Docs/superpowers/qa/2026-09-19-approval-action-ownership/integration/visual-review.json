@@ -1,0 +1,25 @@
+{
+  "run": "integrated-native-006",
+  "all_eight_captures_individually_inspected": true,
+  "themes": [
+    "textual-dark",
+    "textual-light"
+  ],
+  "sizes": [
+    [
+      120,
+      40
+    ],
+    [
+      170,
+      48
+    ]
+  ],
+  "states": [
+    "deny-all",
+    "ready-to-submit"
+  ],
+  "observations": "Both choice rows and all three action labels are painted and reachable; no setup overlay. Deny all sets both choices to Deny; Approve all sets both to Once, with Submit focused. No layout changes in this PR.",
+  "owner_approval": "pending",
+  "inspection_basis": "All eight run-003 captures individually inspected; all eight final run-006 captures are pixel-identical (qodo-visual-comparison.json)."
+}

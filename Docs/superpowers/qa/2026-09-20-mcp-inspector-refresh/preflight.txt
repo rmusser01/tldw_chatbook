@@ -1,0 +1,32 @@
+COMMAND: tldw_chatbook/css/check_bundle_sync.py
+CSS bundle reproduces from its source modules.
+widget_defaults_self.tcss reproduces from its Python sources.
+widget_defaults_scoped.tcss reproduces from its Python sources.
+screen_css_self.tcss reproduces from its Python sources.
+screen_css_scoped.tcss reproduces from its Python sources.
+screen_agentic_library.tcss reproduces from its Python sources.
+screen_agentic_settings.tcss reproduces from its Python sources.
+screen_feature_evals.tcss reproduces from its Python sources.
+screen_feature_scheduling.tcss reproduces from its Python sources.
+screen_feature_workflows.tcss reproduces from its Python sources.
+screen_feature_watchlists.tcss reproduces from its Python sources.
+EXIT: 0
+COMMAND: scripts/check_canvas_mermaid_assets.py
+Canvas Mermaid assets reproduce: 6 outputs
+EXIT: 0
+COMMAND: scripts/check_profile_owned_path_inventory.py
+profile-owned path census verified: 54 executable occurrence(s) across 22 file(s), all matched by 51 approved exceptions.
+EXIT: 0
+COMMAND: scripts/check_persistent_diagnostic_inventory.py
+diagnostic inventory verified: 610 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7765 TASK-494 calls, 14 sink files
+EXIT: 0
+COMMAND: scripts/check_backlog_task_ids.py
+No duplicate task IDs across 4179 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+EXIT: 0
+COMMAND: scripts/check_schema_table_allowlist.py
+chachanotes: 116 declared tables, all present in VALID_TABLES['chachanotes'].
+EXIT: 0
+COMMAND: scripts/check_index_plan_pins.py
+index plan pins: 304 index names declared under tldw_chatbook/DB, 304 census rows, 86 plan-pinned.
+check_index_plan_pins: OK
+EXIT: 0

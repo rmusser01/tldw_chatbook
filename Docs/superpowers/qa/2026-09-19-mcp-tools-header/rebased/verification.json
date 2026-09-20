@@ -1,0 +1,52 @@
+{
+  "base": "495b2c452267a4c25b127018b7ef8c5287511a9b",
+  "tested_head": "7a09197aed5cd50682f287e52d42942ff452d867",
+  "rebase_conflicts": 0,
+  "incoming_change": "PR2748 modal-wide-tier wave 2: scoped rules for other dialogs, template selector and its registry/tests; no Tools source or selector changes.",
+  "targeted_tests": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "152",
+    "time": "124.132",
+    "timestamp": "2026-09-19T15:10:34.129954-07:00",
+    "hostname": "Roberts-MacBook-Pro-2.local"
+  },
+  "guards": "Six guards passed in preflight.txt. The Mermaid asset guard could not download its pinned input under the network-restricted sandbox, then passed with network access (mermaid-retry.txt).",
+  "native": "Fresh isolated LinuxDriver/tmux run after rebase; all four composed header/body checks and native lifecycle checks pass. No tool execution or permission changes.",
+  "visual_comparisons": [
+    {
+      "capture": "textual-dark-120x40-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-rebased-previews/textual-dark-120x40-tools.svg.png",
+      "png_sha256": "eefcced38597f57fa907a37888cd3c39dfb504a92c2238009fd0b5d1ea7cb37a"
+    },
+    {
+      "capture": "textual-dark-170x48-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-rebased-previews/textual-dark-170x48-tools.svg.png",
+      "png_sha256": "aee852dfdfd1f7cd9eb1f51c993381f5387ceec88c1fb63efcef9a6baf0268b4"
+    },
+    {
+      "capture": "textual-light-120x40-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-rebased-previews/textual-light-120x40-tools.svg.png",
+      "png_sha256": "2452761986e35760aac5ab7ef61fc948e29e4d042703087da922a4c5f1991924"
+    },
+    {
+      "capture": "textual-light-170x48-tools",
+      "terminal_identical": true,
+      "pixel_identical": true,
+      "png_path": "/private/tmp/mcp-header-rebased-previews/textual-light-170x48-tools.svg.png",
+      "png_sha256": "781f853ffc2e4c748db029d617260e9cc97dbef622e64ea1c3b251998a1910e0"
+    }
+  ],
+  "qa_runner_hashes": {
+    "native_check.py": "b6ce057645e5dcbdfcfc57ae709989112a91dd820946b71f5ce2a6c4168f8150",
+    "native_journey.py": "bbb19ecba6d5c6a3b37483bb9b22a2b078ac48cfd66a53873e92cab0f8aecbd9"
+  }
+}

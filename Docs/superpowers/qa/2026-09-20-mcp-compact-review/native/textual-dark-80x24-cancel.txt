@@ -1,0 +1,24 @@
+                                ╭────────╮
+ ‹█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+──█                                                                          █──
+ M█                        Review restored MCP roots                         █
+ M█                                                                          █
+ n█  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  █
+  █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp_ser ▎  █
+╭─█  ▊ver_targets.json                                                    ▎  █─╮
+│ █  ▊mcp.context:                                                        ▎  █ │
+│ █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/unified ▎  █ │
+│ █  ▊_mcp_context.json →                                                 ▎  █ │
+│ █  ▊/private/tmp/tldw-32879-native-002/home/restored/data/Local/mcp-rec ▎  █ │
+│ █  ▊overy-4dd6e409e5a6491f805c408c3aaa39e3/unified_mcp_context.json     ▎  █ │
+│ █  ▊                                                                   ▂▎  █ │
+│ █  ▊Create fresh Ask/local permission state for these MCP roots?        ▎  █ │
+│ █  ▊Historical rules, grants and context remain retained and inactive.  ▎  █ │
+│ █  ▊No server will connect and no tool permission will be granted.      ▎  █ │
+│ █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  █ │
+│ █                                                                          █ │
+│ █                     Cancel     Use fresh MCP defaults                    █ │
+│ █                                                                          █ │
+│ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

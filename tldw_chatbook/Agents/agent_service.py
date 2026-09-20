@@ -193,6 +193,7 @@ from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     NEW_CHAT_TOOL_SCHEMA,
     FORK_CHAT_TOOL_SCHEMA,
+    build_chat_create_schema,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
@@ -893,9 +894,26 @@ def build_first_request_schema_plan(
         if run_skill_script_enabled:
             runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
         if fork_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(FORK_CHAT_TOOL_SCHEMA)
+            # TASK-32874: the DISCLOSED schema is built per run (preset
+            # roster + gated override args, ADR-147 pattern); the static
+            # constant remains only as the nothing-to-add identity base.
+            runtime.append(
+                build_chat_create_schema(
+                    FORK_CHAT_TOOL_SCHEMA,
+                    agent_definitions or (),
+                    override_enabled=spawn_override_enabled,
+                    override_targets=spawn_override_targets,
+                )
+            )
         if new_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(NEW_CHAT_TOOL_SCHEMA)
+            runtime.append(
+                build_chat_create_schema(
+                    NEW_CHAT_TOOL_SCHEMA,
+                    agent_definitions or (),
+                    override_enabled=spawn_override_enabled,
+                    override_targets=spawn_override_targets,
+                )
+            )
         log_active = bool(
             agent_kind == AGENT_KIND_PRIMARY
             and run_log_active

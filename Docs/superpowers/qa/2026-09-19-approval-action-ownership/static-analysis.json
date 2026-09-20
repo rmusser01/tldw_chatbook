@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": {
+    "baseline_diagnostics": 6,
+    "current_diagnostics": 6,
+    "introduced": []
+  },
+  "Tests/UI/test_approval_action_ownership.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  }
+}
