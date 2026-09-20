@@ -193,3 +193,13 @@ jobs:
           # at "plan-pinned or pre-convention?". Pure text scan, no database
           # built; milliseconds, so it does not move this job's ~90 s budget.
           python scripts/check_index_plan_pins.py
+
+      - name: Timestamp writers go through the shared UTC helper
+        if: ${{ !cancelled() }}
+        run: |
+          # ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is
+          # forbidden, and naive datetime.now().isoformat() writers are pinned
+          # in scripts/timestamp_writer_census.tsv as a ratchet that only
+          # shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new
+          # or grown naive-timestamp writer. Pure AST scan, no database built.
+          python scripts/check_timestamp_writers.py

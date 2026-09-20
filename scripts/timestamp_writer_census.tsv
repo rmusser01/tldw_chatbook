@@ -1,0 +1,44 @@
+# Timestamp-writer census (ADR-173 / TASK-32803.1). Ratchet: counts
+# only shrink as TASK-32803.5 adopts Utils/timestamps.py. Regenerate
+# with: python scripts/check_timestamp_writers.py --write
+# module	symbol	kind	count
+tldw_chatbook/Audio/meeting_owner	MeetingSessionOwner.enroll_from_mic	naive_now_iso	1
+tldw_chatbook/Audio/meeting_owner	MeetingSessionOwner.start	naive_now_iso	1
+tldw_chatbook/Audio/meeting_session	MeetingSession.stop	naive_now_iso	1
+tldw_chatbook/Chat/document_generator	DocumentGenerator.create_note_with_metadata	naive_now_iso	1
+tldw_chatbook/Chatbooks/chatbook_creator	ChatbookCreator._add_character_dependency	naive_now_iso	2
+tldw_chatbook/Chatbooks/chatbook_creator	ChatbookCreator._collect_characters	naive_now_iso	2
+tldw_chatbook/Chatbooks/chatbook_creator	ChatbookCreator._export_message_chunk	naive_now_iso	1
+tldw_chatbook/Chatbooks/chatbook_importer	ChatbookImporter._import_conversations_with_database	naive_now_iso	3
+tldw_chatbook/Chatbooks/conflict_resolver	ConflictResolver.merge_notes	naive_now_iso	1
+tldw_chatbook/Chunking/chunking_interop_library	ChunkingInteropService.export_template	naive_now_iso	1
+tldw_chatbook/Evals/base_runner	BaseEvalRunner.run	naive_now_iso	1
+tldw_chatbook/Evals/exporters	EvaluationExporter._export_ab_test_csv	naive_now_iso	1
+tldw_chatbook/MCP/client	MCPClient.connect_to_server	naive_now_iso	1
+tldw_chatbook/MCP/server	TldwMCPServer._register_tools.create_note	naive_now_iso	1
+tldw_chatbook/RAG_Search/config_profiles	ConfigProfileManager.end_experiment	naive_now_iso	1
+tldw_chatbook/Subscriptions/site_config_manager	SiteConfig.__init__	naive_now_iso	2
+tldw_chatbook/Subscriptions/site_config_manager	SiteConfig.record_error	naive_now_iso	1
+tldw_chatbook/Subscriptions/site_config_manager	SiteConfig.record_success	naive_now_iso	1
+tldw_chatbook/Subscriptions/site_config_manager	SiteConfigManager._save_config	naive_now_iso	1
+tldw_chatbook/Subscriptions/site_config_manager	SiteConfigManager.export_configs	naive_now_iso	1
+tldw_chatbook/TTS/backends/chatterbox	ChatterboxTTSBackend.save_reference_voice_with_metadata	naive_now_iso	1
+tldw_chatbook/TTS/backends/chatterbox_voice_manager	ChatterboxVoiceManager.create_profile	naive_now_iso	2
+tldw_chatbook/TTS/backends/chatterbox_voice_manager	ChatterboxVoiceManager.import_profile	naive_now_iso	2
+tldw_chatbook/TTS/backends/chatterbox_voice_manager	ChatterboxVoiceManager.update_profile	naive_now_iso	1
+tldw_chatbook/TTS/backends/higgs	HiggsAudioTTSBackend.create_voice_profile	naive_now_iso	1
+tldw_chatbook/TTS/backends/higgs_voice_manager	HiggsVoiceProfileManager.create_profile	naive_now_iso	2
+tldw_chatbook/TTS/backends/higgs_voice_manager	HiggsVoiceProfileManager.import_profile	naive_now_iso	2
+tldw_chatbook/TTS/backends/higgs_voice_manager	HiggsVoiceProfileManager.update_profile	naive_now_iso	1
+tldw_chatbook/TTS/backends/kokoro	KokoroTTSBackend.save_voice_blend	naive_now_iso	1
+tldw_chatbook/Tools/code_audit_tool	CodeAuditTool._generate_deception_report	naive_now_iso	1
+tldw_chatbook/Tools/code_audit_tool	FileAuditSystem.record_file_operation	naive_now_iso	1
+tldw_chatbook/UI/CodeRepoCopyPasteWindow	CodeRepoCopyPasteWindow._export_to_zip_worker	naive_now_iso	1
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib	scrape_article	naive_now_iso	5
+tldw_chatbook/Web_Scraping/Article_Scraper/utils	ContentMetadataHandler.format_content_with_metadata	naive_now_iso	1
+tldw_chatbook/Widgets/NewIngest/BackendIntegration	MediaProcessingService._simulated_result	naive_now_iso	1
+tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage	JSONStorage.save	naive_now_iso	1
+tldw_chatbook/Widgets/activity_log	ActivityLogWidget._write_json_export	naive_now_iso	1
+tldw_chatbook/Widgets/activity_log	ActivityLogWidget._write_text_export	naive_now_iso	1
+tldw_chatbook/Widgets/enhanced_file_picker	RecentLocations.add	naive_now_iso	1
+tldw_chatbook/state/chat_state	ChatSession.add_message	naive_now_iso	1
