@@ -126,6 +126,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-164](164-rechunk-run-lifetime.md) | Accepted | Keep Re-chunk work and feedback for the app session so Library navigation cannot discard a running operation or its receipt. |
 | [ADR-167](167-tool-profile-write-lifetime.md) | Accepted | Keep admitted Tool Profile writes and bounded outcomes application-owned across Settings recreation and shutdown. |
 
+| [ADR-172](172-library-artifacts-browse-and-navigation.md) | Accepted; implementation pending | Browse reports and registered Chatbooks in Library while retaining kept-copy identity, source ownership, app-owned sharing, and the linked ZIP-pack manager. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

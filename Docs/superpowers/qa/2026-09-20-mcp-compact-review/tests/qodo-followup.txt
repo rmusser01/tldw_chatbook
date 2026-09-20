@@ -1,0 +1,15 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+12.75s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-light]
+12.61s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-dark]
+4.05s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-light]
+3.91s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-dark]
+
+(8 durations < 1s hidden.)
+4 passed in 33.99s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-072d5f5d-a82f-4a79-97d1-0b2c3a20ba8c/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-072d5f5d-a82f-4a79-97d1-0b2c3a20ba8c/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-072d5f5d-a82f-4a79-97d1-0b2c3a20ba8c
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-072d5f5d-a82f-4a79-97d1-0b2c3a20ba8c'
+  warnings.warn(

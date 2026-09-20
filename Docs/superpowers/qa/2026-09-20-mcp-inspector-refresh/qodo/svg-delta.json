@@ -1,0 +1,12 @@
+{
+  "textual-dark-120x40-draft-preserved.svg": [
+    "-<rect fill=\"#e0e0e0\" x=\"1256.6\" y=\"611.5\" width=\"12.2\" height=\"24.65\" shape-rendering=\"crispEdges\"/>",
+    "-<rect fill=\"#183a54\" x=\"1268.8\" y=\"611.5\" width=\"134.2\" height=\"24.65\" shape-rendering=\"crispEdges\"/>",
+    "+<rect fill=\"#183a54\" x=\"1256.6\" y=\"611.5\" width=\"146.4\" height=\"24.65\" shape-rendering=\"crispEdges\"/>"
+  ],
+  "textual-light-170x48-draft-preserved.svg": [
+    "-<rect fill=\"#97abb9\" x=\"1695.8\" y=\"587.1\" width=\"317.2\" height=\"24.65\" shape-rendering=\"crispEdges\"/>",
+    "+<rect fill=\"#1f1f1f\" x=\"1695.8\" y=\"587.1\" width=\"12.2\" height=\"24.65\" shape-rendering=\"crispEdges\"/>",
+    "+<rect fill=\"#97abb9\" x=\"1708\" y=\"587.1\" width=\"305\" height=\"24.65\" shape-rendering=\"crispEdges\"/>"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "base_commit": "802809947b0161f9d589d73412fb497516a87f27",
+  "case": "Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet",
+  "same_failure": "features/_workflows.tcss: 11",
+  "baseline_import_root_verified": "/private/tmp/tldw-32823-governance-baseline/tldw_chatbook",
+  "unchanged_sources": {
+    "Tests/UI/test_component_pattern_governance.py": "30a1a8bf688906fa888c769e75e54694c7c2da30ab2d83547e0145bf17253535",
+    "tldw_chatbook/css/features/_workflows.tcss": "ce448224776ed1f97cd348fe341792e7d9c3de74f0d02c94dc7b03bbbf6133df"
+  }
+}

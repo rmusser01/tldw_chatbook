@@ -1,0 +1,22 @@
+...................                                                      [100%]
+---------- generated xml file: /private/tmp/32823-qodo-green-001.xml -----------
+============================= slowest 25 durations =============================
+8.35s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-description]
+7.72s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-unchanged]
+5.85s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-schema]
+5.44s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-removed]
+5.10s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-description]
+5.10s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-unchanged]
+5.01s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-schema]
+4.84s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-removed]
+4.80s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+4.55s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_queued_old_preview_request_cannot_replace_reopened_preview
+4.41s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+4.11s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+4.03s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_waiting_on_inspector_cannot_replace_newer_selection
+3.31s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[effective]
+2.79s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]
+2.76s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]
+
+(9 durations < 1s hidden.)
+19 passed in 81.14s (0:01:21)

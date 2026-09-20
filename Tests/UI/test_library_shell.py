@@ -3306,7 +3306,7 @@ async def test_library_onboarding_positive_wins_while_another_owner_hangs(
             )
             assert gates.gates["collections"][0].release.is_set() is False
             assert len(applied_evidence) == 1
-            assert len(applied_evidence[0]) == 6
+            assert len(applied_evidence[0]) == 7
             assert (
                 applied_evidence[0].count(LibraryContentEvidence.HAS_USER_CONTENT) == 1
             )

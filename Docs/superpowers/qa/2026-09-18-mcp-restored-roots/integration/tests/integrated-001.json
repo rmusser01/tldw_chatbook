@@ -1,0 +1,344 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[finding]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[sync_lock]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[overview]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[detail]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[readiness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[approve]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[source]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[scope]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[unmount]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[definition]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[workspace]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[generation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[duplicate]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel_accepted]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[empty]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_ordinary_mcp_review_preserves_existing_permission_controls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_creates_fresh_existing_format_policy_and_only_mcp_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_retains_accepted_native_lifetime[nested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_retains_accepted_native_lifetime[worker_cancel]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_follow_mode",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_sync_children_resolves_effective_states_exactly_once",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_cleared_selection_is_not_re_hijacked_by_later_resync",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_execution_log_entries_into_canvas",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_server_findings_into_findings_subview",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_concurrent_refreshes_serialize_and_last_writer_wins",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_named_profile_global_edit_uses_exact_captured_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[missing]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[generation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[digest]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_selected_profile_disappearance_falls_back_and_invalidates_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_tool_row_selection_shows_permission_block",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_pinned_row_selection_clears_inspector_without_crash",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_tool_row_selection_shows_permission_block",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_pinned_row_selection_clears_inspector",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    }
+  ]
+}

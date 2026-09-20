@@ -1,0 +1,184 @@
+[
+  {
+    "source": "/private/tmp/2730-closeout-001.log",
+    "target": "tests/001.txt",
+    "original_sha256": "379690c88448528f1494c94c88548b698c406d47378092820d46ef23a1266224",
+    "export_sha256": "9c8efd25056eb9cc00357cc615f9c9d399393bc9d75f559fbe08214b04f10fce",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-001.xml",
+    "target": "tests/001.xml",
+    "original_sha256": "119b3ac14b94b65997436366d7aaa3d32d98b970bd3d481da8ad9812dc570d13",
+    "export_sha256": "df5ee254c880e1d1fc879464647d32e38f70cc76714a882e881c5dee14d95765",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-baseline-002.log",
+    "target": "tests/baseline-002.txt",
+    "original_sha256": "7bbfab0e268ea8fde5c1229e8c0bc32981c6588bb4d9c6bd16034ecb4a3af208",
+    "export_sha256": "bea30b1e13c55e159410e169f24d7870cdfcfcf3d06a7de39903cc9248e16a64",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-baseline-002.xml",
+    "target": "tests/baseline-002.xml",
+    "original_sha256": "e460be53b6063319b2aa045591c9c35f82e114a7dfb858aefaedd928b33580e0",
+    "export_sha256": "0787950ad45d60f9e45e453144d28db531d6a5f890f09f0a0be951315ae51173",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-baseline-comparison.json",
+    "target": "baseline-comparison.json",
+    "original_sha256": "19fb51ba650a488e32fb73ae31d7be771aabee13ba55d2dff52701003027cbfb",
+    "export_sha256": "19fb51ba650a488e32fb73ae31d7be771aabee13ba55d2dff52701003027cbfb",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-visual-comparison.json",
+    "target": "visual-comparison.json",
+    "original_sha256": "dc5537713d111916484017224eef53efedb35332ee7705aaeadf9caf69f41d37",
+    "export_sha256": "dc5537713d111916484017224eef53efedb35332ee7705aaeadf9caf69f41d37",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-closeout-preflight-001.log",
+    "target": "preflight.txt",
+    "original_sha256": "b3b313f8bb341f51ace3f2930628642f8487a872add1d862d1bd88a8b06091ed",
+    "export_sha256": "b3b313f8bb341f51ace3f2930628642f8487a872add1d862d1bd88a8b06091ed",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-170x48-ready-to-submit.svg",
+    "target": "native/textual-light-170x48-ready-to-submit.svg",
+    "original_sha256": "308aeec5b6e8cfad4bb6bdd86b057b9f99fd5df302e01481be94c4002d0f07a6",
+    "export_sha256": "97a91a291189d6e388ea4957223c0d43b0ff49799fcddeace89a80c2f2e2bc11",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-120x40-deny-all.txt",
+    "target": "native/textual-light-120x40-deny-all.txt",
+    "original_sha256": "dcd3bc32d7cd02e4dee8d00bd5f9e506521f6220513d5c9a04c02265280093b0",
+    "export_sha256": "dcd3bc32d7cd02e4dee8d00bd5f9e506521f6220513d5c9a04c02265280093b0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-170x48-ready-to-submit.txt",
+    "target": "native/textual-dark-170x48-ready-to-submit.txt",
+    "original_sha256": "011cf18f0d2db5f9dcb1d46c7d6f9c6f0a66c4998eabeea8a9e194d9b28d14d0",
+    "export_sha256": "011cf18f0d2db5f9dcb1d46c7d6f9c6f0a66c4998eabeea8a9e194d9b28d14d0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-120x40-deny-all.svg",
+    "target": "native/textual-light-120x40-deny-all.svg",
+    "original_sha256": "fa9b8679542787004a57687307925d8d58570d2cada41f44e42f793c43308bed",
+    "export_sha256": "608d6fc8740263ef39baa8f5122d40a1f67a85d78e158bfe62fe6e94a0aba3a8",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-170x48-ready-to-submit.txt",
+    "target": "native/textual-light-170x48-ready-to-submit.txt",
+    "original_sha256": "011cf18f0d2db5f9dcb1d46c7d6f9c6f0a66c4998eabeea8a9e194d9b28d14d0",
+    "export_sha256": "011cf18f0d2db5f9dcb1d46c7d6f9c6f0a66c4998eabeea8a9e194d9b28d14d0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-170x48-ready-to-submit.svg",
+    "target": "native/textual-dark-170x48-ready-to-submit.svg",
+    "original_sha256": "f097f534f6ac377820002fccff223973b72b76d162588199a51e070cc0c83253",
+    "export_sha256": "03d98f742b88909c279549bf4801c1117d58d055fb9c90206523e1f5e9f4be64",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/result.json",
+    "target": "native/result.json",
+    "original_sha256": "40cff3b6d158bef3e1767e8ee0de939214db32824d4343216d5d8ca83d3e167c",
+    "export_sha256": "40cff3b6d158bef3e1767e8ee0de939214db32824d4343216d5d8ca83d3e167c",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-170x48-deny-all.txt",
+    "target": "native/textual-dark-170x48-deny-all.txt",
+    "original_sha256": "6787684858b47022350cec1c27d0b93c9cf99b33436dc1241d4bd4e42c010ab4",
+    "export_sha256": "6787684858b47022350cec1c27d0b93c9cf99b33436dc1241d4bd4e42c010ab4",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-170x48-deny-all.svg",
+    "target": "native/textual-dark-170x48-deny-all.svg",
+    "original_sha256": "fb852665b66a3b7104022853a0ed340c6cf54e88d7bad3e8b85ddcaa2d29735e",
+    "export_sha256": "fa36af9cd77eed78bdc7af6e32f6061bd59bee9667fb5fe944f3a33faf3e1e71",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-120x40-deny-all.svg",
+    "target": "native/textual-dark-120x40-deny-all.svg",
+    "original_sha256": "d1e40a01b5f4d13a63d53a9dc07c067002d868ea38fcee3993afbfda974df304",
+    "export_sha256": "34a7b28a547e1a2d2cc10489c58e924909b14b7b572b6789808c5ceee40735b8",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-120x40-deny-all.txt",
+    "target": "native/textual-dark-120x40-deny-all.txt",
+    "original_sha256": "dcd3bc32d7cd02e4dee8d00bd5f9e506521f6220513d5c9a04c02265280093b0",
+    "export_sha256": "dcd3bc32d7cd02e4dee8d00bd5f9e506521f6220513d5c9a04c02265280093b0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-170x48-deny-all.svg",
+    "target": "native/textual-light-170x48-deny-all.svg",
+    "original_sha256": "b07cb168a9d5ffff9f5a006611a288c34ee5639d7aa81d9bbdf5bd3badb7cea9",
+    "export_sha256": "029cef1945503ef7a9e8f3c9bf4d945693a951cb00d4bd99b28c5bf16cc90126",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-120x40-ready-to-submit.txt",
+    "target": "native/textual-dark-120x40-ready-to-submit.txt",
+    "original_sha256": "cd483d522cc067a52747b98a938177c4ebe8548653327b3594d4118e3abe0c70",
+    "export_sha256": "cd483d522cc067a52747b98a938177c4ebe8548653327b3594d4118e3abe0c70",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-120x40-ready-to-submit.svg",
+    "target": "native/textual-light-120x40-ready-to-submit.svg",
+    "original_sha256": "92dfc498fd524130800f9465543335e03817f00142a1d51dbffcbaa9c5c04a78",
+    "export_sha256": "b54d32c09a461c26aa730b7e14612c70ee31515a21a08c2ae1244d3a2d8cce50",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-dark-120x40-ready-to-submit.svg",
+    "target": "native/textual-dark-120x40-ready-to-submit.svg",
+    "original_sha256": "a944999b1cca268451088f06e0dd5a8d9ef89ff2189e83055a2b38cab322bd8f",
+    "export_sha256": "aa49879e6f0f04d5c55a69fe87f90a27436704ae67bebf1bca263d490a158983",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-120x40-ready-to-submit.txt",
+    "target": "native/textual-light-120x40-ready-to-submit.txt",
+    "original_sha256": "cd483d522cc067a52747b98a938177c4ebe8548653327b3594d4118e3abe0c70",
+    "export_sha256": "cd483d522cc067a52747b98a938177c4ebe8548653327b3594d4118e3abe0c70",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/evidence/textual-light-170x48-deny-all.txt",
+    "target": "native/textual-light-170x48-deny-all.txt",
+    "original_sha256": "6787684858b47022350cec1c27d0b93c9cf99b33436dc1241d4bd4e42c010ab4",
+    "export_sha256": "6787684858b47022350cec1c27d0b93c9cf99b33436dc1241d4bd4e42c010ab4",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/preparation.json",
+    "target": "preparation.json",
+    "original_sha256": "e0be97bc07d58c25d0c37513031f37cc9e7148d565cb835ff246bcf8ea11dd96",
+    "export_sha256": "e0be97bc07d58c25d0c37513031f37cc9e7148d565cb835ff246bcf8ea11dd96",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-closeout-native-001/lifecycle.json",
+    "target": "lifecycle.json",
+    "original_sha256": "94a3b3815d060f549ba6846f003938f257eb20acff7f8e5e812fba70bce9eaa6",
+    "export_sha256": "94a3b3815d060f549ba6846f003938f257eb20acff7f8e5e812fba70bce9eaa6",
+    "normalization": "trailing whitespace and final newline only"
+  }
+]

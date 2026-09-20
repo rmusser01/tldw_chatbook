@@ -1,0 +1,30 @@
+........................................................................ [ 79%]
+...................                                                      [100%]
+--------- generated xml file: /private/tmp/mcp-2728-integrated-001.xml ---------
+============================= slowest 25 durations =============================
+7.31s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision
+4.87s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]
+4.42s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_follow_mode
+3.96s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume
+3.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile]
+3.59s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]
+3.54s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row]
+3.48s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[current]
+3.37s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[failure]
+3.27s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-current]
+3.19s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[service]
+3.14s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[mode]
+3.08s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[approve]
+3.00s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[duplicate]
+2.96s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[empty]
+2.95s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[sync_lock]
+2.92s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[tool]
+2.85s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]
+2.83s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[target_round_trip]
+2.77s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[round_trip]
+2.75s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-service]
+2.74s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-round_trip]
+2.70s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[overview]
+2.68s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[readiness]
+2.65s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-mode]
+91 passed in 203.03s (0:03:23)

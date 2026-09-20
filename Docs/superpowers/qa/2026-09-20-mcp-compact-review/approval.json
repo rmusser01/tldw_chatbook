@@ -1,0 +1,26 @@
+{
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/2759",
+  "owner_visual_approval": true,
+  "approved_head": "518143252eb43934f56c527f178d28cae2cda797",
+  "recorded_at": "2026-09-20T18:43:51.822771+00:00",
+  "dev": "62d43190ce3ca21bda0f0ff03e5148971eedc7ca",
+  "source_hashes_match_approved_gallery": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": true,
+    "tldw_chatbook/css/tldw_cli_modular.tcss": true,
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
+    "tldw_chatbook/css/widget_defaults_self.tcss": true,
+    "tldw_chatbook/css/core/_variables.tcss": true,
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": true,
+    "Docs/superpowers/qa/native_runner_args.py": true,
+    "tldw_chatbook/UI/Screens/mcp_screen.py": true,
+    "tldw_chatbook/MCP/recovery_activation.py": true,
+    "tldw_chatbook/MCP/local_control_service.py": true,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_recovery_review.py": true,
+    "tldw_chatbook/Widgets/confirmation_dialog.py": true,
+    "tldw_chatbook/css/components/_dialogs.tcss": true
+  },
+  "approval_scope": "Owner approved the sixteen-capture gallery and authorized closeout subject to CI, accumulated review and current dev/conflict checks."
+}

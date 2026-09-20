@@ -1,0 +1,90 @@
+{
+  "pid": 9666,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.Utils.path_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/path_validation.py",
+    "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_chat_controller.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "ffd7ae0e10fc3b5df30f224ed816c92a5b652eab67a285927d14f647cc181fbb",
+    "tldw_chatbook/Chat/console_chat_controller.py": "2f571609f882a839b98b6a6c6209f4b2992e1ca96708955be5f8ab4e4dbf4fca",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "eaebda3ad49687e1bb9322996a34d689b502e441e5a4b47423e8f87ee4affe7a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "f862601ea8ad2abdccaf9393ccf145dcc0024bcd4fe93ad085deecbc99151b33",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a"
+  },
+  "runner_sha256": "b793e92a8398114b324404ec50049fadb17e641b1858a99ac6489e0ae7ca8f4d",
+  "fixture_scope": "Synthetic pending-call metadata enters the real controller request/resolve round trip. Returned decisions are checked and never passed to a provider or tool executor.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "approval cleared",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

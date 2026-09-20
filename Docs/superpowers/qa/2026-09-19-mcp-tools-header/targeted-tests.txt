@@ -1,0 +1,31 @@
+........................................................................ [ 47%]
+........................................................................ [ 94%]
+........                                                                 [100%]
+---------- generated xml file: /private/tmp/mcp-header-final-002.xml -----------
+============================= slowest 25 durations =============================
+10.52s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-light]
+9.84s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-dark]
+6.73s call     Tests/UI/test_mcp_tools_column_readability.py::test_catalog_size_and_scrollbar_changes_keep_complete_allow_state
+6.39s call     Tests/UI/test_mcp_tools_header_alignment.py::test_catalog_filter_theme_and_resize_keep_header_and_selection[True]
+6.08s call     Tests/UI/test_mcp_tools_header_alignment.py::test_catalog_filter_theme_and_resize_keep_header_and_selection[False]
+5.35s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[True]
+5.20s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[False]
+2.54s call     Tests/UI/test_mcp_tools_header_alignment.py::test_header_painted_before_measurement_aligns_with_new_catalog[textual-dark]
+2.46s call     Tests/UI/test_mcp_tools_header_alignment.py::test_header_painted_before_measurement_aligns_with_new_catalog[textual-light]
+2.26s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+2.24s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.16s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-down-row]
+2.16s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-enter-row]
+2.14s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-click-row]
+2.14s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-down-row]
+2.13s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-click-row]
+2.13s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-click-row]
+2.12s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-cell]
+2.09s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+2.05s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-row]
+2.04s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-enter-row]
+2.02s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-enter-row]
+2.02s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+1.78s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.73s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+152 passed in 121.67s (0:02:01)
