@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "manifest_boundary": {
-        "checked_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
-        "origin_dev_generated_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
+        "checked_normalized_inventory_sha256": "d6c4b3b39062bab5585873ac53ade5321dd4ed169f1339a72fe5986f3e0c47a1",
+        "origin_dev_generated_normalized_inventory_sha256": "d6c4b3b39062bab5585873ac53ade5321dd4ed169f1339a72fe5986f3e0c47a1",
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
@@ -9849,7 +9849,7 @@
             "outcome": "deleted",
             "current": null,
             "navigation_line": 1171,
-            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt provider-labelled network log was superseded by the shared transport handling; the caller-visible exhaustion error string is preserved unchanged."
+            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt network log moved into the shared helper (whose generic statement serves all providers), so the provider-labelled variant is superseded; the caller-visible exhaustion error string is preserved unchanged."
         },
         {
             "site_id": "general-dd184c22fec5f90f",
