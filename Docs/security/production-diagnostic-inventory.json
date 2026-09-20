@@ -1377,6 +1377,7 @@
 =======
       "call_count": 269,
 <<<<<<< HEAD
+<<<<<<< HEAD
       "diagnostic_digest": "dbcc0db127c17dafee53",
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 <<<<<<< HEAD
@@ -1394,10 +1395,25 @@
 =======
       "diagnostic_digest": "571ec035007350308f10",
 >>>>>>> 13a9c28d21 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+<<<<<<< HEAD
 >>>>>>> 60af575933 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+<<<<<<< HEAD
 >>>>>>> 5aa43aa0ae (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+<<<<<<< HEAD
 >>>>>>> 3a3d0c8336 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+<<<<<<< HEAD
 >>>>>>> c0c558af0b (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+=======
+=======
+=======
+=======
+=======
+      "diagnostic_digest": "e8225e3610bdbf11071a",
+>>>>>>> 8bd7e24de6 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+>>>>>>> 9fea723ed8 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+>>>>>>> 1012426811 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+>>>>>>> 4dbb3bed6c (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+>>>>>>> bf47b39279 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
