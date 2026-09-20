@@ -843,8 +843,21 @@ def test_build_report_confidence_and_penalty():
     )
     report = build_report({"name": "s"}, SkillEvalDepth.QUICK, static, None, None)
     assert report.confidence == "Estimated"
-    raw = sum(d.blended * d.weight for d in report.dimensions)
-    assert report.composite == pytest.approx(raw * 0.90 * 100)  # two 5% penalties
+    assert report.composite == pytest.approx(90.0)  # renormalized 1.0 * 0.90
+
+
+def test_unmeasurable_dimensions_are_excluded_and_renormalized():
+    static = StaticLayerResult(
+        sub_scores={}, dimension_scores={
+            "triggering_accuracy": 1.0, "instruction_fitness": 1.0,
+            "output_quality": None, "scope_calibration": 1.0,
+            "progressive_disclosure": 1.0, "tool_surface_sanity": 1.0,
+            "token_efficiency": 1.0, "robustness": None,
+            "structural_completeness": 1.0}, findings=())
+    report = build_report({"name": "s"}, SkillEvalDepth.QUICK, static, None, None)
+    # output_quality/robustness have zero static weight -> excluded, weights
+    # renormalized over the measurable seven -> perfect static scores hit 100.
+    assert report.composite == pytest.approx(100.0)
 
 
 def test_build_report_degrades_confidence_when_judge_failed():
@@ -973,9 +986,9 @@ def blend_dimension(name: str, *, static: Optional[float],
     if sim is not None and wm > 0:
         pairs.append(("sim", wm, max(0.0, min(1.0, sim))))
     total_w = sum(w for _, w, _ in pairs)
-    if total_w == 0:  # no layer produced this dimension at all
-        pairs = [("static", 1.0, 0.0)]
-        total_w = 1.0
+    if total_w == 0:  # no layer can produce this dimension at this depth
+        return DimensionScore(name=name, weight=DIMENSION_WEIGHTS[name],
+                              blended=0.0, available_layers=())
     blended = sum(w * v for _, w, v in pairs) / total_w
     return DimensionScore(name=name, weight=DIMENSION_WEIGHTS[name],
                           blended=round(blended, 4),
@@ -997,7 +1010,9 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
             judge=_judge_value(judge if judge_usable else None, name),
             sim=_sim_value(sim if sim_usable else None, name),
         ))
-    raw = sum(d.blended * d.weight for d in dims)
+    measurable = [d for d in dims if d.available_layers]
+    weight_sum = sum(d.weight for d in measurable) or 1.0
+    raw = sum(d.blended * (d.weight / weight_sum) for d in measurable)
     penalty = 1.0
     for finding in static.findings:
         penalty -= finding.penalty
@@ -1950,7 +1965,10 @@ class _Chat:
     def __call__(self, *, messages, target, temperature, max_tokens, seed):
         self.calls += 1
         text = messages[1]["content"]
-        if "Invent exactly 10" in text:
+        if "varied" in text:  # sim-prompt generation (deep only) -- must match FIRST
+            import json
+            return json.dumps({"prompts": [f"q{i}" for i in range(10)]})
+        if "Invent exactly 10" in text:  # judge synthesis
             import json
             return json.dumps({"prompts": [
                 {"text": f"p{i}", "should_trigger": i < 5} for i in range(10)]})
@@ -1958,9 +1976,6 @@ class _Chat:
             return '{"task": "t", "rating": 4, "rationale": "ok"}'
         if "Rate how well" in text or "right-sized" in text:
             return '{"rating": 4, "rationale": "ok"}'
-        if "Invent exactly 10 short user requests" in text or "varied" in text:
-            import json
-            return json.dumps({"prompts": [f"q{i}" for i in range(10)]})
         return '{"skill": "csv-cleaner", "reason": "r"}'
 
 
@@ -2226,9 +2241,10 @@ def test_bench_save_load_round_trip(db):
     bench_id = storage.save_skill_eval_bench(db, cfg)
     assert storage.is_skill_eval_bench(db.get_task(bench_id))
     loaded = storage.load_skill_eval_bench(db, bench_id)
-    assert loaded == cfg
+    assert loaded.to_config_data() == cfg.to_config_data()
     assert loaded.bench_id == bench_id
-    cfg2 = _config(name="renamed")
+    from dataclasses import replace
+    cfg2 = replace(loaded, name="renamed")
     assert storage.save_skill_eval_bench(db, cfg2) == bench_id
     assert db.get_task(bench_id)["name"] == "renamed"
 
