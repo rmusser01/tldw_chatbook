@@ -933,6 +933,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "slow: Tests that take more than 1 second")
     config.addinivalue_line(
+        "markers",
+        "bootstrap_profile: keep the collection-time profile instead of the per-test sandbox (config-participant admission)",
+    )
+    config.addinivalue_line(
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
@@ -1050,12 +1054,29 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     # failing since TASK-32628 landed) are this exact signature swallowed.
     keep_bootstrap_profile = (
         is_private_profile_child(request)
+        # TASK-32873: per-NODE opt-in for suites that are MOSTLY sandbox
+        # unit tests but contain real-app mounts (the runtime-ownership
+        # suite): mark only the mounting tests.
+        or request.node.get_closest_marker("bootstrap_profile") is not None
         or request.node.path.name in {
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
             "test_hosted_chat.py", "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
+            "test_summarization_diagnostic_privacy.py",
+            "test_summarization_model_capabilities.py",
+            # TASK-32873: the runtime-ownership and viewless suites mount
+            # real apps end to end; same config-participant admission
+            # signature as above. (The few pure-unit tests inside the
+            # ownership suite were fixed to be profile-agnostic.)
+            "test_console_runtime_ownership.py",
+            "test_console_viewless_hooks.py",
+            # TASK-32873: same signature, discovered while re-verifying --
+            # install_skill dispatch drives scripted agent runs whose config
+            # reads go through the config-participant admission.
+            "test_install_skill_runtime_tool.py",
+            "test_console_chat_create_integration.py",
         }
     )
     test_data_dir = (
