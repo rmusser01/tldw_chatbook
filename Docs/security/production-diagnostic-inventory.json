@@ -3571,13 +3571,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "8baad40748260b87df44",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/paths.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 1,
       "diagnostic_digest": "f284de2bc41b0d856b70",
       "owner": "TASK-494",
@@ -3603,13 +3596,6 @@
       "diagnostic_digest": "291c235f26ff797f6c34",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/terminal_utils.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 3,
-      "diagnostic_digest": "d7b790428d23da7450dc",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/text.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10206,67 +10192,6 @@
     {
       "candidates": [
         {
-          "call_digest": "0257f742389328a1",
-          "method": "debug",
-          "path_expressions": [
-            "full_path",
-            "safe_db_filename"
-          ],
-          "scope": "get_project_database_path",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "1b71248c178cbed2",
-          "method": "error",
-          "path_expressions": [
-            "PROJECT_DATABASES_DIR"
-          ],
-          "scope": "get_project_databases_dir",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "fc0d56c70450ff59",
-          "method": "info",
-          "path_expressions": [
-            "PROJECT_DATABASES_DIR"
-          ],
-          "scope": "get_project_databases_dir",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "60d8867a39b08f40",
-          "method": "debug",
-          "path_expressions": [
-            "absolute_path",
-            "relative_path_str"
-          ],
-          "scope": "get_project_relative_path",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "372a9b0db3c8ab61",
-          "method": "debug",
-          "path_expressions": [
-            "PROJECT_ROOT_DIR"
-          ],
-          "scope": "get_project_root",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "ffc21eb9adefe9f3",
-          "method": "info",
-          "path_expressions": [
-            "project_root"
-          ],
-          "scope": "get_project_root",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Utils/paths.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "c7b5bebb7673581b",
           "method": "debug",
           "path_expressions": [
@@ -11456,11 +11381,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 602,
-    "path_privacy_candidate_calls": 700,
+    "owner_files": 600,
+    "path_privacy_candidate_calls": 694,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
     "task_492_calls": 1407,
-    "task_494_calls": 7713
+    "task_494_calls": 7704
   }
 }
