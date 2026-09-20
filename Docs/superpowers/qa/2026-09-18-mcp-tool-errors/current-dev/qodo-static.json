@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/MCP/client.py": {
+    "baseline": 123,
+    "current": 123,
+    "introduced": []
+  },
+  "tldw_chatbook/Utils/input_validation.py": {
+    "baseline": 8,
+    "current": 8,
+    "introduced": []
+  }
+}

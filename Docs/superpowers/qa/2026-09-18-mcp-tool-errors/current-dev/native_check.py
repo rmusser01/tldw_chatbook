@@ -154,6 +154,7 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
         "tldw_chatbook/MCP/client.py",
         "tldw_chatbook/MCP/local_control_service.py",
         "tldw_chatbook/MCP/unified_control_plane_service.py",
+        "tldw_chatbook/Utils/input_validation.py",
         "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
         "Tests/MCP/fixtures/stdio_tool_result_server.py",
     ]
@@ -279,6 +280,7 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
                 type(workbench).__module__,
                 MCPInspector.__module__,
                 MCPToolsMode.__module__,
+                "tldw_chatbook.Utils.input_validation",
             }
             for name in sorted(names):
                 origin = Path(sys.modules[name].__file__).resolve()

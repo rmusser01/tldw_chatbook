@@ -1,6 +1,6 @@
 {
-  "root": "/private/tmp/tldw-32831-current-wide-001",
-  "pid": 55770,
+  "root": "/private/tmp/tldw-32831-current-wide-002",
+  "pid": 68932,
   "pid_absent": true,
   "exit_code": 0,
   "app_run_returned": true,
@@ -84,6 +84,6 @@
   "network_attempts": [],
   "preexisting_fixture_files_unchanged": true,
   "fixture_pids_absent": {
-    "55916": true
+    "69067": true
   }
 }

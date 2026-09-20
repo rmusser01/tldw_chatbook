@@ -1,156 +1,156 @@
 [
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/fixture-result.json",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/fixture-result.json",
     "name": "fixture-result.json",
     "source_sha256": "05786924c79318503c152cfd793fc2cb6e888b93b890183af6325d93b96e5c15",
     "export_sha256": "49124fcc78a03597881c4c679d7dc757a2da4de68689727a8a18fb5d5e8a9a5e",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/fixture-trace.jsonl",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/fixture-trace.jsonl",
     "name": "fixture-trace.jsonl",
-    "source_sha256": "5f7076a0757192c5f71719016a8f1a121a6a4b4fa6a3e2c6142225e7cb227088",
-    "export_sha256": "5f7076a0757192c5f71719016a8f1a121a6a4b4fa6a3e2c6142225e7cb227088",
+    "source_sha256": "24793efdf1e0c64e2aebf9ab1fd78694dcbb463969a9fa0da4104077c08acbb9",
+    "export_sha256": "24793efdf1e0c64e2aebf9ab1fd78694dcbb463969a9fa0da4104077c08acbb9",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/result.json",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/result.json",
     "name": "native-result.json",
-    "source_sha256": "ceaf1494d226a64dc4653ddca16766545c5d0eeb2dfea495a366b781c4099417",
-    "export_sha256": "ceaf1494d226a64dc4653ddca16766545c5d0eeb2dfea495a366b781c4099417",
+    "source_sha256": "e93ca48c4340a7738aaa352d043aa201298bf6f634b959e919f080d384bf61c6",
+    "export_sha256": "e93ca48c4340a7738aaa352d043aa201298bf6f634b959e919f080d384bf61c6",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-failed-feedback.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-failed-feedback.svg",
     "name": "textual-dark-170x48-failed-feedback.svg",
     "source_sha256": "cc4d8da80bf325a3560977032b8693aaaa6c0d90074b53ae48406d2a2006e556",
     "export_sha256": "d764795e46565981b19157cedd410a3eb1b406a250684dbf3c4537224d8ba629",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-failed.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-failed.svg",
     "name": "textual-dark-170x48-failed.svg",
     "source_sha256": "cc4d8da80bf325a3560977032b8693aaaa6c0d90074b53ae48406d2a2006e556",
     "export_sha256": "d764795e46565981b19157cedd410a3eb1b406a250684dbf3c4537224d8ba629",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-failed.txt",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-failed.txt",
     "name": "textual-dark-170x48-failed.txt",
     "source_sha256": "c5ef18cbc639e782e95c51117e45b8534cb0ae43b1e838570890ca8fc35ed4ef",
     "export_sha256": "c5ef18cbc639e782e95c51117e45b8534cb0ae43b1e838570890ca8fc35ed4ef",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-recovered-feedback.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-recovered-feedback.svg",
     "name": "textual-dark-170x48-recovered-feedback.svg",
     "source_sha256": "05e3de7e58529e6e04682abb1a24d4e7e73980d7752254dc9ebd4635020414be",
     "export_sha256": "04bf64c72a0690a3ab2e10a16404f024ac63cf48668132a852219d7d9652b33d",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-recovered.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-recovered.svg",
     "name": "textual-dark-170x48-recovered.svg",
     "source_sha256": "05e3de7e58529e6e04682abb1a24d4e7e73980d7752254dc9ebd4635020414be",
     "export_sha256": "04bf64c72a0690a3ab2e10a16404f024ac63cf48668132a852219d7d9652b33d",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-dark-170x48-recovered.txt",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-dark-170x48-recovered.txt",
     "name": "textual-dark-170x48-recovered.txt",
     "source_sha256": "b3b036f6260c534825b5e46888852dcd3ce35fa731a18e4aa5b3fd2aec67a0a9",
     "export_sha256": "b3b036f6260c534825b5e46888852dcd3ce35fa731a18e4aa5b3fd2aec67a0a9",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-failed-feedback.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-failed-feedback.svg",
     "name": "textual-light-170x48-failed-feedback.svg",
     "source_sha256": "53b95544066a547f11da728c445fc4d6661c8e55a750d263ca6857e4ac4617c5",
     "export_sha256": "cdaf911736d65f510b980913b9e4511ca96f6967043ceec55fed1103662c1a29",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-failed.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-failed.svg",
     "name": "textual-light-170x48-failed.svg",
     "source_sha256": "53b95544066a547f11da728c445fc4d6661c8e55a750d263ca6857e4ac4617c5",
     "export_sha256": "cdaf911736d65f510b980913b9e4511ca96f6967043ceec55fed1103662c1a29",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-failed.txt",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-failed.txt",
     "name": "textual-light-170x48-failed.txt",
     "source_sha256": "c5ef18cbc639e782e95c51117e45b8534cb0ae43b1e838570890ca8fc35ed4ef",
     "export_sha256": "c5ef18cbc639e782e95c51117e45b8534cb0ae43b1e838570890ca8fc35ed4ef",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-recovered-feedback.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-recovered-feedback.svg",
     "name": "textual-light-170x48-recovered-feedback.svg",
     "source_sha256": "2896a6e57d30dd491e1eb724cd136fd3beaf471f18618c3eed1578c1610266a1",
     "export_sha256": "d012682879d71832376dc7e2dad3a14c5fd84e6d144427abb545cd311107564d",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-recovered.svg",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-recovered.svg",
     "name": "textual-light-170x48-recovered.svg",
     "source_sha256": "2896a6e57d30dd491e1eb724cd136fd3beaf471f18618c3eed1578c1610266a1",
     "export_sha256": "d012682879d71832376dc7e2dad3a14c5fd84e6d144427abb545cd311107564d",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/evidence/textual-light-170x48-recovered.txt",
+    "source": "/private/tmp/tldw-32831-current-wide-002/evidence/textual-light-170x48-recovered.txt",
     "name": "textual-light-170x48-recovered.txt",
     "source_sha256": "b3b036f6260c534825b5e46888852dcd3ce35fa731a18e4aa5b3fd2aec67a0a9",
     "export_sha256": "b3b036f6260c534825b5e46888852dcd3ce35fa731a18e4aa5b3fd2aec67a0a9",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/lifecycle.json",
+    "source": "/private/tmp/tldw-32831-current-wide-002/lifecycle.json",
     "name": "native-lifecycle.json",
-    "source_sha256": "7715b6c761b30d541308a3e9296279ea25e6ef74cf5e7779632e5942a2602ada",
-    "export_sha256": "7715b6c761b30d541308a3e9296279ea25e6ef74cf5e7779632e5942a2602ada",
+    "source_sha256": "0430a25820686e83963366bccb4c29c0f9d36c249f79f1cf1a6a6cd2144ce182",
+    "export_sha256": "0430a25820686e83963366bccb4c29c0f9d36c249f79f1cf1a6a6cd2144ce182",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-wide-001/launch.json",
+    "source": "/private/tmp/tldw-32831-current-wide-002/launch.json",
     "name": "native-launch.json",
-    "source_sha256": "18c9a0b28fc5206804b916ff3f6dd62b2bbfa8078fdcd828cd149e240cfa3f5a",
-    "export_sha256": "18c9a0b28fc5206804b916ff3f6dd62b2bbfa8078fdcd828cd149e240cfa3f5a",
+    "source_sha256": "867cbd198cad6892f2c66a6ccba6bd23ee87357de9f16fad07bb3fb76e66fb64",
+    "export_sha256": "867cbd198cad6892f2c66a6ccba6bd23ee87357de9f16fad07bb3fb76e66fb64",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-compact-001/evidence/result.json",
+    "source": "/private/tmp/tldw-32831-current-compact-002/evidence/result.json",
     "name": "compact-attempt.json",
-    "source_sha256": "794881617b685b810d7c85538674f681dde6cc32bd1ccf55f2f22025ff3c3791",
-    "export_sha256": "794881617b685b810d7c85538674f681dde6cc32bd1ccf55f2f22025ff3c3791",
+    "source_sha256": "9e1ca79841d227e2ed83de3bac282b6267c380a671e277b6d4de86e6cc7616a4",
+    "export_sha256": "9e1ca79841d227e2ed83de3bac282b6267c380a671e277b6d4de86e6cc7616a4",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-compact-001/evidence/failed-state.svg",
+    "source": "/private/tmp/tldw-32831-current-compact-002/evidence/failed-state.svg",
     "name": "compact-unreachable.svg",
-    "source_sha256": "34d2736664f69085bb48acaee22ae85169f39c326fdd37e911a3b6a36ba78aa4",
-    "export_sha256": "ef4ea81cf618b1c180aaa7f49211d74a6b87aae0a476e0e3b1b4586487ca8873",
+    "source_sha256": "8172b8eb34b48546d6f8c9ba71ba1d042b7d904f50597f75563b1a2b7acf89c2",
+    "export_sha256": "05a9d9d910d516395c1b76a7485fb1abeb59f29feb8583b55e43b5ee1dde5c7b",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-compact-001/evidence/fixture-trace.jsonl",
+    "source": "/private/tmp/tldw-32831-current-compact-002/evidence/fixture-trace.jsonl",
     "name": "compact-wire.jsonl",
-    "source_sha256": "fe8ded1e89f5d012fb9b00be43e3c1d8e67ac95d52640855d05e6fcc39fb83b5",
-    "export_sha256": "fe8ded1e89f5d012fb9b00be43e3c1d8e67ac95d52640855d05e6fcc39fb83b5",
+    "source_sha256": "db57970a2d0f14b60c344dd41e962a12fbb864800e2e9b09a4b2338237d09abe",
+    "export_sha256": "db57970a2d0f14b60c344dd41e962a12fbb864800e2e9b09a4b2338237d09abe",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-compact-001/lifecycle.json",
+    "source": "/private/tmp/tldw-32831-current-compact-002/lifecycle.json",
     "name": "compact-lifecycle.json",
-    "source_sha256": "151e284b7e30d06bff8940fa67b5ee606a760d7a35d99730db8122696d6f5098",
-    "export_sha256": "151e284b7e30d06bff8940fa67b5ee606a760d7a35d99730db8122696d6f5098",
+    "source_sha256": "484c5cc40772385efc1f39f3800a4ecfd71c1ff786246fc2e400009dcb0127e0",
+    "export_sha256": "484c5cc40772385efc1f39f3800a4ecfd71c1ff786246fc2e400009dcb0127e0",
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/tldw-32831-current-compact-001/launch.json",
+    "source": "/private/tmp/tldw-32831-current-compact-002/launch.json",
     "name": "compact-launch.json",
-    "source_sha256": "51c656b536669e157700c476575c1992e66463b7e9d63d2d11f63ea44ddfcbe6",
-    "export_sha256": "51c656b536669e157700c476575c1992e66463b7e9d63d2d11f63ea44ddfcbe6",
+    "source_sha256": "9c59f0387ae00371768cbef3c2cb5ff53597c149ec035e2d0bca44966af275ae",
+    "export_sha256": "9c59f0387ae00371768cbef3c2cb5ff53597c149ec035e2d0bca44966af275ae",
     "normalization": "trailing whitespace only"
   },
   {
@@ -238,6 +238,34 @@
     "normalization": "trailing whitespace only"
   },
   {
+    "source": "/private/tmp/32831-flags-red.txt",
+    "name": "flags-red.txt",
+    "source_sha256": "837fcb57f3d772e8a4197c7e7f56808f70778211be1b2ca7205ea1278218e0b4",
+    "export_sha256": "6e53bc1e9c1f22b19adbe2ad6cd2168086bd6a0925e5db956c1cef4c20e0d2a6",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-flags-red.xml",
+    "name": "flags-red.xml",
+    "source_sha256": "050062ee3c3997dfc696843c4af6d7a09c00d4169dd3ffe4068aa9d31dfb2d2f",
+    "export_sha256": "b54fdee014a97dc0cb7463e02a688d1d1bec1b68d32b984104f52031297216a8",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-flags-green.txt",
+    "name": "flags-green.txt",
+    "source_sha256": "323c5c80ab2fb1605c4b05033a51fa89ece7ef67c0cce324e18f722cb6102b3e",
+    "export_sha256": "323c5c80ab2fb1605c4b05033a51fa89ece7ef67c0cce324e18f722cb6102b3e",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-flags-green.xml",
+    "name": "flags-green.xml",
+    "source_sha256": "c77c88c4560790d98c93ded53f3bfd20e193815d0f010889969db3f9f6f1384f",
+    "export_sha256": "52382bc4854b06a97b3c0f3b60d1c72023af205d1d8c9b479f46cff06fe6e0e5",
+    "normalization": "trailing whitespace only"
+  },
+  {
     "source": "/private/tmp/32831-preflight.txt",
     "name": "preflight.txt",
     "source_sha256": "dc85ca98b071eb838d5a9c87f75b395150be61d034ba18c308b51304d23a32e3",
@@ -252,7 +280,21 @@
     "normalization": "trailing whitespace only"
   },
   {
-    "source": "/private/tmp/32831-renders/renders.json",
+    "source": "/private/tmp/32831-qodo-preflight.txt",
+    "name": "qodo-preflight.txt",
+    "source_sha256": "dc85ca98b071eb838d5a9c87f75b395150be61d034ba18c308b51304d23a32e3",
+    "export_sha256": "dc85ca98b071eb838d5a9c87f75b395150be61d034ba18c308b51304d23a32e3",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-qodo-static.json",
+    "name": "qodo-static.json",
+    "source_sha256": "68728f4620274e4fbae0a760ff952b0ed17af81d8d0cd4ba2221edcf0fe1b2b0",
+    "export_sha256": "68728f4620274e4fbae0a760ff952b0ed17af81d8d0cd4ba2221edcf0fe1b2b0",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-renders-002/renders.json",
     "name": "render-hashes.json",
     "source_sha256": "2546bfe43b322c577f6e3ca793ddbd16c14cc6a0073ef3d2c5fa6c8669847c1d",
     "export_sha256": "2546bfe43b322c577f6e3ca793ddbd16c14cc6a0073ef3d2c5fa6c8669847c1d",

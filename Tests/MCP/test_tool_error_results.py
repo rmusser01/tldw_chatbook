@@ -156,6 +156,57 @@ async def test_success_with_absent_or_false_error_flag_keeps_existing_shape(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flag", [1, 0, "true", "false", None, [], {}, {"secret": "private-flag-sentinel"}]
+)
+@private_profile_test
+async def test_non_boolean_error_flag_is_bounded_failure_and_can_retry(
+    request, tmp_path, flag
+):
+    """Malformed protocol flags cannot become success or expose validator inputs."""
+    async with connected_tool(tmp_path) as (client, service, state):
+        session = client.sessions["result-review"]
+        state.write_text(
+            json.dumps(
+                {
+                    "isError": flag,
+                    "content": [{"type": "text", "text": "private-body-sentinel"}],
+                }
+            )
+        )
+        logs = []
+        sink = logger.add(lambda message: logs.append(str(message)))
+        try:
+            with pytest.raises(RuntimeError, match="^Invalid MCP tool result$"):
+                await service.execute_hub_tool(
+                    "local:result-review",
+                    "review_echo",
+                    {"message": "fail"},
+                    registered_argument_names={"message"},
+                )
+        finally:
+            logger.remove(sink)
+        record = service.execution_log.read_recent(1)[0]
+        assert record["ok"] is False and record["status"] == "error"
+        assert record["error_category"] == "execution_failed"
+        for sentinel in ("private-body-sentinel", "private-flag-sentinel"):
+            assert sentinel not in "".join(logs)
+            assert sentinel not in service.execution_log.path.read_text()
+        assert client.sessions["result-review"] is session
+        assert session.process.returncode is None
+        state.write_text(
+            json.dumps({"content": [{"type": "text", "text": "Recovered"}]})
+        )
+        assert await service.execute_hub_tool(
+            "local:result-review",
+            "review_echo",
+            {"message": "retry"},
+            registered_argument_names={"message"},
+        ) == {"result": [{"type": "text", "text": "Recovered"}]}
+        assert service.execution_log.read_recent(1)[0]["ok"] is True
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_control_plane_audits_tool_failure_without_error_body_and_recovers(
     request, tmp_path

@@ -1,6 +1,6 @@
 {
-  "root": "/private/tmp/tldw-32831-current-compact-001",
-  "pid": 56897,
+  "root": "/private/tmp/tldw-32831-current-compact-002",
+  "pid": 71544,
   "pid_absent": true,
   "exit_code": 1,
   "app_run_returned": true,
@@ -84,6 +84,6 @@
   "network_attempts": [],
   "preexisting_fixture_files_unchanged": true,
   "fixture_pids_absent": {
-    "57001": true
+    "71768": true
   }
 }

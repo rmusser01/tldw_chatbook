@@ -5,10 +5,14 @@
 PR2714 merged into dev as `e4096e2059` after owner approval and all CI/review gates;
 TASK-32830 is Done. The fresh follow-up branch integrates existing PR2716 without
 conflicts. Server-reported tool errors now reach the existing failed result and
-Audit path; successful retry uses the same connection. Only client result handling
-changes in production, with existing ADR-111/161 and no new architecture.
+Audit path; successful retry uses the same connection. Production changes cover client result handling
+and strict flag validation in the existing shared input-validation module, with
+existing ADR-111/161 and no new architecture.
 
-67 distinct targeted cases, eight artifact guards and independent reviews pass.
+75 distinct targeted cases, eight artifact guards and independent reviews pass.
+Qodo's malformed-flag finding is repaired: eight real-stdio cases reproduce the
+false success before repair, then reject malformed values without body leakage
+and successfully retry on the same session.
 Fresh native dark/light 170×48 passes with eight inspected SVGs, real error/success
 audit records, clean app/child shutdown, healthy private databases, unchanged
 defaults/sentinels and matching source hashes. The separate 80×24 attempt fails

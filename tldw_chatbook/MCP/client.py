@@ -468,6 +468,10 @@ class _StdioJSONRPCConnection:
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> SimpleNamespace:
+        from pydantic import ValidationError
+
+        from tldw_chatbook.Utils.input_validation import MCPToolResultInput
+
         result = await self.request(
             "tools/call",
             {
@@ -475,9 +479,12 @@ class _StdioJSONRPCConnection:
                 "arguments": arguments,
             },
         )
-        return SimpleNamespace(
-            content=result.get("content", []), isError=result.get("isError", False)
-        )
+        try:
+            validated = MCPToolResultInput.model_validate(result)
+        except ValidationError:
+            # Validator details may contain the server's untrusted response body.
+            raise MCPClientError("Invalid MCP tool result") from None
+        return SimpleNamespace(content=validated.content, isError=validated.is_error)
 
     @guarded
     @producer_call

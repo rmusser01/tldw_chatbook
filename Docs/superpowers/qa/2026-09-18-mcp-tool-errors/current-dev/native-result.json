@@ -1,5 +1,5 @@
 {
-  "pid": 55770,
+  "pid": 68932,
   "cells": [
     {
       "theme": "textual-dark",
@@ -10,14 +10,14 @@
       "failure": {
         "summary": "Failed \u00b7 0ms\nFixture tool failed; use a different message.",
         "audit": {
-          "ts": "2026-09-20T23:15:27.889754+00:00",
+          "ts": "2026-09-20T23:32:28.201652+00:00",
           "server_key": "local:execution-review",
           "tool_name": "review_echo",
           "initiator": "test",
           "decision": "approved",
           "ok": false,
           "status": "error",
-          "duration_ms": 43,
+          "duration_ms": 39,
           "error_category": "execution_failed",
           "exception_type": "RuntimeError",
           "status_code": null,
@@ -33,14 +33,14 @@
       "recovery": {
         "summary": "OK \u00b7 0ms \u00b7 1 result",
         "audit": {
-          "ts": "2026-09-20T23:15:29.485157+00:00",
+          "ts": "2026-09-20T23:32:29.733369+00:00",
           "server_key": "local:execution-review",
           "tool_name": "review_echo",
           "initiator": "test",
           "decision": "approved",
           "ok": true,
           "status": "success",
-          "duration_ms": 42,
+          "duration_ms": 31,
           "error_category": null,
           "exception_type": null,
           "status_code": null,
@@ -64,14 +64,14 @@
       "failure": {
         "summary": "Failed \u00b7 0ms\nFixture tool failed; use a different message.",
         "audit": {
-          "ts": "2026-09-20T23:15:31.586574+00:00",
+          "ts": "2026-09-20T23:32:31.872530+00:00",
           "server_key": "local:execution-review",
           "tool_name": "review_echo",
           "initiator": "test",
           "decision": "approved",
           "ok": false,
           "status": "error",
-          "duration_ms": 40,
+          "duration_ms": 57,
           "error_category": "execution_failed",
           "exception_type": "RuntimeError",
           "status_code": null,
@@ -87,14 +87,14 @@
       "recovery": {
         "summary": "OK \u00b7 0ms \u00b7 1 result",
         "audit": {
-          "ts": "2026-09-20T23:15:33.306944+00:00",
+          "ts": "2026-09-20T23:32:33.590830+00:00",
           "server_key": "local:execution-review",
           "tool_name": "review_echo",
           "initiator": "test",
           "decision": "approved",
           "ok": true,
           "status": "success",
-          "duration_ms": 36,
+          "duration_ms": 38,
           "error_category": null,
           "exception_type": null,
           "status_code": null,
@@ -121,6 +121,7 @@
     "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
     "tldw_chatbook.UI.MCP_Modules.mcp_tools_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
     "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
     "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py"
   },
   "source_hashes": {
@@ -132,28 +133,29 @@
     "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
     "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
     "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
-    "tldw_chatbook/MCP/client.py": "e23a7106296652e57a22f8828b0a3a5a5fc4fff7278d6affbf631d321ac15ed7",
+    "tldw_chatbook/MCP/client.py": "725fcd87ac8468c310d9fd89bb71e1fd60051fa72992eaa078fcf2d752f845bb",
     "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
     "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Utils/input_validation.py": "38abf83896986846cc8c673b2ef2e15995c00f4720b26cb435cb12407669f74b",
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "cd7a4ae19bc1bfcde77d136623e1fcf861c7c26547e9910162f55fb28a3bfcca",
     "Tests/MCP/fixtures/stdio_tool_result_server.py": "00a85b39db22a3578562bc4103d223b76467bf034935eb2a6a7f010253f353d6"
   },
-  "runner_sha256": "b42d427fa5f54ce308ae47936fb93806ab9f7cc447725b05a74c552e02c94e88",
+  "runner_sha256": "037eded57ab74332e6640e6dc2e80425b309f0068fc64c5885a0e8397671ec49",
   "driver": "LinuxDriver",
   "tty_streams": true,
   "lock_acquired": true,
   "waiting_for": "notices clear",
-  "fixture_pid": 55916,
+  "fixture_pid": 69067,
   "audit": [
     {
-      "ts": "2026-09-20T23:15:33.306944+00:00",
+      "ts": "2026-09-20T23:32:33.590830+00:00",
       "server_key": "local:execution-review",
       "tool_name": "review_echo",
       "initiator": "test",
       "decision": "approved",
       "ok": true,
       "status": "success",
-      "duration_ms": 36,
+      "duration_ms": 38,
       "error_category": null,
       "exception_type": null,
       "status_code": null,
@@ -165,14 +167,14 @@
       "result_size": 1
     },
     {
-      "ts": "2026-09-20T23:15:31.586574+00:00",
+      "ts": "2026-09-20T23:32:31.872530+00:00",
       "server_key": "local:execution-review",
       "tool_name": "review_echo",
       "initiator": "test",
       "decision": "approved",
       "ok": false,
       "status": "error",
-      "duration_ms": 40,
+      "duration_ms": 57,
       "error_category": "execution_failed",
       "exception_type": "RuntimeError",
       "status_code": null,
@@ -184,14 +186,14 @@
       "result_size": 0
     },
     {
-      "ts": "2026-09-20T23:15:29.485157+00:00",
+      "ts": "2026-09-20T23:32:29.733369+00:00",
       "server_key": "local:execution-review",
       "tool_name": "review_echo",
       "initiator": "test",
       "decision": "approved",
       "ok": true,
       "status": "success",
-      "duration_ms": 42,
+      "duration_ms": 31,
       "error_category": null,
       "exception_type": null,
       "status_code": null,
@@ -203,14 +205,14 @@
       "result_size": 1
     },
     {
-      "ts": "2026-09-20T23:15:27.889754+00:00",
+      "ts": "2026-09-20T23:32:28.201652+00:00",
       "server_key": "local:execution-review",
       "tool_name": "review_echo",
       "initiator": "test",
       "decision": "approved",
       "ok": false,
       "status": "error",
-      "duration_ms": 43,
+      "duration_ms": 39,
       "error_category": "execution_failed",
       "exception_type": "RuntimeError",
       "status_code": null,
@@ -224,39 +226,39 @@
   ],
   "wire_requests": [
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "initialize"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "notifications/initialized"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "tools/list"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "resources/list"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "prompts/list"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "tools/call"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "tools/call"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "tools/call"
     },
     {
-      "pid": 55916,
+      "pid": 69067,
       "method": "tools/call"
     }
   ],

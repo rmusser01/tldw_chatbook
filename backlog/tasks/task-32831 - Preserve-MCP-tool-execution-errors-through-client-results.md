@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:30'
-updated_date: '2026-09-20 23:21'
+updated_date: '2026-09-20 23:37'
 labels:
   - mcp
   - ui
@@ -26,12 +26,14 @@ A server-reported tool failure must appear as a failed invocation in Test Tool a
 - [x] #2 Absent or false isError preserves successful result shapes, and a tool error does not disconnect the server.
 - [x] #3 The real control plane records failed tool outcomes without persisting error-body secrets and accepts a subsequent successful invocation.
 - [x] #4 Targeted regressions and private native dark/light execution at 170x48 verify visible failure and successful retry; compact inspector reachability failures remain explicitly unqualified in the review ledger.
+- [x] #5 Malformed non-boolean isError values are rejected as bounded failures, never successful invocations, without logging response bodies.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no. ADR path: N/A; existing ADR-111 and ADR-161 apply. Reason: restore existing MCP tool-result failure semantics without a new API, transport, permission, storage or UI boundary. Resume saved PR2716 on merged PR2714 dev e4096e2059. 1. Reproduce the saved real-stdio failures on merged dev, then integrate the minimal client repair. 2. Validate fixture paths and malformed requests using current shared boundary helpers and focused regressions. 3. Replace the obsolete native executable with a supported current-dev runner; use private roots, actual import provenance, terminal warmup, network guard, exclusive evidence and owned cleanup. 4. Requalify failure/audit/retry in dark/light wide views; attempt compact reachability and retain any limitation without UI scope expansion. 5. Run focused tests, artifact/static checks and independent review, update the existing draft PR with fresh evidence and owner gallery. Current-head CI, accumulated review and fresh owner visual approval gate merge.
+Qodo follow-up: reproduce non-boolean isError success fallthrough with real stdio cases; validate the existing flag using a strict private boundary model and discard validator details before logging. Preserve current content/result behavior, prove a corrected retry works, and repeat affected tests/native evidence. No new ADR or transport interface.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,4 +46,8 @@ Verification: 11 targeted cases pass; six regressions failed on unchanged dev. T
 Plan deviation: 80x24 execution qualification failed because the argument field could not be revealed, even after explicit scrolling. Narrowed this client-only slice to wide execution; retained both failed attempts and made compact inspector reachability the next review. No UI layout changes were bundled. Evidence: Docs/superpowers/qa/2026-09-18-mcp-tool-errors/README.md; both design-system review ledgers updated. ADR required: no; existing ADR-111 and ADR-161 apply. Separate draft PR against dev; owner visual approval remains required before merge.
 
 Integrated saved PR2716 on merged PR2714 dev e4096e2059. Six execution regressions reproduce before repair; 67 distinct targeted cases pass, including isolated malformed-content, real stdio/audit/retry, both fixture CLI boundaries, runner ownership and transport neighbors. Eleven fixture boundary failures reproduced before explicit-root/path and strict request validation. All eight artifact guards pass, no added baseline Ruff diagnostics; independent production/fixture and native-runner reviews clear. Native dark/light 170x48 passes with eight inspected SVGs (four identical feedback/settled pairs), same live connection, actual failure/success audit, clean exit and healthy private databases. Fresh 80x24 attempt fails earlier than historical evidence: Test Tool is offscreen despite focus/scroll; exit1 and clean owned cleanup are retained, compact execution unqualified. User defaults and fixture sentinels unchanged, source/runner hashes match, zero network. Existing ADR-111/161 apply. Current QA: Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/README.md. Keep In Progress pending current-head CI/review, fresh owner visual approval and merge.
+
+Qodo identified malformed non-boolean isError values falling through as success. Extending the existing tool-result boundary to reject those values with a fixed malformed-response failure; targeted wire regressions and fresh native qualification will be recorded before merge.
+
+Qodo malformed-flag follow-up complete: shared MCPToolResultInput validates the existing isError flag strictly; the client suppresses validator/body details behind a fixed error and preserves the session. Eight real-stdio regressions fail before repair; 22 affected cases pass afterward, bringing the distinct targeted inventory to 75. Eight artifact guards and baseline-relative static checks pass; independent review is clear. Final wide-002 native runs pass in both themes, with all eight PNG renders identical to the inspected prior captures. Compact-002 again fails before execution at offscreen Test Tool; the fresh capture was inspected. Both app/fixture lifecycles, private databases, locks, unchanged defaults and exact source hashes verify. Final exports and manifest replace current qualification while the previous run remains immutable at 8b7be87978. No new ADR. Await current-head CI, accumulated Qodo disposition and fresh owner visual approval before merge.
 <!-- SECTION:NOTES:END -->

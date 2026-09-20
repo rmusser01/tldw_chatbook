@@ -1,5 +1,5 @@
 {
-  "distinct_passed": 67,
+  "distinct_passed": 75,
   "cases": [
     "Tests.MCP.test_catalog_fixture_paths::test_fixture_rejects_malformed_request_and_serves_next_request[catalog-[]--32600]",
     "Tests.MCP.test_catalog_fixture_paths::test_fixture_rejects_malformed_request_and_serves_next_request[catalog-{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":7}}--32602]",
@@ -34,6 +34,14 @@
     "Tests.MCP.test_tool_error_results::test_malformed_error_content_stays_failed_without_logging_body[content0]",
     "Tests.MCP.test_tool_error_results::test_malformed_error_content_stays_failed_without_logging_body[content1]",
     "Tests.MCP.test_tool_error_results::test_malformed_error_content_stays_failed_without_logging_body[content2]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[0]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[1]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[None]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[false]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag5]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag6]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag7]",
+    "Tests.MCP.test_tool_error_results::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[true]",
     "Tests.MCP.test_tool_error_results::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]",
     "Tests.MCP.test_tool_error_results::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\\nSecond error.]",
     "Tests.MCP.test_tool_error_results::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]",
