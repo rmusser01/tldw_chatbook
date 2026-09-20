@@ -41,6 +41,11 @@ _MAX_METADATA_CHARS = 4 * 1024
 _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# Upper bound on a provider-named Retry-After sleep (seconds). The engine's
+# workers run on threads Stop cannot interrupt, and every hosted provider's
+# api_base_url is user-configurable -- a hostile endpoint naming
+# "Retry-After: 99999999" must never pin the worker for that long.
+_MAX_RETRY_AFTER_SECONDS = 60.0
 
 ReasoningDisposition = Literal["displayable", "proprietary", "ignored"]
 
@@ -889,11 +894,22 @@ def _retry_delay(
     if raw_value is not None:
         try:
             if raw_value.strip().isdigit():
-                return max(0.0, float(int(raw_value.strip())))
+                # Bounded (TASK-32853): api_base_url is user-configurable for
+                # every hosted provider, so a misbehaving endpoint can name
+                # any delay -- and Stop cancels the task but cannot interrupt
+                # this worker thread's sleep. Honour the header only up to
+                # the cap; a longer demand still retries, after the cap.
+                return min(
+                    max(0.0, float(int(raw_value.strip()))),
+                    _MAX_RETRY_AFTER_SECONDS,
+                )
             from email.utils import parsedate_to_datetime
 
             parsed = parsedate_to_datetime(raw_value)
-            return max(0.0, parsed.timestamp() - time.time())
+            return min(
+                max(0.0, parsed.timestamp() - time.time()),
+                _MAX_RETRY_AFTER_SECONDS,
+            )
         except (OverflowError, TypeError, ValueError):
             pass
     return retry_delay * (2**attempt)

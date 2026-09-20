@@ -1137,6 +1137,35 @@ def test_owned_json_post_honors_http_date_and_malformed_retry_after(
 
 
 @pytest.mark.allow_network
+def test_owned_json_post_caps_provider_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider's Retry-After is honoured only up to a bounded cap.
+
+    api_base_url is user-configurable for every hosted provider, so a
+    misbehaving or hostile endpoint can name any delay; the engine's worker
+    must never sleep it in full (Stop cancels the task but cannot interrupt
+    the thread). TASK-32853 pins the cap the 2026-09-17 review asked for.
+    """
+    sleeps: list[float] = []
+    monkeypatch.setattr(hosted_chat.time, "sleep", sleeps.append)
+    with _scripted_hosted_server(
+        [
+            {"status": 503, "headers": {"Retry-After": "99999999"}},
+            {"body": b'{"ok":true}'},
+        ]
+    ) as (_server, base_url):
+        result = owned_json_post(
+            config=_transport_config(base_url, retries=1, retry_delay=0.25),
+            route="chat/completions",
+            payload={},
+            streaming=False,
+        )
+
+    assert result == {"ok": True}
+    assert len(sleeps) == 1
+    assert sleeps[0] == pytest.approx(60.0)
+
+
+@pytest.mark.allow_network
 def test_sensitive_request_forces_transport_retries_to_zero() -> None:
     with _scripted_hosted_server([{"status": 503}, {"body": b'{"ok":true}'}]) as (
         server,
