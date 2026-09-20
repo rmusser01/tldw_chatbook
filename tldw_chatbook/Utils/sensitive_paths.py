@@ -204,7 +204,7 @@ track is the real answer for shell execution.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Iterable, Literal, NamedTuple
 
 from loguru import logger
 
@@ -643,6 +643,45 @@ def resolve_sensitive_context() -> SensitivePathContext:
             if p is not None
         ),
     )
+
+
+def merge_sensitive_context(
+    base: SensitivePathContext,
+    *,
+    extra_files: Iterable[Path] = (),
+    extra_dirs: Iterable[Path] = (),
+) -> SensitivePathContext:
+    """Fold per-workspace user exclusions into a per-call context snapshot.
+
+    The workspace-exclusions injection point (spec 2026-09-20): extras join
+    ``files``/``dirs`` resolved and deduped by the denylist's own
+    ``_compare_key`` discipline, so ``is_sensitive_path``,
+    ``sensitive_exclusions_under``, and ``refuses_new_directory_chain``
+    enforce them with no further call-site changes. Unresolvable extras are
+    kept only if they resolve; entries that fail resolution are dropped
+    exactly like the base set's own unresolved entries.
+    """
+    files = list(base.files)
+    dirs = list(base.dirs)
+    seen_files = {_compare_key(p) for p in files}
+    seen_dirs = {_compare_key(p) for p in dirs}
+    for raw in extra_files:
+        resolved = _resolved(str(raw))
+        if resolved is None:
+            continue
+        key = _compare_key(resolved)
+        if key not in seen_files:
+            seen_files.add(key)
+            files.append(resolved)
+    for raw in extra_dirs:
+        resolved = _resolved(str(raw))
+        if resolved is None:
+            continue
+        key = _compare_key(resolved)
+        if key not in seen_dirs and key not in seen_files:
+            seen_dirs.add(key)
+            dirs.append(resolved)
+    return base._replace(files=tuple(files), dirs=tuple(dirs))
 
 
 def _compare_key(path: Path) -> tuple[str, ...]:
