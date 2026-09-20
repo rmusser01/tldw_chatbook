@@ -26,7 +26,8 @@ invariants in the plan:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -114,7 +115,9 @@ def _script(
     return script_id
 
 
-def _delete_watchlist_bypassing_cascade(subs_db: SubscriptionsDB, watchlist_id: int) -> None:
+def _delete_watchlist_bypassing_cascade(
+    subs_db: SubscriptionsDB, watchlist_id: int
+) -> None:
     """Delete a watchlist WITHOUT cascading its briefings.
 
     `briefings.watchlist_id` carries a real `ON DELETE CASCADE` foreign key
@@ -192,7 +195,9 @@ def test_an_empty_briefing_is_refused_not_kept(tmp_path: Path, body) -> None:
 # --- First keep: denormalized fields + provenance ----------------------------
 
 
-def test_keep_creates_a_new_kept_briefing_with_denormalized_fields(tmp_path: Path) -> None:
+def test_keep_creates_a_new_kept_briefing_with_denormalized_fields(
+    tmp_path: Path,
+) -> None:
     subs_db = _subs_db(tmp_path)
     chacha_db = _chacha_db(tmp_path)
     try:
@@ -265,9 +270,8 @@ def test_keep_survives_a_racing_create_kept_briefing_conflict(
     `ConflictError` from it is unambiguous) and must land as a friendly
     re-keep result, not a raw exception.
 
-    Forced deterministically rather than with real threads: the kept row
-    is pre-created directly via `chacha_db.create_kept_briefing` (exactly
-    what "another caller won the race" would have done), then this
+    Forced deterministically rather than with real threads: another keep
+    first creates a compatible snapshot, then this
     briefing's *first* `get_kept_briefing_by_source` call within the
     `keep_briefing` call below is monkeypatched to still report `None` --
     reproducing the exact TOCTOU window a real race would hit -- so the
@@ -280,12 +284,9 @@ def test_keep_survives_a_racing_create_kept_briefing_conflict(
         watchlist_id = _watchlist(subs_db, name="Tech Watch")
         briefing_id = _complete_briefing(subs_db, watchlist_id)
 
-        raced_kept_id = chacha_db.create_kept_briefing(
-            source_briefing_id=briefing_id,
-            watchlist_name="Tech Watch",
-            body_markdown="# Digest\n\nAnother caller already kept this.\n",
-            origin="scheduled",
-        )
+        raced_kept_id = keep_briefing(
+            subs_db, chacha_db, briefing_id, origin="scheduled"
+        )["kept_id"]
 
         real_lookup = chacha_db.get_kept_briefing_by_source
         calls = {"n": 0}
@@ -340,15 +341,11 @@ def test_copy_missing_scripts_survives_a_racing_create_kept_script_conflict(
     try:
         watchlist_id = _watchlist(subs_db, name="Tech Watch")
         briefing_id = _complete_briefing(subs_db, watchlist_id)
+        kept_id = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")[
+            "kept_id"
+        ]
         raced_script_id = _script(subs_db, briefing_id, preset_name="Duo")
         other_script_id = _script(subs_db, briefing_id, preset_name="Solo")
-
-        kept_id = chacha_db.create_kept_briefing(
-            source_briefing_id=briefing_id,
-            watchlist_name="Tech Watch",
-            body_markdown="# Digest\n\nSomething happened this week.\n",
-            origin="manual",
-        )
         # "Another caller" already copied `raced_script_id` first.
         chacha_db.create_kept_script(
             kept_id,
@@ -484,8 +481,7 @@ def test_all_briefing_scripts_walks_every_page(
         watchlist_id = _watchlist(subs_db)
         briefing_id = _complete_briefing(subs_db, watchlist_id)
         script_ids = [
-            _script(subs_db, briefing_id, preset_name=f"Preset {i}")
-            for i in range(5)
+            _script(subs_db, briefing_id, preset_name=f"Preset {i}") for i in range(5)
         ]
 
         result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
@@ -597,7 +593,7 @@ def test_watchlist_name_falls_back_when_watchlist_already_gone(tmp_path: Path) -
 
 def test_to_chacha_datetime_attaches_utc_to_a_naive_string() -> None:
     assert _to_chacha_datetime("2026-01-15 10:30:00") == (
-        datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc).isoformat()
+        datetime(2026, 1, 15, 10, 30, tzinfo=UTC).isoformat()
     )
 
 
@@ -635,7 +631,7 @@ def test_kept_briefing_original_created_at_round_trips_as_tz_aware_utc(
         result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
         kept = chacha_db.get_kept_briefing(result["kept_id"])
 
-        assert kept["original_created_at"] == naive.replace(tzinfo=timezone.utc)
+        assert kept["original_created_at"] == naive.replace(tzinfo=UTC)
         assert kept["original_created_at"].tzinfo is not None
     finally:
         chacha_db.close_connection()
@@ -658,7 +654,7 @@ def test_kept_script_original_created_at_round_trips_as_tz_aware_utc(
         result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
         kept_script = chacha_db.list_kept_scripts(result["kept_id"])[0]
 
-        assert kept_script["original_created_at"] == naive.replace(tzinfo=timezone.utc)
+        assert kept_script["original_created_at"] == naive.replace(tzinfo=UTC)
     finally:
         chacha_db.close_connection()
 
@@ -680,6 +676,272 @@ def test_kept_briefing_covers_from_ts_round_trips_when_naive(tmp_path: Path) -> 
         result = keep_briefing(subs_db, chacha_db, briefing_id, origin="manual")
         kept = chacha_db.get_kept_briefing(result["kept_id"])
 
-        assert kept["covers_from_ts"] == datetime(2026, 7, 25, 0, 0, tzinfo=timezone.utc)
+        assert kept["covers_from_ts"] == datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
     finally:
         chacha_db.close_connection()
+
+
+@pytest.mark.parametrize("raced", [False, True], ids=["existing", "create-race"])
+def test_keep_conflict_does_not_attach_scripts_to_imported_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raced: bool
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        live = _complete_briefing(subs, _watchlist(subs), body="# Local report")
+        _script(subs, live, preset_name="Local cast")
+        saved_id = kept.create_kept_briefing(
+            source_briefing_id=live,
+            watchlist_name="Imported Watchlist",
+            body_markdown="# Different imported report",
+            origin="manual",
+        )
+        kept.create_kept_script(
+            saved_id,
+            source_script_id=None,
+            preset_name="Imported cast",
+            roster_snapshot_json="[]",
+            turns_json="[]",
+        )
+        before = (kept.get_kept_briefing(saved_id), kept.list_kept_scripts(saved_id))
+        if raced:
+            real_lookup = kept.get_kept_briefing_by_source
+            lookups = 0
+
+            def first_lookup_reports_absent(source_id: int):
+                nonlocal lookups
+                lookups += 1
+                return None if lookups == 1 else real_lookup(source_id)
+
+            monkeypatch.setattr(
+                kept, "get_kept_briefing_by_source", first_lookup_reports_absent
+            )
+        with pytest.raises(KeepRefused, match="conflict"):
+            keep_briefing(subs, kept, live, origin="manual")
+        assert (
+            kept.get_kept_briefing(saved_id),
+            kept.list_kept_scripts(saved_id),
+        ) == before
+        if raced:
+            assert lookups == 2  # The real UNIQUE failure reached the fallback.
+    finally:
+        kept.close_connection()
+        subs.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("body_markdown", "# Revised body"),
+        ("created_at", "2025-01-01 00:00:00"),
+        ("covers_from_ts", "2025-01-01 00:00:00"),
+        ("covers_through_item_id", 99),
+        ("selection_mode", "recent"),
+        ("model_used", "different-model"),
+        ("item_count", 6),
+        ("featured_count", 3),
+        ("overflow_count", 1),
+    ],
+)
+def test_keep_rejects_changed_content_without_mutating_saved_copy(
+    tmp_path: Path, field: str, changed: str | int
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        live = _complete_briefing(subs, _watchlist(subs))
+        _script(subs, live, preset_name="Original cast")
+        saved_id = keep_briefing(subs, kept, live, origin="manual")["kept_id"]
+        before = (kept.get_kept_briefing(saved_id), kept.list_kept_scripts(saved_id))
+        if field == "created_at":
+            with subs.transaction() as conn:
+                conn.execute(
+                    "UPDATE briefings SET created_at = ? WHERE id = ?", (changed, live)
+                )
+        else:
+            subs.update_briefing(live, **{field: changed})
+        _script(subs, live, preset_name="Later cast")
+
+        with pytest.raises(KeepRefused, match="conflict"):
+            keep_briefing(subs, kept, live, origin="scheduled")
+        assert (
+            kept.get_kept_briefing(saved_id),
+            kept.list_kept_scripts(saved_id),
+        ) == before
+    finally:
+        kept.close_connection()
+        subs.close()
+
+
+@pytest.mark.parametrize(
+    "timestamp", ["2026-07-25 00:00:00", "2026-07-25T05:00:00+05:00"]
+)
+def test_compatible_rekeep_normalizes_instants_and_counts_preserving_provenance(
+    tmp_path: Path, timestamp: str
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        watchlist_id = _watchlist(subs, name="Original Watchlist")
+        live = _complete_briefing(
+            subs,
+            watchlist_id,
+            covers_from_ts="2026-07-25T00:00:00Z",
+            item_count=0,
+            featured_count=0,
+            overflow_count=0,
+        )
+        with subs.transaction() as conn:
+            conn.execute(
+                "UPDATE briefings SET created_at = ? WHERE id = ?",
+                ("2026-07-25T00:00:00Z", live),
+            )
+        saved_id = keep_briefing(subs, kept, live, origin="manual")["kept_id"]
+        before = kept.get_kept_briefing(saved_id)
+        with subs.transaction() as conn:
+            conn.execute(
+                "UPDATE watchlists SET name = ? WHERE id = ?",
+                ("Renamed Watchlist", watchlist_id),
+            )
+            conn.execute(
+                "UPDATE briefings SET created_at = ?, covers_from_ts = ?, item_count = NULL, featured_count = NULL, overflow_count = NULL WHERE id = ?",
+                (timestamp, timestamp, live),
+            )
+        new_script = _script(subs, live)
+
+        result = keep_briefing(subs, kept, live, origin="scheduled")
+        assert result == {"kept_id": saved_id, "created": False, "scripts_added": 1}
+        assert kept.get_kept_briefing(saved_id) == before
+        assert kept.kept_script_source_ids(saved_id) == {new_script}
+    finally:
+        kept.close_connection()
+        subs.close()
+
+
+def test_keep_rolls_back_parent_and_scripts_if_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        live = _complete_briefing(subs, _watchlist(subs))
+        _script(subs, live, preset_name="First")
+        _script(subs, live, preset_name="Second")
+        real_create = kept.create_kept_script
+        calls = 0
+
+        def fail_second_copy(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("script copy failed")
+            return real_create(*args, **kwargs)
+
+        monkeypatch.setattr(kept, "create_kept_script", fail_second_copy)
+        with pytest.raises(RuntimeError, match="script copy failed"):
+            keep_briefing(subs, kept, live, origin="manual")
+        assert calls == 2
+        assert kept.list_kept_briefings() == []
+        assert (
+            kept.execute_query("SELECT COUNT(*) FROM kept_scripts").fetchone()[0] == 0
+        )
+    finally:
+        kept.close_connection()
+        subs.close()
+
+
+def test_keep_parent_and_scripts_share_one_source_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    writer = SubscriptionsDB(tmp_path / "subs.db", "concurrent-writer")
+    try:
+        live = _complete_briefing(subs, _watchlist(subs), body="# Original report")
+        original_script = _script(subs, live, preset_name="Original cast")
+        real_get = subs.get_briefing
+
+        def read_then_commit_new_revision(briefing_id: int):
+            original = real_get(briefing_id)
+            writer.update_briefing(live, body_markdown="# Revised report")
+            _script(writer, live, preset_name="Revised cast")
+            return original
+
+        monkeypatch.setattr(subs, "get_briefing", read_then_commit_new_revision)
+        result = keep_briefing(subs, kept, live, origin="manual")
+        assert (
+            kept.get_kept_briefing(result["kept_id"])["body_markdown"]
+            == "# Original report"
+        )
+        assert result["scripts_added"] == 1
+        assert kept.kept_script_source_ids(result["kept_id"]) == {original_script}
+        assert real_get(live)["body_markdown"] == "# Revised report"
+    finally:
+        kept.close_connection()
+        writer.close()
+        subs.close()
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["managed", "native"])
+@pytest.mark.parametrize("conflict", [False, True], ids=["success", "refusal"])
+def test_keep_preserves_caller_transaction_ownership(
+    tmp_path: Path, native: bool, conflict: bool
+) -> None:
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        watchlist_id = _watchlist(subs, name="Before caller transaction")
+        live = _complete_briefing(subs, watchlist_id)
+        if conflict:
+            kept.create_kept_briefing(
+                source_briefing_id=live,
+                watchlist_name="Imported",
+                body_markdown="# Unrelated report",
+                origin="manual",
+            )
+        before = kept.list_kept_briefings()
+        source_connection = subs.conn
+        kept_connection = kept.get_connection()
+        with (
+            pytest.raises(RuntimeError, match="owner rollback"),
+            ExitStack() as stack,
+        ):
+            if native:
+                source_connection.execute("BEGIN")
+                stack.callback(source_connection.rollback)
+                kept_connection.execute("BEGIN IMMEDIATE")
+                stack.callback(kept_connection.rollback)
+            else:
+                stack.enter_context(subs.transaction())
+                stack.enter_context(kept.transaction(immediate=True))
+            source_connection.execute(
+                "UPDATE watchlists SET name = ? WHERE id = ?",
+                ("Caller change", watchlist_id),
+            )
+            kept.create_kept_briefing(
+                source_briefing_id=999,
+                watchlist_name="Caller addition",
+                body_markdown="# Caller-owned work",
+                origin="manual",
+            )
+            if conflict:
+                with pytest.raises(KeepRefused, match="conflict"):
+                    keep_briefing(subs, kept, live, origin="manual")
+            else:
+                assert keep_briefing(subs, kept, live, origin="manual")["created"]
+            assert source_connection.in_transaction
+            assert kept_connection.in_transaction
+            assert kept.get_kept_briefing_by_source(999) is not None
+            raise RuntimeError("owner rollback")
+        assert kept.list_kept_briefings() == before
+        assert (
+            source_connection.execute(
+                "SELECT name FROM watchlists WHERE id = ?", (watchlist_id,)
+            ).fetchone()["name"]
+            == "Before caller transaction"
+        )
+        assert not source_connection.in_transaction
+        assert not kept_connection.in_transaction
+    finally:
+        kept.close_connection()
+        subs.close()
