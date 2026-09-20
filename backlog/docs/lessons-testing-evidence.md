@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## DOM presence outlives an inspector form's ownership
+
+**TASK-32823, 2026-09-20.** The saved MCP refresh prototype cleared a preview
+and then awaited child removal. A controlled mint completed in that interval:
+the old form was still queryable and the replacement tool had the same identity,
+so a stale preview was published. A completed-close test missed this boundary.
+The regression now holds removal open and releases the mint inside that window.
+Synchronous form-owner invalidation closes publication before teardown begins.
+A second reproduction showed that a new form failing profile validation must
+still retire the previous worker before returning Unavailable. See the thirteen
+cases in `Tests/UI/test_mcp_inspector_catalog_refresh.py`.
+
 ## A completed catalog read can still block backup maintenance
 
 **PR #2754 / TASK-32870, 2026-09-20.** Artifact snapshot and mounted-reader tests

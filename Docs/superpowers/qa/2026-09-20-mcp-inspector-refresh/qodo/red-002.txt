@@ -1,0 +1,217 @@
+FFF...                                                                   [100%]
+=================================== FAILURES ===================================
+___ test_equal_catalog_refresh_replaces_changed_permission_facts[effective] ____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_equal_catalog_refresh_replaces_changed_permission_facts[effective] ____
+E
+E   request = <FixtureRequest for <Coroutine test_equal_catalog_refresh_replaces_changed_permission_facts[effective]>>
+E   change = 'effective'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("change", ["effective", "arg_rules", "session_approvals"])
+E       @private_profile_test
+E       async def test_equal_catalog_refresh_replaces_changed_permission_facts(request, change):
+E           """An equal definition cannot retain obsolete policy facts or test controls."""
+E           app = InspectorApp()
+E           async with app.run_test(size=(100, 60)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               context = PermissionProfileContext("default", 1, "policy", 1)
+E               facts = {
+E                   "effective": EffectiveToolState(state="ask", origin="server_default"),
+E                   "arg_rules": (),
+E                   "session_approvals": (),
+E               }
+E               await inspector.show_tool(tool, profile_context=context, **facts)
+E               await inspector.open_test_panel()
+E               retired_token = inspector.test_panel_token
+E               facts[change] = {
+E                   "effective": EffectiveToolState(state="deny", origin="tool_override"),
+E                   "arg_rules": ({"rule_id": "r1", "args_json": '{"query":"current"}'},),
+E                   "session_approvals": ((tool.server_key, tool.name),),
+E               }[change]
+E               await inspector.show_tool(
+E                   replace(tool), profile_context=context, refresh_from=tool, **facts
+E               )
+E               await pilot.pause()
+E               assert retired_token is not None
+E   >           assert inspector.test_panel_token is None
+E   E           AssertionError: assert <object object at 0x11f2ffb20> is None
+E   E            +  where <object object at 0x11f2ffb20> = MCPInspector(id='mcp-inspector', classes='ds-inspector').test_panel_token
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:53: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 10:32:15.080 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 10:32:15.107 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 10:32:15.115 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 10:32:15.118 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   - generated xml file: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[effective]
+E   1 failed in 1.91s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 10:32:13.274 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 10:32:13.301 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 10:32:13.308 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 10:32:13.311 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+___ test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules] ____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules] ____
+E
+E   request = <FixtureRequest for <Coroutine test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]>>
+E   change = 'arg_rules'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("change", ["effective", "arg_rules", "session_approvals"])
+E       @private_profile_test
+E       async def test_equal_catalog_refresh_replaces_changed_permission_facts(request, change):
+E           """An equal definition cannot retain obsolete policy facts or test controls."""
+E           app = InspectorApp()
+E           async with app.run_test(size=(100, 60)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               context = PermissionProfileContext("default", 1, "policy", 1)
+E               facts = {
+E                   "effective": EffectiveToolState(state="ask", origin="server_default"),
+E                   "arg_rules": (),
+E                   "session_approvals": (),
+E               }
+E               await inspector.show_tool(tool, profile_context=context, **facts)
+E               await inspector.open_test_panel()
+E               retired_token = inspector.test_panel_token
+E               facts[change] = {
+E                   "effective": EffectiveToolState(state="deny", origin="tool_override"),
+E                   "arg_rules": ({"rule_id": "r1", "args_json": '{"query":"current"}'},),
+E                   "session_approvals": ((tool.server_key, tool.name),),
+E               }[change]
+E               await inspector.show_tool(
+E                   replace(tool), profile_context=context, refresh_from=tool, **facts
+E               )
+E               await pilot.pause()
+E               assert retired_token is not None
+E   >           assert inspector.test_panel_token is None
+E   E           AssertionError: assert <object object at 0x113d17b20> is None
+E   E            +  where <object object at 0x113d17b20> = MCPInspector(id='mcp-inspector', classes='ds-inspector').test_panel_token
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:53: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 10:32:17.990 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 10:32:18.016 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 10:32:18.023 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 10:32:18.026 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   - generated xml file: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]
+E   1 failed in 1.90s
+_ test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals] _
+E
+E   request = <FixtureRequest for <Coroutine test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]>>
+E   change = 'session_approvals'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("change", ["effective", "arg_rules", "session_approvals"])
+E       @private_profile_test
+E       async def test_equal_catalog_refresh_replaces_changed_permission_facts(request, change):
+E           """An equal definition cannot retain obsolete policy facts or test controls."""
+E           app = InspectorApp()
+E           async with app.run_test(size=(100, 60)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               context = PermissionProfileContext("default", 1, "policy", 1)
+E               facts = {
+E                   "effective": EffectiveToolState(state="ask", origin="server_default"),
+E                   "arg_rules": (),
+E                   "session_approvals": (),
+E               }
+E               await inspector.show_tool(tool, profile_context=context, **facts)
+E               await inspector.open_test_panel()
+E               retired_token = inspector.test_panel_token
+E               facts[change] = {
+E                   "effective": EffectiveToolState(state="deny", origin="tool_override"),
+E                   "arg_rules": ({"rule_id": "r1", "args_json": '{"query":"current"}'},),
+E                   "session_approvals": ((tool.server_key, tool.name),),
+E               }[change]
+E               await inspector.show_tool(
+E                   replace(tool), profile_context=context, refresh_from=tool, **facts
+E               )
+E               await pilot.pause()
+E               assert retired_token is not None
+E   >           assert inspector.test_panel_token is None
+E   E           AssertionError: assert <object object at 0x115e4bb20> is None
+E   E            +  where <object object at 0x115e4bb20> = MCPInspector(id='mcp-inspector', classes='ds-inspector').test_panel_token
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:53: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 10:32:20.850 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 10:32:20.879 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 10:32:20.886 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 10:32:20.890 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   - generated xml file: /private/tmp/32823-qodo-red-profile-002/test_equal_catalog_refresh_rep2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]
+E   1 failed in 1.92s
+----------- generated xml file: /private/tmp/32823-qodo-red-002.xml ------------
+============================= slowest 25 durations =============================
+2.78s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]
+2.77s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]
+2.76s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[effective]
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[effective]
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]
+3 failed, 3 passed, 13 deselected in 10.44s

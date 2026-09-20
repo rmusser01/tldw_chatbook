@@ -1,5 +1,38 @@
 # MCP component review
 
+## Current checkpoint — PR2757 approved closeout
+
+The owner approved [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757)
+and its eight-capture gallery. Conflict-free rebases include current dev
+`6e9e94c794`; MCP product code, styles and native source hashes remain unchanged.
+[All 13 catalog-refresh regressions pass again](../qa/2026-09-20-mcp-inspector-refresh/approved-integration.json).
+Qodo review, current-head CI and final live-dev/merge-tree verification remain
+before the authorized merge. [Qodo follow-up](../qa/2026-09-20-mcp-inspector-refresh/qodo/README.md)
+now includes changed permission facts in refresh equality, completes API docs
+and verifies the real mount boundary. All 316 current-source targeted cases
+and the fresh native journey pass; approved visuals differ only by caret blink.
+Remaining component scope is unchanged.
+Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2730 merged; inspector refresh resumed
+
+[PR2730](https://github.com/rmusser01/tldw_chatbook/pull/2730) merged at
+`802809947b0161f9d589d73412fb497516a87f27` after owner visual approval,
+current-head CI and resolved Qodo review. Its actual tree matches the verified
+head. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2730-closeout.json).
+
+[Draft PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) resumes
+saved TASK-32823 on a fresh branch from that merge. Selected MCP
+inspector details now follow catalog changes while equal definitions retain
+argument drafts, cursor, focus and previews. Synchronous form ownership rejects
+late previews during teardown; newer selection and focus win. [475 targeted
+passes, one reproduced Workflows baseline failure, seven guards, independent
+review and eight inspected native captures](../qa/2026-09-20-mcp-inspector-refresh/README.md)
+qualify this bounded follow-up. Its own current-head CI/Qodo and final visual
+approval remain before merge. Compact/long-path presentation, connected-runtime
+journeys and remaining screens stay open. PR2707's heartbeat remains paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2730 approved closeout
 
 The owner approved PR2730’s Console gallery and merge. Its rebase onto current
