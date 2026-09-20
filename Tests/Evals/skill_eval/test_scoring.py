@@ -79,3 +79,23 @@ def test_build_report_degrades_confidence_when_judge_failed():
 
 def test_confidence_labels_by_depth():
     assert CONFIDENCE_BY_DEPTH[SkillEvalDepth.DEEP] == "Certified"
+
+
+# Self-review pins (beyond the brief): SkillEvalDepth is a str-mixin Enum, so
+# `depth >= SkillEvalDepth.X` compares string values lexicographically and
+# inverts the intended depth ordering. build_report must rank depths explicitly.
+def test_quick_depth_emits_no_layer_warnings():
+    static = _static()
+    report = build_report({"name": "s"}, SkillEvalDepth.QUICK, static, None, None)
+    assert report.warnings == ()
+    assert report.confidence == "Estimated"
+
+
+def test_deep_not_certified_when_judge_failed_even_with_sim():
+    static = _static()
+    failed = JudgeLayerResult(rubrics={}, artifacts=(), failed=("all",))
+    sim = SimLayerResult(activation=0.5)
+    report = build_report({"name": "s"}, SkillEvalDepth.DEEP, static, failed, sim)
+    assert report.confidence == "Assessed"
+    assert any("judge" in w for w in report.warnings)
+    assert not any("simulation" in w for w in report.warnings)

@@ -56,6 +56,14 @@ _DEGRADED = {
     SkillEvalDepth.DEEP: "Assessed",
 }
 
+# SkillEvalDepth is a str-mixin Enum: >= compares the string values
+# lexicographically, so depth checks must use an explicit rank instead.
+_DEPTH_RANK = {
+    SkillEvalDepth.QUICK: 0,
+    SkillEvalDepth.STANDARD: 1,
+    SkillEvalDepth.DEEP: 2,
+}
+
 _GRADE_BANDS = ((97, "A+"), (93, "A"), (90, "A-"), (87, "B+"), (83, "B"),
                 (80, "B-"), (77, "C+"), (73, "C"), (70, "C-"), (67, "D+"),
                 (63, "D"), (60, "D-"))
@@ -142,11 +150,11 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
 
     conf = CONFIDENCE_BY_DEPTH[depth]
     warns = list(warnings)
-    if depth >= SkillEvalDepth.STANDARD and not judge_usable:
+    if _DEPTH_RANK[depth] >= _DEPTH_RANK[SkillEvalDepth.STANDARD] and not judge_usable:
         conf = _DEGRADED[depth]
         warns.append("judge layer unavailable; scores renormalized to deeper "
                      "intact layers only")
-    if depth >= SkillEvalDepth.DEEP and not sim_usable:
+    if _DEPTH_RANK[depth] >= _DEPTH_RANK[SkillEvalDepth.DEEP] and not sim_usable:
         conf = _DEGRADED[depth]
         warns.append("simulation layer unavailable; scores renormalized without it")
 
