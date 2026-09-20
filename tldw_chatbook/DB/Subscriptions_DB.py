@@ -31,12 +31,24 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
+from typing import (
+    Iterator,
+    List,
+    Dict,
+    Any,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    Union,
+)
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party Libraries
 from loguru import logger
+
 
 # Local Imports
 from tldw_chatbook.Backup_Recovery.participants import (
@@ -57,15 +69,25 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.fts5_match_forms import quote_fts5_token
 
 if TYPE_CHECKING:
-    from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+    from tldw_chatbook.Library.library_artifacts_state import (
+        ArtifactKey,
+        ArtifactOrderKey,
+        ArtifactScope,
+        ArtifactSourceWindow,
+        ArtifactSummary,
+        ReadDirection,
+    )
+
+    from ..Subscriptions.watchlist_item_page import (
+        WatchlistItemCursor,
+        WatchlistItemPage,
+    )
 
 
 _CURRENT_SCHEMA_VERSION = 2
 _AGENT_NAME_ORDER_PREFIX_CHARS = 96
 
-INTERRUPTED_RUN_ERROR = (
-    "Interrupted: the application stopped before this run finished."
-)
+INTERRUPTED_RUN_ERROR = "Interrupted: the application stopped before this run finished."
 INTERRUPTED_BRIEFING_ERROR = "interrupted"
 
 _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH = (
@@ -681,7 +703,10 @@ class SubscriptionsDB(BaseDB):
                 ]
                 if versions != [_CURRENT_SCHEMA_VERSION]:
                     raise SubscriptionsDBUnavailableError()
-                for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
+                for (
+                    table,
+                    required_columns,
+                ) in self._AGENT_READ_REQUIRED_COLUMNS.items():
                     columns = {
                         row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
                     }
@@ -3348,7 +3373,10 @@ class SubscriptionsDB(BaseDB):
             snapshot_max_item_id=snapshot_max_item_id,
             after=after,
         )
-        from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+        from ..Subscriptions.watchlist_item_page import (
+            WatchlistItemCursor,
+            WatchlistItemPage,
+        )
 
         with self.transaction() as conn:
             # `transaction()` preserves nested write ownership but does not
@@ -3494,7 +3522,7 @@ class SubscriptionsDB(BaseDB):
                 FROM subscription_items i
                 {search_join}
                 JOIN subscriptions s ON i.subscription_id = s.id
-                {self._reader_where_clause([*predicates, 'i.id > ?'])}
+                {self._reader_where_clause([*predicates, "i.id > ?"])}
                 """,
                 tuple([*params, snapshot_max_item_id]),
             ).fetchone()
@@ -4193,7 +4221,7 @@ class SubscriptionsDB(BaseDB):
             return conn.execute(
                 f"""
                 SELECT {columns} FROM briefing_items
-                WHERE {' AND '.join(predicates)}
+                WHERE {" AND ".join(predicates)}
                 ORDER BY {position_column} IS NULL, {position_column}, item_id
                 LIMIT ?
                 """,
@@ -4261,9 +4289,7 @@ class SubscriptionsDB(BaseDB):
             run_params.extend(
                 (after_created_at, after_created_at, after_kind, after_kind, after_id)
             )
-        run_where = (
-            f"WHERE {' AND '.join(run_predicates)}" if run_predicates else ""
-        )
+        run_where = f"WHERE {' AND '.join(run_predicates)}" if run_predicates else ""
         briefing_predicates: List[str] = [
             "typeof(b.created_at) = 'text'",
             "length(b.created_at) <= 128",
@@ -5194,6 +5220,151 @@ class SubscriptionsDB(BaseDB):
                 "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
             ).fetchone()
             return dict(published)
+
+    @_core_transaction
+    @contextmanager
+    def artifact_read_snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Borrow an active transaction or own one deferred artifact read snapshot.
+
+        Nested legacy read methods must not finish the caller's native transaction.
+        The source lifecycle guard remains held until the snapshot exits.
+        """
+        connection = self.conn
+        if connection.in_transaction:
+            depth = getattr(self._local, "transaction_depth", 0)
+            self._local.transaction_depth = depth + 1
+            try:
+                yield connection
+            finally:
+                self._local.transaction_depth = depth
+            return
+        with self.transaction() as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN DEFERRED")
+            yield connection
+
+    def _artifact_metadata_query(self, scope: "ArtifactScope") -> tuple[str, tuple]:
+        """Build this owner's metadata-only projection and shared search predicate."""
+        title = "COALESCE(NULLIF(TRIM(w.name), ''), 'Untitled report')"
+        order = (
+            f"LOWER({title})"
+            if scope.sort == "title"
+            else "COALESCE(-CAST(strftime('%s', b.created_at) AS INTEGER), 9223372036854775807)"
+        )
+        admitted = scope.view in ("reports", "all") and not scope.kept_only
+        query = f"""SELECT b.id, {title} AS title, b.status AS status,
+                       b.updated_at AS revision_time, b.created_at AS created_at,
+                       {order} AS order_value
+                    FROM briefings b JOIN watchlists w ON w.id = b.watchlist_id
+                    WHERE ? AND instr(LOWER({title}), LOWER(?)) > 0"""
+        return query, (int(admitted), scope.query)
+
+    def read_artifact_window(
+        self,
+        scope: "ArtifactScope",
+        *,
+        boundary: "ArtifactOrderKey | None",
+        direction: "ReadDirection",
+        limit: int,
+        inclusive: bool = False,
+    ) -> "ArtifactSourceWindow":
+        """Read a bounded metadata window and exact ranks in one owner snapshot.
+
+        Args:
+            scope: Metadata filter and sort.
+            boundary: Global namespaced cursor, or the requested end of inventory.
+            direction: Read nearest rows after or before the boundary.
+            limit: Maximum candidates, an integer from 1 through 20.
+            inclusive: Include the boundary candidate without changing rank counts.
+
+        Returns:
+            Body-free candidates, total matches, and strict-before/equal ranks.
+        """
+        from tldw_chatbook.Library.library_artifacts_state import (
+            ArtifactSourceWindow,
+            report_summary,
+            validate_artifact_window,
+        )
+
+        validate_artifact_window(scope, boundary, direction, limit, inclusive)
+        projection, params = self._artifact_metadata_query(scope)
+        key_sql = "(order_value, 'live_report', id)"
+        with self.artifact_read_snapshot() as connection:
+            if boundary is None:
+                total = connection.execute(
+                    f"WITH metadata AS ({projection}) SELECT COUNT(*) FROM metadata",
+                    params,
+                ).fetchone()[0]
+                before, equal = (total if direction == "before" else 0), 0
+            else:
+                total, before, equal = connection.execute(
+                    f"""WITH metadata AS ({projection})
+                        SELECT COUNT(*), COALESCE(SUM({key_sql} < (?, ?, ?)), 0),
+                            COALESCE(SUM({key_sql} = (?, ?, ?)), 0) FROM metadata""",
+                    (*params, *boundary, *boundary),
+                ).fetchone()
+            predicate, candidates = "", params
+            if boundary is not None:
+                operator = ">" if direction == "after" else "<"
+                if inclusive:
+                    operator += "="
+                predicate = f"WHERE {key_sql} {operator} (?, ?, ?)"
+                candidates = (*params, *boundary)
+            ordering = "ASC" if direction == "after" else "DESC"
+            rows = connection.execute(
+                f"""WITH metadata AS ({projection})
+                    SELECT id, title, status, revision_time, created_at, order_value
+                    FROM metadata {predicate}
+                    ORDER BY order_value {ordering}, id {ordering} LIMIT ?""",
+                (*candidates, limit),
+            ).fetchall()
+            summaries = tuple(report_summary(dict(row), "live_report") for row in rows)
+            if direction == "before":
+                summaries = tuple(reversed(summaries))
+            return ArtifactSourceWindow(summaries, total, before, equal)
+
+    def get_artifact_audio_path(self, key: "ArtifactKey") -> str | None:
+        """Read the latest completed audio path for one selected live report.
+
+        The caller must validate this stored path before touching the filesystem.
+        This query never loads cast scripts or enumerates other reports.
+        """
+        if key.source != "live_report":
+            return None
+        with self.artifact_read_snapshot() as connection:
+            row = connection.execute(
+                """SELECT a.file_path FROM briefing_audio AS a
+                   JOIN briefing_scripts AS s ON s.id = a.script_id
+                   WHERE s.briefing_id = ? AND a.status = 'complete'
+                     AND a.file_path IS NOT NULL
+                   ORDER BY a.id DESC LIMIT 1""",
+                (key.native_id,),
+            ).fetchone()
+            return row[0] if row is not None else None
+
+    def get_artifact_summary(
+        self,
+        scope: "ArtifactScope",
+        key: "ArtifactKey",
+    ) -> "ArtifactSummary | None":
+        """Read one matching identity without fetching report or script content."""
+        from tldw_chatbook.Library.library_artifacts_state import (
+            report_summary,
+            validate_artifact_window,
+        )
+
+        validate_artifact_window(scope, None, "after", 1)
+        if key.source != "live_report":
+            return None
+        projection, params = self._artifact_metadata_query(scope)
+        with self.artifact_read_snapshot() as connection:
+            row = connection.execute(
+                f"""WITH metadata AS ({projection})
+                    SELECT id, title, status, revision_time, created_at, order_value
+                    FROM metadata WHERE id = ?""",
+                (*params, key.native_id),
+            ).fetchone()
+            return report_summary(dict(row), "live_report") if row is not None else None
 
     def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
         """Fetch one `briefings` row by id.
