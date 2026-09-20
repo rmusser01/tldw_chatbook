@@ -1,0 +1,4 @@
+Reviewer: existing mcp_server_action_review agent; two bounded read-only passes.
+Product integration: no blockers. Passive read precedes publication and current-token check, including merged row/profile invalidations. Catalog failure retains approval and sanitized retry guidance. Reader performs no discovery, connection or grant. Parent selection regressions remain intact.
+Runner follow-up: no blockers. Shared validation precedes environment changes, app imports, fixture setup and writes. Returned canonical profile/names/PATH tmux are consumed. Warm-up precedes app construction. Provenance includes the shared parser. Doc contract and seven new entry-point cases are accurate.
+Reviewer ran no apps or tests; current tests and native evidence were executed by the primary agent.

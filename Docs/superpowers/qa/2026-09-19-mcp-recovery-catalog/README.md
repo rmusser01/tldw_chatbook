@@ -1,5 +1,19 @@
 # Reviewed MCP catalog and guidance — TASK-32840
 
+## Current merged-dev integration
+
+PR2727 is merged. This saved follow-up is rebased onto the verified merge
+`ebee42fab8`; [current evidence and exact conflict choices](CURRENT-DEV-REVIEW.md)
+cover 168 distinct targeted passes, seven guards and eight fresh native captures.
+The [current gallery](GALLERY.md) is ready for this PR's own visual review.
+Current-head CI/review and owner approval remain merge gates.
+
+## Historical original draft qualification
+
+The material below describes saved head `dcdeb2e295` before integration.
+Its stacked-base and pending-parent statements are historical. The current
+runner reuses shared CLI validation and the app's supported image warm-up.
+
 After accepting a restored-root review, Servers stayed empty because the
 completion path cleared historical projections without reading the newly
 approved definitions. It now reads the existing passive local catalog once,

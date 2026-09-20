@@ -1,5 +1,24 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2727 merged; PR2728 integrated
+
+[PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at
+`ebee42fab8a7f55def6a03fc7b3301935940eebf` after owner visual approval,
+current-head CI and accumulated review. Concurrent PR2751 changed unrelated
+Chatbook/audio/Evals components during merge. The actual merged app passed all
+85 affected checks and the 16-capture native journey; MCP sources/styles match
+the approved head. [Actual merge receipt](../qa/2026-09-19-mcp-recovery-catalog/integration/pr2727-closeout.json).
+
+Saved PR2728 / TASK-32840 is integrated onto that verified merged state.
+The report conflict retains both histories; the diagnostic inventory was rebuilt
+after reviewing its sole added redacted warning. No product conflict occurred.
+[168 targeted passes, seven guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md)
+qualify passive catalog repopulation and accurate retained-history guidance.
+This PR's own current-head CI/review and final visual approval remain before merge.
+Long-path presentation, inspector refresh, connected-runtime journeys and saved
+Console approval draft PR2730 remain follow-ups. PR2707's heartbeat stays paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2749 merged; PR2727 integrated
 
 [PR2749](https://github.com/rmusser01/tldw_chatbook/pull/2749) merged at

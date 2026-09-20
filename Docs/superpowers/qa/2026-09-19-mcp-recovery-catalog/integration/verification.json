@@ -1,0 +1,29 @@
+{
+  "base": "ebee42fab8a7f55def6a03fc7b3301935940eebf",
+  "rebased_product_head": "0489b76d7d30bbadf636a1bfba2563a848c90558",
+  "distinct_targeted_cases": 168,
+  "product_parent_adjacent_cases": 91,
+  "runner_boundary_cases": 77,
+  "preflight_guards": 7,
+  "native_captures": 8,
+  "inspected_rendered_captures": 8,
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "4d13e8897f8ebf00e85205877c991b005eb3d1b68ee5fa1c63331b816c49bd0d",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "577a0238ec1e88949bc2c32d5c9da4e6dd2b72debcc6373485d68b6d3bac2c24",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c5b7e6787c489adde244144f5c8c924998208a3b0db4bc3e1c94c4e722fac4c1",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "f862601ea8ad2abdccaf9393ccf145dcc0024bcd4fe93ad085deecbc99151b33",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/MCP/recovery_activation.py": "5ec6a9fd3898e1da1a34d4513c0981b8aaf493c11f8848a202101fca337f66d1",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86"
+  },
+  "runner_sha256": "4ea9ad10e6736b1718ae7c9426e0540ba967194466cfee258f4007c50527f7db",
+  "final_visual_approval": "pending",
+  "current_head_ci_review": "pending",
+  "full_suite_run": false
+}

@@ -1,0 +1,179 @@
+{
+  "normalization": "Text exports trim line-end whitespace only.",
+  "files": [
+    {
+      "source": "/private/tmp/mcp-2728-integrated-001.log",
+      "export": "tests/integrated-001.txt",
+      "source_sha256": "aa28de9de23f25b652f043f57f1981fcba5bfad515d81989d3187379a9a7651e",
+      "export_sha256": "aa28de9de23f25b652f043f57f1981fcba5bfad515d81989d3187379a9a7651e"
+    },
+    {
+      "source": "/private/tmp/mcp-2728-runner-red-001.log",
+      "export": "tests/runner-red-001.txt",
+      "source_sha256": "6d8d56b9b0f0a9010fd3f370322c4e42b930dd3f81728e5a01b757c6fea87bf7",
+      "export_sha256": "7acf90744df58d8389fe6a14f6074e3fd5afdb446e22b3c0be9bfd30534c12d3"
+    },
+    {
+      "source": "/private/tmp/mcp-2728-runner-green-001.log",
+      "export": "tests/runner-green-001.txt",
+      "source_sha256": "93b504a924c201f988cb5b683c3632f3826377a6d09e93d50a50b242c749437b",
+      "export_sha256": "93b504a924c201f988cb5b683c3632f3826377a6d09e93d50a50b242c749437b"
+    },
+    {
+      "source": "/private/tmp/mcp-2728-integrated-cases.txt",
+      "export": "selected-cases.txt",
+      "source_sha256": "dcd545ba19f9df90fc8af51a6b8116812aa6e66496b7025f8a7b5b542622f72d",
+      "export_sha256": "dcd545ba19f9df90fc8af51a6b8116812aa6e66496b7025f8a7b5b542622f72d"
+    },
+    {
+      "source": "/private/tmp/mcp-2728-preflight-001.txt",
+      "export": "preflight.txt",
+      "source_sha256": "0e2f71d45a2020bc260a7efde49b61c164fe3b56817542116c5cc5bcb9c7ad89",
+      "export_sha256": "0e2f71d45a2020bc260a7efde49b61c164fe3b56817542116c5cc5bcb9c7ad89"
+    },
+    {
+      "source": "/private/tmp/mcp-2728-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "d560b05b24d1c07ced75eed4022f6f784be4754847fd6b3107cb870c7c7f4fb3",
+      "export_sha256": "d560b05b24d1c07ced75eed4022f6f784be4754847fd6b3107cb870c7c7f4fb3"
+    },
+    {
+      "source": "/private/tmp/2728-rebase-conflicts.json",
+      "export": "rebase-conflicts.json",
+      "source_sha256": "235b9755fd15f539a8d8e06a6fccb04a881469a46e230815a748ccd0c1adebd6",
+      "export_sha256": "235b9755fd15f539a8d8e06a6fccb04a881469a46e230815a748ccd0c1adebd6"
+    },
+    {
+      "source": "/private/tmp/2728-inventory-diff.txt",
+      "export": "diagnostic-review.txt",
+      "source_sha256": "d21a13ea1f805fc26551a27c5d126dc46347adf823091749cd40ad9c81fce01f",
+      "export_sha256": "d21a13ea1f805fc26551a27c5d126dc46347adf823091749cd40ad9c81fce01f"
+    },
+    {
+      "source": "/private/tmp/2727-closeout-receipt.json",
+      "export": "pr2727-closeout.json",
+      "source_sha256": "1f0f866b905bb7186b41e4c6823a3de7ad59405b87278ff10968f40e606954c7",
+      "export_sha256": "1f0f866b905bb7186b41e4c6823a3de7ad59405b87278ff10968f40e606954c7"
+    },
+    {
+      "source": "/private/tmp/mcp-2727-merged-tests-001.log",
+      "export": "parent-merged-tests.txt",
+      "source_sha256": "aaa5aa030163d009c12812cda94484dab42a2ffcfcfe5df7eabe4700f14bc130",
+      "export_sha256": "aaa5aa030163d009c12812cda94484dab42a2ffcfcfe5df7eabe4700f14bc130"
+    },
+    {
+      "source": "/private/tmp/tldw-2727-merged-native-001/evidence/result.json",
+      "export": "parent-merged-native-result.json",
+      "source_sha256": "d938bc080377180acadf950c3c920b9a8cde67d6b9fc47413b9169a25f4ac2c4",
+      "export_sha256": "d938bc080377180acadf950c3c920b9a8cde67d6b9fc47413b9169a25f4ac2c4"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "b927e5c1d3075c2eb1731bb7eb357bb65516df93cb581c26b03cbdcc60ebc650",
+      "export_sha256": "b927e5c1d3075c2eb1731bb7eb357bb65516df93cb581c26b03cbdcc60ebc650"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-120x40-fresh-defaults.svg",
+      "export": "native/textual-dark-120x40-fresh-defaults.svg",
+      "source_sha256": "47b37dca344807592c63965d162edbff507ab330aa97340f9e6dac922aa2985c",
+      "export_sha256": "4684e98fa2e8bb893b9726f55b01eff728f8e88d99296c7cb312f0b9c02eba04"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-120x40-fresh-defaults.txt",
+      "export": "native/textual-dark-120x40-fresh-defaults.txt",
+      "source_sha256": "80ed12960eee3d7007f6720a4996fe431af5a0f45095568d12011715b7f06ae1",
+      "export_sha256": "80ed12960eee3d7007f6720a4996fe431af5a0f45095568d12011715b7f06ae1"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-120x40-reviewed-server.svg",
+      "export": "native/textual-dark-120x40-reviewed-server.svg",
+      "source_sha256": "f0184140cb08be7fd3f5363e690717f8cd2aa446cdf6ab34e17d15ba6a83b01d",
+      "export_sha256": "14b959fd09f8c29393e9c77532ea9130a396b7919b999821d0a40ecc907b6545"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-120x40-reviewed-server.txt",
+      "export": "native/textual-dark-120x40-reviewed-server.txt",
+      "source_sha256": "456ae5142c0b4ffc030c289fe6d3f6d1bc6f7904901bc3e2a1fb39ba60e24ff1",
+      "export_sha256": "456ae5142c0b4ffc030c289fe6d3f6d1bc6f7904901bc3e2a1fb39ba60e24ff1"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-170x48-fresh-defaults.svg",
+      "export": "native/textual-dark-170x48-fresh-defaults.svg",
+      "source_sha256": "edb0dcf0f6e128a07d9382d3bcf5361c85d943e0b684ba9cf9d8c797ffb55650",
+      "export_sha256": "65770efcb7787ef190baa4272798562e618adbd9cafd1823eba9c5b784f009cc"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-170x48-fresh-defaults.txt",
+      "export": "native/textual-dark-170x48-fresh-defaults.txt",
+      "source_sha256": "cc64dc865ed3f19d47023c0c4b66c552cf02eb8d9553c86caedfb3a0d4849c39",
+      "export_sha256": "cc64dc865ed3f19d47023c0c4b66c552cf02eb8d9553c86caedfb3a0d4849c39"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-170x48-reviewed-server.svg",
+      "export": "native/textual-dark-170x48-reviewed-server.svg",
+      "source_sha256": "b89880daa2853abd390c305ebfe662a2b062b0c3a602dff943d260d89c0b7625",
+      "export_sha256": "399255bc63f31018375e5facc02827359688f7babd0625d588952ff83d91d06f"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-dark-170x48-reviewed-server.txt",
+      "export": "native/textual-dark-170x48-reviewed-server.txt",
+      "source_sha256": "3c6cf9a581c0d90ffdd587488728ec3f3ab2c735a11118115220e7ab5484d031",
+      "export_sha256": "3c6cf9a581c0d90ffdd587488728ec3f3ab2c735a11118115220e7ab5484d031"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-120x40-fresh-defaults.svg",
+      "export": "native/textual-light-120x40-fresh-defaults.svg",
+      "source_sha256": "587ca4366574b674a44bc1e6e51716f38ad2534cdee1afc792d1192e69b51aa4",
+      "export_sha256": "3114fd68b8571a6c44c69cbe4d2de0a119d8f378d7a93d6d6aaaabd89edb6564"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-120x40-fresh-defaults.txt",
+      "export": "native/textual-light-120x40-fresh-defaults.txt",
+      "source_sha256": "90fac1b6936afcbb019a4a65a871b46e6e33cee75f46d7c584c5d22631126a33",
+      "export_sha256": "90fac1b6936afcbb019a4a65a871b46e6e33cee75f46d7c584c5d22631126a33"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-120x40-reviewed-server.svg",
+      "export": "native/textual-light-120x40-reviewed-server.svg",
+      "source_sha256": "dcf05d5607a3b7cc5d55dccc01ea844cfc1760a1642924b8eec0d0e5d83c6b60",
+      "export_sha256": "ed804f3b551e6711d85876294a5079131466c69d3fa36b4bd62e785836d9785a"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-120x40-reviewed-server.txt",
+      "export": "native/textual-light-120x40-reviewed-server.txt",
+      "source_sha256": "a9849b03beaca84fa3cf10793bdb9cd3ecbb7bdab78490143f072f8bab426ed3",
+      "export_sha256": "a9849b03beaca84fa3cf10793bdb9cd3ecbb7bdab78490143f072f8bab426ed3"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-170x48-fresh-defaults.svg",
+      "export": "native/textual-light-170x48-fresh-defaults.svg",
+      "source_sha256": "fc23a12b645d6adfb8eb06537f8636d6915fd21b61c200832404f90347f20fbc",
+      "export_sha256": "f3b4b002ce5e7f5789e29ece2a0ae68e0e39f8d0a8923c42163dadf6afef85ef"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-170x48-fresh-defaults.txt",
+      "export": "native/textual-light-170x48-fresh-defaults.txt",
+      "source_sha256": "cc64dc865ed3f19d47023c0c4b66c552cf02eb8d9553c86caedfb3a0d4849c39",
+      "export_sha256": "cc64dc865ed3f19d47023c0c4b66c552cf02eb8d9553c86caedfb3a0d4849c39"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-170x48-reviewed-server.svg",
+      "export": "native/textual-light-170x48-reviewed-server.svg",
+      "source_sha256": "b7dad952c4fdf0d1695628258dba3f4cc73281e8a822e9173333fbfec37fadae",
+      "export_sha256": "ceb053b092ecd580fec519736dfd9d628a114926ab87e7fba1e5592f11ff6625"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/evidence/textual-light-170x48-reviewed-server.txt",
+      "export": "native/textual-light-170x48-reviewed-server.txt",
+      "source_sha256": "3c6cf9a581c0d90ffdd587488728ec3f3ab2c735a11118115220e7ab5484d031",
+      "export_sha256": "3c6cf9a581c0d90ffdd587488728ec3f3ab2c735a11118115220e7ab5484d031"
+    },
+    {
+      "source": "/private/tmp/tldw-32840-integrated-native-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "ae4647fe05a72f944e73fe9b29a59c7a74f82fc76baeb552e18024ed78982e68",
+      "export_sha256": "ae4647fe05a72f944e73fe9b29a59c7a74f82fc76baeb552e18024ed78982e68"
+    }
+  ]
+}
