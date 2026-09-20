@@ -1,5 +1,19 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2757 merged; compact review next
+
+[PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) merged into dev at
+`62d43190ce3ca21bda0f0ff03e5148971eedc7ca`. Its actual tree equals the verified
+head. Current-head CI passed, including 1,152 Fast Lane tests; 316 local targeted
+checks, native lifecycle, owner visual approval and accumulated review qualify
+the change. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2757-closeout.json).
+TASK-32823 and the matching legacy TASK-235 are closed.
+
+A fresh follow-up branch starts from that merge. Next bounded scope is compact
+MCP action reachability and long-path readability; connected-runtime journeys
+remain separate. No additional screen is declared qualified. PR2707’s heartbeat
+remains paused. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2757 approved closeout
 
 The owner approved [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757)

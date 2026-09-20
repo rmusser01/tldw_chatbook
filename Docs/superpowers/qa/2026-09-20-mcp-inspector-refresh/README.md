@@ -1,6 +1,8 @@
 # Selected MCP inspector catalog refresh — TASK-32823
 
-Saved as [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757).
+[PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) merged into dev at
+`62d43190ce3ca21bda0f0ff03e5148971eedc7ca`. [Closeout receipt](pr2757-closeout.json)
+confirms current-head CI/review and an actual merge tree equal to the verified head.
 
 **Latest qualification:** [Qodo closeout](qodo/README.md) adds policy-input
 currentness, API docs and real-mount coverage: 316 current-source targeted passes
