@@ -46,6 +46,7 @@ from tldw_chatbook.config import (
     current_config_identity,
     get_cli_config_path,
     get_cli_setting,
+    load_cli_config_and_ensure_existence,
     save_setting_to_cli_config,
 )
 from tldw_chatbook.MCP.hub_test_execution import (
@@ -1365,14 +1366,18 @@ class MCPWorkbench(Container):
         service = self._service()
         if self._source == "local":
             self._server_mutations_available = False
+            # task-32804.7 AC#2: one config load for the four [mcp] exposure
+            # flags instead of four storage-admission-scoped get_cli_setting
+            # calls (~20.6 ms on the loop, re-entered from 14 call sites).
+            mcp_cfg = load_cli_config_and_ensure_existence().get("mcp")
+            if not isinstance(mcp_cfg, dict):
+                mcp_cfg = {}
             snapshots.append(
                 builtin_readiness(
-                    enabled=bool(get_cli_setting("mcp", "enabled", False)),
-                    expose_tools=bool(get_cli_setting("mcp", "expose_tools", True)),
-                    expose_resources=bool(
-                        get_cli_setting("mcp", "expose_resources", True)
-                    ),
-                    expose_prompts=bool(get_cli_setting("mcp", "expose_prompts", True)),
+                    enabled=bool(mcp_cfg.get("enabled", False)),
+                    expose_tools=bool(mcp_cfg.get("expose_tools", True)),
+                    expose_resources=bool(mcp_cfg.get("expose_resources", True)),
+                    expose_prompts=bool(mcp_cfg.get("expose_prompts", True)),
                 )
             )
             if service is not None:

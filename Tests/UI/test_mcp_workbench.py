@@ -322,6 +322,11 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
+    )
     app = WorkbenchAppWithBundledCSS()
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -459,6 +464,11 @@ async def test_single_problem_row_is_preselected_on_load(monkeypatch):
         "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
+    )
     app = ProblemRecordsApp([_missing_env_record("docs")])
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -483,6 +493,11 @@ async def test_lone_off_builtin_row_is_preselected_on_fresh_install(monkeypatch)
         mcp_workbench_module,
         "get_cli_setting",
         lambda section, key=None, default=None: default,
+    )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
     )
     app = ProblemRecordsApp([])
     async with app.run_test() as pilot:
@@ -514,6 +529,11 @@ async def test_no_preselection_with_multiple_problems(monkeypatch):
         "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
+    )
     multi = ProblemRecordsApp([_missing_env_record("docs"), _missing_env_record("web")])
     async with multi.run_test() as pilot:
         await pilot.pause()
@@ -532,6 +552,11 @@ async def test_cleared_selection_is_not_re_hijacked_by_later_resync(monkeypatch)
         mcp_workbench_module,
         "get_cli_setting",
         lambda section, key=None, default=None: default,
+    )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
     )
     app = ProblemRecordsApp([_missing_env_record("docs")])
     async with app.run_test() as pilot:
@@ -577,6 +602,11 @@ async def test_restored_all_servers_selection_wins_over_problem_preselect(monkey
         mcp_workbench_module,
         "get_cli_setting",
         lambda section, key=None, default=None: default,
+    )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
     )
     app = RestoreClearApp([_missing_env_record("docs")])
     async with app.run_test() as pilot:
@@ -991,6 +1021,15 @@ async def test_builtin_flag_toggle_saves_setting_and_reloads_catalog(monkeypatch
     monkeypatch.setattr(
         workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
     )
+    # task-32804.7 AC#2: _collect_snapshots now reads the [mcp] exposure flags
+    # via ONE config load (not per-key get_cli_setting), so feed it the same
+    # in-memory `flags` dict -- the reload-reflects-write assertion below still
+    # holds because the lambda returns the live dict fake_save mutates.
+    monkeypatch.setattr(
+        workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {"mcp": flags},
+    )
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1045,6 +1084,15 @@ async def test_builtin_expose_flag_toggle_saves_matching_key(monkeypatch):
     monkeypatch.setattr(workbench_module, "get_cli_setting", fake_get_cli_setting)
     monkeypatch.setattr(
         workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+    # task-32804.7 AC#2: _collect_snapshots now reads the [mcp] exposure flags
+    # via ONE config load (not per-key get_cli_setting), so feed it the same
+    # in-memory `flags` dict -- the reload-reflects-write assertion below still
+    # holds because the lambda returns the live dict fake_save mutates.
+    monkeypatch.setattr(
+        workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {"mcp": flags},
     )
 
     app = WorkbenchApp()
@@ -1934,6 +1982,11 @@ async def test_in_flight_checking_message_includes_time_bound(monkeypatch):
         mcp_workbench_module,
         "get_cli_setting",
         lambda section, key=None, default=None: default,
+    )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
     )
 
     app = LifecycleApp()
@@ -11611,6 +11664,11 @@ async def test_fresh_install_preselection_keeps_overview_on_screen(monkeypatch):
         mcp_workbench_module,
         "get_cli_setting",
         lambda section, key=None, default=None: default,
+    )
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {},  # task-32804.7 AC#2: _collect_snapshots reads defaults
     )
     app = ProblemRecordsApp([])
     async with app.run_test() as pilot:
