@@ -3,6 +3,7 @@
 Date: 2026-09-20
 Status: Draft (pending review)
 Related ADR: ADR-174 (to be created with this design), amends the enforcement seam shared by ADR-101/102; interacts with ADR-028, ADR-069, ADR-079
+Related ADR: ADR-172 (to be created with this design), amends the enforcement seam shared by ADR-101/102; interacts with ADR-028, ADR-069, ADR-079
 
 ## Problem
 
@@ -21,6 +22,8 @@ equivalent is the global, code-defined sensitive-path denylist
   refused (read, write, edit, patch, stat), and enumeration tools
   (`fs_list`, `fs_glob`, `fs_grep`, Git) omit the entry. The agent cannot
   learn the path exists.
+  refused, and enumeration tools (`fs_list`, `fs_glob`, `fs_grep`, Git)
+  omit the entry. The agent cannot learn the path exists.
 - The user's own surfaces (Console file inspector, Settings) remain
   direct-user authority (ADR-079): excluded entries stay visible to the
   user, badged, and un-excludable.
@@ -62,6 +65,11 @@ operation's primary path (stat included) before the pinned request is
 built. No worker-protocol change is needed: `stat_path` needs no
 `sensitive_exclusions` field because its single path is parent-admitted and
 root-pinned.
+existing sensitive-path exclusion pipeline — the same choke point, the same
+per-candidate enumeration filters, the same Git pathspec translation, and the
+same serialized `sensitive_exclusions` field in ADR-101's one-shot pinned
+worker request. No new matching engine, no new enforcement seam, no worker
+protocol change.
 
 Rejected alternatives:
 
@@ -124,6 +132,15 @@ is the existing tripwire contract, not a new one.
   the live binding in its per-call authority check — passes them in; the
   executor itself holds only a root path today). User exclusions serialize
   into the same `sensitive_exclusions` field, as `file`/`subtree` entries.
+- **Run admission**: `capture_run_admitted_workspace_roots` attaches the
+  frozen exclusion snapshot (paths + fingerprint) to each
+  `RunAdmittedWorkspaceRoot`, following ADR-102's freeze-at-admission
+  discipline.
+- **Per-call merge**: `WorkspaceToolExecutor.execute` already captures
+  `sensitive_exclusions_under(root, context)` on every call and serializes
+  them into the pinned worker request. User exclusions merge into that same
+  `sensitive_exclusions` request field; the closed worker protocol schema is
+  unchanged, and the pinned worker enforces per-candidate as it does today.
 - **Mid-run semantics**: the executor keeps a per-run high-water mark.
   Effective set = frozen snapshot ∪ high-water mark of live registry sets
   observed at each call. Consequences:
@@ -133,6 +150,7 @@ is the existing tripwire contract, not a new one.
   - an exclusion removed mid-run stays enforced for the rest of the run
     (authority never expands mid-run);
   - add-then-remove within one run stays excluded (monotone mark);
+  - add-then-remove within one run stays excluded (monotone mark).
   - if the live registry read fails, the last-known effective set is reused
     (protection never shrinks on a read glitch); log and continue.
 - **In-process choke point**: `resolve_workspace_path`'s deny set becomes
@@ -249,6 +267,7 @@ Targeted runs only (repo policy; no full sweep unless requested):
 
 ADR required: yes.
 ADR path: `backlog/decisions/174-workspace-binding-exclusions.md`
+ADR path: `backlog/decisions/172-workspace-binding-exclusions.md`
 Reason: security/permission boundary decision (agent file-access restriction)
 plus a storage decision (metadata_json vs. new table), interacting with
 ADR-028, ADR-069, ADR-079, ADR-101, and ADR-102. Created before
