@@ -3,7 +3,7 @@
     "sha256": "2b043ac7841d693fdd3a442e10cc3f8333764513ba41b6969e201e9c0a5cec55"
   },
   "README.md": {
-    "sha256": "3de80c0da8f38b06ac092a9596bf80c74c1517e359c150797dc65cc8293ae3e1"
+    "sha256": "d9bdf5dd0326e694f751f2465b6ffa4de25b7491d8d7e3d600dd814987dfcc32"
   },
   "baseline-comparison.json": {
     "sha256": "e21637668f00f66d15f0cb03297ed278d7e93b42480f3b319088ebda4cfe869c"
@@ -152,5 +152,65 @@
   },
   "tests/rebase-001.txt": {
     "sha256": "ba09dd0298b32076f7aafec20e4f46325574d57a55fc6169ffe2f7b45d0ceb17"
+  },
+  "qodo/adjacent-001.txt": {
+    "sha256": "eeca123fa900d6ac6d380f9d971f386a7b2bd19ad8abb7adab4ddf174f7bd465"
+  },
+  "qodo/preparation.json": {
+    "sha256": "967ab349f3b54ec0c69bd1b0a5df12b2ddbf00c9d74d254f63b2994a03929462"
+  },
+  "qodo/visual-comparison.json": {
+    "sha256": "d54821cef2d0480cbc778d16cd16e6aaf3e067b986ed940d4163421f0a23feb3"
+  },
+  "qodo/mount-001.txt": {
+    "sha256": "0e2450061500cadecaa11513eb49677b5b7b3e5aa5aa6e524c342a9dcec785bd"
+  },
+  "qodo/red-002.txt": {
+    "sha256": "c6054d2cd1614fa9a9f63c2e05ef27a6baaf55267824ff821b13fb66f4cfc34c"
+  },
+  "qodo/lifecycle.json": {
+    "sha256": "a0f6423893e95c0ca3bf1e81595392a60287ef32c2dad9a0d77fe8b8516fc004"
+  },
+  "qodo/README.md": {
+    "sha256": "d76655bb7b89140abe300bd2d9a09e4bcf20d595b4c6f67cc982c72b7b70c750"
+  },
+  "qodo/qualified-cases.json": {
+    "sha256": "c5bce365d1e27bc5a29dea9518d8f4b8b1a758a5d234f49abcd9ba108b390e8e"
+  },
+  "qodo/svg-delta.json": {
+    "sha256": "1ca57e5ed369a54af2ab66c3812844db384700a003a4291466397431ac3c6c68"
+  },
+  "qodo/review.json": {
+    "sha256": "5442b0088093f46f61573298f582939619c8d14b9c86a705bbbc766d0f438fac"
+  },
+  "qodo/green-001.txt": {
+    "sha256": "9961312f9553f0fb7e2669deda40ec921b55091e0f81cae769b4dbba5847c1ef"
+  },
+  "qodo/native/textual-light-170x48-details-refreshed.svg": {
+    "sha256": "482f71c07cdd70bcf56aa8f4dcbf80dcdc818c4cf5b5ec9e3bfda4dab2b77452"
+  },
+  "qodo/native/result.json": {
+    "sha256": "24e27cd2529a10f0464758b6d7e44316dc4a3e18defd12d3d3483edd29478a38"
+  },
+  "qodo/native/textual-dark-170x48-details-refreshed.svg": {
+    "sha256": "1a15953f49ba0ed4dbc582a6339e47471bfd04074511ca93bde0901ea4135573"
+  },
+  "qodo/native/textual-light-120x40-details-refreshed.svg": {
+    "sha256": "4b1104f99c8708df826d8f21664cdf19de51145596e70a4780d6e48a34978094"
+  },
+  "qodo/native/textual-dark-120x40-details-refreshed.svg": {
+    "sha256": "56da266b018727cb7594c14cab6325afae3b0b4ebad77ad5ebeaaab1b8b06c90"
+  },
+  "qodo/native/textual-dark-120x40-draft-preserved.svg": {
+    "sha256": "f4836ea7a68d05f456b16b776a047eafd85e4cf85608b15938b652cf337734c6"
+  },
+  "qodo/native/textual-light-120x40-draft-preserved.svg": {
+    "sha256": "ac57b386ea60d94acc67f37c2b070987f2f20bed2b8d7b80ddf80e02272a591c"
+  },
+  "qodo/native/textual-dark-170x48-draft-preserved.svg": {
+    "sha256": "87250389a5f951b0605dcb9da39e0493943fbc60eb0e2ecfc74423fcbc04afc8"
+  },
+  "qodo/native/textual-light-170x48-draft-preserved.svg": {
+    "sha256": "575a57264e7f2b69ed7524bf98984fc210cff2e68c5f3f703f11cea9deae0416"
   }
 }

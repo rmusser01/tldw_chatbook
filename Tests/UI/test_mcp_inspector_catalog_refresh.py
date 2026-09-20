@@ -2,18 +2,153 @@
 
 import asyncio
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button, DataTable, Input, Static, TextArea
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_mcp_compact_readability import _settle
+from Tests.UI.test_mcp_inspector import InspectorApp, _tool
 from Tests.UI.test_mcp_root_settings import _open
 from Tests.UI.test_mcp_workbench import (
     ToolTestHubService,
     WorkbenchAppWithBundledCSS,
 )
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import PermissionProfileContext
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["close", "refresh"])
+@private_profile_test
+async def test_retirement_during_native_mount_cannot_leave_orphan_panel(
+    request, action
+):
+    """Real Textual registration precedes the mount await and remains removable."""
+    app = WorkbenchAppWithBundledCSS()
+    app.unified_mcp_service = ToolTestHubService()
+    async with app.run_test(size=(170, 48)) as pilot:
+        workbench, _ = await _open(pilot)
+        inspector = app.query_one(MCPInspector)
+        tool = next(t for t in workbench._last_hub_tools if t.name == "search")
+        context = workbench._tool_policy_profile_context
+        await inspector.show_tool(tool, profile_context=context)
+        opening = asyncio.create_task(inspector.open_test_panel())
+        try:
+            # Yield only until the opening coroutine reaches its first await.
+            # Do not replace mount(): its synchronous registration is essential.
+            await asyncio.sleep(0)
+            panel = inspector.query_one("#mcp-inspector-test-panel")
+            assert not opening.done()
+            assert not panel._mounted_event.is_set()
+            if action == "close":
+                await inspector._close_test_tool_panel()
+            else:
+                await inspector.show_tool(
+                    replace(tool, description="Updated during mount"),
+                    profile_context=context,
+                    refresh_from=tool,
+                )
+        finally:
+            await asyncio.wait_for(opening, 3)
+        await _settle(pilot)
+        await app.workers.wait_for_complete()
+        assert not inspector.query("#mcp-inspector-test-panel")
+        assert inspector.test_panel_token is None
+        assert panel.parent is None
+        assert app.unified_mcp_service._preview_count == 0
+        await inspector.open_test_panel()
+        await _settle(pilot)
+        await app.workers.wait_for_complete()
+        assert len(inspector.query("#mcp-inspector-test-panel")) == 1
+        assert inspector._test_preview is not None
+        assert app.unified_mcp_service._preview_count == 1
+        assert app.unified_mcp_service.test_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["effective", "arg_rules", "session_approvals"])
+@private_profile_test
+async def test_equal_catalog_refresh_replaces_changed_permission_facts(request, change):
+    """An equal definition cannot retain obsolete policy facts or test controls."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        context = PermissionProfileContext("default", 1, "policy", 1)
+        facts = {
+            "effective": EffectiveToolState(state="ask", origin="server_default"),
+            "arg_rules": (),
+            "session_approvals": (),
+        }
+        await inspector.show_tool(tool, profile_context=context, **facts)
+        await inspector.open_test_panel()
+        retired_token = inspector.test_panel_token
+        facts[change] = {
+            "effective": EffectiveToolState(state="deny", origin="tool_override"),
+            "arg_rules": ({"rule_id": "r1", "args_json": '{"query":"current"}'},),
+            "session_approvals": ((tool.server_key, tool.name),),
+        }[change]
+        await inspector.show_tool(
+            replace(tool), profile_context=context, refresh_from=tool, **facts
+        )
+        await pilot.pause()
+        assert retired_token is not None
+        assert inspector.test_panel_token is None
+        assert not inspector.query("#mcp-inspector-test-panel")
+        if change == "effective":
+            assert "Off" in str(
+                inspector.query_one(
+                    "#mcp-inspector-permission-state", Static
+                ).renderable
+            )
+        elif change == "arg_rules":
+            assert "current" in str(
+                inspector.query_one("#mcp-inspector-arg-rule-0", Static).renderable
+            )
+        else:
+            assert tool.name in str(
+                inspector.query_one(
+                    "#mcp-inspector-session-approval-0", Static
+                ).renderable
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("available", ["current", "removed", "invalid_profile"])
+async def test_selected_tool_refresh_resolves_fresh_policy_inputs(available):
+    """Reconciliation resolves current facts and clears unavailable authority."""
+    selected = _tool()
+    fresh = replace(selected, description="Current catalog description")
+    context = PermissionProfileContext("default", 1, "policy", 1)
+    effective = EffectiveToolState(state="deny", origin="tool_override")
+    rules = ({"rule_id": "current", "args_json": "{}"},)
+    approvals = ((selected.server_key, selected.name),)
+    inspector = SimpleNamespace(current_tool=selected, show_tool=AsyncMock())
+    workbench = SimpleNamespace(
+        query_one=lambda _: inspector,
+        _tool_policy_profile_context=context,
+        _validate_profile_context=lambda _: (
+            None if available == "invalid_profile" else context
+        ),
+        _tool_for=lambda server, name: fresh if available == "current" else None,
+        _effective_for_display=lambda tool: effective,
+        _arg_rules_for_row=lambda tool, profile: rules,
+        _session_approvals_for_row=lambda profile: approvals,
+    )
+    await MCPWorkbench._refresh_selected_tool(workbench)
+    inspector.show_tool.assert_awaited_once_with(
+        fresh if available == "current" else None,
+        effective=effective if available == "current" else None,
+        profile_context=None if available == "invalid_profile" else context,
+        arg_rules=rules if available == "current" else (),
+        session_approvals=() if available == "invalid_profile" else approvals,
+        refresh_from=selected,
+    )
 
 
 @pytest.mark.asyncio

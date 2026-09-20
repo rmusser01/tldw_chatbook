@@ -1990,6 +1990,16 @@ class MCPInspector(Vertical):
         not reentrant). `None` (every pre-Task-7 call site, and a cleared
         selection) hides `#mcp-inspector-permission` instead of leaving a
         previous tool's permission facts on screen.
+
+        Args:
+            tool: Current catalog definition, or None to clear the selection.
+            effective: Resolved permission state, or None to hide policy detail.
+            profile_context: Captured profile authority for this detail view.
+            arg_rules: Current exact-input rules shown in the permission block.
+            session_approvals: Current profile's session grants to display.
+            refresh_from: Exact previously selected object owned by a catalog
+                refresh. Ignore the refresh if selection has since changed;
+                preserve the form only when definition and policy inputs match.
         """
         async with self._refresh_lock:
             # A queued refresh owns only the selection captured by its caller.
@@ -1999,6 +2009,10 @@ class MCPInspector(Vertical):
                 if (
                     tool == refresh_from
                     and profile_context == self._current_tool_profile_context
+                    and effective == self._current_permission_effective
+                    and list(arg_rules) == self._current_permission_arg_rules
+                    and list(session_approvals)
+                    == self._current_permission_session_approvals
                 ):
                     return
             container = self.query_one("#mcp-inspector-tool", Vertical)
@@ -3011,7 +3025,12 @@ class MCPInspector(Vertical):
 
     @property
     def test_panel_token(self) -> object | None:
-        """Owner of the live test form; retired before asynchronous removal."""
+        """Return the test form's current publication owner.
+
+        Returns:
+            The opaque identity of the opening or live form, or None when no
+            form owns publication. Retirement precedes asynchronous removal.
+        """
         return self._test_panel_token
 
     @property

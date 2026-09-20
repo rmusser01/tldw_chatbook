@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-18 21:46'
-updated_date: '2026-09-20 17:24'
+updated_date: '2026-09-20 17:39'
 labels:
   - mcp
   - ui
@@ -39,4 +39,8 @@ ADR required: no. ADR path: backlog/decisions/161-component-pattern-library.md, 
 Selected MCP tool detail now reconciles catalog refresh without replacing unchanged argument forms, cursor, focus or previews. Changed/removed definitions retire prior controls, clear detail or show reopen guidance, and synchronously invalidate preview ownership before awaited teardown. Queued refresh and late completions preserve newer selection/focus; failed-context successors also retire prior workers. Port preserves current permission navigation and recovery guards. 475 targeted passes; one unchanged Workflows dimension-ratchet failure reproduced on merged baseline802809947b. Seven artifact guards, Ruff checks with no introduced diagnostics, independent review, and eight inspected current-source native captures passed. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/README.md. Existing ADR-161/170 and ADR-032 apply, no new ADR. Saved as draft PR2757 against dev. Current-head CI/Qodo and final visual approval remain; keep In Progress until closeout. Connected-runtime and compact/long-path work remain outside this task.
 
 2026-09-20 owner approved PR2757 gallery and merge. Conflict-free current-dev integration 6e9e94c794 keeps all approved MCP sources/styles unchanged; all 13 refresh regressions pass again. Native source/runner hashes still match. PR is ready for review; current-head CI/Qodo and exact merge-tree verification remain. See approved-integration.json.
+
+Qodo closeout plan: verify the alleged mount race against synchronous Textual registration; add focused permission-input refresh regressions and isolated reconciliation coverage; document the public refresh/token contract. Fix only reproduced ownership/currentness defects under existing ADR-161/170 and ADR-032, then rerun targeted tests and review.
+
+Qodo follow-up: reproduced and fixed policy-only refresh equality; current effective state, exact-input rules and displayed profile-wide session grants participate. Added public API docs, 3 isolated reconciliation cases, 3 policy component cases and 2 real mount-boundary cases. Mount orphan allegation is unsupported by actual Textual8.2.8 registration and both real-boundary probes; no speculative mount change. 316 current-source targeted passes and native006 lifecycle pass. Six gallery captures are pixel-identical; two differ only by blinking input caret. Independent review: no blockers. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/qodo/README.md. Current-head CI/review and merge receipt remain.
 <!-- SECTION:NOTES:END -->

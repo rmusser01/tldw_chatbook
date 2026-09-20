@@ -7,7 +7,11 @@ and its eight-capture gallery. Conflict-free rebases include current dev
 `6e9e94c794`; MCP product code, styles and native source hashes remain unchanged.
 [All 13 catalog-refresh regressions pass again](../qa/2026-09-20-mcp-inspector-refresh/approved-integration.json).
 Qodo review, current-head CI and final live-dev/merge-tree verification remain
-before the authorized merge. Remaining component scope is unchanged.
+before the authorized merge. [Qodo follow-up](../qa/2026-09-20-mcp-inspector-refresh/qodo/README.md)
+now includes changed permission facts in refresh equality, completes API docs
+and verifies the real mount boundary. All 316 current-source targeted cases
+and the fresh native journey pass; approved visuals differ only by caret blink.
+Remaining component scope is unchanged.
 Earlier checkpoints below are historical.
 
 ## Current checkpoint — PR2730 merged; inspector refresh resumed

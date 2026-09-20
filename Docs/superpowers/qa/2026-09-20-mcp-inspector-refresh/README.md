@@ -2,6 +2,11 @@
 
 Saved as [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757).
 
+**Latest qualification:** [Qodo closeout](qodo/README.md) adds policy-input
+currentness, API docs and real-mount coverage: 316 current-source targeted passes
+and fresh native captures matching the approved gallery apart from caret blink.
+Earlier evidence below records the original approved implementation.
+
 Resumed saved prototype `135f226888` on the verified PR2730 merge
 `802809947b`. [PR2730 receipt](pr2730-closeout.json) confirms all current-head
 gates, resolved Qodo findings and an actual merge tree equal to the tested tree.
