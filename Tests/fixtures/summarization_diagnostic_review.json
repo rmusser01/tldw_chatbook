@@ -9846,20 +9846,10 @@
                 ],
                 "captures_exception": false
             },
-            "outcome": "metadata",
-            "current": {
-                "method": "error",
-                "event": "Anthropic: Network error during attempt; attempt=%s retry_count=%s exception_type=%s",
-                "occurrence": 1,
-                "message_shape": "Constant(value='Anthropic: Network error during attempt; attempt=%s retry_count=%s exception_type=%s')",
-                "expressions": [
-                    "attempt + 1",
-                    "max_retries",
-                    "safe_metadata_token(type(e).__name__)"
-                ],
-                "captures_exception": false
-            },
-            "navigation_line": 1171
+            "outcome": "deleted",
+            "current": null,
+            "navigation_line": 1171,
+            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt provider-labelled network log was superseded by the shared transport handling; the caller-visible exhaustion error string is preserved unchanged."
         },
         {
             "site_id": "general-dd184c22fec5f90f",
