@@ -177,6 +177,9 @@ from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
 )
+from tldw_chatbook.Chat.console_chat_controller import (
+    resolve_console_selection_core,
+)
 from ...Chat.console_context_compaction import (
     EffectiveMemoryKind,
     complete_durable_units,
@@ -9697,51 +9700,18 @@ class ChatScreen(BaseAppScreen):
         """Build a provider selection from one immutable settings snapshot."""
         app_config = self._provider_readiness_app_config()
         store = self._ensure_console_chat_store()
-        # PR-2668 review (CE-001 class): the selection's ``provider`` is a
-        # provider IDENTITY the gateway resolves through ``entry_for`` (dashed
-        # registry slugs), so registry ids must keep their dashed spelling;
-        # only the ``api_settings`` section lookup wants the config-table key.
-        provider = provider_identity_key(selection_settings.provider) or "llama_cpp"
-        explicit_model = (
-            str(selection_settings.model).strip()
-            if _has_selected_text(selection_settings.model)
-            else None
+        # TASK-32859: the provider/model/base-url core resolves through the
+        # ONE shared implementation in console_chat_controller (the
+        # PR-2668 identity fix now lives only there); this superset builder
+        # keeps only what it genuinely adds (endpoint policy, workspace
+        # context, identity re-expansion).
+        core = resolve_console_selection_core(
+            selection_settings, app_config=app_config, legacy_model=legacy_model
         )
-        api_settings = self._config_section(app_config, "api_settings")
-        provider_config = self._config_section(
-            api_settings, provider_config_key(provider)
-        )
-        console_config = self._config_section(app_config, "console")
-        configured_model_value = (
-            provider_config.get("model")
-            or provider_config.get("api_model")
-            or provider_config.get("default_model")
-        )
-        configured_model = (
-            str(configured_model_value).strip()
-            if _has_selected_text(configured_model_value)
-            else None
-        )
-        if not _has_selected_text(legacy_model) and explicit_model == configured_model:
-            explicit_model = None
-
-        base_url: str | None = None
-        if provider in {"llama_cpp", "local_llamacpp"}:
-            fallback_url = (
-                os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
-                or console_config.get("llama_cpp_base_url_override")
-                or first_configured_endpoint(provider_config)
-            )
-            override_url = (
-                selection_settings.base_url
-                if _has_selected_text(selection_settings.base_url)
-                else fallback_url
-            )
-            base_url = self._normalize_llamacpp_base_url(
-                str(override_url) if override_url is not None else None
-            )
-        elif _has_selected_text(selection_settings.base_url):
-            base_url = str(selection_settings.base_url).strip()
+        provider = core.provider
+        explicit_model = core.explicit_model
+        configured_model = core.configured_model
+        base_url = core.base_url
 
         current_workspace_context = self._workspace._current_console_workspace_context()
         if target_session_id is None:

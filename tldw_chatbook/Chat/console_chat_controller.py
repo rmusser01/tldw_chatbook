@@ -589,14 +589,30 @@ _WINDOWS = os.name == "nt"
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
 
 
-def build_console_provider_selection_from_settings(
+@dataclass(frozen=True)
+class ConsoleSelectionCore:
+    """The provider/model/base-url core shared by every selection builder.
+
+    TASK-32859: the algorithm's core (identity resolution, the
+    model/api_model/default_model chain, the explicit==configured dedup,
+    the llama.cpp base-url chain) was written twice -- here and as the
+    screen's superset copy -- and the PR-2668 fix had to be applied in
+    both. This is now the only copy.
+    """
+
+    provider: str
+    explicit_model: str | None
+    configured_model: str | None
+    base_url: str | None
+
+
+def resolve_console_selection_core(
     settings: ConsoleSessionSettings,
     *,
     app_config: Mapping[str, Any],
-    workspace_context: Any,
     legacy_model: Any = None,
-) -> ConsoleProviderSelection:
-    """Reconstruct the effective selection from one session snapshot."""
+) -> ConsoleSelectionCore:
+    """Resolve the provider-selection core once, for every caller."""
 
     def section(value: Any, key: str) -> Mapping[str, Any]:
         child = value.get(key, {}) if isinstance(value, Mapping) else {}
@@ -609,10 +625,8 @@ def build_console_provider_selection_from_settings(
     # PR-2668 review (CE-001 class): ``ConsoleProviderSelection.provider`` is
     # a provider IDENTITY -- the gateway resolves registry entries through
     # ``entry_for``, whose slugs are dashed, so the config-key normalizer's
-    # underscore rewriting must not reach it (``custom-ep:gpu-box`` mangled to
-    # ``custom_ep:gpu_box`` misses the registry and the send is blocked as an
-    # unsupported provider). Only the ``api_settings`` section lookup below
-    # wants the config-table key.
+    # underscore rewriting must not reach it. Only the ``api_settings``
+    # section lookup below wants the config-table key.
     provider = provider_identity_key(settings.provider) or "llama_cpp"
     explicit_model = selected(settings.model)
     provider_config = section(
@@ -639,6 +653,34 @@ def build_console_provider_selection_from_settings(
         )
     elif selected(settings.base_url) is not None:
         base_url = selected(settings.base_url)
+    return ConsoleSelectionCore(
+        provider=provider,
+        explicit_model=explicit_model,
+        configured_model=configured_model,
+        base_url=base_url,
+    )
+
+
+def build_console_provider_selection_from_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, Any],
+    workspace_context: Any,
+    legacy_model: Any = None,
+) -> ConsoleProviderSelection:
+    """Reconstruct the effective selection from one session snapshot."""
+
+    def section(value: Any, key: str) -> Mapping[str, Any]:
+        child = value.get(key, {}) if isinstance(value, Mapping) else {}
+        return child if isinstance(child, Mapping) else {}
+
+    core = resolve_console_selection_core(
+        settings, app_config=app_config, legacy_model=legacy_model
+    )
+    provider = core.provider
+    explicit_model = core.explicit_model
+    configured_model = core.configured_model
+    base_url = core.base_url
 
     defaults = build_default_console_session_settings(app_config, provider, None)
     return ConsoleProviderSelection(
