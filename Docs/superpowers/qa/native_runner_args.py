@@ -31,18 +31,16 @@ def parse_native_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("session", metavar="SESSION")
     args = parser.parse_args(argv)
 
-    from tldw_chatbook.Utils.input_validation import validate_username
+    from tldw_chatbook.Utils.input_validation import validate_tmux_identifier
     from tldw_chatbook.Utils.path_validation import (
         validate_canonical_directory,
         validate_path,
     )
 
     for name in (args.tmux_socket, args.session):
-        if (
-            name != name.strip()
-            or not validate_username(name, min_length=1, max_length=64)
-            or not (name[0].isascii() and name[0].isalnum())
-        ):
+        try:
+            validate_tmux_identifier(name)
+        except ValueError:
             parser.error("tmux names require 1–64 ASCII identifier characters")
     args.tmux_path = shutil.which("tmux")
     if args.tmux_path is None:

@@ -1,0 +1,25 @@
+{
+  "approved_head": "890f10de38192105bd5e9d774960c3c2e1bb397b",
+  "input_validation_existing_ast_unchanged": true,
+  "new_qa_validator_covered_by": "153 direct/admission/fixture cases",
+  "input_validation_sha256": "deabe09b3f44b208cbcfec86ecb204db24b7eee1059861600827a6b24ab11ebc",
+  "native_runner_args_sha256": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+  "receipts": [
+    {
+      "name": "compact",
+      "source_hash_count": 14,
+      "changed_sources": [
+        "tldw_chatbook/Utils/input_validation.py"
+      ],
+      "other_captured_sources_match": true
+    },
+    {
+      "name": "wide",
+      "source_hash_count": 14,
+      "changed_sources": [
+        "tldw_chatbook/Utils/input_validation.py"
+      ],
+      "other_captured_sources_match": true
+    }
+  ]
+}

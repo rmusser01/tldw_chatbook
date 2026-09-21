@@ -3440,6 +3440,15 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+#mcp-hub-inspector .console-action-primary,
+#mcp-hub-inspector .console-action-secondary {
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
     width: $ds-fr-2;
     min-width: $ds-size-16;
