@@ -321,6 +321,37 @@ answered with "protected path", even when the root you chose contains it — so
 a session rooted at your home directory cannot read `~/.ssh/id_rsa` or rewrite
 the file that records which tools you approved.
 
+#### Exclusions
+
+A folder binding can also carry **exclusions**: exact paths inside that
+folder that the agent cannot see at all. Excluding a path hides it from
+every agent file tool — reads, writes, edits, stat, and directory listings
+alike — and keeps it out of Git results, no matter whether the binding is
+read-only or read-write. The agent is told the path is protected, in the
+same words used for Chatbook's built-in protected paths, so it cannot tell
+an exclusion from a system rule or learn that the file exists. Exclusions
+are yours alone: in the Console files modal the entry stays visible with
+an "[excluded]" badge, and you can un-exclude it at any time.
+
+You can mark exclusions from two places:
+
+| Surface | How |
+|---|---|
+| Settings ▸ Workspaces | Each folder binding row lists its exclusions with an "Unexclude" button each, plus an input labeled `path/to/exclude (relative to folder)` with an "Exclude" button to add one. |
+| Console files modal | Select an entry in the bound folder's tree and press `x` to exclude it; press `x` again on a badged entry to un-exclude it. |
+
+Paths are exact and binding-relative — `secrets`, `notes/private.md`, not
+patterns like `*.key`. A path does not have to exist yet: you can exclude
+`secrets/api-keys.env` before you ever create it, and it stays invisible
+once it appears. Excluding a directory covers everything under it.
+
+Timing within a running chat: an exclusion you add takes effect on the
+agent's **next tool call**, even mid-run; removing one takes effect only
+for **new runs**. In the files modal, un-excluding a path covered by
+nested exclusions peels off the deepest layer first — if a parent
+exclusion still covers it, the status says it is still excluded and you
+can un-exclude again to remove that layer.
+
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:

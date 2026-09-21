@@ -1030,6 +1030,8 @@ def _project_binding_snapshot(
     workspace_id: str,
 ) -> ConsoleProjectBindingSnapshot:
     binding = selection.binding
+    from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
     return ConsoleProjectBindingSnapshot(
         binding_id=str(binding.binding_id),
         workspace_id=str(getattr(binding, "workspace_id", workspace_id)),
@@ -1042,6 +1044,12 @@ def _project_binding_snapshot(
         locator_fingerprint=selection.locator_fingerprint,
         allow_write=selection.allow_write,
         root_identity=selection.root_identity,
+        # Freeze the exclusions admitted with the binding so a mid-run
+        # registry removal cannot relax this run's family-2 enforcement
+        # (the roots helper unions these with the live entries).
+        exclusions=tuple(
+            entry.path for entry in binding_exclusion_entries(binding)
+        ),
     )
 
 
@@ -1378,6 +1386,78 @@ def _workspace_binding_authority_is_current(
     )
 
 
+def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
+    """Frozen absolute workspace-excluded paths for one selected binding.
+
+    Project-instruction activation skips every AGENTS.md/AGENTS.override.md
+    candidate at or under these binding-relative exclusions (spec 2026-09-20
+    section 2): excluded guidance is never read or activated.
+
+    Per-entry isolation (final-review Finding 2b): an entry that cannot be
+    resolved (e.g. replaced by a symlink loop mid-run) is skipped with a
+    warning while every other exclusion stays enforced -- zeroing the whole
+    set here would fail OPEN, letting excluded guidance activate because one
+    unrelated entry went bad.
+    """
+    from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+    root = Path(selection.root)
+    try:
+        entries = tuple(binding_exclusion_entries(selection.binding))
+    except (OSError, RuntimeError, ValueError, AttributeError, TypeError):
+        return frozenset()
+    excluded: set[Path] = set()
+    for entry in entries:
+        try:
+            excluded.add((root / entry.path).resolve(strict=False))
+        except Exception:  # noqa: BLE001 - isolate one bad entry, keep the rest
+            logger.warning(
+                "Project-instruction exclusion entry could not be resolved; "
+                "skipped while keeping the remaining exclusions"
+            )
+    return frozenset(excluded)
+
+
+def _exclusion_paths_provider(
+    registry: Any,
+    binding_id: str,
+    root: Path,
+    snapshot_rels: tuple[str, ...],
+) -> Callable[[], tuple[Path, ...]]:
+    """Effective exclusion paths: admission snapshot union a high-water mark.
+
+    Reads the binding's live exclusions on every call so a mid-run addition
+    refuses the NEXT tool call (fail-closed shrink); the high-water mark
+    keeps removals enforced for the rest of the run so run authority never
+    expands mid-run (spec 2026-09-20, ADR-102 discipline).
+    """
+    holder: dict[str, frozenset[str]] = {"effective": frozenset(snapshot_rels)}
+
+    def read() -> tuple[Path, ...]:
+        try:
+            binding = registry.get_runtime_binding(binding_id)
+            from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+            live = frozenset(entry.path for entry in binding_exclusion_entries(binding))
+        except Exception:  # noqa: BLE001 -- degrade to last-known, never wider
+            live = frozenset()
+        holder["effective"] = holder["effective"] | live
+        resolved: list[Path] = []
+        for rel in sorted(holder["effective"]):
+            try:
+                resolved.append((root / rel).resolve(strict=False))
+            except Exception:  # noqa: BLE001 - per-entry isolation: skip the
+                # unresolvable entry (warning), keep the resolvable rest.
+                # Zeroing the whole tuple here would fail OPEN for the run.
+                logger.warning(
+                    "Console run exclusion path could not be resolved; "
+                    "skipped while keeping the remaining exclusions"
+                )
+        return tuple(resolved)
+
+    return read
+
+
 def capture_run_admitted_workspace_roots(
     *,
     session: ConsoleChatSession | Any,
@@ -1437,6 +1517,15 @@ def capture_run_admitted_workspace_roots(
     roots = []
     for selection in selections:
         binding_id = str(selection.binding.binding_id)
+        from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+        snapshot_rels = tuple(
+            entry.path
+            for entry in binding_exclusion_entries(selection.binding)
+        )
+        exclusions_provider = _exclusion_paths_provider(
+            registry, binding_id, selection.root, snapshot_rels
+        )
         if project_selection is not None and project_authority_guard is not None:
 
             def guard(
@@ -1469,6 +1558,7 @@ def capture_run_admitted_workspace_roots(
                 root_identity=selection.root_identity,
                 allow_write=selection.allow_write,
                 guard=guard,
+                exclusions_provider=exclusions_provider,
             )
         )
     return tuple(roots)
@@ -20853,6 +20943,7 @@ class ConsoleChatController:
                     maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                 ),
                 dispatch_started_wall_ns=time.time_ns(),
+                excluded_dirs=_project_instruction_excluded_dirs(selection),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
@@ -26822,6 +26913,9 @@ class ConsoleChatController:
                         maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                     ),
                     dispatch_started_wall_ns=time.time_ns(),
+                    excluded_dirs=_project_instruction_excluded_dirs(
+                        project_selection
+                    ),
                 )
                 destination_provider = str(
                     getattr(resolution, "execution_key", "")

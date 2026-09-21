@@ -23,6 +23,7 @@ from ..Utils.path_validation import validate_path_multi
 from ..Utils.atomic_file_ops import atomic_write_text
 from ..Utils.sensitive_paths import (
     is_git_metadata_write,
+    merge_sensitive_context,
     SensitivePathContext,
     is_sensitive_path,
     refuses_new_directory_chain,
@@ -30,6 +31,7 @@ from ..Utils.sensitive_paths import (
 )
 from .workspace_file_roots import (
     allowed_file_roots,
+    current_folder_binding_exclusions,
     current_run_sandbox_root,
     run_file_sandbox,
     run_workspace,
@@ -117,6 +119,32 @@ def _tool_sandbox_root() -> Path:
     root = Path(_resolve_sandbox_config()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _exclusion_aware_context() -> SensitivePathContext:
+    """Per-call deny context: base denylist merged with binding exclusions.
+
+    Family-2 injection point (spec 2026-09-20): the same fold
+    ``WorkspaceToolExecutor._call_context`` and the local provider's preflight
+    perform for the other file-tool families -- per-binding user exclusions
+    join the sensitive set, so every ``is_sensitive_path``/``is_within``
+    check this module makes refuses them with the denylist's OWN refusal
+    (identical message text; there is no second code path and no second
+    wording). No workspace bound, no exclusions configured, or the exclusion
+    lookup itself failing: the base context, unchanged.
+    """
+    base = resolve_sensitive_context()
+    try:
+        extra = current_folder_binding_exclusions()
+    except Exception:  # exclusion lookup failure falls back to the base denylist
+        return base
+    if not extra:
+        return base
+    return merge_sensitive_context(
+        base,
+        extra_files=tuple(path for path in extra if path.is_file()),
+        extra_dirs=tuple(path for path in extra if not path.is_file()),
+    )
 
 
 #: Tool name -> (path argument key, write access required). Read/write mirror
@@ -309,8 +337,9 @@ class ReadFileTool(Tool):
             # Refuse credential, gate-state, and app-database paths outright,
             # regardless of the sandbox/workspace roots (see
             # Utils.sensitive_paths). This must run before any filesystem
-            # access below.
-            if is_sensitive_path(path):
+            # access below. The context folds in the run's per-binding user
+            # exclusions so excluded paths refuse identically.
+            if is_sensitive_path(path, context=_exclusion_aware_context()):
                 return {
                     "file_path": file_path,
                     "error": f"Refused: '{file_path}' is a protected path and cannot be read",
@@ -454,8 +483,9 @@ class ListDirectoryTool(Tool):
             # for the top-level check below, containment_root selection, and
             # every per-entry check the recursive walk makes -- not a fresh
             # resolution per entry (see
-            # Utils.sensitive_paths.resolve_sensitive_context).
-            sensitive_ctx = resolve_sensitive_context()
+            # Utils.sensitive_paths.resolve_sensitive_context). The context
+            # folds in the run's per-binding user exclusions.
+            sensitive_ctx = _exclusion_aware_context()
 
             # Refuse credential, gate-state, and app-database paths outright,
             # regardless of the sandbox/workspace roots (see
@@ -684,8 +714,9 @@ class WriteFileTool(Tool):
             # Refuse credential, gate-state, and app-database paths outright,
             # regardless of the sandbox/workspace roots (see
             # Utils.sensitive_paths). This must run before any filesystem
-            # access below.
-            if is_sensitive_path(path):
+            # access below. The context folds in the run's per-binding user
+            # exclusions so excluded paths refuse identically.
+            if is_sensitive_path(path, context=_exclusion_aware_context()):
                 return {
                     "file_path": file_path,
                     "error": f"Refused: '{file_path}' is a protected path and cannot be written",
@@ -753,8 +784,13 @@ class WriteFileTool(Tool):
                 # a denial of service. See
                 # `Utils.sensitive_paths.refuses_new_directory_chain` for
                 # why this walks every not-yet-existing ancestor rather
-                # than just `path.parent` itself.
-                if refuses_new_directory_chain(path.parent):
+                # than just `path.parent` itself. Passes the merged
+                # (exclusion-aware) context so the walk refuses a chain
+                # landing under a user exclusion identically to the final
+                # file check above.
+                if refuses_new_directory_chain(
+                    path.parent, context=_exclusion_aware_context()
+                ):
                     return {
                         "file_path": file_path,
                         "error": (
@@ -1234,7 +1270,7 @@ class GlobFiles(Tool):
             # `is_sensitive_path` re-resolve the sensitive-path set (11
             # config accessors) per candidate -- see
             # Utils.sensitive_paths.resolve_sensitive_context.
-            sensitive_ctx = resolve_sensitive_context()
+            sensitive_ctx = _exclusion_aware_context()
             matches: list[str] = []
             try:
                 for path in _iter_candidates_across_roots(
@@ -1825,7 +1861,7 @@ class GrepFiles(Tool):
             # Resolved ONCE for this call and reused for every candidate
             # from every root -- see the matching comment in
             # GlobFiles.execute above.
-            sensitive_ctx = resolve_sensitive_context()
+            sensitive_ctx = _exclusion_aware_context()
 
             # Candidate discovery (containment, sensitivity, hidden-component,
             # _MAX_CANDIDATES) and the search are STREAMED together, in
