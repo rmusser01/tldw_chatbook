@@ -1,0 +1,531 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_accepted_delete_survives_departure_during_mount_completion[False] ____
+
+self = <Coroutine test_accepted_delete_survives_departure_during_mount_completion[False]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'hold_after_mount': False, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10aeca150>, 'request': <FixtureRequest for <Coroutine test_accepted_delete_survives_departure_during_mount_completion[False]>>}
+request = <FixtureRequest for <Coroutine test_accepted_delete_survives_departure_during_mount_completion[False]>>
+work = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process')
+profile = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 30.0
+report = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process/pytest.log
+E              │ │
+E           │ │            │   │   name='git_blame',                                     │ │
+E           │ │            │   │   description='Read-only virtual command: git_blame     │ │
+E           │ │            PATH [--start N] [--end N]. No host shell i'+78,              │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'git_blame PATH [--start   │ │
+E           │ │            N] [--end N]'                                                 │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='git_branches',                                  │ │
+E           │ │            │   │   description='Read-only virtual command: git_branches. │ │
+E           │ │            No host shell is invoked. Permission is'+54,                  │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'git_branches'             │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='git_diff',                                      │ │
+E           │ │            │   │   description='Read-only virtual command: git_diff      │ │
+E           │ │            [--staged] [--range REF] [--path PATH] [--st'+98,             │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'git_diff [--staged]       │ │
+E           │ │            [--range REF] [--path PATH] [--stat]'                         │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='git_log',                                       │ │
+E           │ │            │   │   description='Read-only virtual command: git_log       │ │
+E           │ │            [--count N] [--path PATH]. No host shell is i'+75,            │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'git_log [--count N]       │ │
+E           │ │            [--path PATH]'                                                │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='git_status',                                    │ │
+E           │ │            │   │   description='Read-only virtual command: git_status    │ │
+E           │ │            [PATH]. No host shell is invoked. Permissi'+59,               │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'git_status [PATH]'        │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='grep',                                          │ │
+E           │ │            │   │   description='Read-only virtual command: grep PATTERN  │ │
+E           │ │            [--mode content|files|count]. No host sh'+83,                 │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'grep PATTERN [--mode      │ │
+E           │ │            content|files|count]'                                         │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='ls',                                            │ │
+E           │ │            │   │   description='Read-only virtual command: ls [PATH]. No │ │
+E           │ │            host shell is invoked. Permission is in'+51,                  │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'ls [PATH]'                │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   ),                                                        │ │
+E           │ │            │   HubTool(                                                  │ │
+E           │ │            │   │   server_key='local:__virtual_cli__',                   │ │
+E           │ │            │   │   server_label='Virtual CLI (read-only)',               │ │
+E           │ │            │   │   source='local',                                       │ │
+E           │ │            │   │   name='stat',                                          │ │
+E           │ │            │   │   description='Read-only virtual command: stat PATH. No │ │
+E           │ │            host shell is invoked. Permission is in'+51,                  │ │
+E           │ │            │   │   input_schema={                                        │ │
+E           │ │            │   │   │   'type': 'object',                                 │ │
+E           │ │            │   │   │   'properties': {                                   │ │
+E           │ │            │   │   │   │   'argv': {                                     │ │
+E           │ │            │   │   │   │   │   'type': 'array',                          │ │
+E           │ │            │   │   │   │   │   'items': {'type': 'string'},              │ │
+E           │ │            │   │   │   │   │   'description': 'stat PATH'                │ │
+E           │ │            │   │   │   │   }                                             │ │
+E           │ │            │   │   │   },                                                │ │
+E           │ │            │   │   │   'required': ['argv'],                             │ │
+E           │ │            │   │   │   'additionalProperties': False                     │ │
+E           │ │            │   │   },                                                    │ │
+E           │ │            │   │   tags=(),                                              │ │
+E           │ │            │   │   stale=False,                                          │ │
+E           │ │            │   │   executable=False                                      │ │
+E           │ │            │   )                                                         │ │
+E           │ │            ]                                                             │ │
+E           │ │ selected = None                                                          │ │
+E           │ │     self = MCPToolsMode(id='mcp-mode-canvas-tools')                      │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           ╰──────────────────────────────────────────────────────────────────────────────╯
+E           NoMatches: No nodes match '#mcp-tools-table' on
+E           MCPToolsMode(id='mcp-mode-canvas-tools')
+E           - generated xml file: /private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.17s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[False]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[False]
+E           1 failed in 2.48s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 18:45:36.846 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 18:45:36.908 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 18:45:36.948 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 18:45:36.950 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+____ test_accepted_delete_survives_departure_during_mount_completion[True] _____
+
+self = <Coroutine test_accepted_delete_survives_departure_during_mount_completion[True]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'hold_after_mount': True, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1086c4230>, 'request': <FixtureRequest for <Coroutine test_accepted_delete_survives_departure_during_mount_completion[True]>>}
+request = <FixtureRequest for <Coroutine test_accepted_delete_survives_departure_during_mount_completion[True]>>
+work = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process')
+profile = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 30.0
+report = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_accepted_delete_survives_departure_during_mount_completion[True] _____
+E
+E           request = <FixtureRequest for <Coroutine test_accepted_delete_survives_departure_during_mount_completion[True]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a9566c0>
+E           hold_after_mount = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("hold_after_mount", [False, True])
+E               @private_profile_test
+E               async def test_accepted_delete_survives_departure_during_mount_completion(
+E                   request, monkeypatch, hold_after_mount
+E               ):
+E                   """AwaitMount waits for registered children; resuming it cannot republish them."""
+E                   app = ProfileFormApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       await workbench._select_server_key("local:docs")
+E                       canvas = app.query_one(MCPServersMode)
+E                       canvas.query_one("#mcp-detail-delete", Button).press()
+E                       await pilot.pause()
+E                       toolbar = canvas.query_one("#mcp-detail-toolbar")
+E                       mount = toolbar.mount_all
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E                       registered = []
+E                       calls = 0
+E
+E                       def held_mount(widgets, **kwargs):
+E                           nonlocal calls
+E                           calls += 1
+E                           first = calls == 1
+E                           pending = mount(widgets, **kwargs)
+E                           if first:
+E                               registered.extend(toolbar.children)
+E
+E                           async def finish():
+E                               if first:
+E                                   if hold_after_mount:
+E                                       await pending
+E                                   entered.set()
+E                                   await release.wait()
+E                               if not first or not hold_after_mount:
+E                                   await pending
+E
+E                           return finish()
+E
+E                       monkeypatch.setattr(toolbar, "mount_all", held_mount)
+E                       canvas.query_one("#mcp-detail-delete-confirm", Button).press()
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 3)
+E                           assert len(registered) == 4
+E                           assert list(toolbar.children) == registered
+E                           workbench.set_mode("tools")
+E                           workbench.set_mode("servers")
+E           >               await asyncio.wait_for(app.workers.wait_for_complete(), 5)
+E
+E           Tests/UI/test_mcp_server_action_departure.py:168:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+E               return await fut
+E                      ^^^^^^^^^
+E           .venv/lib/python3.12/site-packages/textual/worker_manager.py:179: in wait_for_complete
+E               await asyncio.gather(*[worker.wait() for worker in (workers or self)])
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = <Worker CANCELLED group='mcp-detail-disarm' description="functools.partial(<bound method MCPWorkbench._disarm_canvas_delete of MCPWorkbench(id='mcp-workbench')>, 7)">
+E
+E               async def wait(self) -> ResultType:
+E                   """Wait for the work to complete.
+E
+E                   Raises:
+E                       WorkerFailed: If the Worker raised an exception.
+E                       WorkerCancelled: If the Worker was cancelled before it completed.
+E
+E                   Returns:
+E                       The return value of the work.
+E                   """
+E                   try:
+E                       if active_worker.get() is self:
+E                           raise DeadlockError(
+E                               "Can't call worker.wait from within the worker function!"
+E                           )
+E                   except LookupError:
+E                       # Not in a worker
+E                       pass
+E
+E                   if self.state == WorkerState.PENDING:
+E                       raise WorkerError("Worker must be started before calling this method.")
+E                   if self._task is not None:
+E                       try:
+E                           await self._task
+E                       except asyncio.CancelledError as error:
+E                           self.state = WorkerState.CANCELLED
+E                           self._error = error
+E                   if self.state == WorkerState.ERROR:
+E                       assert self._error is not None
+E                       raise WorkerFailed(self._error)
+E                   elif self.state == WorkerState.CANCELLED:
+E           >           raise WorkerCancelled("Worker was cancelled, and did not complete.")
+E           E           textual.worker.WorkerCancelled: Worker was cancelled, and did not complete.
+E
+E           .venv/lib/python3.12/site-packages/textual/worker.py:454: WorkerCancelled
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:45:40.931 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:45:40.969 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:45:41.006 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:45:41.007 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:45:41.128 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:45:41.376 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 18:45:41.769 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:45:42.007 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:45:42.244 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/tmp/32825-mount-review-pytest/test_accepted_delete_survives_1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[True]
+E           1 failed in 2.06s
+
+Tests/private_profile.py:84: Failed
+----------- generated xml file: /private/tmp/32825-mount-review.xml ------------
+============================= slowest 25 durations =============================
+3.08s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[False]
+2.71s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[True]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[False]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[True]
+2 failed, 12 deselected in 6.88s

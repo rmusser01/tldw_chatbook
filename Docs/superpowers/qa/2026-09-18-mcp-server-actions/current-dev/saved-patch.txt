@@ -1,0 +1,1211 @@
+.................FFFFFFF..                                               [100%]
+=================================== FAILURES ===================================
+____ test_queued_server_action_stays_retired_after_mode_round_trip[delete] _____
+
+self = <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'delete', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a7496a0>, 'request': <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete]>>}
+request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_queued_server_action_stays_retired_after_mode_round_trip[delete] _____
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e5cd2e0>
+E           button_id = 'delete'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["delete", "delete-confirm", "disconnect"])
+E               @private_profile_test
+E               async def test_queued_server_action_stays_retired_after_mode_round_trip(
+E                   request, monkeypatch, button_id
+E               ):
+E                   """Returning to Servers cannot revive a press queued before departure."""
+E                   app = ProfileFormApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       await workbench._select_server_key("local:docs")
+E                       canvas = app.query_one(MCPServersMode)
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       async with workbench._sync_children_lock:
+E                           workbench.set_mode("tools")
+E                           workbench.set_mode("servers")
+E                           await pilot.pause()
+E                           assert canvas.display and button.is_attached
+E                           post(pending[0])
+E                           await pilot.pause()
+E                           calls = (
+E                               list(app.unified_mcp_service.delete_calls),
+E                               list(app.unified_mcp_service.disconnect_calls),
+E                           )
+E                           if button_id == "delete":
+E           >                   assert not canvas._delete_armed, "retired Delete armed a confirmation"
+E           E                   AssertionError: retired Delete armed a confirmation
+E           E                   assert not True
+E           E                    +  where True = MCPServersMode(id='mcp-mode-canvas-servers')._delete_armed
+E
+E           Tests/UI/test_mcp_server_action_departure.py:56: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:10.826 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:10.868 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:10.875 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:10.876 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:10.992 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:11.229 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 18:10:12.339 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:12.990 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.99s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+E           1 failed in 3.35s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm] _
+
+self = <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'delete-confirm', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a7488f0>, 'request': <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]>>}
+request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109eb5400>
+E           button_id = 'delete-confirm'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["delete", "delete-confirm", "disconnect"])
+E               @private_profile_test
+E               async def test_queued_server_action_stays_retired_after_mode_round_trip(
+E                   request, monkeypatch, button_id
+E               ):
+E                   """Returning to Servers cannot revive a press queued before departure."""
+E                   app = ProfileFormApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       await workbench._select_server_key("local:docs")
+E                       canvas = app.query_one(MCPServersMode)
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       async with workbench._sync_children_lock:
+E                           workbench.set_mode("tools")
+E                           workbench.set_mode("servers")
+E                           await pilot.pause()
+E                           assert canvas.display and button.is_attached
+E                           post(pending[0])
+E                           await pilot.pause()
+E                           calls = (
+E                               list(app.unified_mcp_service.delete_calls),
+E                               list(app.unified_mcp_service.disconnect_calls),
+E                           )
+E                           if button_id == "delete":
+E                               assert not canvas._delete_armed, "retired Delete armed a confirmation"
+E                       await app.workers.wait_for_complete()
+E           >           assert calls == ([], []), (
+E                           "a retired press dispatched after returning to Servers"
+E                       )
+E           E           AssertionError: a retired press dispatched after returning to Servers
+E           E           assert (['docs'], []) == ([], [])
+E           E
+E           E             At index 0 diff: ['docs'] != []
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:58: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:16.454 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:16.498 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:16.506 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:16.507 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:16.641 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:16.915 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 18:10:17.353 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:17.618 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:18.027 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.12s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+E           1 failed in 2.74s
+
+Tests/private_profile.py:84: Failed
+__ test_queued_server_action_stays_retired_after_mode_round_trip[disconnect] ___
+
+self = <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'disconnect', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a748da0>, 'request': <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]>>}
+request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_queued_server_action_stays_retired_after_mode_round_trip[disconnect] ___
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e4553a0>
+E           button_id = 'disconnect'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["delete", "delete-confirm", "disconnect"])
+E               @private_profile_test
+E               async def test_queued_server_action_stays_retired_after_mode_round_trip(
+E                   request, monkeypatch, button_id
+E               ):
+E                   """Returning to Servers cannot revive a press queued before departure."""
+E                   app = ProfileFormApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       await workbench._select_server_key("local:docs")
+E                       canvas = app.query_one(MCPServersMode)
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       async with workbench._sync_children_lock:
+E                           workbench.set_mode("tools")
+E                           workbench.set_mode("servers")
+E                           await pilot.pause()
+E                           assert canvas.display and button.is_attached
+E                           post(pending[0])
+E                           await pilot.pause()
+E                           calls = (
+E                               list(app.unified_mcp_service.delete_calls),
+E                               list(app.unified_mcp_service.disconnect_calls),
+E                           )
+E                           if button_id == "delete":
+E                               assert not canvas._delete_armed, "retired Delete armed a confirmation"
+E                       await app.workers.wait_for_complete()
+E           >           assert calls == ([], []), (
+E                           "a retired press dispatched after returning to Servers"
+E                       )
+E           E           AssertionError: a retired press dispatched after returning to Servers
+E           E           assert ([], ['docs']) == ([], [])
+E           E
+E           E             At index 1 diff: ['docs'] != []
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:58: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:19.724 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:19.769 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:19.777 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:19.778 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:19.916 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:20.207 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 18:10:20.686 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:20.976 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:21.298 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           2026-09-20 18:10:21.454 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1665 - MCP execution log access failed: 'ProfileFormHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_stay2/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.25s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+E           1 failed in 2.58s
+
+Tests/private_profile.py:84: Failed
+__ test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect] __
+
+self = <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'connect', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a74a6c0>, 'request': <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]>>, 'state': 'disabled'}
+request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect] __
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a0ce780>
+E           button_id = 'connect', state = 'disabled'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["connect", "delete-confirm"])
+E               @pytest.mark.parametrize("state", ["disabled", "ancestor_disabled", "covered"])
+E               @private_profile_test
+E               async def test_queued_server_action_cannot_use_an_unavailable_view(
+E                   request, monkeypatch, button_id, state
+E               ):
+E                   """A real press queued while enabled cannot bypass later view admission."""
+E                   app = CanvasApp()
+E                   async with app.run_test() as pilot:
+E                       canvas = app.query_one(MCPServersMode)
+E                       await canvas.show_detail(_snap("local:alpha", "Alpha"))
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       if state == "disabled":
+E                           button.disabled = True
+E                       elif state == "ancestor_disabled":
+E                           canvas.disabled = True
+E                       else:
+E                           await app.push_screen(Screen())
+E                       post(pending[0])
+E                       await pilot.pause()
+E           >           assert app.events == []
+E           E           assert [HubActionRequested()] == []
+E           E
+E           E             Left contains one more item: HubActionRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:112: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:23.277 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:23.316 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:23.323 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:23.324 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:23.439 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:23.665 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]
+E           1 failed in 1.43s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm] _
+
+self = <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'delete-confirm', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a749c70>, 'request': <Fi...or <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]>>, 'state': 'disabled'}
+request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bf510d0>
+E           button_id = 'delete-confirm', state = 'disabled'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["connect", "delete-confirm"])
+E               @pytest.mark.parametrize("state", ["disabled", "ancestor_disabled", "covered"])
+E               @private_profile_test
+E               async def test_queued_server_action_cannot_use_an_unavailable_view(
+E                   request, monkeypatch, button_id, state
+E               ):
+E                   """A real press queued while enabled cannot bypass later view admission."""
+E                   app = CanvasApp()
+E                   async with app.run_test() as pilot:
+E                       canvas = app.query_one(MCPServersMode)
+E                       await canvas.show_detail(_snap("local:alpha", "Alpha"))
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       if state == "disabled":
+E                           button.disabled = True
+E                       elif state == "ancestor_disabled":
+E                           canvas.disabled = True
+E                       else:
+E                           await app.push_screen(Screen())
+E                       post(pending[0])
+E                       await pilot.pause()
+E           >           assert app.events == []
+E           E           assert [DeleteConfirmed()] == []
+E           E
+E           E             Left contains one more item: DeleteConfirmed()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:112: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:25.177 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:25.217 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:25.230 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:25.231 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:25.356 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:25.579 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]
+E           1 failed in 1.33s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect] _
+
+self = <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'connect', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a74aa20>, 'request': <FixtureRe...ne test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]>>, 'state': 'ancestor_disabled'}
+request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e378f20>
+E           button_id = 'connect', state = 'ancestor_disabled'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["connect", "delete-confirm"])
+E               @pytest.mark.parametrize("state", ["disabled", "ancestor_disabled", "covered"])
+E               @private_profile_test
+E               async def test_queued_server_action_cannot_use_an_unavailable_view(
+E                   request, monkeypatch, button_id, state
+E               ):
+E                   """A real press queued while enabled cannot bypass later view admission."""
+E                   app = CanvasApp()
+E                   async with app.run_test() as pilot:
+E                       canvas = app.query_one(MCPServersMode)
+E                       await canvas.show_detail(_snap("local:alpha", "Alpha"))
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       if state == "disabled":
+E                           button.disabled = True
+E                       elif state == "ancestor_disabled":
+E                           canvas.disabled = True
+E                       else:
+E                           await app.push_screen(Screen())
+E                       post(pending[0])
+E                       await pilot.pause()
+E           >           assert app.events == []
+E           E           assert [HubActionRequested()] == []
+E           E
+E           E             Left contains one more item: HubActionRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:112: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:27.083 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:27.121 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:27.128 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:27.129 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:27.246 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:27.474 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann2/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]
+E           1 failed in 1.32s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm] _
+
+self = <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'button_id': 'delete-confirm', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a74a720>, 'request': <Fi..._queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]>>, 'state': 'ancestor_disabled'}
+request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]>>
+work = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process')
+profile = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 45.0
+report = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ca5d250>
+E           button_id = 'delete-confirm', state = 'ancestor_disabled'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("button_id", ["connect", "delete-confirm"])
+E               @pytest.mark.parametrize("state", ["disabled", "ancestor_disabled", "covered"])
+E               @private_profile_test
+E               async def test_queued_server_action_cannot_use_an_unavailable_view(
+E                   request, monkeypatch, button_id, state
+E               ):
+E                   """A real press queued while enabled cannot bypass later view admission."""
+E                   app = CanvasApp()
+E                   async with app.run_test() as pilot:
+E                       canvas = app.query_one(MCPServersMode)
+E                       await canvas.show_detail(_snap("local:alpha", "Alpha"))
+E                       if button_id == "delete-confirm":
+E                           canvas.query_one("#mcp-detail-delete", Button).press()
+E                           await pilot.pause()
+E                       button = canvas.query_one(f"#mcp-detail-{button_id}", Button)
+E                       pending = []
+E                       post = canvas.post_message
+E
+E                       def hold(message):
+E                           if isinstance(message, Button.Pressed) and message.button is button:
+E                               pending.append(message)
+E                               return True
+E                           return post(message)
+E
+E                       monkeypatch.setattr(canvas, "post_message", hold)
+E                       button.press()
+E                       await pilot.pause()
+E                       assert len(pending) == 1
+E                       if state == "disabled":
+E                           button.disabled = True
+E                       elif state == "ancestor_disabled":
+E                           canvas.disabled = True
+E                       else:
+E                           await app.push_screen(Screen())
+E                       post(pending[0])
+E                       await pilot.pause()
+E           >           assert app.events == []
+E           E           assert [DeleteConfirmed()] == []
+E           E
+E           E             Left contains one more item: DeleteConfirmed()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_server_action_departure.py:112: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 18:10:28.999 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 18:10:29.037 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 18:10:29.044 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 18:10:29.045 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-20 18:10:29.159 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-20 18:10:29.383 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           - generated xml file: /private/tmp/32825-saved-patch-pytest/test_queued_server_action_cann3/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]
+E           1 failed in 1.35s
+
+Tests/private_profile.py:84: Failed
+------------ generated xml file: /private/tmp/32825-saved-patch.xml ------------
+============================= slowest 25 durations =============================
+8.14s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]
+8.05s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]
+7.63s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]
+7.62s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]
+4.67s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+3.84s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+3.75s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]
+3.41s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+2.84s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]
+2.45s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]
+2.41s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]
+2.39s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]
+2.24s call     Tests/UI/test_mcp_server_action_ownership.py::test_accepted_delete_keeps_its_target_across_toolbar_rebuild
+2.15s call     Tests/UI/test_mcp_server_action_ownership.py::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open
+2.07s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]
+2.03s call     Tests/UI/test_mcp_server_action_ownership.py::test_old_server_action_is_retired_before_first_detail_refresh_await
+1.97s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]
+1.88s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]
+1.88s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]
+1.86s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]
+1.79s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]
+1.72s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete]
+1.68s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[edit]
+1.66s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[refresh]
+1.64s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[connect]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]
+FAILED Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]
+7 failed, 19 passed in 85.24s (0:01:25)

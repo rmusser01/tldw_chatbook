@@ -1,11 +1,11 @@
 ---
 id: TASK-32831
 title: Preserve MCP tool execution errors through client results
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:30'
-updated_date: '2026-09-21 00:40'
+updated_date: '2026-09-21 01:04'
 labels:
   - mcp
   - ui
@@ -62,4 +62,6 @@ CI follow-up verified: select real Home startup, scoped splash getter override (
 Current accumulated Qodo review added two bounded follow-ups: document StdioSession.call_tool Args/Returns/Raises, and directly test MCPToolResultInput accepted/missing boolean flags, rejected non-booleans, opaque content and independent defaults. Plan: add the contract docstring and pure unit cases, run affected unit/stdio tests plus baseline-relative static checks, verify production AST equivalence excluding the docstring, then refresh review/CI. ADR required: no; documentation and coverage only under existing ADR-111/161. The approved visible behavior remains unchanged.
 
 Accumulated Qodo follow-up complete: public stdio call_tool contract now documents Args/Returns/Raises, including propagated request exceptions. Twelve direct validator cases cover missing/boolean flags, eight non-booleans, opaque content, ignored metadata and independent defaults. All31 affected unit/stdio cases pass; distinct MCP inventory87. Ruff lint/new-file and changed-range formatting pass with zero introduced production diagnostics. Independent review clear after documenting TypeError. Executable client AST is identical except its docstring; existing owner visual approval applies. Evidence: current-dev/review-followup. Current-head CI and final accumulated review still gate merge.
+
+Merged PR2716 into dev as 9cf5ba67b2396e67c16f3ad7157066b1f7bf740f at 2026-09-21T01:04:25Z. Final head 94600e9d8b passed 1152 main CI tests, 123 admission tests with 1 existing expected failure, all artifact/CSS/backlog/performance guards. Qodo has 0 bugs and 0 rule violations; all 3 review threads resolved. Owner-approved 19ceab visuals apply through executable AST and native evidence equality. Actual squash tree exactly matches the current-dev CI merge candidate87 distinct targeted MCP passes; compact execution remains unqualified. Existing ADR-103/111/161 apply. Receipt: current-dev/merge-closeout.json. PR2712 is the next separate bounded review.
 <!-- SECTION:NOTES:END -->

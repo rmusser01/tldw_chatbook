@@ -1319,6 +1319,19 @@ Button.mcp-callout {
     border: none;
 }
 
+.mcp-compact #mcp-detail-toolbar {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-size-1;
+}
+
+.mcp-compact #mcp-detail-toolbar .console-action-primary,
+.mcp-compact #mcp-detail-toolbar .console-action-secondary {
+    width: 1fr;
+    min-width: $ds-size-0;
+}
+
 /* A1: kept in lockstep with the baseline copy in MCPImportPanel.DEFAULT_CSS
    (mcp_profile_form.py) -- without an explicit height override here too,
    Textual's Vertical default (height: 1fr) expands this container to
