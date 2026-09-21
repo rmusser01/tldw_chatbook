@@ -1044,8 +1044,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "a2ac25ac002010f75ebd",
+      "call_count": 4,
+      "diagnostic_digest": "9d1b69a7ec63068c31fa",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_transformers.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11421,6 +11421,6 @@
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
     "task_492_calls": 1355,
-    "task_494_calls": 7709
+    "task_494_calls": 7708
   }
 }
