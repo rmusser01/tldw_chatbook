@@ -136,7 +136,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: 1023 -> 1026 (2026-09-19, TASK-32852): deepseek.py + mistral.py provider
 #: profiles and the shared legacy_line_stream.py shim join the same split;
 #: same reasoning as the 1022 -> 1023 bump above.
-MAX_TLDW_MODULES_AT_UI_READY = 1026
+#: 1026 -> 1027 (2026-09-21, inherited from TASK-32803.5, noted in PR #2766):
+#: task-32803.5's utc_now_iso adoption (6888a05082) made Utils.timestamps
+#: resident at _ui_ready via module-level imports in already-resident writers
+#: (Chat.document_generator et al.). Same-probe dev/current measurement:
+#: 1027/1027 -- pure origin/dev fails this census identically, so the +1 is
+#: not PR #2766's cost (its modules ride the lazily-mounted evals screen and
+#: are invisible to this census). Deferring it means lazy-import surgery
+#: across another task's 53-writer sweep; attributed here instead.
+#: Snapshot refreshed via ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
+MAX_TLDW_MODULES_AT_UI_READY = 1027
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

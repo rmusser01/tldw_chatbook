@@ -1,0 +1,21 @@
+{
+  "baseRefOid": "6622115c27a54bb93b11112c46d430682af5d8e9",
+  "headRefOid": "946b987cf6ea91b290b67e609b5c33d5d78e6a41",
+  "mergeCommit": {
+    "oid": "85e7153158619a7229e680a08678f88c256605d9"
+  },
+  "mergedAt": "2026-09-21T06:38:25Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2769",
+  "actual_tree": "733286f69189f4c67ff83cc657d83d286cf8b0c8",
+  "verified_candidate_tree": "733286f69189f4c67ff83cc657d83d286cf8b0c8",
+  "candidate_base": "6622115c27a54bb93b11112c46d430682af5d8e9",
+  "candidate_tests": "2 passed: isolated Advanced import closure and UI-ready census",
+  "ci_main_passed": 1152,
+  "ci_admission_passed": 123,
+  "ci_admission_xfailed": 1,
+  "qodo_reviewed_head": "5d493d1eaadc1a7a1e3ed72a50219dcacb47ee68",
+  "qodo_findings": 0,
+  "subsequent_import_fix_independent_review": "No blockers",
+  "review_threads_unresolved": 0
+}

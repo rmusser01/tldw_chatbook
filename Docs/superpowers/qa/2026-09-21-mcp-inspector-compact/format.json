@@ -1,0 +1,86 @@
+[
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "901-902",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "915-924",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "1454-1469",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "215-218",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "220-223",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "245-258",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "322-323",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "329-330",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "331-333",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "334-335",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "336-351",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    "range": "425-427",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/native_runner_args.py",
+    "range": "5-6",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Docs/superpowers/qa/native_runner_args.py",
+    "range": "41-42",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  }
+]
