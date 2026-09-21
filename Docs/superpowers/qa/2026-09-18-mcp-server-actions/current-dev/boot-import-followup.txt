@@ -1,0 +1,73 @@
+............                                                             [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/Performance/test_app_import_weight.py:325: UserWarning: boot-import-weight: 675/686 modules (headroom 11); snapshot drift +7/-1
+    ratchet.emit_headroom(
+
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/Performance/test_ui_ready_module_census.py:437: UserWarning: ui-ready-census: 1026/1026 modules (headroom 0); snapshot drift +1/-1
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================== PASSES ====================================
+________________ test_app_import_defers_advanced_tool_readiness ________________
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 23:10:29.457 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-20 23:10:29.494 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_0_l1doyl/config/config.toml
+2026-09-20 23:10:29.495 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_0_l1doyl/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-20 23:10:29.495 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_0_l1doyl/config/config.toml
+2026-09-20 23:10:29.496 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6248 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-20 23:10:29.496 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6252 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-20 23:10:29.501 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 23:10:29.502 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 23:10:29.502 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1890 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-20 23:10:29.503 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2211 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-20 23:10:29.525 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_0_l1doyl/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-20 23:10:29.525 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3445 - load_settings: Configuration cached for future use
+2026-09-20 23:10:29.525 | INFO     | tldw_chatbook.config:<module>:9762 - Default API Endpoint (from config.py global scope): openai
+2026-09-20 23:10:29.526 | DEBUG    | tldw_chatbook.config:<module>:9785 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-20 23:10:29.680 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-20 23:10:29.790 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 23:10:29.882 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 23:10:29.890 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 23:10:29.891 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_________ test_app_import_own_module_count_stays_at_the_post_diet_size _________
+----------------------------- Captured stdout call -----------------------------
+boot-import-weight: 675/686 modules (headroom 11); snapshot drift +7/-1
+_____________ test_ensure_torch_resolves_real_torch_when_installed _____________
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 23:10:36.620 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ torch dependency found. Feature 'torch' is enabled.
+______ test_ensure_transformers_resolves_real_transformers_when_installed ______
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 23:10:37.751 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ transformers dependency found. Feature 'transformers' is enabled.
+_____________ test_ensure_numpy_resolves_real_numpy_when_installed _____________
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 23:10:39.448 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ numpy dependency found. Feature 'numpy' is enabled.
+_____________ test_ui_ready_module_census_stays_at_the_pinned_size _____________
+----------------------------- Captured stdout call -----------------------------
+ui-ready-census: 1026/1026 modules (headroom 0); snapshot drift +1/-1
+--------- generated xml file: /private/tmp/2769-performance-green.xml ----------
+============================= slowest 25 durations =============================
+17.91s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+2.83s call     Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed
+1.26s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+1.26s call     Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+1.22s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+1.17s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+1.17s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+
+(18 durations < 1s hidden.)
+=========================== short test summary info ============================
+PASSED Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+PASSED Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+PASSED Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+PASSED Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+PASSED Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+PASSED Tests/Performance/test_app_import_weight.py::test_ensure_torch_resolves_real_torch_when_installed
+PASSED Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed
+PASSED Tests/Performance/test_app_import_weight.py::test_ensure_numpy_resolves_real_numpy_when_installed
+PASSED Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+PASSED Tests/Performance/test_ui_ready_module_census.py::test_flag_time_snapshot_copies_modules_inside_the_assignment_and_only_once
+PASSED Tests/Performance/test_ui_ready_module_census.py::test_flag_time_snapshot_is_per_instance_state_on_the_class
+PASSED Tests/Performance/test_ui_ready_module_census.py::test_census_script_embeds_the_unit_tested_helper
+12 passed, 2 warnings in 28.22s

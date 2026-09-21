@@ -1,0 +1,81 @@
+{
+  "pr": 2712,
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2712",
+  "state": "MERGED",
+  "approved_head": "93fef7e4056f417b1e0ab3ad33a9224da8988390",
+  "head": "3d624ba80241db3094ac167195684b3e2c861dd7",
+  "merge_commit": "4b61a5ca8f1dd33a4cc839b3f329a068decedea5",
+  "merged_at": "2026-09-21T05:34:32Z",
+  "actual_parent": "4f600976dfdc4f9cd92d4628518e838e2694d511",
+  "actual_tree": "19adddfd7621adee262cc8e12ced482a61927c50",
+  "visual_approval": "approved continue; same UI/CSS after conflict-free rebase",
+  "conflicts": [],
+  "native_sources_at_merge": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": true,
+    "tldw_chatbook/css/tldw_cli_modular.tcss": true,
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
+    "tldw_chatbook/css/widget_defaults_self.tcss": true,
+    "tldw_chatbook/css/core/_variables.tcss": true,
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": true,
+    "tldw_chatbook/MCP/local_store.py": true,
+    "tldw_chatbook/MCP/local_control_service.py": true,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": true,
+    "tldw_chatbook/Utils/terminal_utils.py": true,
+    "Docs/superpowers/qa/native_runner_args.py": true,
+    "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py": true
+  },
+  "ci": {
+    "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35563474671",
+    "head": "3d624ba80241db3094ac167195684b3e2c861dd7",
+    "base": "42d5cff862b7f6474dd543671d7b802365ec1b96",
+    "conclusion": "SUCCESS",
+    "main_passed": 1152,
+    "admission_passed": 123,
+    "admission_existing_xfailed": 1,
+    "artifact_css_backlog_performance_gguf": "SUCCESS"
+  },
+  "qodo": {
+    "open_threads": 0,
+    "bugs": 0,
+    "rule_violations": 0,
+    "mount_finding": "Dismissed after two real-mount overlap regressions and Textual registration trace. Patch unchanged by pure rebase.",
+    "reply": "https://github.com/rmusser01/tldw_chatbook/pull/2712#discussion_r4058799026"
+  },
+  "later_dev_verification": [
+    {
+      "dev": "48aff6e060386e3cbe3bcc549de016c9fd07fa9c",
+      "combined_tree": "afd444edb29e904436fd56b1d784d79eb511212e",
+      "targeted_passed": 40,
+      "artifact_guards_passed": 9
+    },
+    {
+      "dev": "bc458b7f8ace7ceff480bfb256afcbcc280d2d06",
+      "combined_tree": "0296814cc8e44c3560b6d2506634641ec48e15d0",
+      "targeted_passed": 38,
+      "timestamp_worker_guards": "passed"
+    }
+  ],
+  "merge_time_delta": [
+    "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/Architecture/test_screen_size_ratchet.py",
+    "backlog/docs/size-decomposition-candidates-2026-09-18.md"
+  ],
+  "post_merge_architecture": {
+    "passed": 66,
+    "failed": 1,
+    "failure": "Workbench grew to6771 lines vs new6761-line budget from PR2744; runtime identical to locally verified combination. Follow-up moves existing inspector clearing into its owner and tightens budget to6760.",
+    "log": "post-merge-architecture.txt"
+  },
+  "followup": {
+    "branch": "codex/mcp-mode-cleanup-review-20260921",
+    "targeted_passed": 106,
+    "log": "ratchet-followup.txt",
+    "independent_review": "No blockers. Mounted inspector lifetime, same async callable/group and ordered clearing preserve behavior. Original native UI evidence applies to mechanical move; no new native replay claimed.",
+    "status": "implementation verified; PR/CI pending",
+    "artifact_guards_passed": 9
+  },
+  "remaining_scope": "Compact Test Tool inspector reachability, Audit and other bounded component reviews remain open."
+}
