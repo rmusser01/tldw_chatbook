@@ -1195,7 +1195,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("Widgets/Console/console_workspace_switcher_modal.py", "ConsoleWorkspaceSwitcherModal", "DEFAULT_CSS"),
     ("Widgets/delete_confirmation_dialog.py", "DeleteConfirmationDialog", "DEFAULT_CSS"),
     ("Widgets/destination_workbench.py", "DestinationWorkbench", "DEFAULT_CSS"),
-    ("Widgets/dictation_performance_widget.py", "DictationPerformanceWidget", "DEFAULT_CSS"),
     ("Widgets/document_generation_modal.py", "DocumentGenerationModal", "DEFAULT_CSS"),
     ("Widgets/enhanced_file_picker.py", "DirectorySearch", "DEFAULT_CSS"),
     ("Widgets/enhanced_file_picker.py", "EnhancedFileDialog", "DEFAULT_CSS"),

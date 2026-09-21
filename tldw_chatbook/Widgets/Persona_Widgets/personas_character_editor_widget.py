@@ -1281,10 +1281,8 @@ class PersonasCharacterEditorWidget(Container):
         holder.remove_children()
         if renderable is None:
             return
-        from textual.widget import Widget as _W
-        from textual.widgets import Static as _S
 
-        if isinstance(renderable, _W):
+        if isinstance(renderable, Widget):
             holder.mount(renderable)
             return
         from ...Utils.mosaic_render import explicit_cell_size
@@ -1293,7 +1291,7 @@ class PersonasCharacterEditorWidget(Container):
         # default width: 100% folds a full-width mosaic inside any narrower
         # (or padded) box, painting black continuation stripes (task-3793);
         # an explicit size degrades a future width mismatch to a crop.
-        thumb = _S(renderable)
+        thumb = Static(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
             # ds-runtime: match the rendered image cell grid.
@@ -1366,17 +1364,15 @@ class PersonasCharacterEditorWidget(Container):
         holder.remove_children()
         if renderable is None:
             return
-        from textual.widget import Widget as _W
-        from textual.widgets import Static as _S
 
-        if isinstance(renderable, _W):
+        if isinstance(renderable, Widget):
             holder.mount(renderable)
             return
         from ...Utils.mosaic_render import explicit_cell_size
 
         # Explicit cell size from the baked renderable's grid - same
         # fold-into-stripes guard as set_avatar_thumbnail (task-3793).
-        thumb = _S(renderable)
+        thumb = Static(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
             # ds-runtime: match the rendered image cell grid.
