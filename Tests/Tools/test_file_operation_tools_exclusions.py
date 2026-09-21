@@ -99,6 +99,54 @@ def test_exclusions_empty_when_no_binding_carries_any(plain_root: Path) -> None:
         assert current_folder_binding_exclusions() == ()
 
 
+def test_one_unresolvable_exclusion_keeps_the_resolvable_rest(
+    tmp_path, monkeypatch
+) -> None:
+    """Finding 2c: per-entry isolation, never a whole-set collapse.
+
+    A mid-run filesystem change (here: a bound exclusion replaced by a
+    self-referential symlink) makes resolving ONE entry raise. The helper
+    must skip that entry at warning level and keep enforcing the resolvable
+    rest; zeroing the set would fail OPEN (every exclusion dropped at once).
+    """
+    from types import SimpleNamespace
+
+    root = tmp_path / "rw-project"
+    root.mkdir()
+    (root / "secrets").mkdir()
+    loop = root / "loop"
+    loop.symlink_to(loop)
+    binding = SimpleNamespace(
+        binding_id="binding-1",
+        locator=str(root),
+        metadata={
+            "access": "rw",
+            "exclusions": [
+                {"path": "secrets", "kind": "directory", "added_at": ""},
+                {"path": "loop", "kind": "directory", "added_at": ""},
+            ],
+        },
+    )
+
+    class _LoopRegistry:
+        def list_folder_bindings(self, _workspace_id):
+            return (binding,)
+
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: _LoopRegistry())
+    records: list[dict] = []
+    sink = wfr.logger.add(lambda message: records.append(message.record), level="WARNING")
+    try:
+        with wfr.run_workspace(WORKSPACE_ID):
+            paths = current_folder_binding_exclusions()
+    finally:
+        wfr.logger.remove(sink)
+
+    assert paths == ((root / "secrets").resolve(strict=False),)
+    assert any(
+        "exclusion" in record["message"] for record in records
+    ), [record["message"] for record in records]
+
+
 # ---------------------------------------------------------------------------
 # Family enforcement: read / list / write / glob through the builtin tools.
 # ---------------------------------------------------------------------------

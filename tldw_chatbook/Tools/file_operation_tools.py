@@ -750,8 +750,13 @@ class WriteFileTool(Tool):
                 # a denial of service. See
                 # `Utils.sensitive_paths.refuses_new_directory_chain` for
                 # why this walks every not-yet-existing ancestor rather
-                # than just `path.parent` itself.
-                if refuses_new_directory_chain(path.parent):
+                # than just `path.parent` itself. Passes the merged
+                # (exclusion-aware) context so the walk refuses a chain
+                # landing under a user exclusion identically to the final
+                # file check above.
+                if refuses_new_directory_chain(
+                    path.parent, context=_exclusion_aware_context()
+                ):
                     return {
                         "file_path": file_path,
                         "error": (

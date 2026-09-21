@@ -462,11 +462,21 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     @staticmethod
     def _is_excluded(relative_path: str, exclusions: tuple[str, ...]) -> bool:
-        """Whether one binding-relative path equals or lies under an exclusion."""
-        return any(
-            relative_path == exclusion or relative_path.startswith(exclusion + "/")
-            for exclusion in exclusions
-        )
+        """Whether one binding-relative path equals or lies under an exclusion.
+
+        Compared casefolded per component (final-review Finding 3), matching
+        the denylist's own ``_compare_key`` discipline: on a case-insensitive
+        filesystem a Settings-typed ``Docs`` exclusion refuses on-disk
+        ``docs/`` via the tools, so the badge must agree with them.
+        """
+        folded_path = relative_path.casefold()
+        for exclusion in exclusions:
+            folded_exclusion = exclusion.casefold()
+            if folded_path == folded_exclusion or folded_path.startswith(
+                folded_exclusion + "/"
+            ):
+                return True
+        return False
 
     def _can_publish(self, generation: int) -> bool:
         return (

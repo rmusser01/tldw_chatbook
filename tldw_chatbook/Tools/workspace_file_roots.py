@@ -575,7 +575,9 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
         run workspace, for the default workspace, when no admitted binding
         carries exclusions, or when the registry is unavailable (consistent
         with ``allowed_file_roots`` degrading to sandbox-only there, which
-        already makes every bound path unreachable).
+        already makes every bound path unreachable). An individual entry
+        that cannot be resolved (e.g. replaced by a symlink loop mid-run)
+        is skipped with a warning while the resolvable rest stays enforced.
     """
     paths: list[Path] = []
     try:
@@ -620,9 +622,18 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
             ):
                 continue
             for entry in binding_exclusion_entries(binding):
-                paths.append((folder / entry.path).resolve(strict=False))
+                try:
+                    paths.append((folder / entry.path).resolve(strict=False))
+                except Exception:  # noqa: BLE001 - per-entry isolation (final
+                    # review Finding 2c): skip the unresolvable entry at
+                    # warning, keep the resolvable rest. Collapsing to () here
+                    # would fail OPEN (every exclusion dropped at once).
+                    logger.warning(
+                        "Workspace binding exclusion could not be resolved; "
+                        "skipped while keeping the remaining exclusions"
+                    )
     except Exception:
-        logger.opt(exception=True).debug(
+        logger.opt(exception=True).warning(
             "Workspace binding exclusions unavailable; treating as none"
         )
         return ()

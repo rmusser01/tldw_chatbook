@@ -93,6 +93,29 @@ def test_registry_failure_reuses_last_known(tmp_path: Path):
     assert (root / "secrets").resolve(strict=False) in provider()
 
 
+def test_provider_skips_unresolvable_entry_and_keeps_rest(tmp_path: Path):
+    """Finding 2a: one unresolvable exclusion must not kill the provider call.
+
+    A self-referential symlink under the binding root makes resolving that
+    one relative exclusion raise; the provider must skip it (warning) and
+    still return the resolvable rest rather than propagating the error and
+    zeroing the effective set for the caller.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    (root / "secrets").mkdir()
+    loop = root / "loop"
+    loop.symlink_to(loop)
+    registry = _FakeRegistry([_FakeBinding("ws", "folder-1", root, ("secrets", "loop"))])
+
+    provider = _exclusion_paths_provider(
+        registry, "folder-1", root, ("secrets", "loop")
+    )
+    paths = provider()
+
+    assert paths == ((root / "secrets").resolve(strict=False),)
+
+
 def test_provider_refuses_excluded_path_end_to_end(tmp_path: Path):
     root = (tmp_path / "repo").resolve()
     root.mkdir()

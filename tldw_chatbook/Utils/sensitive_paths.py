@@ -657,9 +657,9 @@ def merge_sensitive_context(
     ``files``/``dirs`` resolved and deduped by the denylist's own
     ``_compare_key`` discipline, so ``is_sensitive_path``,
     ``sensitive_exclusions_under``, and ``refuses_new_directory_chain``
-    enforce them with no further call-site changes. Unresolvable extras are
-    kept only if they resolve; entries that fail resolution are dropped
-    exactly like the base set's own unresolved entries.
+    enforce them with no further call-site changes. Extras that fail
+    resolution are dropped, mirroring how the base set's own unresolved
+    entries are dropped.
     """
     files = list(base.files)
     dirs = list(base.dirs)

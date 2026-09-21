@@ -1384,17 +1384,30 @@ def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
     Project-instruction activation skips every AGENTS.md/AGENTS.override.md
     candidate at or under these binding-relative exclusions (spec 2026-09-20
     section 2): excluded guidance is never read or activated.
+
+    Per-entry isolation (final-review Finding 2b): an entry that cannot be
+    resolved (e.g. replaced by a symlink loop mid-run) is skipped with a
+    warning while every other exclusion stays enforced -- zeroing the whole
+    set here would fail OPEN, letting excluded guidance activate because one
+    unrelated entry went bad.
     """
     from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
     root = Path(selection.root)
     try:
-        return frozenset(
-            (root / entry.path).resolve(strict=False)
-            for entry in binding_exclusion_entries(selection.binding)
-        )
+        entries = tuple(binding_exclusion_entries(selection.binding))
     except (OSError, RuntimeError, ValueError, AttributeError, TypeError):
         return frozenset()
+    excluded: set[Path] = set()
+    for entry in entries:
+        try:
+            excluded.add((root / entry.path).resolve(strict=False))
+        except Exception:  # noqa: BLE001 - isolate one bad entry, keep the rest
+            logger.warning(
+                "Project-instruction exclusion entry could not be resolved; "
+                "skipped while keeping the remaining exclusions"
+            )
+    return frozenset(excluded)
 
 
 def _exclusion_paths_provider(
@@ -1421,10 +1434,18 @@ def _exclusion_paths_provider(
         except Exception:  # noqa: BLE001 -- degrade to last-known, never wider
             live = frozenset()
         holder["effective"] = holder["effective"] | live
-        return tuple(
-            (root / rel).resolve(strict=False)
-            for rel in sorted(holder["effective"])
-        )
+        resolved: list[Path] = []
+        for rel in sorted(holder["effective"]):
+            try:
+                resolved.append((root / rel).resolve(strict=False))
+            except Exception:  # noqa: BLE001 - per-entry isolation: skip the
+                # unresolvable entry (warning), keep the resolvable rest.
+                # Zeroing the whole tuple here would fail OPEN for the run.
+                logger.warning(
+                    "Console run exclusion path could not be resolved; "
+                    "skipped while keeping the remaining exclusions"
+                )
+        return tuple(resolved)
 
     return read
 

@@ -100,6 +100,19 @@ def test_resolve_workspace_files_visit_exposes_binding_exclusions(
 # -- Widget level: real modal over a fake service --------------------------
 
 
+def test_is_excluded_folds_case_componentwise() -> None:
+    """A differently-cased exclusion must still badge on case-insensitive FS.
+
+    Mirrors the denylist's ``_compare_key`` discipline (Finding 3): tools
+    refuse a case-variant excluded path, so the modal's badge must agree --
+    ``Docs`` badges on-disk ``docs/...`` while ``docsfoo`` stays unbadged.
+    """
+    assert ConsoleWorkspaceFilesModal._is_excluded("docs/file.txt", ("Docs",))
+    assert ConsoleWorkspaceFilesModal._is_excluded("Docs", ("docs",))
+    assert not ConsoleWorkspaceFilesModal._is_excluded("docsfoo/file.txt", ("docs",))
+    assert not ConsoleWorkspaceFilesModal._is_excluded("other/file.txt", ("docs",))
+
+
 class _FakeFilesService:
     """The modal's whole service boundary, recording exclusion toggles."""
 

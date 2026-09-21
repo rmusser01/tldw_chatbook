@@ -41,6 +41,23 @@ def test_path_is_excluded_matches_dir_and_children(tmp_path: Path):
     assert not path_is_excluded(tmp_path / "public" / "AGENTS.md", excluded)
 
 
+def test_path_is_excluded_folds_case(tmp_path: Path):
+    """A Settings-typed ``Private`` exclusion still excludes on-disk ``private/``.
+
+    macOS/Windows filesystems are case-insensitive by default and
+    ``Path.resolve()`` preserves the typed spelling, so an exact-case compare
+    lets ``private/AGENTS.md`` through a ``Private`` exclusion -- the same
+    hole the denylist's own ``_compare_key`` discipline (TASK-19800) closes
+    for the fs-tool families. Deny-side only: folding must never touch a
+    confinement check.
+    """
+    excluded = frozenset({tmp_path / "Private"})
+    assert path_is_excluded(tmp_path / "private", excluded)
+    assert path_is_excluded(tmp_path / "private" / "AGENTS.md", excluded)
+    assert not path_is_excluded(tmp_path / "privatefoo" / "AGENTS.md", excluded)
+    assert not path_is_excluded(tmp_path / "other" / "AGENTS.md", excluded)
+
+
 class _BindingRegistry:
     def __init__(self, bindings):
         self.bindings = {binding.binding_id: binding for binding in bindings}
@@ -56,7 +73,7 @@ class _BindingRegistry:
         return self.bindings.get(binding_id)
 
 
-def _binding(root: Path) -> WorkspaceRuntimeBinding:
+def _binding(root: Path, exclusions: tuple[str, ...] = ("private",)) -> WorkspaceRuntimeBinding:
     return WorkspaceRuntimeBinding(
         workspace_id="w1",
         binding_id="b1",
@@ -68,10 +85,11 @@ def _binding(root: Path) -> WorkspaceRuntimeBinding:
             "access": "rw",
             "exclusions": [
                 {
-                    "path": "private",
+                    "path": path,
                     "kind": "directory",
                     "added_at": "2026-09-20T00:00:00Z",
                 }
+                for path in exclusions
             ],
         },
     )
@@ -239,3 +257,53 @@ def test_resolver_treats_excluded_candidates_as_nonexistent(tmp_path: Path):
     assert startup.source is None
     assert startup.outcomes == ()
     assert startup.excluded_dirs == frozenset({root / "AGENTS.md"})
+
+
+def test_resolver_skips_case_variant_excluded_directory(tmp_path: Path):
+    """End-to-end Finding 1 regression: exclusion ``Private`` vs on-disk ``private/``.
+
+    Before the casefold fix the differently-cased exclusion missed, the
+    nested directory was admitted, and its AGENTS.md body was read into
+    context (the byte-budget pass below would have returned the sentinel).
+    """
+    root = tmp_path.resolve()
+    private = root / "private"
+    private.mkdir()
+    (private / "AGENTS.md").write_text(SENTINEL)
+    resolver = ProjectInstructionResolver()
+
+    batch = resolver.resolve_targets(
+        root,
+        (private,),
+        max_bytes=10_000,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        excluded_dirs=frozenset({root / "Private"}),
+    )
+    assert batch.sources == ()
+    assert batch.outcomes == ()
+
+
+def test_excluded_dirs_survive_one_unresolvable_entry(tmp_path: Path):
+    """Finding 2b: one unresolvable exclusion entry must not zero the set.
+
+    A self-referential symlink under the binding root makes resolving that
+    one entry raise; the effective set must keep every other exclusion
+    instead of collapsing to ``frozenset()`` (fail-open).
+    """
+    root = tmp_path.resolve()
+    (root / "private").mkdir()
+    loop = root / "loop"
+    loop.symlink_to(loop)
+    session = SimpleNamespace(
+        workspace_id="w1",
+        project_instruction_state=ProjectInstructionControlState.new_session(),
+    )
+    selection = resolve_project_instruction_binding(
+        session, _BindingRegistry([_binding(tmp_path, exclusions=("private", "loop"))])
+    )
+    assert selection is not None
+
+    excluded = _project_instruction_excluded_dirs(selection)
+
+    assert excluded == frozenset({(root / "private").resolve(strict=False)})

@@ -163,19 +163,38 @@ class _UnsafeMetadata(Exception):
 
 
 def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
-    """True when ``path`` is or lies under a workspace-excluded directory."""
+    """True when ``path`` is or lies under a workspace-excluded directory.
+
+    Deny-side comparison is COMPONENT-WISE CASEFOLDED, mirroring
+    ``Utils.sensitive_paths._compare_key`` (TASK-19800): macOS and Windows
+    filesystems are case-insensitive by default and ``Path.resolve()``
+    preserves the caller's spelling, so a Settings-typed ``Docs`` exclusion
+    must also exclude an on-disk ``docs/AGENTS.md``. Folding may
+    over-refuse a genuinely distinct sibling on a case-sensitive
+    filesystem -- the cheap direction for a denylist. Never reuse the
+    folded form for confinement checks: folding loosens those (see
+    ``_compare_key`` for why).
+    """
     if not excluded:
         return False
     try:
-        resolved = path.resolve(strict=False)
-    except OSError:
-        return True  # unresolvable candidate paths fail closed
+        resolved_key = tuple(
+            part.casefold() for part in path.resolve(strict=False).parts
+        )
+    except Exception:  # noqa: BLE001 - unresolvable candidate paths fail closed
+        return True
     for entry in excluded:
         try:
-            candidate = entry.resolve(strict=False)
-        except OSError:
+            entry_key = tuple(
+                part.casefold() for part in entry.resolve(strict=False).parts
+            )
+        except Exception:  # noqa: BLE001 - broad like ``_resolved`` (TASK-847):
+            # symlink loops raise OSError/RuntimeError, embedded NULs raise
+            # ValueError. Skipping the ENTRY is safe because an actual tool
+            # touching such a path still fails closed via ``is_sensitive_path``,
+            # which refuses any path it cannot resolve.
             continue
-        if resolved == candidate or candidate in resolved.parents:
+        if entry_key == resolved_key[: len(entry_key)]:
             return True
     return False
 
