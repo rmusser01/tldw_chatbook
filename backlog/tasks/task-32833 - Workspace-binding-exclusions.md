@@ -20,7 +20,7 @@ User-managed exact-path exclusions per workspace folder binding; agent-invisible
 - [x] #1 Registry CRUD validated
 - [x] #2 Agent tools refuse+omit excluded paths
 - [x] #3 Both UI surfaces
-- [x] #4 ADR-173
+- [x] #4 ADR-174
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,5 +32,5 @@ Per implementation plan Docs/superpowers/plans/2026-09-20-workspace-binding-excl
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented via Docs/superpowers/plans/2026-09-20-workspace-binding-exclusions.md; ADR-173; final whole-branch review clean after one fix wave
+Implemented via Docs/superpowers/plans/2026-09-20-workspace-binding-exclusions.md; ADR-174; final whole-branch review clean after one fix wave
 <!-- SECTION:NOTES:END -->

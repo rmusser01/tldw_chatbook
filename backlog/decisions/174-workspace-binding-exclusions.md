@@ -1,4 +1,4 @@
-# ADR-173: Per-workspace binding exclusions for agent file access
+# ADR-174: Per-workspace binding exclusions for agent file access
 
 Status: Accepted
 Date: 2026-09-20
