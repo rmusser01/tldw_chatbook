@@ -1,9 +1,10 @@
 ---
 id: TASK-32832
 title: Add skill eval sub-harness (layered skill scoring)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-20 20:20'
+updated_date: '2026-09-21 02:16'
 labels:
   - evals
   - skills
@@ -33,83 +34,6 @@ Score a skill as the subject under test, PluginEval-style: deterministic static 
 
 ## Implementation Notes
 
-Implemented as a self-contained sub-harness package per ADR-172 (the
-`character_probe`/`word_bench` precedent — no classic-runner registry entry,
-no schema migration), delivered across ten tasks: T1 models/digest,
-T2 subject snapshots, T3 static analyzer, T4 scoring/blend/grades,
-T5 simulation + pure-Python stats, T6 judge layer + inert-data prompts,
-T7 depth runner + preflight + live progress, T8 EvalsDB persistence,
-T9 view-model + launcher panel, T10 screen wiring/rail entry/detail view,
-T11 docs + polish + hygiene.
-
-Key deviations from the plan briefs, each ratified during execution
-(controller rulings recorded in the task briefs' errata):
-
-- `line_count` counts full SKILL.md content lines (front matter included),
-  not body-only — the Task 2 brief was self-contradictory against its own
-  pinned test.
-- Depth checks in `build_report` use explicit ranks, not `>=` —
-  `SkillEvalDepth` is a str-mixin Enum, so relational operators compare the
-  string values lexicographically.
-- The Task 5 brief's beta continued-fraction transcription was broken; the
-  Lentz CF (with the symmetry-swap branch) was implemented per Numerical
-  Recipes and scipy-verified to <1e-9; the brief's unsatisfiable CP test
-  windows were replaced with true reference values.
-- Simulation chat-exception cells are appended as failure cells (never
-  dropped) so `failure_rate` and the activation denominator count them.
-- A parseable-but-indeterminate judge selection reply is a FAILED cell
-  ("indeterminate"), not a silently skipped one.
-- Runner progress is live per-call (layer-internal cumulative counters
-  forwarded as deltas), not layer-end bumps.
-- `Select` NULL value guards in the launch panel (Textual `Select` can hold
-  `Select.NULL` after option reloads).
-- Runner exposes `judge_result`/`sim_result` attributes so the screen worker
-  can persist artifacts the report itself does not carry.
-- Storage writes run metrics with type `"custom"` (the EvalsDB metric-type
-  vocabulary has no numeric-without-tolerance kind).
-- The consolidated UI test harness now loads `css/screen_feature_evals.tcss`
-  (production loads it via TAB_EVALS first-navigation) — this production-parity
-  fix cleared 30 previously "pre-existing" failures across the evals suites.
-
-Known deliberate simplifications: judge trigger-check selections run with no
-decoys (isolated routing measurement; decoys measure competition in the sim
-layer), and `store_skill_names` limits NAME_COLLISION scope to
-builtin ∪ store-skill names (full composition-time exclusion set needs
-registry composition, deferred).
-
-Final review fix wave (whole-branch review, six cross-seam defects):
-
-- Subject picker (Critical): the panel's subject was display-only and
-  drafts started `subject_ref=""`, so the feature was unusable from its own
-  surface (every draft run died in `SubjectError`). The panel now carries a
-  store-skill `Select` (fed by `set_subjects`, labels `name (trust)`) plus a
-  directory-path `Input`, posts `SubjectChanged(subject_ref, subject_kind)`
-  on either change (last-touched-wins between the two controls), and the
-  screen persists the pick (`load_skill_eval_bench` → `replace` →
-  `save_skill_eval_bench`) and refreshes the subject display; the picker is
-  fed via a post-mount worker over `skill_eval_launch.store_skill_names`.
-- Name-collision self-exclusion (Critical): the worker's reserved-name set
-  included the subject's own store name, flagging every store-sourced
-  subject `NAME_COLLISION` (−5%). Extracted
-  `skill_eval_launch.reserved_names_for(subject_name, skill_names,
-  builtin_names)` excludes it at the one construction site.
-- Body-size cap (spec §11, controller ruling 8,000 chars): `prompts._wrap`
-  truncates oversize bodies with `[BODY TRUNCATED AT 8000 CHARS]` inside
-  the data fence, and `runner.run` appends a report warning.
-- Sim-prompt inert markers: `_generate_sim_prompts` now fences the subject
-  name/description in `<<<SKILL_UNDER_TEST_START/END>>>`, matching the
-  system prompt's only-marked-text-is-untrusted contract.
-- `sim_usable` gate: a usable simulation layer requires at least one parsed
-  cell; a ran-but-zero-parsed layer (sustained provider outage) degrades
-  confidence one level with a distinct warning instead of certifying.
-- Layer statistics rendering: `SkillEvalDetail` renders the persisted
-  `layer_summaries` (judge rubrics + trigger F1 line; sim activation/
-  consistency/failure lines with CIs; `None` blocks skipped).
-
-Files: `tldw_chatbook/Evals/skill_eval/` (models, subject, static_analyzer,
-scoring, simulation, judge, prompts, runner, storage),
-`tldw_chatbook/UI/Evals/skill_eval_{panel,detail,launch}.py`, wiring in
-`tldw_chatbook/UI/Screens/evals_screen.py` + `UI/Evals/library_rail.py` +
-`UI/Evals/evals_state.py`; tests under `Tests/Evals/skill_eval/` (44 tests)
-and `Tests/UI/test_evals_skill_eval_{panel,screen}.py`; docs in
-`tldw_chatbook/Evals/README.md` and `Docs/User_Guide/lab.md`.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented via subagent-driven development: 11 plan tasks + final-review fix wave. All ACs verified; targeted sweep 167 green; ADR-172 accepted; lessons entry added.
+<!-- SECTION:NOTES:END -->
