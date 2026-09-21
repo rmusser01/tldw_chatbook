@@ -154,7 +154,9 @@ def save_report(db: EvalsDB, run_id: str, report: SkillEvalReport,
 
     The full report JSON lands in ``config_overrides["skill_eval_report"]``;
     per-dimension and composite values are also written as run metrics for
-    comparison surfaces.
+    comparison surfaces. Writes commit metrics first and the terminal
+    status LAST (see the ordering comment in the body) so a mid-sequence
+    failure can never leave a completed run without its metrics.
 
     Args:
         db: EvalsDB handle.
@@ -182,14 +184,21 @@ def save_report(db: EvalsDB, run_id: str, report: SkillEvalReport,
         "methodology_version": report.methodology_version,
         "layer_summaries": report.layer_summaries,
     }
+    metrics: Dict[str, Tuple[float, str]] = {
+        f"dim_{d.name}": (float(d.blended), "custom") for d in report.dimensions}
+    metrics["composite"] = (float(report.composite), "custom")
+    # Qodo F14 -- commit ordering is load-bearing: metrics, then the
+    # report-snapshot overrides, then the terminal status LAST. A failure
+    # mid-sequence can then only leave a run NOT yet marked completed (the
+    # UI shows it as running/failed -- recoverable), never a "completed"
+    # run whose metrics and report snapshot silently never persisted.
+    # (Each update is its own transaction via EvalsDB methods; this store
+    # never writes raw SQL.)
+    db.store_run_metrics(run_id, metrics)
     # update_run returns None (no bool contract like update_task); the
     # missing-run case is already guarded by the get_run check above.
     db.update_run(run_id, {"config_overrides": overrides})
     db.update_run(run_id, {"status": status})
-    metrics: Dict[str, Tuple[float, str]] = {
-        f"dim_{d.name}": (float(d.blended), "custom") for d in report.dimensions}
-    metrics["composite"] = (float(report.composite), "custom")
-    db.store_run_metrics(run_id, metrics)
 
 
 def load_report(db: EvalsDB, run_group_id: str) -> Optional[dict]:

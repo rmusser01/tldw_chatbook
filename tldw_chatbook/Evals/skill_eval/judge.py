@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from typing import Any, List, Optional
 
@@ -40,7 +41,13 @@ def parse_judge_json(text: str) -> Optional[dict]:
 
 
 class _Caller:
-    """One LLM role-call with parse validation and a single retry."""
+    """One LLM role-call with parse validation and a single retry.
+
+    ``completed`` counts every TERMINATED cell -- success,
+    failure-after-retries, and cancellation alike (Qodo F7: failures used
+    to leave the counter -- and therefore live progress -- permanently
+    stalled). Only the layer's progress callback reads it.
+    """
 
     def __init__(self, chat: Any, semaphore: asyncio.Semaphore,
                  cancel: Optional[CancelToken]):
@@ -53,9 +60,14 @@ class _Caller:
                    validate) -> tuple[Optional[dict], str, Optional[str]]:
         last_raw, last_err = "", None
         for _attempt in (1, 2):
-            if self.cancel is not None and self.cancel.is_cancelled:
-                return None, last_raw, "cancelled"
             async with self.sem:
+                # Re-checked AFTER acquiring (Qodo F5): a cell that queued
+                # behind an in-flight call when cancellation landed must
+                # not still spend the call -- the pre-acquire check alone
+                # left a whole semaphore-queue of stragglers executing.
+                if self.cancel is not None and self.cancel.is_cancelled:
+                    self.completed += 1
+                    return None, last_raw, "cancelled"
                 try:
                     raw = await asyncio.to_thread(
                         self.chat, messages=messages, target=target,
@@ -69,23 +81,43 @@ class _Caller:
                 self.completed += 1
                 return parsed, raw, None
             last_err = "unparseable"
+        self.completed += 1
         return None, last_raw, last_err
 
 
 def _validate_synthesis(obj: Optional[dict]):
-    if not obj or not isinstance(obj.get("prompts"), list) or not obj["prompts"]:
+    """Accept only the exact synthesis contract: 10 prompts, 5 true / 5 false.
+
+    Qodo F2: any non-empty list of well-shaped prompt objects used to
+    pass, so a 7-prompt or 9-true/1-false reply silently produced a
+    lopsided trigger battery (and precision/recall over a prompt set the
+    contract never asked for).
+    """
+    if not obj or not isinstance(obj.get("prompts"), list):
         return None
-    ok = all(isinstance(p, dict) and isinstance(p.get("text"), str)
-             and isinstance(p.get("should_trigger"), bool)
-             for p in obj["prompts"])
-    return obj if ok else None
+    prompts = obj["prompts"]
+    if len(prompts) != 10:
+        return None
+    if not all(isinstance(p, dict) and isinstance(p.get("text"), str)
+               and isinstance(p.get("should_trigger"), bool)
+               for p in prompts):
+        return None
+    true_count = sum(1 for p in prompts if p["should_trigger"])
+    return obj if true_count == 5 else None
 
 
 def _validate_rating(obj: Optional[dict]):
     if not obj:
         return None
     r = obj.get("rating")
-    if isinstance(r, (int, float)) and 1 <= r <= 5:
+    # Qodo F10: ``True`` is an ``int`` in Python, so a boolean rating used
+    # to pass as 1.0; non-finite floats (NaN survives ``json.loads``) are
+    # rejected outright alongside it.
+    if isinstance(r, bool) or not isinstance(r, (int, float)):
+        return None
+    if isinstance(r, float) and not math.isfinite(r):
+        return None
+    if 1 <= r <= 5:
         obj["rating"] = float(r)
         return obj
     return None
@@ -114,7 +146,8 @@ async def run_judge_layer(subject: SkillSubject, chat: Any, *,
         config: Run config (seed, temperatures, max_tokens).
         semaphore: Concurrency bound shared with the sim layer.
         progress: Optional cumulative ``(completed, 16)`` callback per
-            successful call.
+            TERMINATED cell -- success, failure-after-retries, or
+            cancellation (Qodo F7), so failures advance live progress too.
         cancel: Optional cooperative cancellation token.
 
     Returns:

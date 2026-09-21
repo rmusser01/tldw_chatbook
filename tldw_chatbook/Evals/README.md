@@ -240,8 +240,13 @@ letter grade:
 | Depth | Layers | Estimated LLM calls | Confidence label |
 |---|---|---|---|
 | quick | static | 0 | Estimated |
-| standard | static + judge | 16 | Assessed |
-| deep | all three | 67 (17 + sim total) | Certified |
+| standard | static + judge | 16 (max 32 with judge retries) | Assessed |
+| deep | all three | 67 = 17 + sim total (max 84 with judge retries) | Certified |
+
+The nominal estimate counts one attempt per cell; the parenthetical
+maximum adds the judge layer's retry-once budget (16 judge cells may each
+be attempted twice; simulation cells are single-attempt — error cells are
+recorded, not retried). The panel's cost line shows both numbers.
 
 If a depth-required layer becomes unusable (e.g. every judge call fails at
 standard), the run still completes: blends renormalize over the intact

@@ -31,7 +31,8 @@ mode strip, then:
    last wins. Then pick a **depth** (quick / standard / deep) and the
    **generator** and **judge** models. The panel shows the estimated LLM
    call count for the chosen depth before anything is spent (quick 0,
-   standard 16, deep 67).
+   standard 16 with a worst case of 32, deep 67 with a worst case of 84 —
+   the maximum counts each judge cell's one retry).
 3. Press **Run**. Progress ticks per completed call; **Cancel** keeps the
    partial results.
 

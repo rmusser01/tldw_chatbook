@@ -21,6 +21,28 @@ BODY_CHAR_CAP = 8000
 #: where) the material they are rating was cut off.
 _BODY_TRUNCATION_MARKER = "[BODY TRUNCATED AT 8000 CHARS]"
 
+
+def sanitize_untrusted(text: Any) -> str:
+    """Neutralize fence-forging character sequences in untrusted text.
+
+    Every builder below interleaves untrusted skill fields (names,
+    descriptions, bodies, decoy summaries) with ``<<<..._START>>>`` /
+    ``<<<..._END>>>`` inert-data fences. A crafted description containing
+    e.g. ``<<<SKILL_PACKAGE_END>>>`` would otherwise close the fence early,
+    letting everything after it pose as trusted instruction text. Replacing
+    every ``<<<``/``>>>`` occurrence with single-guillemet runs keeps the
+    content readable while making fence tokens unforgeable from the inside.
+
+    Args:
+        text: Untrusted field value of any type (non-strings are ``str()``ed
+            by the callers' own conventions; this guards the markers only).
+
+    Returns:
+        The text with every ``<<<`` -> ``‹‹‹`` and ``>>>`` -> ``›››``.
+    """
+    return (str(text).replace("<<<", "‹‹‹")
+                     .replace(">>>", "›››"))
+
 _RUBRICS = {
     "instruction_fitness": (
         "Rate how well this skill's body instructs an executing agent, 1-5.\n"
@@ -40,12 +62,14 @@ _RUBRICS = {
 
 
 def _wrap(subject: SkillSubject) -> str:
-    body = subject.body
+    # Every untrusted field is sanitized (Qodo F6): a crafted name,
+    # description, or body must not be able to forge the package fence.
+    body = sanitize_untrusted(subject.body)
     if len(body) > BODY_CHAR_CAP:
         body = body[:BODY_CHAR_CAP] + "\n" + _BODY_TRUNCATION_MARKER
     return (f"<<<SKILL_PACKAGE_START>>>\n"
-            f"name: {subject.name}\n"
-            f"description: {subject.description}\n"
+            f"name: {sanitize_untrusted(subject.name)}\n"
+            f"description: {sanitize_untrusted(subject.description)}\n"
             f"allowed_tools: {' '.join(subject.allowed_tools)}\n\n"
             f"{body}\n"
             f"<<<SKILL_PACKAGE_END>>>")
@@ -90,8 +114,15 @@ def selection_messages(prompt: str, subject: SkillSubject,
         Two-message list requesting a strict-JSON ``{"skill": ..., ...}``
         reply.
     """
-    lines = [f"- {d.get('name')}: {d.get('description', '')}" for d in decoys]
-    lines.append(f"- {subject.name}: {subject.description}")
+    # Decoy summaries are untrusted store content too (Qodo F6): a crafted
+    # decoy description must not be able to forge the catalog fence.
+    lines = [
+        f"- {sanitize_untrusted(d.get('name'))}: "
+        f"{sanitize_untrusted(d.get('description', ''))}"
+        for d in decoys
+    ]
+    lines.append(f"- {sanitize_untrusted(subject.name)}: "
+                 f"{sanitize_untrusted(subject.description)}")
     system = (
         f"{INERT_DATA_RULE}\nYou are an agent choosing which skill (if any) to "
         'use. Reply ONLY: {"skill": "<name or null>", "reason": "<short>"}'

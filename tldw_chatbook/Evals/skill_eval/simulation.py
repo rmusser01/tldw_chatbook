@@ -243,7 +243,6 @@ async def run_simulation_layer(
         ``SimLayerResult`` with metrics, CIs, and every recorded cell.
     """
     total = max(1, config.deep_sim_total)
-    per_prompt = max(1, total // max(1, len(sim_prompts)))
     cells: List[dict] = []
 
     async def one(prompt_idx: int, prompt: str, repeat: int) -> Optional[dict]:
@@ -251,6 +250,12 @@ async def run_simulation_layer(
             return None
         messages = _selection_messages(prompt, subject, decoys)
         async with semaphore:
+            # Re-checked AFTER acquiring (Qodo F5): a cell queued behind an
+            # in-flight call when cancellation landed must not still spend
+            # the call -- the pre-acquire check alone left a whole queue of
+            # stragglers executing after a Cancel press.
+            if cancel is not None and cancel.is_cancelled:
+                return None
             try:
                 raw = await asyncio.to_thread(
                     chat, messages=messages, target=target,
@@ -276,9 +281,15 @@ async def run_simulation_layer(
                 pass
         return cell
 
+    # Qodo F11: distribute EXACTLY ``total`` cells -- floor division used
+    # to drop the remainder (``51 // 10`` ran 50 cells) and its ``max(1, ..)``
+    # could overshoot. Base repeats per prompt plus one extra for the first
+    # ``remainder`` prompts; empty ``sim_prompts`` still yields zero tasks
+    # (the loop body never runs) exactly as before.
+    base, remainder = divmod(total, max(1, len(sim_prompts)))
     tasks = []
     for p_idx, prompt in enumerate(sim_prompts):
-        for rep in range(per_prompt):
+        for rep in range(base + (1 if p_idx < remainder else 0)):
             tasks.append(asyncio.create_task(one(p_idx, prompt, rep)))
     await asyncio.gather(*tasks)
 

@@ -22,6 +22,11 @@ from .static_analyzer import analyze_static
 def estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
     """Estimated LLM calls a depth will spend (shown pre-launch in the UI).
 
+    This is the NOMINAL count -- one attempt per logical cell. The judge
+    layer retries each failed cell exactly once (``judge._Caller``), so the
+    worst case is ``max_estimate_calls``; surfaces like the panel's cost
+    line show both.
+
     Args:
         depth: Quick costs nothing; standard is the 16-call judge battery;
             deep adds the sim-prompt generation call plus the simulations.
@@ -35,6 +40,30 @@ def estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
     if depth is SkillEvalDepth.STANDARD:
         return 16
     return 17 + deep_sim_total
+
+
+def max_estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
+    """Worst-case LLM calls for a depth, counting the judge retry-once.
+
+    Judge cells (16 at standard and deep) may each be attempted twice;
+    simulation cells are one attempt each (an error cell is recorded, not
+    retried), and the deep-only sim-prompt generation call is counted at
+    two attempts as a safe upper bound alongside the judge battery.
+
+    Args:
+        depth: Quick costs nothing; standard doubles the 16 judge cells;
+            deep doubles the 17 generation+judge cells and adds the sim
+            cells once each.
+        deep_sim_total: Configured simulation count for deep runs.
+
+    Returns:
+        The maximum call count: 0 / 32 / ``34 + deep_sim_total``.
+    """
+    if depth is SkillEvalDepth.QUICK:
+        return 0
+    if depth is SkillEvalDepth.STANDARD:
+        return 32
+    return 34 + deep_sim_total
 
 
 def run_preflight(subject: SkillSubject, generator: EvalTarget,
@@ -160,6 +189,13 @@ class SkillEvalRunner:
             sim_prompts = await self._generate_sim_prompts(
                 subject, generator, config, semaphore)
             tick(1)
+            if not sim_prompts:
+                # Distinct from scoring's "simulation layer produced no
+                # parseable responses": that message covers an all-error
+                # cell layer, while this one says the layer never got ANY
+                # cells because the generation call itself failed.
+                warnings.append(
+                    "simulation prompt generation failed; no cells run")
             decoys = select_decoys(decoy_pool, subject.name, k=8,
                                    seed=config.seed)
             sim_result = await run_simulation_layer(
@@ -185,7 +221,7 @@ class SkillEvalRunner:
 
     async def _generate_sim_prompts(self, subject, generator, config,
                                     semaphore) -> list:
-        from .prompts import INERT_DATA_RULE
+        from .prompts import INERT_DATA_RULE, sanitize_untrusted
 
         system = f"{INERT_DATA_RULE}\nYou write varied test requests."
         # Final-review Important 4: the subject's name/description is DATA
@@ -193,9 +229,12 @@ class SkillEvalRunner:
         # marker pair so the system prompt's "only marked text is untrusted"
         # rule actually covers it (a bare "name: description" line left the
         # contract's assertion and its payload in contradiction).
+        # Sanitized like every other untrusted field (Qodo F6): a crafted
+        # description must not be able to forge the fence itself.
         user = (f"Skill under test:\n"
                 f"<<<SKILL_UNDER_TEST_START>>>\n"
-                f"{subject.name}: {subject.description}\n"
+                f"{sanitize_untrusted(subject.name)}: "
+                f"{sanitize_untrusted(subject.description)}\n"
                 f"<<<SKILL_UNDER_TEST_END>>>\n\n"
                 "Invent exactly 10 varied, short user requests spanning this "
                 "skill's intended range plus near-miss neighbours. Reply ONLY: "

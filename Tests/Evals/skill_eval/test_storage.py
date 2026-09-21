@@ -82,3 +82,69 @@ def test_run_artifacts_report_round_trip(db):
     artifacts = list(storage.iter_artifacts(db, run))
     assert [a["sample_id"] for a in artifacts] == ["judge-task-0"]
     assert artifacts[0]["metadata"]["kind"] == "task"
+
+
+# Qodo F8: the worker's sim-cell artifact shape round-trips -- the cell's
+# prompt_index/repeat land in `input` and activated/error in the metrics,
+# so a stored run's simulation evidence is recoverable from eval_results.
+def test_sim_cell_artifact_round_trip(db):
+    gen, jud = _targets(db)
+    bench_id = storage.save_skill_eval_bench(db, _config())
+    _group, run = storage.create_skill_eval_run(
+        db, bench_id, _config(), _subject(), gen, jud, call_estimate=67)
+    # Exactly the mapping the worker's sim-cell loop constructs.
+    cell = {"prompt_index": 3, "repeat": 2, "activated": True,
+            "error": None, "raw": '{"skill": "csv-cleaner"}'}
+    storage.save_artifact(db, run, {
+        **cell,
+        "sample_id": f"sim-{cell['prompt_index']}-{cell['repeat']}",
+        "kind": "sim",
+        "input": {"prompt_index": cell["prompt_index"],
+                  "repeat": cell["repeat"]},
+        "parsed": {"activated": cell["activated"], "error": cell["error"]},
+    })
+    artifacts = list(storage.iter_artifacts(db, run))
+    assert [a["sample_id"] for a in artifacts] == ["sim-3-2"]
+    assert artifacts[0]["metadata"]["kind"] == "sim"
+    assert artifacts[0]["input_data"]["prompt_index"] == 3
+    assert artifacts[0]["input_data"]["repeat"] == 2
+    assert artifacts[0]["metrics"]["activated"] is True
+    assert artifacts[0]["metrics"]["error"] is None
+
+    # The failure-cell shape round-trips too (activated None + error text).
+    storage.save_artifact(db, run, {
+        "sample_id": "sim-0-0", "kind": "sim",
+        "input": {"prompt_index": 0, "repeat": 0},
+        "parsed": {"activated": None, "error": "boom"},
+        "raw": "",
+    })
+    failure = next(a for a in storage.iter_artifacts(db, run)
+                   if a["sample_id"] == "sim-0-0")
+    assert failure["metrics"]["activated"] is None
+    assert failure["metrics"]["error"] == "boom"
+
+
+# Qodo F14: a metrics-write failure mid-save_report must leave the run NOT
+# completed -- the terminal status commits last, so a half-persisted run
+# shows as running/failed (recoverable), never silently complete.
+def test_save_report_failure_leaves_run_not_completed(db, monkeypatch):
+    gen, jud = _targets(db)
+    bench_id = storage.save_skill_eval_bench(db, _config())
+    _group, run = storage.create_skill_eval_run(
+        db, bench_id, _config(), _subject(), gen, jud, call_estimate=16)
+    report = SkillEvalReport(
+        provenance=_subject().to_provenance(), depth="standard",
+        dimensions=(DimensionScore("triggering_accuracy", 0.25, 0.8,
+                                   ("static", "judge")),),
+        composite=81.2, grade="B-", confidence="Assessed", findings=(),
+        warnings=())
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("metrics write failed")
+
+    monkeypatch.setattr(db, "store_run_metrics", _boom)
+    try:
+        storage.save_report(db, run, report)
+    except RuntimeError:
+        pass
+    assert db.get_run(run)["status"] != "completed"

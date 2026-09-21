@@ -152,3 +152,64 @@ def test_simulation_layer_records_error_cells():
     assert res.failure_rate == pytest.approx(1 / 6)
     assert res.activation == pytest.approx(5 / 6)  # denominator includes the error cell
     assert chat.calls == 6
+
+
+# Qodo F11: the cell budget distributes EXACTLY deep_sim_total cells --
+# floor division used to drop the remainder (51 over 10 prompts ran 50),
+# and its max(1, ..) could overshoot on tiny totals.
+def test_simulation_distributes_exact_total_cells():
+    chat = _FakeChat('{"skill": "csv-cleaner", "reason": "r"}')
+    prompts = [f"p{i}" for i in range(10)]
+    res = _run(run_simulation_layer(
+        _subject(), prompts, [{"name": "other", "description": "d"}], chat,
+        target=_target(), config=_config(deep_sim_total=51),
+        semaphore=asyncio.Semaphore(4)))
+    assert len(res.cells) == 51
+    counts: dict[int, int] = {}
+    for c in res.cells:
+        counts[c["prompt_index"]] = counts.get(c["prompt_index"], 0) + 1
+    assert counts[0] == 6          # the single remainder repeat lands on prompt 0
+    assert counts[9] == 5
+    assert sum(counts.values()) == 51
+    assert all(5 <= v <= 6 for v in counts.values())
+    assert chat.calls == 51
+
+
+# Qodo F5: a cell queued on the semaphore when cancellation lands must not
+# still spend its chat call -- the cancel is re-checked AFTER acquiring.
+def test_cancelled_queued_sim_cell_makes_no_chat_call():
+    import threading
+
+    token = CancelToken()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _BlockingChat:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, **kw):
+            self.calls += 1
+            entered.set()
+            release.wait(timeout=5)
+            token.cancel()
+            return '{"skill": "csv-cleaner", "reason": "r"}'
+
+    chat = _BlockingChat()
+
+    async def scenario():
+        task = asyncio.ensure_future(run_simulation_layer(
+            _subject(), ["p1", "p2"], [], chat, target=_target(),
+            config=_config(), semaphore=asyncio.Semaphore(1), cancel=token))
+        # Wait until cell 1 is INSIDE chat, then give the queued cells a
+        # loop turn to pass their pre-acquire check and block on the
+        # semaphore BEFORE cancellation lands.
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
+        release.set()
+        return await task
+
+    res = _run(scenario())
+    assert chat.calls == 1        # 6 cells existed; only the first spent a call
+    assert len(res.cells) == 1   # the queued cells returned no cell
