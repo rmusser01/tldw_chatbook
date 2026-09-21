@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "manifest_boundary": {
-        "checked_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
-        "origin_dev_generated_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
+        "checked_normalized_inventory_sha256": "7b40dd496ea775c6c40466d6fc00af153ef96b51114053905ed6231f007ba58c",
+        "origin_dev_generated_normalized_inventory_sha256": "7b40dd496ea775c6c40466d6fc00af153ef96b51114053905ed6231f007ba58c",
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
@@ -1550,7 +1550,7 @@
         {
             "site_id": "local-c5bb913a5a5c88e9",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_kobold",
+            "qualname": "summarize_with_kobold._kobold_stream",
             "group": "local_core",
             "starting_classification": "reviewed_safe",
             "safe_reason": "fixed operational message",
@@ -1576,7 +1576,7 @@
         {
             "site_id": "local-a60026a9cde645f4",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_kobold",
+            "qualname": "summarize_with_kobold._kobold_stream",
             "group": "local_core",
             "starting_classification": "private",
             "category": "exception/error detail",
@@ -1584,9 +1584,9 @@
                 "method": "error",
                 "event": "Kobold: Error decoding streamed JSON: %s",
                 "occurrence": 1,
-                "message_shape": "Constant(value='Kobold: Error decoding streamed JSON: %s')",
+                "message_shape": "Constant(value='Kobold: Failed to decode streamed JSON; exception_type=%s')",
                 "expressions": [
-                    "str(e)"
+                    "safe_metadata_token(type(e).__name__)"
                 ],
                 "captures_exception": false
             },
@@ -1689,14 +1689,14 @@
         {
             "site_id": "local-b40f1e3e9547c0ea",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_kobold",
+            "qualname": "summarize_with_kobold._kobold_stream",
             "group": "local_core",
             "starting_classification": "reviewed_safe",
             "safe_reason": "status metadata",
             "starting": {
                 "method": "debug",
                 "event": "Kobold Summarization: API Response Status Code: %d",
-                "occurrence": 2,
+                "occurrence": 1,
                 "message_shape": "Constant(value='Kobold Summarization: API Response Status Code: %d')",
                 "expressions": [
                     "response.status_code"
@@ -1707,7 +1707,7 @@
             "current": {
                 "method": "debug",
                 "event": "Kobold Summarization: API Response Status Code: %d",
-                "occurrence": 2,
+                "occurrence": 1,
                 "message_shape": "Constant(value='Kobold Summarization: API Response Status Code: %d')",
                 "expressions": [
                     "response.status_code"
@@ -1823,18 +1823,17 @@
         {
             "site_id": "local-c9779023a8c4791e",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_kobold",
+            "qualname": "summarize_with_kobold._kobold_stream",
             "group": "local_core",
             "starting_classification": "private",
             "category": "response/output content",
             "starting": {
                 "method": "error",
                 "event": "Kobold: API request failed with status code : ",
-                "occurrence": 2,
-                "message_shape": "JoinedStr(values=[Constant(value='Kobold: API request failed with status code '), FormattedValue(value=Attribute(value=Name(id='response', ctx=Load()), attr='status_code', ctx=Load()), conversion=-1), Constant(value=': '), FormattedValue(value=Attribute(value=Name(id='response', ctx=Load()), attr='text', ctx=Load()), conversion=-1)])",
+                "occurrence": 1,
+                "message_shape": "Constant(value='Kobold: API request failed; status_code=%s')",
                 "expressions": [
-                    "response.status_code",
-                    "response.text"
+                    "response.status_code"
                 ],
                 "captures_exception": false
             },
@@ -1842,7 +1841,7 @@
             "current": {
                 "method": "error",
                 "event": "Kobold: API request failed; status_code=%s",
-                "occurrence": 2,
+                "occurrence": 1,
                 "message_shape": "Constant(value='Kobold: API request failed; status_code=%s')",
                 "expressions": [
                     "response.status_code"
@@ -1884,17 +1883,17 @@
         {
             "site_id": "local-bcebc43fd2cf83ca",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_kobold",
+            "qualname": "summarize_with_kobold._kobold_stream",
             "group": "local_core",
             "starting_classification": "private",
             "category": "exception/error detail",
             "starting": {
                 "method": "error",
                 "event": "Kobold: Error in processing: %s",
-                "occurrence": 3,
-                "message_shape": "Constant(value='Kobold: Error in processing: %s')",
+                "occurrence": 1,
+                "message_shape": "Constant(value='Kobold: Processing failed; exception_type=%s')",
                 "expressions": [
-                    "str(e)"
+                    "safe_metadata_token(type(e).__name__)"
                 ],
                 "captures_exception": false
             },
@@ -1902,7 +1901,7 @@
             "current": {
                 "method": "error",
                 "event": "Kobold: Processing failed; exception_type=%s",
-                "occurrence": 3,
+                "occurrence": 1,
                 "message_shape": "Constant(value='Kobold: Processing failed; exception_type=%s')",
                 "expressions": [
                     "safe_metadata_token(type(e).__name__)"
@@ -3062,7 +3061,7 @@
         {
             "site_id": "local-823127ee7f86b33a",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_tabbyapi",
+            "qualname": "summarize_with_tabbyapi._tabby_stream",
             "group": "local_adapters",
             "starting_classification": "private",
             "category": "exception/error detail",
@@ -3070,9 +3069,10 @@
                 "method": "error",
                 "event": "TabbyAPI: Failed to parse JSON streamed data: ",
                 "occurrence": 1,
-                "message_shape": "JoinedStr(values=[Constant(value='TabbyAPI: Failed to parse JSON streamed data: '), FormattedValue(value=Call(func=Name(id='str', ctx=Load()), args=[Name(id='e', ctx=Load())], keywords=[]), conversion=-1)])",
+                "message_shape": "Constant(value='TabbyAPI: Failed to parse streamed JSON; exception_type=%s; line_length=%s')",
                 "expressions": [
-                    "str(e)"
+                    "safe_metadata_token(type(e).__name__)",
+                    "len(data_line)"
                 ],
                 "captures_exception": false
             },
@@ -3093,7 +3093,7 @@
         {
             "site_id": "local-141341cd2aa440f1",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_tabbyapi",
+            "qualname": "summarize_with_tabbyapi._tabby_stream",
             "group": "local_adapters",
             "starting_classification": "private",
             "category": "response/output content",
@@ -3101,9 +3101,9 @@
                 "method": "debug",
                 "event": "TabbyAPI: Received non-data line: ",
                 "occurrence": 1,
-                "message_shape": "JoinedStr(values=[Constant(value='TabbyAPI: Received non-data line: '), FormattedValue(value=Name(id='decoded_line', ctx=Load()), conversion=-1)])",
+                "message_shape": "Constant(value='TabbyAPI: Ignored non-data stream line; line_length=%s')",
                 "expressions": [
-                    "decoded_line"
+                    "len(decoded_line)"
                 ],
                 "captures_exception": false
             },
@@ -3123,7 +3123,7 @@
         {
             "site_id": "local-e14ce06abbdc9680",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_tabbyapi",
+            "qualname": "summarize_with_tabbyapi._tabby_stream",
             "group": "local_adapters",
             "starting_classification": "private",
             "category": "exception/error detail",
@@ -3131,9 +3131,9 @@
                 "method": "error",
                 "event": "Error summarizing with TabbyAPI: ",
                 "occurrence": 1,
-                "message_shape": "JoinedStr(values=[Constant(value='Error summarizing with TabbyAPI: '), FormattedValue(value=Name(id='e', ctx=Load()), conversion=-1)])",
+                "message_shape": "Constant(value='TabbyAPI: Streaming request failed; exception_type=%s')",
                 "expressions": [
-                    "e"
+                    "safe_metadata_token(type(e).__name__)"
                 ],
                 "captures_exception": false
             },
@@ -3153,7 +3153,7 @@
         {
             "site_id": "local-e5a74594128e09af",
             "module": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
-            "qualname": "summarize_with_tabbyapi",
+            "qualname": "summarize_with_tabbyapi._tabby_stream",
             "group": "local_adapters",
             "starting_classification": "private",
             "category": "exception/error detail",
@@ -3161,9 +3161,9 @@
                 "method": "error",
                 "event": "Unexpected error in summarize_with_tabbyapi: ",
                 "occurrence": 1,
-                "message_shape": "JoinedStr(values=[Constant(value='Unexpected error in summarize_with_tabbyapi: '), FormattedValue(value=Name(id='e', ctx=Load()), conversion=-1)])",
+                "message_shape": "Constant(value='TabbyAPI: Streaming failed; exception_type=%s')",
                 "expressions": [
-                    "e"
+                    "safe_metadata_token(type(e).__name__)"
                 ],
                 "captures_exception": false
             },
