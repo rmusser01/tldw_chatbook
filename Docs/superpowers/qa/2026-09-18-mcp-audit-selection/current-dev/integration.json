@@ -1,0 +1,15 @@
+{
+  "merged_dev": "ba5aa6e9ec60bb93aec4adc6aae219deb9266b78",
+  "before_rebase_head": "1429893a5a",
+  "rebased_head": "589a0fcc624acce76c27f0ef08a7166c573b2470",
+  "before_and_after_tree": "a6c6ba0b5645794cd69a013521610c2d75a5d08a",
+  "captured_source_hashes_verified": 14,
+  "runner_hash_matches": true,
+  "retained_capture_receipt_hashes_verified": 46,
+  "product_conflicts": [],
+  "documentation_conflicts": "Preserved both histories in the MCP review ledger and testing lessons; earlier Audit qualification is labeled historical. Rebase onto the actual PR2770 merge had no conflicts.",
+  "visual_gallery_sha256": "cefa5cced134214b5f3663b54a496043d04b3b1ef466c6c90e5abcfbc2071d5f",
+  "visual_gallery": "mcp-audit-selection-review-32834.html",
+  "visual_gallery_captures": 8,
+  "visual_gallery_transform": "Quick Look rendering, crop outside terminal window, lossless WebP; no resizing or product content changes."
+}
