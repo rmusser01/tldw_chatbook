@@ -24607,7 +24607,6 @@ class SettingsScreen(BaseAppScreen):
         if not base_url:
             return
 
-        from tldw_chatbook.Utils.input_validation import validate_url
 
         if not validate_url(base_url):
             self.app.notify(
