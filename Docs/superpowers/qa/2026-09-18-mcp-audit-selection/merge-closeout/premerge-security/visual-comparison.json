@@ -1,0 +1,144 @@
+[
+  {
+    "capture": "textual-dark-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "b46aae1df0e7f282872abf59ddd1828fd65f1159d5f38fb10ac1b2085a2c7d59",
+    "approved_svg_sha256": "d14e1c3301b259ea2624389a7e32e2c89f7c8db2c19ee0bd385dfe34de6b3c3f"
+  },
+  {
+    "capture": "textual-dark-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e",
+    "approved_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e"
+  },
+  {
+    "capture": "textual-dark-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "f14d60de0f0c895bc6ce7c63dd4de50cc10605980780fda9d7ada09398817e4c",
+    "approved_svg_sha256": "f11369ad6abf0d14161d91a3185e47e051568a80cba938e206286c208708c33d",
+    "remaining_difference": "Blinking input caret; matches the already visually inspected Qodo follow-up capture except timestamp and Rich ID."
+  },
+  {
+    "capture": "textual-dark-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "5eab9aadd4e58a6edfa50bfe4bb40a79ebd1174275a7a81ca5d799ff02812351",
+    "approved_svg_sha256": "ede654e2cc7d11915568879d2b4368a4df0a22447e776b73708a2d0cb05d4606"
+  },
+  {
+    "capture": "textual-dark-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "948a1bb83f769d6dbba93926e53b4e94aefe7a1033a7f7e86f36194480abb592",
+    "approved_svg_sha256": "98ff756c8022abe6dce005914665ebbc5cf27f92de8af77432e6eaa27b900f4d"
+  },
+  {
+    "capture": "textual-dark-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "d198fde2bd88416b425b15eec1d8652c4ff795919312320cd3bbd3d51ef68f1d",
+    "approved_svg_sha256": "7050212d0695698bac213dfd12a2460937829f6f55792fc0b70f2b583fec40f4"
+  },
+  {
+    "capture": "textual-dark-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f",
+    "approved_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f"
+  },
+  {
+    "capture": "textual-dark-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "813e20efe3c332a17f9dfa9af02f3aa3c3bf7c16abc650f9e22049881407eab6",
+    "approved_svg_sha256": "ec013febc4c66a0f217f04e494ad8c071c9257196098e0b8770a73e781f2cf6a"
+  },
+  {
+    "capture": "textual-dark-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "280da4c7ae631a9423b200bfef5c654c77cd6793f899f98c8e1a297d1770cfcd",
+    "approved_svg_sha256": "ed35403451f4a075984090f84263e35de862466c92fdf95daa6a7e802d607b2a"
+  },
+  {
+    "capture": "textual-dark-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "f092dd87dbf3559817c797bad197fe61cb59de1d19286584cb84d1f394e96535",
+    "approved_svg_sha256": "736458813e26bb5793f71bc5fbb87175a26526e35d24bd014a5bc02922b177ff"
+  },
+  {
+    "capture": "textual-light-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "fc49efcdbfb09b9398112e009d6f03efd1029233c393484a154b1eb5970e5d48",
+    "approved_svg_sha256": "a570263250dcea9d70d9be1dd47d41750f149637fbd06ddb0956dc6c37ecaccc"
+  },
+  {
+    "capture": "textual-light-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6",
+    "approved_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6"
+  },
+  {
+    "capture": "textual-light-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "5d69518633dc19c6c36875a1808045f91f19c0d5cb9235e4614a04bcbea8944f",
+    "approved_svg_sha256": "4e168de98de5697bdc5e60541994b62305914e544d133e9c34422a740311a748",
+    "remaining_difference": "Blinking input caret; matches the already visually inspected Qodo follow-up capture except timestamp and Rich ID."
+  },
+  {
+    "capture": "textual-light-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "88878c86536ca97f912c570c83129fd98082f0b50d19f951c23b666d466ea8fa",
+    "approved_svg_sha256": "035f6cc97edb3ccd78e0f04486ad798af8c73ae8e8eebf72dbc9adc36d464c4c"
+  },
+  {
+    "capture": "textual-light-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "8765c8c9faf014cb39602565f50b058b6bed4d37b0a2c8c838f74ba152d1eea2",
+    "approved_svg_sha256": "3ef5e9105bbf53d83d40cf4a2f64c7f9ab389c42e229f662d2c1d143540ebe90"
+  },
+  {
+    "capture": "textual-light-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "6da493ad14989185f963e92fc4bb2b9aa4593df4fbbdd6a83494f2f1590ab5b9",
+    "approved_svg_sha256": "02caebbf933b96cfbeba15dd1382cb349fae721ad88b007ca265cb0a39a3c739"
+  },
+  {
+    "capture": "textual-light-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694",
+    "approved_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694"
+  },
+  {
+    "capture": "textual-light-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "789669f861ccf0f39cd2401b39a44befce9facccc56459db58cf33b3cc561f1c",
+    "approved_svg_sha256": "65545c45eee199454aea0a20af0162ca0faf7fe38e567a15da00a1e29137062f"
+  },
+  {
+    "capture": "textual-light-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "ca000688b6ffebe3475f4a2ee8f2ffe622052e7c4ec3be05488e3288cd84783c",
+    "approved_svg_sha256": "cdcfa9941cdf1be84e98a11658adf19369e2ce90852145c80851a7c4cd8d96e8"
+  },
+  {
+    "capture": "textual-light-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "b9aa4a1423845a4b82a55c632807fb37d77e6f1be4c942c3118c361e8bf46db9",
+    "approved_svg_sha256": "ee7dda4cd3578239f735841a4338516593212a8fc072ff500b0120ec91fce166"
+  }
+]

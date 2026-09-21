@@ -1,0 +1,237 @@
+{
+  "pid": 32360,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/unified_control_plane_service.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "6d78236c8a24dc8f3a6a3b9a31b09fd3b2397493d0b066076ed10f800a19ae82",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "c48e089dc9c962934deb150b981fedc5c3b2676717439123bedcbb2d90769930",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "603a8ec88df5dfd01db4cf02b27164b719c16835deb713a0077b1b032cb49f6e",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "1f5df97afea45183affe4ad039d3df438df87e255ad0a0e8fb6ad79a4ef95073",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "40b1a0dd5da40f7d59068dbdb3eb4c440b76172713985f4a74aceadb4690e840",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "d03c7844cadb9acd6f09f43b73282578a5d63270058faad6f99ff66bd4812e48",
+    "tldw_chatbook/MCP/client.py": "6e1b7613eca8f6f39ef828096c895c52adb05196f1c4937b309b6438220f5809",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "f432bc3f9c3b016b1ff850146d56999216e8725dd9c38bf4b7417f589de87bb9",
+    "tldw_chatbook/Utils/input_validation.py": "deabe09b3f44b208cbcfec86ecb204db24b7eee1059861600827a6b24ab11ebc",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+    "Tests/MCP/fixtures/stdio_tool_result_server.py": "00a85b39db22a3578562bc4103d223b76467bf034935eb2a6a7f010253f353d6"
+  },
+  "runner_sha256": "6f8017ab7f2e48027de12057d0d68232dd77838994c6541992f6efa988442862",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "fixture_pids": [
+    32508,
+    32524
+  ],
+  "records": [
+    {
+      "ts": "2026-09-21T15:09:30.287097+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-21T15:09:25.469861+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-21T15:09:20.632046+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-21T15:09:15.804167+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-21T15:09:14.150262+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-21T15:09:14.136084+00:00",
+      "server_key": "local:audit-beta",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "allowed",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    }
+  ],
+  "wire_requests": [
+    {
+      "pid": 32508,
+      "method": "initialize"
+    },
+    {
+      "pid": 32508,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 32508,
+      "method": "tools/list"
+    },
+    {
+      "pid": 32508,
+      "method": "resources/list"
+    },
+    {
+      "pid": 32508,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 32524,
+      "method": "initialize"
+    },
+    {
+      "pid": 32524,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 32524,
+      "method": "tools/list"
+    },
+    {
+      "pid": 32524,
+      "method": "resources/list"
+    },
+    {
+      "pid": 32524,
+      "method": "prompts/list"
+    }
+  ],
+  "fixture_returncodes": [
+    -15,
+    -15
+  ],
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

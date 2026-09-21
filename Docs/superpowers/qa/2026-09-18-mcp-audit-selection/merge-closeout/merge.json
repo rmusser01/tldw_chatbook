@@ -1,0 +1,53 @@
+{
+  "headRefOid": "46d5dadbc7fd702811f2efe2b24bcf0a6a6d0ebf",
+  "mergeCommit": {
+    "oid": "7a758b8196bd3083ae9f878551d01dde7f4ec1ad"
+  },
+  "mergedAt": "2026-09-21T15:13:15Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2720",
+  "qualified_head": "46d5dadbc7fd702811f2efe2b24bcf0a6a6d0ebf",
+  "premerge_candidate": "dd109e8bdb64456c6fa265c2f1dcc6bb109c8ebd",
+  "premerge_tree": "a9cc3799fa18389bad752985dac279f85484e3cc",
+  "actual_merge_tree": "6a28a52fa4374f4e63ba2dc81962e046eff5eaaf",
+  "trees_identical": false,
+  "actual_base": "037a43dd329de20bf099bbbc507ffea777ca1a62",
+  "base_advanced_at_merge": "PR2739 merged eight seconds before PR2720; actual tree requalified separately",
+  "ci": {
+    "run": 35614819365,
+    "head": "46d5dadbc7fd702811f2efe2b24bcf0a6a6d0ebf",
+    "checkout": "dd109e8bdb64456c6fa265c2f1dcc6bb109c8ebd",
+    "main_passed": 1152,
+    "admission_passed": 123,
+    "admission_xfailed": 1,
+    "artifact_gate": "success",
+    "performance": "success",
+    "css": "success",
+    "backlog": "success"
+  },
+  "review": {
+    "resolved_threads": 3,
+    "qodo_unit_acceptance": "https://github.com/rmusser01/tldw_chatbook/pull/2720#discussion_r4063354832",
+    "import_finding": "dismissed intentional",
+    "doc_finding": "resolved",
+    "independent_review": "no actionable findings"
+  },
+  "owner_visual_approval": "6180cf54c9",
+  "native_actual_merge": {
+    "passed": true,
+    "cells": 4,
+    "captures": 20,
+    "text_matches_approved": 20,
+    "svg_matches_after_timestamp_id_normalization": 18,
+    "remaining_differences": "input caret only",
+    "lifecycle": "verified"
+  },
+  "remaining_baseline_debt": "Five size ratchets already failed on actual parent 037a43dd32; Audit reduces Workbench by seven lines. Existing TASK-32809 owns size governance.",
+  "actual_merge_tests": {
+    "passed": 382,
+    "failed": 5,
+    "failures": "All five architecture size failures pre-exist on actual parent; see actual-merge/upstream-ratchets.json.",
+    "artifact_guards_passed": 9,
+    "independent_review": "No actionable integration findings."
+  }
+}

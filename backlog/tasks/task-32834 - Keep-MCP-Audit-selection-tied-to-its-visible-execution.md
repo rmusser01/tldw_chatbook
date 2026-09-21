@@ -1,11 +1,11 @@
 ---
 id: TASK-32834
 title: Keep MCP Audit selection tied to its visible execution
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 03:45'
-updated_date: '2026-09-21 14:49'
+updated_date: '2026-09-21 15:21'
 labels: []
 dependencies: []
 ---
@@ -50,4 +50,6 @@ Owner approved PR2720 at 6180cf54c9. Rebased without conflicts onto f1a027c12b (
 Qodo review at 919ae96fb5 reports zero bugs and three rule findings. Follow-up plan: document nullable selection arguments, extract the duplicated old/new uniqueness check into one pure helper and add isolated matching/key-retirement coverage while preserving mounted regressions, and retain deferred runtime imports with a technical explanation because private admission and environment selection must precede app imports. Correct the adjacent Findings docstring that still describes the retired index symmetry. No layout, authority or schema change; verify focused behavior and a fresh native replay before push.
 
 Qodo follow-up verified: 37 focused tests (8 isolated, 15 mounted, 14 architecture), all nine artifact guards, no added Ruff findings and changed-range formatting pass. Independent review clear. Native run 004 passes all four theme/size cells; twenty captures preserve approved content with timestamp/caret-only differences. Lifecycle, two fixture exits, ten DBs, defaults/sentinels and source hashes verified. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/qodo-followup/README.md. Current-head CI/review and latest-dev gate remain.
+
+Merged PR2720 as 7a758b8196bd3083ae9f878551d01dde7f4ec1ad after owner approval, addressed Qodo findings and successful required current-head CI (1152 main +123 admission, one expected failure). PR2739 landed eight seconds earlier, so the actual merge differs from the CI candidate and was separately verified: 382 targeted passes, five proven upstream size-ratchet failures, all nine artifact guards, independent integration review clear and twenty approved-equivalent native captures with clean lifecycle. Audit reduces Workbench by seven lines; existing TASK-32809 owns the incoming size debt. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/README.md. No new ADR required; ADR170/150/161 remain applicable.
 <!-- SECTION:NOTES:END -->

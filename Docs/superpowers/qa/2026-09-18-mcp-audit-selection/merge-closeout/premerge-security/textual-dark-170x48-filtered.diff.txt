@@ -1,0 +1,14 @@
+--- approved
++++ security-integration
+@@ -327,3 +327,4 @@
+ ["rect", [["fill", "#183a54"], ["height", "24.65"], ["shape-rendering", "crispEdges"], ["width", "24.4"], ["x", "610"], ["y", "269.9"]], ""]
+-["rect", [["fill", "#183a54"], ["height", "24.65"], ["shape-rendering", "crispEdges"], ["width", "134.2"], ["x", "634.4"], ["y", "269.9"]], ""]
++["rect", [["fill", "#e0e0e0"], ["height", "24.65"], ["shape-rendering", "crispEdges"], ["width", "12.2"], ["x", "634.4"], ["y", "269.9"]], ""]
++["rect", [["fill", "#183a54"], ["height", "24.65"], ["shape-rendering", "crispEdges"], ["width", "122"], ["x", "646.6"], ["y", "269.9"]], ""]
+ ["rect", [["fill", "#183a54"], ["height", "24.65"], ["shape-rendering", "crispEdges"], ["width", "122"], ["x", "768.6"], ["y", "269.9"]], ""]
+@@ -1126,3 +1127,4 @@
+ ["text", [["class", "fill: #0178d4"], ["clip-path", "url(#terminal-ID-line-11)"], ["textLength", "12.2"], ["x", "597.8"], ["y", "288.4"]], "\u2502"]
+-["text", [["class", "fill: #e0e5e8"], ["clip-path", "url(#terminal-ID-line-11)"], ["textLength", "134.2"], ["x", "634.4"], ["y", "288.4"]], "audit-alpha"]
++["text", [["class", "fill: #121212"], ["clip-path", "url(#terminal-ID-line-11)"], ["textLength", "12.2"], ["x", "634.4"], ["y", "288.4"]], "a"]
++["text", [["class", "fill: #e0e5e8"], ["clip-path", "url(#terminal-ID-line-11)"], ["textLength", "122"], ["x", "646.6"], ["y", "288.4"]], "udit-alpha"]
+ ["text", [["class", "fill: #0178d4"], ["clip-path", "url(#terminal-ID-line-11)"], ["textLength", "12.2"], ["x", "915"], ["y", "288.4"]], "\u2502"]

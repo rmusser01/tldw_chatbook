@@ -1,0 +1,42 @@
+[
+  {
+    "path": "tldw_chatbook/app.py",
+    "budget": 21415,
+    "base_lines": 21443,
+    "merged_lines": 21443,
+    "delta_from_audit": 0,
+    "already_failed_on_base": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "budget": 29367,
+    "base_lines": 29393,
+    "merged_lines": 29393,
+    "delta_from_audit": 0,
+    "already_failed_on_base": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+    "budget": 16436,
+    "base_lines": 16452,
+    "merged_lines": 16452,
+    "delta_from_audit": 0,
+    "already_failed_on_base": true
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "budget": 8353,
+    "base_lines": 8399,
+    "merged_lines": 8399,
+    "delta_from_audit": 0,
+    "already_failed_on_base": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "budget": 6760,
+    "base_lines": 6781,
+    "merged_lines": 6774,
+    "delta_from_audit": -7,
+    "already_failed_on_base": true
+  }
+]
