@@ -5,9 +5,11 @@
 # Settings destination). It is not reachable through normal navigation: the
 # "tools_settings" route resolves to MCPScreen (see UI/Navigation/screen_registry.py)
 # and nothing composes a widget with id "tools_settings-window" anymore. It remains
-# only because Tests/UI/test_tools_settings_window.py still exercises it directly,
-# app.py handles its IngestUiStyleChanged message, and dead init scaffolding for it
-# lingers at app.py:8340-8368. Do not add new settings here;
+# only because Tests/UI/test_tools_settings_window.py still exercises it directly.
+# (It still constructs IngestUiStyleChanged at :3656, but app.py no longer handles
+# that message -- the handler and its dead #ingest-window scaffolding were removed
+# in task-32810; the message is now unhandled, which is harmless for a nav-
+# unreachable window.) Do not add new settings here;
 # migrate surviving behavior to the Settings screen before this module is deleted.
 #
 # Imports
