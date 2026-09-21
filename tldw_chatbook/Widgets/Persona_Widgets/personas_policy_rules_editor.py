@@ -26,6 +26,7 @@ from textual.widgets import Button, Checkbox, Input, ListItem, ListView, Static
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     normalize_policy_rules,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 #: The one ruled warning copy. Names spawn_subagent explicitly because it is
 #: the runtime/builtin tool users most often lose without noticing.
@@ -147,10 +148,7 @@ class PersonasPolicyRulesEditor(Vertical):
         self.query_one("#personas-policy-caps", Input).value = ""
 
     def _set_status(self, text: str) -> None:
-        try:
-            self.query_one("#personas-policy-status", Static).update(text)
-        except Exception:
-            pass
+        set_status_line(self, "#personas-policy-status", text)
 
     def _sync_warning(self) -> None:
         """Recompute the deny-by-default warning on every rules change."""

@@ -65,6 +65,7 @@ from tldw_chatbook.Chat.sampling_params import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
 #: (spec §4: every enabled definition rides the spawn tool's schema).
@@ -714,4 +715,4 @@ class AgentsSettingsPanel(Vertical):
         await self._reload_list()
 
     def _set_status(self, text: str) -> None:
-        self.query_one("#agents-status", Static).update(text)
+        set_status_line(self, "#agents-status", text)

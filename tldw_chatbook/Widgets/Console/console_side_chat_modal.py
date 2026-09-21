@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_side_chat import (
     cap_reply_buffer,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 _CONTENT = "#console-side-chat-modal"
 _IDENTITY = "#console-side-chat-identity"
@@ -350,10 +351,7 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
     # ------------------------------------------------------------------
 
     def _set_status(self, message: str) -> None:
-        try:
-            self.query_one(_STATUS, Static).update(message)
-        except NoMatches:
-            return
+        set_status_line(self, _STATUS, message)
 
     def _set_action_visible(self, selector: str, visible: bool) -> None:
         try:

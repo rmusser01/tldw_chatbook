@@ -36,6 +36,7 @@ from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 ExportDestination = Literal["clipboard", "file"]
 
@@ -356,7 +357,7 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
     def _set_status(self, message: str, *, error: bool = False) -> None:
         status = self.query_one("#exchange-export-status", Static)
         status.set_class(error, "-error")
-        status.update(message)
+        set_status_line(self, "#exchange-export-status", message, missing_ok=False)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source

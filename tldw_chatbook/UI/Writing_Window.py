@@ -15,6 +15,7 @@ from tldw_chatbook.Widgets.Writing import (
     WritingOutlineTree,
     WritingSourcePanel,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 class WritingWindow(Container):
@@ -259,10 +260,7 @@ class WritingWindow(Container):
         self.source_panel.set_notice(message)
         if not self.is_mounted:
             return
-        try:
-            self.query_one("#writing-status", Static).update(message)
-        except Exception:
-            pass
+        set_status_line(self, "#writing-status", message)
         try:
             self.source_panel.query_one("#writing-source-status", Static).update(
                 message

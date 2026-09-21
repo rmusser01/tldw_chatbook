@@ -22,6 +22,7 @@ from textual.widgets import Button, Input, Label, Select, Static, TextArea
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Image_Generation.worker import build_request, run_generation
 from ...Image_Generation.listing import list_image_models_for_catalog
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -96,7 +97,7 @@ class ImageGenDemoScreen(BaseAppScreen):
     def _set_status(self, message: str) -> None:
         """Update the status line. UI-thread only (call via ``call_from_thread``
         from a worker)."""
-        self.query_one("#imagegen-status", Static).update(message)
+        set_status_line(self, "#imagegen-status", message)
 
     @work(thread=True, exclusive=True, group="imagegen-demo")
     def _generate(self, backend, prompt, negative, seed) -> None:

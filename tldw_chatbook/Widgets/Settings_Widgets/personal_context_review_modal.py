@@ -35,6 +35,7 @@ from ...Personal_Context.service import (
     ProfileKeyCollisionError,
 )
 from ..modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,7 +361,7 @@ class PersonalContextProposalReviewModal(
 
     def _set_status(self, copy: str) -> None:
         if self.is_mounted:
-            self.query_one("#personal-context-proposal-status", Static).update(copy)
+            set_status_line(self, "#personal-context-proposal-status", copy, missing_ok=False)
 
     def _set_busy(self, value: bool) -> None:
         self._busy = value

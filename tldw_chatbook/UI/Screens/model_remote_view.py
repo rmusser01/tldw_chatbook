@@ -48,6 +48,7 @@ from tldw_chatbook.UI.Screens.model_memory_presenter import (
     build_machine_memory_presentation,
 )
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import (
@@ -1143,7 +1144,7 @@ class RemoteView(Widget):
         variant_list.mount(*self._variant_widgets(self._resolved, disabled=disabled))
 
     def _set_status(self, message: str) -> None:
-        self.query_one("#remote-model-status", Static).update(message)
+        set_status_line(self, "#remote-model-status", message)
 
     def _refresh_with_status(self, message: str) -> None:
         disabled = self._operation_reference is not None
