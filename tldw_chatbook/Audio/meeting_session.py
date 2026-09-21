@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional, Protocol, Sequence
 from loguru import logger
 
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 MEETING_JSON = "meeting.json"
 TRANSCRIPT_JSONL = "transcript.jsonl"
@@ -819,7 +820,7 @@ class MeetingSession:
                         logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
         result = MeetingResult(
             meta=self.meta,
-            ended_at=datetime.now().isoformat(timespec="seconds"),
+            ended_at=utc_now_iso(),
             duration_s=float(self.capture.audio_position_s),
             segment_count=segment_count,
             transcription_complete=complete,

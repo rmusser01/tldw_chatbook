@@ -9,12 +9,12 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Dict, Any, Optional
-from datetime import datetime
 import logging
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from tldw_chatbook.Backup_Recovery.settings_file_participants import pet_operation
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Import validators for state recovery
 try:
@@ -299,7 +299,7 @@ class JSONStorage(StorageAdapter):
 
         # Add timestamp
         state_with_timestamp = state.copy()
-        state_with_timestamp["last_saved"] = datetime.now().isoformat()
+        state_with_timestamp["last_saved"] = utc_now_iso()
 
         data[pet_id] = state_with_timestamp
         return self._write_data(data)

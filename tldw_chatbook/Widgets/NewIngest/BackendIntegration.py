@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -17,6 +16,7 @@ from .UnifiedProcessor import (
     VideoConfig,
     WebConfig,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 class ProcessingJobResult(Message):
@@ -120,7 +120,7 @@ class MediaProcessingService:
         return {
             "status": "simulated",
             "file_path": str(file_path),
-            "processed_at": datetime.now().isoformat(),
+            "processed_at": utc_now_iso(),
         }
 
     async def _process_generic(self, job_id: str, config: MediaConfig) -> None:

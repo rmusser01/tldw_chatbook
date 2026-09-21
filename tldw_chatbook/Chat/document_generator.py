@@ -14,7 +14,6 @@ Uses configurable prompts and LLM APIs to generate content based on conversation
 """
 
 import time
-from datetime import datetime
 from typing import List, Dict, Any, Optional, Generator, Union
 import pyperclip
 from loguru import logger
@@ -50,6 +49,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Internal_Prompts import get_internal_prompt
 from .Chat_Deps import ChatAPIError
 from .assistant_generation_state import render_exported_assistant_content
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Configure logger
 logger = logger.bind(module="DocumentGenerator")
@@ -586,7 +586,7 @@ class DocumentGenerator:
         metadata = {
             "document_type": document_type,
             "conversation_id": conversation_id,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": utc_now_iso(),
         }
 
         # Add metadata to content

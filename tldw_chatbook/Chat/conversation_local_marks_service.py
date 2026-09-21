@@ -113,7 +113,17 @@ class ConversationLocalMarksService:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        # task-32803.4: the canonical 24-char millisecond+Z shape that the
+        # column's OTHER writers (chat_persistence_service,
+        # console_dispatch_repository via _get_current_utc_timestamp_iso)
+        # already use and that _is_canonical_utc_timestamp accepts.
+        # isoformat() with no timespec emitted microseconds (27 chars), or no
+        # fraction at all when microsecond==0 (20 chars) -- a second shape
+        # that inverted the lexical ORDER BY updated_at and that the
+        # voice-promotion validator rejected.
+        return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        )
 
     @classmethod
     def _mark_type(cls, mark_type: str | None) -> str:

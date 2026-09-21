@@ -12,7 +12,6 @@ import asyncio
 import re
 import json
 import base64
-from datetime import datetime
 from uuid import uuid4
 from difflib import SequenceMatcher
 from loguru import logger
@@ -28,6 +27,7 @@ from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.optional_deps import check_dependency
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
 #
@@ -1456,7 +1456,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             metadata.update(
                 {
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": utc_now_iso(),
                     "audio_file": f"{name}.wav",
                     "file_size": os.path.getsize(audio_path),
                     "original_path": audio_path,

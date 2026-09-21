@@ -37,6 +37,10 @@ CHECKERS = (
     # were one defect class with no guard: a synchronous callable handed to
     # run_worker, and a query_one resuming into a removed subtree.
     "scripts/check_textual_worker_contract.py",
+    # TASK-32803.1 / ADR-173. Timestamp writers must go through the shared UTC
+    # helper: datetime.utcnow() is forbidden and naive datetime.now().isoformat()
+    # is ratcheted.
+    "scripts/check_timestamp_writers.py",
 )
 
 

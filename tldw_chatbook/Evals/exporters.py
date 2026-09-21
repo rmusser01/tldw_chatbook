@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from datetime import datetime
 from loguru import logger
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 class EvaluationExporter:
@@ -96,7 +97,7 @@ class EvaluationExporter:
 
             # Write header
             writer.writerow(["A/B Test Results Export"])
-            writer.writerow(["Generated:", datetime.now().isoformat()])
+            writer.writerow(["Generated:", utc_now_iso()])
             writer.writerow([])
 
             # Test information

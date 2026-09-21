@@ -2215,15 +2215,26 @@ class MediaDatabase:
             raise DatabaseError(f"Unexpected error applying schema: {e}") from e
 
     # --- Internal Helpers (Unchanged) ---
-    def _get_current_utc_timestamp_str(self) -> str:
+    @staticmethod
+    def _utc_timestamp_str(dt: datetime) -> str:
+        """Format a datetime as the one canonical stored shape.
+
+        ``%Y-%m-%dT%H:%M:%S.mmmZ`` (millisecond precision, ``Z`` suffix).
+        task-32803.3: every ``last_modified``/``trash_date`` value AND every
+        cutoff compared against one must use this shape, or the lexical TEXT
+        comparison silently disagrees with chronological order (``'T'`` 0x54 >
+        ``' '`` 0x20, so a space-separated cutoff sorts before same-day stored
+        values and rows on the cutoff date are skipped).
         """
-        Internal helper to generate a UTC timestamp string in ISO 8601 format.
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    def _get_current_utc_timestamp_str(self) -> str:
+        """Internal helper: current UTC timestamp in the canonical stored shape.
 
         Returns:
             str: Timestamp string (e.g., '2023-10-27T10:30:00.123Z').
         """
-        # Use ISO 8601 format with Z for UTC, more standard
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        return self._utc_timestamp_str(datetime.now(timezone.utc))
 
     def _generate_uuid(self) -> str:
         """
@@ -4355,11 +4366,12 @@ class MediaDatabase:
         """
         from datetime import timedelta
 
-        # Calculate cutoff date
-        cutoff_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-            days=days_old
+        # task-32803.3: build the cutoff in the SAME shape the column is
+        # written in, so the lexical TEXT comparison below agrees with
+        # chronological order on the boundary date.
+        cutoff_str = self._utc_timestamp_str(
+            datetime.now(timezone.utc) - timedelta(days=days_old)
         )
-        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
 
         logger.info(
             f"Starting hard deletion of media soft-deleted before {cutoff_str} (>{days_old} days old)"
@@ -4460,10 +4472,14 @@ class MediaDatabase:
         Returns:
             List of dictionaries containing media info (id, uuid, title, type, last_modified)
         """
-        from datetime import datetime, timedelta
+        from datetime import datetime, timezone, timedelta
 
-        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
-        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+        # task-32803.3: same shape as the writer (was datetime.utcnow(),
+        # deprecated in 3.12, and a space-separated format that skipped
+        # boundary-date rows).
+        cutoff_str = self._utc_timestamp_str(
+            datetime.now(timezone.utc) - timedelta(days=days_old)
+        )
 
         try:
             cursor = self.execute_query(
@@ -9277,9 +9293,11 @@ def empty_trash(db_instance: MediaDatabase, days_threshold: int) -> Tuple[int, i
         raise TypeError("db_instance required.")
     if not isinstance(days_threshold, int) or days_threshold < 0:
         raise ValueError("Days must be non-negative int.")
-    threshold_date_str = (
+    # task-32803.3: same shape as the writer (was no-ms, off by <=1s the
+    # other way against the .mmmZ stored values).
+    threshold_date_str = db_instance._utc_timestamp_str(
         datetime.now(timezone.utc) - timedelta(days=days_threshold)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")  # ISO Format
+    )
     processed_count = 0
     logger.info(
         f"Emptying trash older than {days_threshold} days ({threshold_date_str}) on DB {db_instance.db_path_str}"
