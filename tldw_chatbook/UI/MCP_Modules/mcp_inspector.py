@@ -914,7 +914,7 @@ def _render_section_payload(section: str, payload: Any) -> str:
         return str(payload)
 
 
-class MCPInspector(Vertical):
+class MCPInspector(VerticalScroll):
     """Right-pane inspector: what is selected, why, what can I do."""
 
     # F-056: Escape closes the Test Tool panel when it's open (same path as
@@ -927,6 +927,15 @@ class MCPInspector(Vertical):
         min-width: 28;
         height: 100%;
         min-height: 0;
+    }
+    MCPInspector Button {
+        min-width: $ds-size-0;
+        max-width: $ds-width-full;
+        height: auto;
+        text-wrap: wrap;
+    }
+    #mcp-inspector-test-panel {
+        height: auto;
     }
     /* F-054: let the empty-state/badge line WRAP at narrow widths instead
     of clipping mid-word -- the shared `.ds-status-badge` rule pins
@@ -1457,6 +1466,21 @@ class MCPInspector(Vertical):
         # metadata-only preview the service issued for the visible panel.
         self._test_preview: ToolTestAdmissionPreview | None = None
         self._test_panel_token: object | None = None
+
+    def on_resize(self) -> None:
+        """Keep the current editor visible after the viewport settles."""
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -2004,6 +2028,16 @@ class MCPInspector(Vertical):
         self.query_one(
             "#mcp-inspector-state", Static
         ).display = not self._any_detail_displayed()
+
+    async def clear_mode_view(self) -> None:
+        """Clear mode-dependent selections when the Workbench changes mode.
+
+        The Workbench schedules this as an exclusive async worker so a mode
+        departure clears tool, execution-log and finding panels in order.
+        """
+        await self.show_tool(None)
+        await self.show_audit_entry(None)
+        await self.show_finding(None)
 
     async def show_tool(
         self,
@@ -2631,7 +2665,7 @@ class MCPInspector(Vertical):
         folded into `show_tool()`'s single locked pass, since an audit-entry
         selection never touches `#mcp-inspector-tool`/`#mcp-inspector-
         permission`). `entry=None` (a stale/out-of-range selection, or a
-        mode switch via `MCPWorkbench._clear_tool_view()`) hides the
+        mode switch via `MCPInspector.clear_mode_view()`) hides the
         container instead of leaving a previous entry's facts on screen.
 
         The detail is a ``json.dumps(indent=2)`` view of the execution log's
@@ -2710,8 +2744,8 @@ class MCPInspector(Vertical):
         `_refresh_lock` discipline as `show_permission()`/`show_audit_
         entry()` (two selections back to back must not interleave their
         remove/mount cycles into `DuplicateIds`). `finding=None` (a
-        stale/out-of-range selection, or a mode switch via `MCPWorkbench.
-        _clear_tool_view()`) hides the container instead of leaving a
+        stale/out-of-range selection, or a mode switch via `MCPInspector.
+        clear_mode_view()`) hides the container instead of leaving a
         previous finding's facts on screen.
 
         Severity/type/message, plus a suggested-remediation line only when

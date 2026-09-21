@@ -8802,12 +8802,18 @@ def get_detected_api_providers() -> List[str]:
     config = load_cli_config_and_ensure_existence()
     providers = []
 
-    for section_name, section_value in config.items():
-        if section_name.startswith("api_settings.") and isinstance(section_value, dict):
-            api_key = section_value.get("api_key", "")
-            # Check if API key exists and is not a placeholder
-            if api_key and not api_key.startswith("<") and not api_key.endswith(">"):
-                provider_name = section_name.replace("api_settings.", "")
+    # TASK-32811.3: a nested TOML load produces `config["api_settings"]` as a
+    # nested table, never flat `"api_settings.<provider>"` top-level keys, so
+    # the old iteration matched nothing and this always returned []. Read the
+    # nested table, and screen each key through `resolve_provider_api_key`
+    # (the shared validity rule) rather than the ad-hoc `<...>` check, so a
+    # padded or otherwise-invalid key is not counted as configured.
+    api_settings = config.get("api_settings")
+    if isinstance(api_settings, Mapping):
+        for provider_name, provider_config in api_settings.items():
+            if not isinstance(provider_config, Mapping):
+                continue
+            if resolve_provider_api_key(provider_config.get("api_key")) is not None:
                 providers.append(provider_name)
 
     return providers

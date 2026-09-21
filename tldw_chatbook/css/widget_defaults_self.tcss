@@ -255,6 +255,12 @@
         height: 100%;
         min-height: 0;
     }
+    MCPInspector Button {
+        min-width: 0;
+        max-width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
 
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 

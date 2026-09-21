@@ -1,0 +1,35 @@
+...................................................F...............      [100%]
+=================================== FAILURES ===================================
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py] _
+
+rel_path = 'tldw_chatbook/UI/MCP_Modules/mcp_workbench.py'
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("rel_path", sorted(_BUDGETS))
+    def test_module_does_not_grow_past_its_budget(rel_path: str) -> None:
+        """The ceiling itself: a budgeted module may not exceed its pin."""
+        max_lines = _BUDGETS[rel_path]
+        lines = _measure(rel_path)
+    
+>       assert lines <= max_lines, (
+               ^^^^^^^^^^^^^^^^^^
+            f"{rel_path} grew to {lines} lines (budget {max_lines}, "
+            f"+{lines - max_lines}).\n\n"
+            f"{rel_path} is under a size ratchet "
+            f"(Tests/Architecture/test_module_size_ratchet.py). Put new code in "
+            f"a controller/widget/helper module — do NOT raise the budget to "
+            f"make this pass. Lower it when the file shrinks."
+        )
+E       AssertionError: tldw_chatbook/UI/MCP_Modules/mcp_workbench.py grew to 6771 lines (budget 6761, +10).
+E       
+E       tldw_chatbook/UI/MCP_Modules/mcp_workbench.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+
+Tests/Architecture/test_module_size_ratchet.py:78: AssertionError
+-------- generated xml file: /private/tmp/32825-merged-architecture.xml --------
+============================= slowest 25 durations =============================
+1.09s setup    Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py]
+1 failed, 66 passed in 1.48s

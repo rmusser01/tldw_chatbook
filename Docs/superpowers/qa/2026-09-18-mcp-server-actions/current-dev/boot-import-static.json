@@ -1,0 +1,20 @@
+[
+  {
+    "path": "Tests/Performance/test_app_import_weight.py",
+    "base_diagnostics": 2,
+    "current_diagnostics": 2,
+    "introduced": []
+  },
+  {
+    "path": "Tests/MCP/test_control_plane_tool_execute.py",
+    "base_diagnostics": 70,
+    "current_diagnostics": 70,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
+    "base_diagnostics": 29,
+    "current_diagnostics": 29,
+    "introduced": []
+  }
+]

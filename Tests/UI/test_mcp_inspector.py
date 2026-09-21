@@ -4918,7 +4918,7 @@ async def test_empty_state_badge_hidden_when_tool_shown():
 @pytest.mark.asyncio
 async def test_empty_state_badge_returns_when_detail_cleared():
     """The clear path is `show_tool(None)` itself (see
-    `MCPWorkbench._clear_tool_view()`, which calls exactly that) -- no
+    `MCPInspector.clear_mode_view()`, which calls exactly that) -- no
     separate blank/clear method exists. Restoring `display = True` must not
     disturb the content `update_readiness()` maintains -- untouched here,
     so it is still the compose()-time `_EMPTY_STATE_COPY`."""

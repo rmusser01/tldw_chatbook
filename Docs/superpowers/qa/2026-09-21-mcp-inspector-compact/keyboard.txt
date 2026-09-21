@@ -1,0 +1,10 @@
+....                                                                     [100%]
+------------ generated xml file: /private/tmp/32882-focus-green.xml ------------
+============================= slowest 25 durations =============================
+19.01s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light-fetch]
+17.80s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light-search]
+17.72s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]
+16.05s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-search]
+
+(8 durations < 1s hidden.)
+4 passed in 72.59s (0:01:12)

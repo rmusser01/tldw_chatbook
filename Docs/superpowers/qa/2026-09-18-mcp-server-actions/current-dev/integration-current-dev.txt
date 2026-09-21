@@ -1,0 +1,14 @@
+..                                                                       [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/Performance/test_ui_ready_module_census.py:437: UserWarning: ui-ready-census: 1026/1026 modules (headroom 0); snapshot drift +1/-1
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+------------ generated xml file: /private/tmp/2769-current-dev.xml -------------
+============================= slowest 25 durations =============================
+15.93s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+1.16s call     Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+
+(4 durations < 1s hidden.)
+2 passed, 1 warning in 18.04s

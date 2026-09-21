@@ -88,6 +88,7 @@ from ...Evals.character_probe.storage import (
     is_probe_set,
     save_probe_set,
 )
+from ...Evals.skill_eval.storage import is_skill_eval_bench
 from ...Evals.word_bench.models import BenchConfig
 from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
@@ -366,6 +367,18 @@ class LibraryRail(NotifyMixin, Vertical):
         to ever becoming runnable.
         """
 
+    class NewSkillEvalRequested(Message, namespace="library_rail"):
+        """Posted when "+ New skill eval" is pressed.
+
+        Handled screen-side for the same reason ``NewCharacterBenchRequested``
+        above is: creating the draft bench resolves a model target from the
+        view model (``skill_eval_targets()``'s first row, or an empty id when
+        none exist yet), which -- like the character bench's target
+        resolution -- is logic this widget delegates to ``EvalsScreen``'s
+        handler rather than duplicating here. A plain DB write either way, no
+        worker (mirrors ``NewCharacterBenchRequested``'s own handler).
+        """
+
     def __init__(
         self,
         view_model: EvalsViewModel,
@@ -603,6 +616,16 @@ class LibraryRail(NotifyMixin, Vertical):
                     if not has_probe_set
                     else "Creates a draft character-probe bench bound to "
                     "the newest probe set."
+                ),
+            ),
+            Button(
+                "+ New skill eval",
+                id="evals-rail-new-skill-eval",
+                compact=True,
+                tooltip=(
+                    "Creates a draft skill-eval bench (static + judge + "
+                    "simulation over one skill); pick its subject and "
+                    "models in the detail pane."
                 ),
             ),
             classes="evals-rail-empty-actions",
@@ -901,8 +924,19 @@ class LibraryRail(NotifyMixin, Vertical):
                         # EvalsScreen._compose_detail_pane's
                         # "character_bench" branch (task-1691 phase 2,
                         # Task 5). A genuinely classic (pre-word-bench)
-                        # task keeps kind="classic".
-                        kind="character_bench" if is_character_bench(row) else "classic",
+                        # task keeps kind="classic". A skill-eval bench
+                        # renders here too (plain name -- no marker; the
+                        # brief's ruling) and routes to its own
+                        # "skill_eval_bench" kind the same way.
+                        kind=(
+                            "skill_eval_bench"
+                            if is_skill_eval_bench(row)
+                            else (
+                                "character_bench"
+                                if is_character_bench(row)
+                                else "classic"
+                            )
+                        ),
                         row_id=row.get("id"),
                         label=_classic_row_label(row),
                     )
@@ -963,6 +997,10 @@ class LibraryRail(NotifyMixin, Vertical):
         if button_id == "evals-rail-new-character-bench":
             event.stop()
             self.post_message(self.NewCharacterBenchRequested())
+            return
+        if button_id == "evals-rail-new-skill-eval":
+            event.stop()
+            self.post_message(self.NewSkillEvalRequested())
             return
         if button_id == "evals-rail-new-dataset":
             event.stop()

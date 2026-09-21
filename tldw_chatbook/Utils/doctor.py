@@ -59,7 +59,17 @@ def check_config_load(load_failure: object = _UNSET) -> DoctorCheck:
 def check_optional_dependencies(available: Optional[Mapping[str, bool]] = None) -> DoctorCheck:
     """Optional extras availability (AC#2). Missing extras WARN, never FAIL."""
     if available is None:
-        from .optional_deps import DEPENDENCIES_AVAILABLE
+        # TASK-32811.3: under the shipped (lazy) dependency mode the registry
+        # starts all-False and is populated only by
+        # `initialize_dependency_checks`, which nothing on the doctor path
+        # called -- so the doctor reported every optional group as "not
+        # installed", including installed ones. Probe first, then read.
+        from .optional_deps import (
+            DEPENDENCIES_AVAILABLE,
+            initialize_dependency_checks,
+        )
+
+        initialize_dependency_checks()
         available = DEPENDENCIES_AVAILABLE
     present = sorted(k for k, v in available.items() if v)
     missing = sorted(k for k, v in available.items() if not v)
