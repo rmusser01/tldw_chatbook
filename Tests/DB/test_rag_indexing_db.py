@@ -169,6 +169,13 @@ class TestRAGIndexingDB:
         assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 12, 0, 0)) is False
         # A later naive time still reads as needing reindex, not a crash.
         assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 13, 0, 0)) is True
+        # An explicitly-aware value keeps working (unchanged path).
+        aware_same = datetime(2026, 9, 18, 12, 0, 0, tzinfo=timezone.utc)
+        assert temp_db.needs_reindexing(item_id, item_type, aware_same) is False
+        # A different offset compares by absolute instant: 08:00-04:00 == 12:00Z.
+        east = timezone(timedelta(hours=-4))
+        assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 8, 0, 0, tzinfo=east)) is False
+        assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 9, 0, 0, tzinfo=east)) is True
 
     def test_remove_item(self, temp_db):
         """Test removing an indexed item."""

@@ -780,10 +780,19 @@ class TestSearchOperations:
             config_data={},
         )
 
+        in_memory_db.create_task(
+            name="100%done",
+            description="literal percent",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+
         underscore_hits = {r["name"] for r in in_memory_db.search_tasks("_")}
         assert underscore_hits == {"load_test"}, underscore_hits
-        # No task name/description contains a literal '%'.
-        assert in_memory_db.search_tasks("%") == []
+        # A literal '%' matches only the row that actually contains it, not all.
+        percent_hits = {r["name"] for r in in_memory_db.search_tasks("%")}
+        assert percent_hits == {"100%done"}, percent_hits
 
     def test_search_datasets(self, in_memory_db):
         """Test dataset search functionality."""
