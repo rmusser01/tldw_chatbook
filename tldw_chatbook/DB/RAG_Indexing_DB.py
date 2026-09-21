@@ -832,8 +832,13 @@ class RAGIndexingDB:
         if not info:
             return True  # Not indexed yet
 
-        # Compare timestamps
+        # Compare timestamps. The stored value is always tz-aware (the write path
+        # in sqlite_datetime_fix stamps UTC onto naive input), so normalize a naive
+        # caller value the same way instead of raising "can't compare offset-naive
+        # and offset-aware datetimes".
         last_modified = datetime.fromisoformat(info["last_modified"])
+        if current_modified.tzinfo is None:
+            current_modified = current_modified.replace(tzinfo=timezone.utc)
         return current_modified > last_modified
 
     def remove_item(self, item_id: str, item_type: str) -> bool:

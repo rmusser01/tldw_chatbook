@@ -1155,13 +1155,20 @@ class EvalsDB:
             # FTS5 tokenization drops punctuation-only terms, so use literal LIKE
             # for short or non-token-like queries.
             if len(query) <= 2 or any(not (c.isalnum() or c.isspace()) for c in query):
+                # Escape LIKE metacharacters so a literal '%'/'_' matches itself.
+                # This branch is chosen *because* the query has punctuation, so an
+                # unescaped '_' or '%' otherwise matches every row. Precedent:
+                # Prompts_DB._escape_library_prompt_like.
+                like_term = (
+                    query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                )
                 cursor = conn.execute(
                     """
-                SELECT * FROM eval_tasks 
-                WHERE (name LIKE ? OR description LIKE ?) AND deleted_at IS NULL
+                SELECT * FROM eval_tasks
+                WHERE (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\') AND deleted_at IS NULL
                 ORDER BY created_at DESC LIMIT ?
             """,
-                    (f"%{query}%", f"%{query}%", limit),
+                    (f"%{like_term}%", f"%{like_term}%", limit),
                 )
             else:
                 # For normal queries, use FTS5 with proper escaping (the ONE

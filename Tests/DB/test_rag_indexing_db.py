@@ -154,6 +154,22 @@ class TestRAGIndexingDB:
         # Check non-existent item (should need indexing)
         assert temp_db.needs_reindexing("non_existent", item_type, new_time)
 
+    def test_needs_reindexing_accepts_naive_datetime(self, temp_db):
+        """A naive `current_modified` must not raise. The write path stamps UTC
+        onto naive input, so the read path normalizes the same way instead of
+        raising 'can't compare offset-naive and offset-aware datetimes'.
+        """
+        item_id, item_type = "naive_item", "media"
+        indexed_at = datetime(2026, 9, 18, 12, 0, 0, tzinfo=timezone.utc)
+        temp_db.mark_item_indexed(
+            item_id=item_id, item_type=item_type, last_modified=indexed_at, chunk_count=3
+        )
+
+        # Same instant, but expressed naive (what a caller may pass).
+        assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 12, 0, 0)) is False
+        # A later naive time still reads as needing reindex, not a crash.
+        assert temp_db.needs_reindexing(item_id, item_type, datetime(2026, 9, 18, 13, 0, 0)) is True
+
     def test_remove_item(self, temp_db):
         """Test removing an indexed item."""
         item_id = "test_item"
