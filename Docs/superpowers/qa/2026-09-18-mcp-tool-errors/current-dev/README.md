@@ -1,5 +1,13 @@
 # PR2716 current-dev tool-error qualification
 
+Owner approved the gallery at `19ceab4dc3`. A subsequent
+[test/CI-only follow-up](ci-followup/README.md) repairs a splash-dependent watcher
+test and accommodates both required test steps within a bounded 30-minute job.
+The approved production and native source hashes are unchanged. The original
+75-case MCP inventory below remains valid; the follow-up separately verifies
+123 admission-sensitive cases (plus one existing expected failure), 26 CI
+contracts and all eight artifact checks. Current-head remote CI still gates merge.
+
 TASK-32831 resumes from merged PR2714 dev `e4096e2059`. The production repair
 changes `MCP/client.py` and the existing shared `Utils/input_validation.py`:
 stdio validates and retains `isError`, and the client returns the
@@ -92,5 +100,5 @@ lock and matching source hashes. This remains a separate layout review.
 
 [Export manifest](export-manifest.json) binds originals to whitespace-normalized
 copies. Historical evidence and the immutable retired runner remain one level up.
-TASK-32831 stays In Progress until fresh owner visual approval, current-head CI,
+TASK-32831 stays In Progress until current-head CI,
 accumulated review and merge. Includes the verified PR2714 closeout ledger.

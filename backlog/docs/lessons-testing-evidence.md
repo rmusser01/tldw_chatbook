@@ -16163,3 +16163,19 @@ must force coroutine collection; both service and redraw workers need lazy
 callbacks when their body may never execute. In Textual tests, a cancelled
 worker's `wait()` raises `WorkerCancelled`; settle that expected outcome without
 masking the behavior assertions or swallowing other worker failures.
+
+
+## App-loop readiness can still leave splash startup pending (TASK-32831)
+
+PR2716 CI passed 1,152 main cases but its synchronous-construction Canvas watcher
+test failed when a seven-second splash closed during teardown: runtime disposal
+preceded a late Console mount, leaving its store absent. The same test passed
+quickly in isolation because it exercised only the app loop while splash stayed
+up. Requiring a mounted Console exposed another premise: Console creates the
+Canvas controller that this test explicitly expects to remain uncreated.
+
+The repair selects Home, disables splash through a scoped delegated getter,
+joins the real startup task and verifies the Home header before keeping all
+original watcher and disposal assertions. A persisted splash override was rejected
+in review because this module shares its bootstrap profile. Qualify the intended
+startup state; app-loop readiness alone does not establish it.

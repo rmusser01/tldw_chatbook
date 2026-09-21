@@ -21,8 +21,12 @@ before execution because Test Tool is offscreen even after focus/scroll; it exit
 layout repair stays separate from this client-only PR.
 
 [Current evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/README.md).
-TASK-32831 remains In Progress pending fresh owner visual approval, current-head
-CI, accumulated review and merge. Full Audit navigation, raw-response expansion,
+Owner approved the PR2716 gallery at `19ceab4dc3`. A test/CI-only follow-up
+repairs the splash-dependent watcher fixture and extends the bounded serial job
+to 30 minutes; production/native hashes are unchanged. Its 123 admission cases
+(plus one existing expected failure), 26 CI contracts and eight artifact checks
+pass. TASK-32831 remains In Progress pending current-head CI, accumulated review
+and merge. Full Audit navigation, raw-response expansion,
 complete permission flows and remaining screen reviews stay open.
 
 ## PR2714 merged; PR2716 resumed — 2026-09-20

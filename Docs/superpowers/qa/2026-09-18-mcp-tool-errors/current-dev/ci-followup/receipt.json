@@ -1,0 +1,40 @@
+{
+  "approved_visual_head": "19ceab4dc39da5aca46088b9a77b7c932861128b",
+  "owner_visual_approval": "Approved by owner in subsequent user turn",
+  "ci_run": 35545242345,
+  "ci_job": 106170570754,
+  "main_tests_passed": 1152,
+  "main_duration_seconds": 885.51,
+  "admission_failed": 1,
+  "admission_passed": 122,
+  "admission_expected_failures": 1,
+  "admission_duration_seconds": 299.84,
+  "job_timeout_minutes": 20,
+  "ci_failure": "Splash closes while synchronous-construction watcher test tears down; late Console mounts after runtime disposal. Job also exceeds20min.",
+  "repair": "Scoped splash getter override; real Home startup joined before all original unwarmed-Canvas/watcher/disposal assertions. Bounded serial job timeout30min; targets/dependencies/gates unchanged.",
+  "production_native_hashes_unchanged": true,
+  "local_counts": {
+    "admission": {
+      "passed": 123,
+      "expected_failures": 1
+    },
+    "ci-contracts": {
+      "passed": 26,
+      "expected_failures": 0
+    },
+    "isolated": {
+      "passed": 1,
+      "expected_failures": 0
+    }
+  },
+  "reviewer": "mcp_compact_review",
+  "review_findings": [],
+  "review_followups": "Avoid shared-profile writes; choose Home to preserve uncreated Canvas; synchronize all spec timeout literals. All addressed.",
+  "adrs": [
+    "ADR-103",
+    "ADR-111",
+    "ADR-161"
+  ],
+  "full_local_suite_run": false,
+  "source_ci_log_sha256": "23ff78d9727ddff20bdf96d680e1eb41479e98c17a8e3a727f98841836a37132"
+}
