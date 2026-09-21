@@ -95,7 +95,7 @@ from textual.widget import Widget
 # 3rd-Party Libraries
 import asyncio
 from loguru import logger as loguru_logger, logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.events import AppFocus, Resize
@@ -583,6 +583,7 @@ from .UI.Navigation.screen_registry import (
     screen_load_error,
 )
 from .UI.Navigation.shell_destinations import (
+    ARTIFACTS_COMPATIBILITY_SHORTCUT,
     SHELL_DESTINATION_ORDER,
     SHELL_DESTINATION_SHORTCUTS,
     get_shell_destination,
@@ -1342,7 +1343,8 @@ class TabNavigationProvider(Provider):
     }
 
     NAVIGATION_TABS = tuple(
-        destination.primary_route for destination in SHELL_DESTINATION_ORDER
+        destination.primary_route
+        for destination in SHELL_DESTINATION_ORDER
     )
 
     POPULAR_TABS = (
@@ -1360,6 +1362,11 @@ class TabNavigationProvider(Provider):
     # entry is (legacy route, command text, help text); the route rides
     # ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` to land on its rail row.
     LIBRARY_SUBROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
+        (
+            "artifacts",
+            "Tab Navigation: Library — Artifacts",
+            "Open Library All artifacts for reports and registered Chatbooks",
+        ),
         (
             "skills",
             "Tab Navigation: Library — Skills",
@@ -1434,6 +1441,9 @@ class TabNavigationProvider(Provider):
         return f"Open {destination.accessible_label} for {destination.purpose}"
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
+        for route, text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+            if route == tab_id:
+                return text, tab_id, help_text
         destination = self._shell_destination_for_tab(tab_id)
         label = (
             destination.accessible_label
@@ -7771,6 +7781,13 @@ class TldwCli(
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
         Binding("f1", "show_workbench_help", "Help", show=True),
         Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+        # ADR-172: preserve muscle memory after Artifacts folds into Library.
+        Binding(
+            ARTIFACTS_COMPATIBILITY_SHORTCUT,
+            "library_artifacts",
+            "Library Artifacts",
+            show=False,
+        ),
         Binding(
             "ctrl+shift+f",
             FOCUS_TOGGLE_PALETTE_ENTRY[1],
@@ -7787,6 +7804,7 @@ class TldwCli(
             ),
         )
         for destination in SHELL_DESTINATION_ORDER
+        if destination.destination_id != "artifacts"
     ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
@@ -12524,6 +12542,7 @@ class TldwCli(
     # carry that context, so the bare alias route itself must supply it here.
     # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
+        "artifacts": {LIBRARY_NAV_CONTEXT_MODE: "artifacts-all"},
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
         "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
@@ -20155,12 +20174,19 @@ class TldwCli(
         )
         self.push_screen(WorkbenchHelpPanel(state))
 
+    def action_library_artifacts(self) -> None:
+        """Preserve Ctrl+6 as a Library route outside permanent shell destinations."""
+        self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+
     def action_shell_destination(self, destination_id: str) -> None:
         """Navigate to the shell destination identified by a stable ID.
 
         Args:
             destination_id: Shell destination ID from the Textual binding.
         """
+        if destination_id == TAB_ARTIFACTS:
+            self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+            return
         try:
             destination = get_shell_destination(destination_id)
         except KeyError:

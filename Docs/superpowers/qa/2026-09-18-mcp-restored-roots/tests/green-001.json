@@ -1,0 +1,112 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[approve]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[source]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[scope]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[unmount]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[definition]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[workspace]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[generation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[duplicate]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel_accepted]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[empty]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_ordinary_mcp_review_preserves_existing_permission_controls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision",
+      "status": "passed"
+    }
+  ]
+}

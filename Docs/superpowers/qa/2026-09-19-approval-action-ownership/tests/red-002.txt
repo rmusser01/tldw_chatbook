@@ -1,0 +1,2279 @@
+FFFFFFFFF..FFFFFFF...                                                    [100%]
+=================================== FAILURES ===================================
+__ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-approve-all] __
+
+action = 'approve-all', transition = 'round'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'approve-all', transition = 'round'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335: in on_button_pressed
+    self._set_all_batch_decisions(("approve_once", "approve_session"))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 08:05:33.464 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-19 08:05:33.498 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 08:05:33.499 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-19 08:05:33.499 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1332 │   │   button_id = event.button.id or ""                             │
+│   1333 │   │   if button_id == "approval-approve-all":                       │
+│   1334 │   │   │   event.stop()                                              │
+│ ❱ 1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│   1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-approve-all'                       │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'approve_once'                                          │   │
+│ │   candidates = ('approve_once', 'approve_session')                     │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'approve_once'                      │                     │
+│ │          index = 0                                   │                     │
+│ │         prompt = 'Once'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'approve_once'                      │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Once'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+___ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-deny-all] ____
+
+action = 'deny-all', transition = 'round'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'deny-all', transition = 'round'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338: in on_button_pressed
+    self._set_all_batch_decisions(("deny",))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│ ❱ 1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│   1339 │   │   elif button_id == "approval-submit":                          │
+│   1340 │   │   │   event.stop()                                              │
+│   1341 │   │   │   self._submit_batch_decisions()                            │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-deny-all'                          │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'deny'                                                  │   │
+│ │   candidates = ('deny',)                                               │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'deny'                              │                     │
+│ │          index = 4                                   │                     │
+│ │         prompt = 'Deny'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'deny'                              │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Deny'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+____ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-submit] _____
+
+action = 'submit', transition = 'round'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+>           assert app.decided == [], "the old Submit decided a different batch"
+                   ^^^^^^^^^^^^^^^^^
+E           AssertionError: the old Submit decided a different batch
+
+Tests/UI/test_approval_action_ownership.py:46: AssertionError
+__ test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-approve-all] __
+
+action = 'approve-all', transition = 'calls'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'approve-all', transition = 'calls'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335: in on_button_pressed
+    self._set_all_batch_decisions(("approve_once", "approve_session"))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1332 │   │   button_id = event.button.id or ""                             │
+│   1333 │   │   if button_id == "approval-approve-all":                       │
+│   1334 │   │   │   event.stop()                                              │
+│ ❱ 1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│   1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-approve-all'                       │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'approve_once'                                          │   │
+│ │   candidates = ('approve_once', 'approve_session')                     │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'approve_once'                      │                     │
+│ │          index = 0                                   │                     │
+│ │         prompt = 'Once'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'approve_once'                      │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Once'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+___ test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-deny-all] ____
+
+action = 'deny-all', transition = 'calls'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'deny-all', transition = 'calls'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338: in on_button_pressed
+    self._set_all_batch_decisions(("deny",))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│ ❱ 1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│   1339 │   │   elif button_id == "approval-submit":                          │
+│   1340 │   │   │   event.stop()                                              │
+│   1341 │   │   │   self._submit_batch_decisions()                            │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-deny-all'                          │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'deny'                                                  │   │
+│ │   candidates = ('deny',)                                               │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'deny'                              │                     │
+│ │          index = 4                                   │                     │
+│ │         prompt = 'Deny'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'deny'                              │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Deny'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+____ test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-submit] _____
+
+action = 'submit', transition = 'calls'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+>           assert app.decided == [], "the old Submit decided a different batch"
+                   ^^^^^^^^^^^^^^^^^
+E           AssertionError: the old Submit decided a different batch
+
+Tests/UI/test_approval_action_ownership.py:46: AssertionError
+_ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-approve-all] _
+
+action = 'approve-all', transition = 'round_trip'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'approve-all', transition = 'round_trip'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335: in on_button_pressed
+    self._set_all_batch_decisions(("approve_once", "approve_session"))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1332 │   │   button_id = event.button.id or ""                             │
+│   1333 │   │   if button_id == "approval-approve-all":                       │
+│   1334 │   │   │   event.stop()                                              │
+│ ❱ 1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│   1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-approve-all'                       │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'approve_once'                                          │   │
+│ │   candidates = ('approve_once', 'approve_session')                     │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-3-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-3-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'approve_once'                      │                     │
+│ │          index = 0                                   │                     │
+│ │         prompt = 'Once'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-3-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'approve_once'                      │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Once'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+_ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-deny-all] _
+
+action = 'deny-all', transition = 'round_trip'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'deny-all', transition = 'round_trip'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338: in on_button_pressed
+    self._set_all_batch_decisions(("deny",))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│ ❱ 1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│   1339 │   │   elif button_id == "approval-submit":                          │
+│   1340 │   │   │   event.stop()                                              │
+│   1341 │   │   │   self._submit_batch_decisions()                            │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-deny-all'                          │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'deny'                                                  │   │
+│ │   candidates = ('deny',)                                               │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-3-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-3-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'deny'                              │                     │
+│ │          index = 4                                   │                     │
+│ │         prompt = 'Deny'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-3-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'deny'                              │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Deny'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+__ test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-submit] __
+
+action = 'submit', transition = 'round_trip'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+>           assert app.decided == [], "the old Submit decided a different batch"
+                   ^^^^^^^^^^^^^^^^^
+E           AssertionError: the old Submit decided a different batch
+
+Tests/UI/test_approval_action_ownership.py:46: AssertionError
+____ test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-submit] _____
+
+action = 'submit', transition = 'clear'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+>           assert app.decided == [], "the old Submit decided a different batch"
+                   ^^^^^^^^^^^^^^^^^
+E           AssertionError: the old Submit decided a different batch
+
+Tests/UI/test_approval_action_ownership.py:46: AssertionError
+_ test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-approve-all] _
+
+action = 'approve-all', transition = 'finishing'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'approve-all', transition = 'finishing'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335: in on_button_pressed
+    self._set_all_batch_decisions(("approve_once", "approve_session"))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1335 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1332 │   │   button_id = event.button.id or ""                             │
+│   1333 │   │   if button_id == "approval-approve-all":                       │
+│   1334 │   │   │   event.stop()                                              │
+│ ❱ 1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│   1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-approve-all'                       │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'approve_once'                                          │   │
+│ │   candidates = ('approve_once', 'approve_session')                     │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'approve_once'                      │                     │
+│ │          index = 0                                   │                     │
+│ │         prompt = 'Once'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'approve_once'                      │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Once'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+_ test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-deny-all] __
+
+action = 'deny-all', transition = 'finishing'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+            assert app.decided == [], "the old Submit decided a different batch"
+>           assert [select.value for select in card._batch_selects] == expected
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:47: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+action = 'deny-all', transition = 'finishing'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+>       async with app.run_test() as pilot:
+                   ^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_action_ownership.py:19:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338: in on_button_pressed
+    self._set_all_batch_decisions(("deny",))
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418: in _set_all_batch_decisions
+    select.value = candidate
+    ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = SelectCurrent(classes='-has-value'), selector = '#label'
+expect_type = <class 'textual.widgets._static.Static'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1338 in  │
+│ on_button_pressed                                                            │
+│                                                                              │
+│   1335 │   │   │   self._set_all_batch_decisions(("approve_once", "approve_s │
+│   1336 │   │   elif button_id == "approval-deny-all":                        │
+│   1337 │   │   │   event.stop()                                              │
+│ ❱ 1338 │   │   │   self._set_all_batch_decisions(("deny",))                  │
+│   1339 │   │   elif button_id == "approval-submit":                          │
+│   1340 │   │   │   event.stop()                                              │
+│   1341 │   │   │   self._submit_batch_decisions()                            │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ button_id = 'approval-deny-all'                          │                 │
+│ │     event = Pressed()                                    │                 │
+│ │      self = ChatApprovalCard(classes='ds-approval-card') │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py:1418 in  │
+│ _set_all_batch_decisions                                                     │
+│                                                                              │
+│   1415 │   │   │   if not (is_raw_shell and "approve_once" in candidates):   │
+│   1416 │   │   │   │   for candidate in candidates:                          │
+│   1417 │   │   │   │   │   if candidate in legal_values:                     │
+│ ❱ 1418 │   │   │   │   │   │   select.value = candidate                      │
+│   1419 │   │   │   │   │   │   applied = True                                │
+│   1420 │   │   │   │   │   │   break                                         │
+│   1421 │   │   │   if applied:                                               │
+│                                                                              │
+│ ╭──────────────────────────────── locals ────────────────────────────────╮   │
+│ │      applied = False                                                   │   │
+│ │  base_header = 'Srv A · search ×2'                                     │   │
+│ │    candidate = 'deny'                                                  │   │
+│ │   candidates = ('deny',)                                               │   │
+│ │ is_raw_shell = False                                                   │   │
+│ │ legal_values = [                                                       │   │
+│ │                │   'approve_once',                                     │   │
+│ │                │   'approve_session',                                  │   │
+│ │                │   'allow_matching',                                   │   │
+│ │                │   'always_allow',                                     │   │
+│ │                │   'deny'                                              │   │
+│ │                ]                                                       │   │
+│ │          row = Vertical(id='approval-row-2-0', classes='approval-row') │   │
+│ │       select = Select(                                                 │   │
+│ │                │   id='approval-row-decision-2-0',                     │   │
+│ │                │   classes='approval-row-decision'                     │   │
+│ │                )                                                       │   │
+│ │         self = ChatApprovalCard(classes='ds-approval-card')            │   │
+│ ╰────────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615 │
+│  in _watch_value                                                             │
+│                                                                              │
+│   612 │   │   │   │   │   if _value == value:                                │
+│   613 │   │   │   │   │   │   select_overlay = self.query_one(SelectOverlay) │
+│   614 │   │   │   │   │   │   select_overlay.highlighted = index             │
+│ ❱ 615 │   │   │   │   │   │   select_current.update(prompt)                  │
+│   616 │   │   │   │   │   │   break                                          │
+│   617 │   │   │   self.post_message(self.Changed(self, value))               │
+│   618                                                                        │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │         _value = 'deny'                              │                     │
+│ │          index = 4                                   │                     │
+│ │         prompt = 'Deny'                              │                     │
+│ │ select_current = SelectCurrent(classes='-has-value') │                     │
+│ │ select_overlay = SelectOverlay()                     │                     │
+│ │           self = Select(                             │                     │
+│ │                  │   id='approval-row-decision-2-0', │                     │
+│ │                  │   classes='approval-row-decision' │                     │
+│ │                  )                                   │                     │
+│ │          value = 'deny'                              │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256 │
+│  in update                                                                   │
+│                                                                              │
+│   253 │   │   """                                                            │
+│   254 │   │   self.label = label                                             │
+│   255 │   │   self.has_value = label is not Select.NULL                      │
+│ ❱ 256 │   │   self.query_one("#label", Static).update(                       │
+│   257 │   │   │   self.placeholder if isinstance(label, NoSelection) else la │
+│   258 │   │   )                                                              │
+│   259                                                                        │
+│                                                                              │
+│ ╭────────────────── locals ───────────────────╮                              │
+│ │ label = 'Deny'                              │                              │
+│ │  self = SelectCurrent(classes='-has-value') │                              │
+│ ╰─────────────────────────────────────────────╯                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+__ test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-submit] ___
+
+action = 'submit', transition = 'finishing'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["approve-all", "deny-all", "submit"])
+    @pytest.mark.parametrize(
+        "transition", ["round", "calls", "round_trip", "clear", "finishing"]
+    )
+    async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transition):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            calls = _sample_calls()
+            card.set_batch(calls, timeout_seconds=0, round_id="original")
+            await pilot.pause()
+            button = card.query_one(f"#approval-{action}", Button)
+            # Button.press publishes asynchronously. Replace the batch before the
+            # real public message bubbles to the card, without fabricating an event.
+            button.press()
+            if transition == "clear":
+                card.set_batch([], timeout_seconds=0)
+            elif transition == "finishing":
+                card.set_batch(
+                    calls, timeout_seconds=0, round_id="original", phase="finishing"
+                )
+            elif transition == "calls":
+                changed = deepcopy(calls)
+                changed[0]["arguments"] = {"query": "replacement target"}
+                card.set_batch(changed, timeout_seconds=0, round_id="original")
+            else:
+                card.set_batch(calls, timeout_seconds=0, round_id="replacement")
+                if transition == "round_trip":
+                    card.set_batch(calls, timeout_seconds=0, round_id="original")
+            for select in card._batch_selects:
+                select.value = "deny" if action == "approve-all" else "approve_once"
+            expected = [select.value for select in card._batch_selects]
+            await pilot.pause()
+>           assert app.decided == [], "the old Submit decided a different batch"
+                   ^^^^^^^^^^^^^^^^^
+E           AssertionError: the old Submit decided a different batch
+
+Tests/UI/test_approval_action_ownership.py:46: AssertionError
+_______ test_queued_repeated_submit_decides_the_batch_only_once[submit] ________
+
+action = 'submit'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["submit", "fast-approve", "fast-deny"])
+    async def test_queued_repeated_submit_decides_the_batch_only_once(action):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            card.set_batch([_sample_calls()[0]], timeout_seconds=0, round_id="one")
+            await pilot.pause()
+            selector = (
+                "#approval-submit" if action == "submit" else f".approval-row-{action}"
+            )
+            button = card.query_one(selector, Button)
+            button.press()
+            button.press()
+            await pilot.pause()
+>           assert len(app.decided) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:65: AssertionError
+____ test_queued_repeated_submit_decides_the_batch_only_once[fast-approve] _____
+
+action = 'fast-approve'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["submit", "fast-approve", "fast-deny"])
+    async def test_queued_repeated_submit_decides_the_batch_only_once(action):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            card.set_batch([_sample_calls()[0]], timeout_seconds=0, round_id="one")
+            await pilot.pause()
+            selector = (
+                "#approval-submit" if action == "submit" else f".approval-row-{action}"
+            )
+            button = card.query_one(selector, Button)
+            button.press()
+            button.press()
+            await pilot.pause()
+>           assert len(app.decided) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:65: AssertionError
+______ test_queued_repeated_submit_decides_the_batch_only_once[fast-deny] ______
+
+action = 'fast-deny'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["submit", "fast-approve", "fast-deny"])
+    async def test_queued_repeated_submit_decides_the_batch_only_once(action):
+        app = _CardHarnessApp()
+        async with app.run_test() as pilot:
+            card = app.query_one(ChatApprovalCard)
+            card.set_batch([_sample_calls()[0]], timeout_seconds=0, round_id="one")
+            await pilot.pause()
+            selector = (
+                "#approval-submit" if action == "submit" else f".approval-row-{action}"
+            )
+            button = card.query_one(selector, Button)
+            button.press()
+            button.press()
+            await pilot.pause()
+>           assert len(app.decided) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_approval_action_ownership.py:65: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-ede2955d-8e22-4c68-9820-cbeaf8a7e133/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-ede2955d-8e22-4c68-9820-cbeaf8a7e133/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-ede2955d-8e22-4c68-9820-cbeaf8a7e133
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-ede2955d-8e22-4c68-9820-cbeaf8a7e133'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-approve-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-deny-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-approve-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-deny-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-approve-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-deny-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-approve-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-deny-all]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_repeated_submit_decides_the_batch_only_once[submit]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_repeated_submit_decides_the_batch_only_once[fast-approve]
+FAILED Tests/UI/test_approval_action_ownership.py::test_queued_repeated_submit_decides_the_batch_only_once[fast-deny]
+16 failed, 5 passed, 2 warnings in 7.06s

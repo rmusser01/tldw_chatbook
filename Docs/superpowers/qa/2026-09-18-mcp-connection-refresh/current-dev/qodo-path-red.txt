@@ -1,0 +1,273 @@
+FFFFFF..                                                                 [100%]
+=================================== FAILURES ===================================
+_________ test_fixture_rejects_paths_outside_owned_root[parent-state] __________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out0')
+target = 'state', escape = 'parent'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "outside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 15:00:58.344 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-20 15:00:58.380 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jkryfrlh/config/config.toml
+2026-09-20 15:00:58.381 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6165 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jkryfrlh/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-20 15:00:58.382 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6174 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jkryfrlh/config/config.toml
+2026-09-20 15:00:58.382 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-20 15:00:58.382 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-20 15:00:58.387 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 15:00:58.388 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 15:00:58.388 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-20 15:00:58.389 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-20 15:00:58.419 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jkryfrlh/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-20 15:00:58.419 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+2026-09-20 15:00:58.419 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+2026-09-20 15:00:58.420 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-20 15:00:58.559 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-20 15:00:58.683 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 15:00:58.786 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 15:00:58.807 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 15:00:58.813 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_________ test_fixture_rejects_paths_outside_owned_root[parent-trace] __________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out1')
+target = 'trace', escape = 'parent'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "inside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+________ test_fixture_rejects_paths_outside_owned_root[absolute-state] _________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out2')
+target = 'state', escape = 'absolute'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "outside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+________ test_fixture_rejects_paths_outside_owned_root[absolute-trace] _________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out3')
+target = 'trace', escape = 'absolute'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "inside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+_________ test_fixture_rejects_paths_outside_owned_root[symlink-state] _________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out4')
+target = 'state', escape = 'symlink'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "outside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+_________ test_fixture_rejects_paths_outside_owned_root[symlink-trace] _________
+
+tmp_path = PosixPath('/private/tmp/32830-path-red/test_fixture_rejects_paths_out5')
+target = 'trace', escape = 'symlink'
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str
+    ) -> None:
+        """Reject both read and write escapes before processing any wire request."""
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text('{"version": "inside"}')
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [sys.executable, str(FIXTURE.resolve()),
+             bad if target == "state" else str(state),
+             bad if target == "trace" else str(trace), str(root.resolve())],
+            cwd=root, input=REQUEST, capture_output=True, text=True, timeout=10,
+        )
+>       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "inside_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...de_tool", "description": "Local review fixture", "inputSchema": {"type": "object", "properties": {}}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:43: AssertionError
+============================= slowest 25 durations =============================
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[parent-state]
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[parent-trace]
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[absolute-state]
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[absolute-trace]
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[symlink-state]
+FAILED Tests/MCP/test_catalog_fixture_paths.py::test_fixture_rejects_paths_outside_owned_root[symlink-trace]
+6 failed, 2 passed in 1.06s

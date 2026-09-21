@@ -1,0 +1,28 @@
+{
+  "user_message": "approved, continue",
+  "approved_head": "a3fd318d94d3a3070a741206853b18efe3384557",
+  "approved_base": "ab57681864bc2f5c6d8b255203e011a95321c02c",
+  "approved_tree": "d8e06d36c780d6a36c9ccbed7fb789e64e39b37f",
+  "gallery": "/Users/macbook-dev/.codex/visualizations/2026/09/14/01a0a1cf-edfb-7d02-bd56-794ea2270aa2/mcp-cancellation-review-32880/index.html",
+  "capture_hashes": {
+    "textual-dark-80x24-cancelling.svg": "1197b93116c4438f99b2643d07195b5c2ce9b08fff5ed7f124439a587864db88",
+    "textual-light-170x48-working.svg": "215ad98bc6066520554a9b27ee5c21705d92a8d6eb3ef2810fa61a74115ac107",
+    "textual-dark-170x48-cancelling.svg": "f61b356540170d93902c1abaea1be4821ac15da393e2ab9f6d2271a44298a758",
+    "textual-light-80x24-cancelling.svg": "3e4d9b5af445ea62039c6a394570c4d4f63f2d61469b74eb2253c12245ac4ae1",
+    "textual-light-80x24-retry-available.svg": "954f36063b6309fc3943a3694a601b45b1c8c57cecd916bf0be661ed188b16e6",
+    "textual-dark-80x24-retry-available.svg": "17a8b7b7a8df74e0baece7a689b983e36215710a349c27e38300958515c4cc00",
+    "textual-dark-80x24-working.svg": "02fe347425e6df1a4dcaa9f520f7251e4e2cceb1e6fc0d5431826ce47000f575",
+    "textual-dark-170x48-working.svg": "9df07679f537708ee4249eb3cc35913cf38afa7bbeb590a4782e5d3181cf23d1",
+    "textual-light-170x48-cancelling.svg": "c500f3d74af7d486f262025de27225196d4baa6f3ebd3f5e7a17b1f826948e97",
+    "textual-light-80x24-working.svg": "dc6f741856cf4a44d1e5e35db1dfbeddeb5b24f3b9054983c6c900b9168b594a",
+    "textual-dark-170x48-retry-available.svg": "973f7c2ad8b67d338aa161f477a0373be05bacc7fc933f32b51667d1771c1179",
+    "textual-light-170x48-retry-available.svg": "712c82052f809b35bc046405aa173d5266068e4374ace618a13ea399201ba3dd"
+  },
+  "conflict_choice": "Keep both recovery-token checks around readiness rendering and the captured cancellation operation identity.",
+  "native_source_hashes_match": true,
+  "artifact_counts_verified": {
+    "Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation": 41,
+    "Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev": 40
+  },
+  "merge_gate": "Current-head required CI still pending; no further visual approval needed for this unchanged approved tree."
+}

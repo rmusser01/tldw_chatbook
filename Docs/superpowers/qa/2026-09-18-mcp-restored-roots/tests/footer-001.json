@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_follow_mode",
+      "status": "passed"
+    }
+  ]
+}

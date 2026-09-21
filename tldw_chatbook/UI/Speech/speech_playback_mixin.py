@@ -881,7 +881,7 @@ class SpeechPlaybackMixin:
                     self.app.notify("Failed to resume playback", severity="warning")
         except Exception as e:
             logger.error(f"Error toggling pause: {e}")
-            from rich.markup import escape
+            from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
             self.app.notify(f"Error: {escape(str(e))}", severity="error")
 
@@ -937,7 +937,7 @@ class SpeechPlaybackMixin:
             return True
         except Exception as e:
             logger.error(f"Error stopping playback: {e}")
-            from rich.markup import escape
+            from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
             self.app.notify(f"Error: {escape(str(e))}", severity="error")
             return False

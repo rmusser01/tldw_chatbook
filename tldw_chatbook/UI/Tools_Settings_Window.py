@@ -6565,7 +6565,7 @@ class ToolsSettingsWindow(Container):
         try:
             # Show chatbook creation window
             result = await self.app_instance.push_screen(
-                ChatbookCreationWindow(self.app_instance), wait_for_dismiss=True
+                ChatbookCreationWindow(), wait_for_dismiss=True
             )
 
             if result:

@@ -1,0 +1,172 @@
+{
+  "recorded_at": "2026-09-20T07:29:00.993270+00:00",
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/2728",
+  "state": "MERGED",
+  "head": "f55b7804d8f81e6a9117178d3d67970b2eda99b5",
+  "base": "ebee42fab8a7f55def6a03fc7b3301935940eebf",
+  "target": "dev",
+  "mergeable": "MERGEABLE",
+  "merge_state": "CLEAN",
+  "working_tree_clean": true,
+  "checks": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:32:46Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494507904/job/106035006635",
+      "name": "platform-evidence",
+      "startedAt": "2026-09-20T06:32:46Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:32:46Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494507963/job/106035007077",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-09-20T06:32:47Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:33:11Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494507956/job/106035006474",
+      "name": "No duplicate backlog task IDs",
+      "startedAt": "2026-09-20T06:32:49Z",
+      "status": "COMPLETED",
+      "workflowName": "Backlog Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:33:11Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494507923/job/106035006526",
+      "name": "CSS bundle reproduces from its sources",
+      "startedAt": "2026-09-20T06:32:49Z",
+      "status": "COMPLETED",
+      "workflowName": "CSS Bundle Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:46:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494508002/job/106035358170",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-09-20T06:35:56Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:38:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494507867/job/106035006191",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-09-20T06:32:50Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:48:30Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35494508002/job/106036512292",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-09-20T06:46:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T06:32:54Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2728",
+      "name": "cubic \u00b7 AI code reviewer",
+      "startedAt": "2026-09-20T06:32:52Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-20T06:32:48Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "review_threads": [
+    {
+      "id": "PRRT_kwDOOcyyl86kHb_A",
+      "isResolved": true,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4056299679,
+            "author": {
+              "login": "qodo-code-review"
+            },
+            "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n2\\. Malformed catalog data reaches ui logic <code>\ud83d\udcd8 Rule violation</code> <code>\u2261 Correctness</code>\n\n<pre>\n<b><i>_record_mcp_recovery_review</i></b> performs only ad-hoc <b><i>Mapping</i></b> and <b><i>profile_id</i></b> checks before passing\nraw record dictionaries into <b><i>local_profile_readiness</i></b>. If one record contains a malformed nested\nfield such as non-mapping <b><i>env_placeholders</i></b>, snapshot construction raises and the shared exception\nhandler replaces the entire catalog with empty collections, including valid sibling servers.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nThe reviewed catalog uses manual shape checks and then passes loosely typed dictionaries into UI readiness logic instead of validating them through a Pydantic model.\n\n## Fix Focus Areas\n- tldw_chatbook/UI/MCP_Modules/mcp_workbench.py[3396-3405]\n- tldw_chatbook/MCP/readiness.py[366-389]\n\n## Recommended Fix\nDefine or reuse a Pydantic model describing every local catalog field, validate each service result at this boundary, and pass only validated model data into catalog and readiness construction. Handle validation errors through the existing safe refresh-failure path without exposing raw values.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>",
+            "url": "https://github.com/rmusser01/tldw_chatbook/pull/2728#discussion_r4056299679"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kHb_D",
+      "isResolved": true,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4056299684,
+            "author": {
+              "login": "qodo-code-review"
+            },
+            "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n1\\. Catalog refresh has no unit coverage <code>\ud83d\udcd8 Rule violation</code> <code>\u25a3 Testability</code>\n\n<pre>\n<b><i>_record_mcp_recovery_review</i></b> now reads, validates, transforms, and conditionally publishes the\nrestored catalog based on view-token ownership. The added test exercises those branches only through\na complete Textual application journey, leaving the changed method without the separately required\nisolated unit test.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nThe new catalog publication logic has integration coverage but no isolated unit coverage, despite the checklist requiring both forms of testing for non-trivial changed logic.\n\n## Fix Focus Areas\n- tldw_chatbook/UI/MCP_Modules/mcp_workbench.py[3392-3428]\n- Tests/Backup_Recovery/test_mcp_recovery_catalog.py[99-104]\n\n## Recommended Fix\nAdd focused unit tests for successful conversion, malformed catalog results, reader exceptions, and stale recovery tokens using a minimal workbench fixture and controlled service doubles. Keep the existing Textual journey as integration coverage.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>",
+            "url": "https://github.com/rmusser01/tldw_chatbook/pull/2728#discussion_r4056299684"
+          }
+        ]
+      }
+    }
+  ],
+  "qodo": {
+    "current_head_marker": "f55b7804d8f81e6a9117178d3d67970b2eda99b5",
+    "bugs": 0,
+    "summary_rule_findings": 1,
+    "unit_coverage_finding": "resolved with isolated unit tests",
+    "remaining_validation_suggestion": "declined with real store/service regression evidence; the reported non-mapping field is normalized before UI readiness; duplicate UI schema would not fix this scenario",
+    "disposition_file": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/QODO-REVIEW.md",
+    "comment_url": "https://github.com/rmusser01/tldw_chatbook/pull/2728#issuecomment-5748115574",
+    "summary_body_sha256": "858d5f4ff1bb2d2c768f5765c4fcd0920feb1a0d42e704b05396b3e78a8ac7a2"
+  },
+  "coderabbit": "success status explicitly skips review on dev; not counted as a review",
+  "independent_review": "no blockers in product, runner, or isolated/storage test follow-up",
+  "local_distinct_targeted_passes": 182,
+  "full_suite_run": false,
+  "native_captures": 8,
+  "product_source_hashes_match_gallery": true,
+  "gallery": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/GALLERY.md",
+  "conflict_choices": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md",
+  "visual_approval": "user approved final eight-capture gallery and merge on 2026-09-20",
+  "merge_authorized": true,
+  "remaining_followups": [
+    "long-path recovery review presentation",
+    "80x24",
+    "MCP inspector refresh",
+    "connected-runtime journeys",
+    "saved Console approval PR2730"
+  ],
+  "merged_at": "2026-09-20T07:28:25Z",
+  "merge_commit": "de10a62e67124a2b21b78edf1a4887cea03ff139",
+  "merge_parents": [
+    "ebee42fab8a7f55def6a03fc7b3301935940eebf",
+    "f55b7804d8f81e6a9117178d3d67970b2eda99b5"
+  ],
+  "approved_tree": "ca275ff9110dece2eaa0f8f05c05d713598944e4",
+  "actual_merge_tree": "ca275ff9110dece2eaa0f8f05c05d713598944e4",
+  "actual_merge_tree_equals_approved": true
+}

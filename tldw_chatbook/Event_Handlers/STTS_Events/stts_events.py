@@ -15,7 +15,12 @@ from typing import Any, Dict, NamedTuple, Optional
 from uuid import UUID
 
 from loguru import logger
-from rich.markup import escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
+# The narrow rich escape is kept for the call sites below whose value
+# reaches a markup-OFF sink, where any escape shows the reader a literal
+# backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
+# widening the escape would make that leak worse rather than fix it.
+from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
 
 #
 # Third-party imports
@@ -1821,7 +1826,7 @@ class STTSEventHandler:
 
         def deliver() -> None:
             playground.query_one("#tts-generation-log", RichLog).write(
-                f"[bold red]Generation failed: {escape(message)}[/bold red]"
+                f"[bold red]Generation failed: {_escape_for_markup_off_sink(message)}[/bold red]"
             )
             callback = getattr(playground, "_generation_complete", None)
             if callable(callback):

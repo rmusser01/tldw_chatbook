@@ -1,0 +1,25 @@
+......................                                                   [100%]
+------------ generated xml file: /private/tmp/32831-flags-green.xml ------------
+============================= slowest 25 durations =============================
+1.45s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[false]
+1.44s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[1]
+1.42s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[0]
+1.41s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[true]
+1.41s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[None]
+1.38s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag5]
+1.34s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]
+1.33s call     Tests/MCP/test_tool_error_results.py::test_control_plane_audits_tool_failure_without_error_body_and_recovers
+1.33s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]
+1.30s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[None]
+1.28s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag6]
+1.27s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]
+1.26s call     Tests/MCP/test_tool_error_results.py::test_non_boolean_error_flag_is_bounded_failure_and_can_retry[flag7]
+1.24s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]
+1.20s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[False]
+1.18s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]
+1.10s call     Tests/MCP/test_tool_error_results.py::test_malformed_error_content_stays_failed_without_logging_body[content1]
+1.08s call     Tests/MCP/test_tool_error_results.py::test_malformed_error_content_stays_failed_without_logging_body[content2]
+1.04s call     Tests/MCP/test_tool_error_results.py::test_malformed_error_content_stays_failed_without_logging_body[content0]
+
+(6 durations < 1s hidden.)
+22 passed in 25.80s

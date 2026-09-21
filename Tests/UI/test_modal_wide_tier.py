@@ -417,24 +417,7 @@ def _build_prompt_collection_modal(_app: object) -> PromptCollectionManagerModal
     )
 
 
-class _MountedCreationWindow(ChatbookCreationWindow):
-    """Shipped window minus its constructor bug.
-
-    ``ChatbookCreationWindow.__init__`` assigns ``self.app = app_instance``,
-    but ``Widget.app`` is a read-only property, so every construction of the
-    shipped class raises ``AttributeError`` (only call site:
-    ``UI/Tools_Settings_Window.py``). The ``app`` class attribute here
-    shadows the property so the assignment stores the REAL harness app
-    normally (Textual's own screen registration reads ``self.app`` too);
-    CSS, compose and ``on_mount`` are the shipped class's. Drop this
-    subclass when the constructor is fixed (documented in
-    .superpowers/wave2-report.md).
-    """
-
-    app = None
-
-
-def _build_chatbook_creation_modal(app: object) -> _MountedCreationWindow:
+def _build_chatbook_creation_modal(_app: object) -> ChatbookCreationWindow:
     # Two constructor dependencies load the CLI config, which trips this
     # machine's pre-existing ``RecoveryRequired: raw_source_selection_changed``
     # profile condition when config first loads mid-test-session (see
@@ -444,6 +427,10 @@ def _build_chatbook_creation_modal(app: object) -> _MountedCreationWindow:
     # install empty-database branch on_mount reads from self.db_paths), and
     # ChatbookCreator -> None (self.creator is only touched by the create
     # button's action, never on the mount/geometry path).
+    # TASK-32829 removed the constructor's ``self.app`` assignment (and its
+    # ``app_instance`` parameter), so the shipped class mounts directly now;
+    # the ``_MountedCreationWindow`` subclass that used to shadow the
+    # read-only ``Widget.app`` property is gone.
     import tldw_chatbook.UI.ChatbookCreationWindow as creation_module
 
     empty_dir = Path(tempfile.mkdtemp(prefix="tldw-wide-tier-spot-"))
@@ -456,7 +443,7 @@ def _build_chatbook_creation_modal(app: object) -> _MountedCreationWindow:
     }
     creation_module.ChatbookCreator = lambda *_args, **_kwargs: None
     try:
-        return _MountedCreationWindow(app)  # type: ignore[arg-type]
+        return ChatbookCreationWindow()
     finally:
         creation_module.get_chatbook_database_paths = real_paths
         creation_module.ChatbookCreator = real_creator

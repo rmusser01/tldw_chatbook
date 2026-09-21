@@ -1,0 +1,17 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+_ test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged] _
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 14:49:24.602 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 14:49:24.608 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 14:49:24.609 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 14:49:24.609 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 14:49:25.145 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+2026-09-18 14:49:25.317 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+2026-09-18 14:49:26.700 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+2.19s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]
+
+(2 durations < 1s hidden.)
+1 passed in 4.00s

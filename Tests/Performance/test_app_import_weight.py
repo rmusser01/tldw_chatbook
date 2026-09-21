@@ -110,9 +110,10 @@ ELIMINATED_MODULES = ("torch", "transformers")
 #   The ADR-097 standing breach (dev b5eaa9cf64: 666 vs the 660 ratchet) was
 #   repaid by TASK-23112, NOT by raising this constant: 646 measured
 #   (headroom 14), snapshot re-pinned at that set. Two deferrals did it, each
-#   re-measured with an import-parent tracer: `Chat_Functions` now reaches
+#   re-measured with an import-parent tracer: `Chat_Functions` reached
 #   `ChatPersistenceService` inside `save_chat_history_to_db_wrapper`
-#   (666 -> 648, 18 modules), and `Chat/console_raw_cli.py` reaches
+#   (666 -> 648, 18 modules; TASK-32858 later deleted that wrapper
+#   outright, removing the reach entirely), and `Chat/console_raw_cli.py` reaches
 #   `Tools.raw_cli_executor` through a lazy accessor with the default
 #   `RawShellExecutor` built on first execute (648 -> 646). ADR-097's
 #   tightening convention does NOT fire here: the 20-module reduction is under

@@ -1,97 +1,89 @@
-# Artifacts — Generated outputs, bundles, reports, datasets, and Chatbooks
+# Artifacts in Library
 
-> 🚧 **This page is a stub.** The full write-up is planned; the sections
-> below cover orientation only. See the [guide index](index.md).
+Library's **Artifacts** section contains **All artifacts**, **Chatbooks**, and
+**Reports**. These views browse local content even when the Library's other
+sources use a server. Press **Ctrl+6**, or choose **Ctrl+P → Tab Navigation:
+Library — Artifacts**, to open All artifacts. Existing `artifacts` routes and
+configured defaults reach the same view.
 
-## What this screen is for
+## Browse and read
 
-Artifacts is where generated outputs collect: bundles, reports, datasets,
-drafts, exports, and Chatbooks. The on-screen filter bar lets you narrow
-by type (All, Chatbooks, Reports, Datasets, Drafts, Exports) and sort
-(default: Recent).
+The layout follows the rest of Library: navigation rail, Items, and reader.
+Search titles, switch between Newest and A–Z, and use First, Prev, Next, or Last
+to reach the complete inventory. Each page contains up to 20 copies. Selecting
+an item loads its Preview; Details shows its provenance and available files.
+Reports include local timestamps and labels distinguishing Watchlist copies
+from independent kept copies.
 
-## Reports
+Press **Enter** in Items to focus the reader. Reader arrows scroll the body
+without changing the selected item. **‹ Items** or **Escape** returns to the
+selected row. Escape in a populated search field first clears the query.
+**/** focuses the artifact search. Pane handles follow Library's adaptive
+layout, and each artifact view remembers its query, selection, and scroll
+position for the current visit.
 
-The **Reports** slot lists recent Daily Briefs. With no reports yet, use
-**Create Your First Daily Report** to run the wired demo (it seeds a
-"Daily Brief" watchlist from live RSS and drafts a brief with your
-configured LLM provider). If a run fails — for example, no API key is
-configured — the failed report is listed and a **Run the Daily Report
-demo again** button stays on the screen so you can retry after fixing the
-provider in **Settings (F4) → API Keys**. Report timestamps are shown in
-your local time.
+## Reports and kept copies
 
-## Import
+Reports opens on **All reports**. It includes live Watchlist reports and
+independent saved copies. **Kept** shows only saved copies and remains usable
+when the Watchlists database is unavailable. Reading a report does not keep it.
 
-**Import Artifact** is not yet available in this shell; the button is
-disabled and labelled with that precondition. Create artifacts through
-Console (Chatbooks) or generate them from Library sources instead.
+**Keep in Library** saves a complete report and its complete scripts. The saved
+copy remains readable and exportable after deleting its Watchlist. Live and
+kept copies remain separate rows. A conflicting imported source ID cannot
+silently replace or relabel an existing kept copy; Keep refuses that conflict.
 
-## Getting there
+**Export…** writes Markdown through the file picker. **Scripts…** opens the
+existing kept-report manager on that copy. **Play** is available when the live
+report has usable audio. **Watchlists** returns to the selected live report's
+source. Empty Reports and failed runs offer **Try report demo**; this uses the
+existing demo service and configured provider.
 
-- Press **Ctrl+6**, click **⌃6 Artifacts** in the nav bar, or press
-  **Ctrl+P** → "Tab Navigation: Switch to Artifacts".
+If a source fails, Library shows an error and Retry instead of claiming that
+its last successful count is current. Other healthy artifact views remain
+usable.
 
-## Sharing artifacts
+## Chatbooks and the pack manager
 
-You can hand Chatbook artifacts to other people by hosting a temporary
-web page from this screen. Press **s** or click **Share artifacts**
-(next to the Chatbooks actions); recipients browse the page, download
-the bundles, and import them into their own tldw_chatbook via
-**Chatbooks → Import**. Web sharing needs the optional extras —
-`pip install tldw_chatbook[web]` — or the screen tells you that hint
-instead of opening the dialog.
+Chatbooks shows registered bundles and responses saved from Console. A saved
+response previews its full stored text; if the original save was truncated,
+the reader labels it **Saved response excerpt**. Other records preview their
+registry metadata. Missing export files do not hide saved text or metadata.
 
-### Starting a share
+**Use in Console** preserves the selected artifact's provenance. **Open source**
+is offered when its original local conversation is available. **Manage
+Chatbook packs…** opens the existing manager, including Create, Import,
+Templates, Export, and Delete. The manager remains a separate workflow linked
+from Library.
 
-The share dialog lists your local Chatbook artifacts for multi-select.
-Artifacts whose exported bundle is no longer on disk are listed but
-grayed out ("no exported bundle on disk") — only artifacts with an
-actual `.zip` behind them can be shared.
+The inventory covers registered Chatbooks and reports. It does not scan folders
+for unregistered exports or invent empty Datasets/Drafts sections.
 
-- **Share name** (optional) becomes the page's title.
-- **Require a password** adds a single shared username/password
-  (HTTP Basic). Every recipient you give the login to uses the same
-  pair — leave it off for an open share.
-- **Who can reach it**: *This computer only (localhost)* keeps the page
-  on your machine; *Local network (all interfaces)* makes it reachable
-  from other devices on your LAN. Sharing on the local network
-  **without** a password requires typing `share` as confirmation.
-- **Port** (optional). Leave it blank and a free port is picked
-  automatically.
+## Share exported Chatbooks
 
-Starting a share stages immutable copies of the selected bundles (plus
-a pre-built download-all bundle) and serves them from a small child web
-server. While it runs, the Artifacts screen shows a banner with the
-URL(s) — loopback always, plus your LAN address when bound wide — and
-the artifact count. The share is owned by the app, not the screen: it
-survives switching tabs, and only one share runs at a time (starting a
-new one stops the previous). Deleting or editing the artifacts in your
-library mid-share does not change what recipients get — they see the
-staged copies as they were at start.
+For a Chatbook with a usable exported ZIP, **Share…** opens the existing
+multi-selection dialog with that item selected. The dialog includes every
+eligible registered bundle, not just the current page. Saved responses without
+an exported ZIP cannot be shared through this workflow; the reader explains
+why.
 
-### What recipients see
+Sharing requires the optional web extras (`pip install 'tldw_chatbook[web]'`).
+Choose a share name, optional shared username/password, and reachability:
 
-A plain HTML page (no JavaScript) listing each artifact with its
-description, kind, and size, plus:
+- **This computer only (localhost)** keeps the page on this machine.
+- **Local network (all interfaces)** allows other devices on your LAN. An
+  unprotected LAN share requires typing `share` to confirm.
+- Leave Port blank to choose a free port automatically.
 
-- a **Download** button per artifact,
-- a **Download all** button (one bundle containing every artifact), and
-- `index.json`, machine-readable metadata including sha256 checksums.
+Starting a share stages immutable copies of the selected ZIPs. Library shows
+its URLs and count in a persistent strip with **Manage** and **Stop**, including
+while reading Notes or collapsing artifact panes. The share belongs to the app
+and survives navigation. Starting another share replaces it; later edits to the
+original bundles do not change the staged downloads.
 
-Recipients import the downloaded `.zip` files through
-**Chatbooks → Import**.
+Recipients can download individual packs or a combined bundle, inspect
+`index.json` metadata, and import packs through **Manage Chatbook packs… →
+Import**. Traffic uses plain HTTP: a password controls access but does not
+encrypt traffic. Use a trusted local network or a TLS reverse proxy.
 
-### Plain HTTP — read this before sharing wide
-
-Share traffic is plain HTTP. A password is an access gate, not
-encryption: on an untrusted network, anyone between you and a recipient
-can read the traffic. Home and office LANs are the intended setting.
-For hostile networks, front the share with a reverse proxy that adds
-TLS and point recipients at that instead.
-
-### Stopping
-
-Click **Stop sharing** (the banner's stop button) or close the app.
-Access is revoked immediately — the server is stopped and the staged
-copies are deleted, so the URLs die with the share.
+**Stop** or closing the app stops the server and removes staged copies.

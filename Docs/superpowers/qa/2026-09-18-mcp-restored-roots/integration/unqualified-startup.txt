@@ -1,0 +1,49 @@
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py", line
+ 347, in <module>
+    main()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py", line
+ 45, in main
+    from textual_image._terminal import probe_terminal
+ImportError: cannot import name 'probe_terminal' from 'textual_image._terminal' (/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review
+/.venv/lib/python3.12/site-packages/textual_image/_terminal.py)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Pane is dead (status 0, Sat Sep 19 22:23:38 2026)

@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+3.55s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+
+(2 durations < 1s hidden.)
+1 passed in 4.34s

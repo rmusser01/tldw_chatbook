@@ -1,0 +1,17 @@
+........................................................................ [ 51%]
+...................................................................      [100%]
+------------ generated xml file: /private/tmp/32830-qodo-final.xml -------------
+============================= slowest 25 durations =============================
+1.46s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+1.32s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]
+1.28s call     Tests/MCP/test_profile_refresh.py::test_refresh_cleanup_preserves_a_concurrent_replacement
+1.27s call     Tests/MCP/test_profile_refresh.py::test_disconnected_refresh_cleans_up_if_saving_catalog_fails
+1.21s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+1.18s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+1.18s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+1.16s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[False]
+1.08s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+1.07s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[observe]
+
+(15 durations < 1s hidden.)
+139 passed in 22.18s

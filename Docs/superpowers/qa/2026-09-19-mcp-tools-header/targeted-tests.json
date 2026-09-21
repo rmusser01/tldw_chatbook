@@ -1,0 +1,765 @@
+{
+  "passed": 152,
+  "cases": [
+    {
+      "class": "Tests.UI.test_mcp_tools_header_alignment",
+      "name": "test_header_painted_before_measurement_aligns_with_new_catalog[textual-dark]",
+      "seconds": 2.694
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_header_alignment",
+      "name": "test_header_painted_before_measurement_aligns_with_new_catalog[textual-light]",
+      "seconds": 2.531
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_header_alignment",
+      "name": "test_catalog_filter_theme_and_resize_keep_header_and_selection[False]",
+      "seconds": 6.148
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_header_alignment",
+      "name": "test_catalog_filter_theme_and_resize_keep_header_and_selection[True]",
+      "seconds": 6.462
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_column_readability",
+      "name": "test_production_tools_keep_tool_and_state_visible_without_reload[textual-dark]",
+      "seconds": 9.908
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_column_readability",
+      "name": "test_production_tools_keep_tool_and_state_visible_without_reload[textual-light]",
+      "seconds": 10.587
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_column_readability",
+      "name": "test_unicode_filter_refresh_and_reflow_preserve_exact_tool[False]",
+      "seconds": 5.263
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_column_readability",
+      "name": "test_unicode_filter_refresh_and_reflow_preserve_exact_tool[True]",
+      "seconds": 5.414
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_column_readability",
+      "name": "test_catalog_size_and_scrollbar_changes_keep_complete_allow_state",
+      "seconds": 6.799
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-enter-row]",
+      "seconds": 2.223
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-row]",
+      "seconds": 2.11
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-click-row]",
+      "seconds": 2.198
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-enter-row]",
+      "seconds": 2.08
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-down-row]",
+      "seconds": 2.208
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[executions-click-row]",
+      "seconds": 2.21
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-enter-row]",
+      "seconds": 2.108
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-down-row]",
+      "seconds": 2.22
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-click-row]",
+      "seconds": 2.19
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-cell]",
+      "seconds": 2.183
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_hidden_findings_refresh_preserves_active_execution_gesture",
+      "seconds": 2.322
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_focused_external_tool_drill_moves_without_selecting[tools]",
+      "seconds": 2.079
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_focused_external_tool_drill_moves_without_selecting[permissions]",
+      "seconds": 2.149
+    },
+    {
+      "class": "Tests.UI.test_mcp_table_refresh_selection",
+      "name": "test_identical_row_keys_in_different_tables_are_distinct_gestures",
+      "seconds": 0.056
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tool_controls_are_visible_and_emit_configuration_requests",
+      "seconds": 0.222
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tool_controls_can_hide_for_server_source",
+      "seconds": 0.132
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tool_controls_render_with_bundled_css_at_100x30",
+      "seconds": 0.259
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tools_master_switch_renders_full_label_untruncated[80]",
+      "seconds": 0.172
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tools_master_switch_renders_full_label_untruncated[120]",
+      "seconds": 0.175
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_local_tools_master_switch_renders_full_label_untruncated[250]",
+      "seconds": 0.175
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_rows_render_grouped_sorted_with_tags_and_schema_columns",
+      "seconds": 0.16
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_builtin_tools_use_form_except_for_nested_spec_schemas",
+      "seconds": 0.083
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_state_column_renders_marker_labels_from_states_dict",
+      "seconds": 0.15
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_state_column_renders_em_dash_when_states_none_or_missing",
+      "seconds": 0.173
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_stale_tool_gets_stale_suffix_on_server_cell",
+      "seconds": 0.15
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_row_keys_are_tool_id",
+      "seconds": 0.15
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_duplicate_tool_ids_do_not_crash_update_tools",
+      "seconds": 0.149
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_by_text_narrows_rows_without_touching_empty_state",
+      "seconds": 0.177
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_by_server_select_narrows_rows",
+      "seconds": 0.221
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_server_refresh_preserves_all_servers_choice",
+      "seconds": 0.201
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_row_selection_posts_tool_selected_with_tool_id",
+      "seconds": 0.243
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_empty_diagnosis_renders_message_and_action_button_posts",
+      "seconds": 0.27
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_empty_diagnosis_connect_action_key_round_trips",
+      "seconds": 0.278
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_empty_without_diagnosis_hides_action_button",
+      "seconds": 0.169
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_going_from_empty_to_populated_hides_empty_state_again",
+      "seconds": 0.213
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_server_select_options_reflect_current_catalog_and_prune_stale_filter",
+      "seconds": 0.242
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_moves_cursor_to_matching_row",
+      "seconds": 0.193
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_returns_false_for_unknown_tool_id",
+      "seconds": 0.171
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_clears_an_active_filter_hiding_the_target",
+      "seconds": 0.241
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_tags_column_omitted_when_no_tool_has_tags",
+      "seconds": 0.172
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_tags_column_shown_when_any_tool_has_tags",
+      "seconds": 0.157
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_tags_column_stays_stable_while_filtering_to_a_tagless_subset",
+      "seconds": 0.211
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_tools_table_height_rule_pinned_in_bundle_source_and_bundle",
+      "seconds": 0.09
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle",
+      "seconds": 0.089
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_server_select_has_nonzero_geometry_with_bundled_css",
+      "seconds": 0.176
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_state_column_cells_carry_semantic_color_by_effective_state",
+      "seconds": 0.159
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_selected_server_group_sorts_first_in_the_catalog",
+      "seconds": 0.19
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_two_presses_before_a_resync_request_opposite_values",
+      "seconds": 0.211
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_a_failed_save_repaints_the_master_switch_from_persisted_truth",
+      "seconds": 0.234
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_server_column_truncates_long_labels_with_ellipsis",
+      "seconds": 0.171
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-False]",
+      "seconds": 0.467
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-True]",
+      "seconds": 0.462
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-False]",
+      "seconds": 0.728
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-True]",
+      "seconds": 0.502
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[same]",
+      "seconds": 0.336
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[remove]",
+      "seconds": 0.342
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[rename]",
+      "seconds": 0.339
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_filter_ignores_detached_control_with_matching_id",
+      "seconds": 0.228
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_catalog_visibility_keeps_focus_on_a_reachable_control[table_empty]",
+      "seconds": 0.323
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_catalog_visibility_keeps_focus_on_a_reachable_control[action_populated]",
+      "seconds": 0.302
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_catalog_visibility_keeps_focus_on_a_reachable_control[action_hidden]",
+      "seconds": 0.321
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_catalog_visibility_keeps_focus_on_a_reachable_control[other_owner]",
+      "seconds": 0.305
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_closed_filter_text_draft_and_row_identity_survive_refresh",
+      "seconds": 0.34
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-option]",
+      "seconds": 0.516
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-selection]",
+      "seconds": 0.533
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-option]",
+      "seconds": 0.574
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-selection]",
+      "seconds": 0.575
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_explicit_tool_drill_supersedes_pending_filter_event[server]",
+      "seconds": 0.267
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_explicit_tool_drill_supersedes_pending_filter_event[text]",
+      "seconds": 0.283
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[same]",
+      "seconds": 0.508
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[rename]",
+      "seconds": 0.512
+    },
+    {
+      "class": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[remove]",
+      "seconds": 0.481
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_all_referenced_ds_tokens_are_defined",
+      "seconds": 1.92
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_defined_tokens_have_no_orphans_in_catalog",
+      "seconds": 1.83
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_documented_design_vocabulary_is_available",
+      "seconds": 1.846
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_hex_literals_are_ratcheted_outside_token_definitions",
+      "seconds": 1.825
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_hex_ratchet_ignores_comments",
+      "seconds": 1.791
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_new_sheets_must_use_spacing_tokens",
+      "seconds": 1.866
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_active_css_extension_is_in_hex_floor",
+      "seconds": 1.812
+    },
+    {
+      "class": "Tests.UI.test_design_token_governance",
+      "name": "test_section_header_preserves_global_and_stats_computed_geometry",
+      "seconds": 2.4
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-tools-header]",
+      "seconds": 0.03
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-modal-selector]",
+      "seconds": 0.03
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-catalog-freshness]",
+      "seconds": 0.03
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]",
+      "seconds": 0.046
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]",
+      "seconds": 0.045
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]",
+      "seconds": 0.03
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-tools-header]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-modal-selector]",
+      "seconds": 0.034
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-catalog-freshness]",
+      "seconds": 0.032
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]",
+      "seconds": 0.19
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]",
+      "seconds": 0.046
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]",
+      "seconds": 0.045
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-tools-header]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-modal-selector]",
+      "seconds": 0.03
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-catalog-freshness]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]",
+      "seconds": 0.045
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]",
+      "seconds": 0.045
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]",
+      "seconds": 0.029
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-tools-header]",
+      "seconds": 0.107
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-modal-selector]",
+      "seconds": 0.104
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-catalog-freshness]",
+      "seconds": 0.11
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]",
+      "seconds": 0.103
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-tools-header]",
+      "seconds": 0.104
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-modal-selector]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-catalog-freshness]",
+      "seconds": 0.107
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]",
+      "seconds": 0.107
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]",
+      "seconds": 0.11
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-tools-header]",
+      "seconds": 0.249
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-modal-selector]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-catalog-freshness]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]",
+      "seconds": 0.104
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]",
+      "seconds": 0.104
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-tools-header]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-modal-selector]",
+      "seconds": 0.106
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-catalog-freshness]",
+      "seconds": 0.104
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]",
+      "seconds": 0.099
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]",
+      "seconds": 0.103
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]",
+      "seconds": 0.105
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]",
+      "seconds": 0.107
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_tmux_names_reject_trailing_newlines[names0]",
+      "seconds": 0.003
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_tmux_names_reject_trailing_newlines[names1]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+      "seconds": 0.004
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[outside]",
+      "seconds": 0.003
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[alias]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[traversal]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[tmp-base]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[escaped-home]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[escaped-db]",
+      "seconds": 0.003
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[native.log]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[launch.json]",
+      "seconds": 0.002
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[evidence]",
+      "seconds": 0.14
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[dangling-log]",
+      "seconds": 0.003
+    },
+    {
+      "class": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_missing_tmux_is_reported_before_output",
+      "seconds": 0.002
+    }
+  ]
+}

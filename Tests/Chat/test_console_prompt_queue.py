@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from rich.cells import cell_len
+from textual.content import Content
 from rich.text import Text
 
 from tldw_chatbook.Chat.console_prompt_queue import (
@@ -216,7 +217,8 @@ def test_edit_recomputes_only_one_preview_and_preserves_id_and_order(
         second_id,
     ]
     assert edited.snapshot.entries[1] is second_before
-    assert Text.from_markup(edited.snapshot.entries[0].preview).plain == (
+    # TASK-32802.4: the preview is literal text, so it IS what renders.
+    assert edited.snapshot.entries[0].preview == (
         "edited [bold]private[/bold] text"
     )
 
@@ -784,16 +786,48 @@ def test_foreign_thread_access_is_rejected(
         ("wide 界 and e\u0301", "wide 界 and e\u0301"),
     ],
 )
-def test_preview_is_one_line_terminal_safe_and_markup_escaped(
+def test_preview_is_one_line_terminal_safe_and_literal(
     raw: str, plain: str
 ) -> None:
+    """TASK-32802.4: the preview is the text the user typed, not markup.
+
+    Its shelf renders through ``Static(..., markup=False)``, so escaping on
+    the way out put a literal backslash in front of every ``[`` the user
+    wrote. The preview is now literal and the ONE consumer that parses
+    markup -- the manage modal's button label -- escapes at its own render
+    site, which is pinned separately below.
+    """
     preview = make_prompt_preview(raw)
-    rendered = Text.from_markup(preview).plain
-    assert rendered == plain
+    assert preview == plain
     assert "\n" not in preview
     assert "\r" not in preview
     assert "\x1b" not in preview
-    assert cell_len(rendered) <= PROMPT_PREVIEW_CELL_BUDGET
+    assert cell_len(preview) <= PROMPT_PREVIEW_CELL_BUDGET
+
+
+def test_the_budget_bounds_what_the_shelf_actually_renders() -> None:
+    """The escape used to be applied AFTER fitting and blew the budget.
+
+    ``[`` * 40 fitted to 96 cells came back 120 cells wide, overflowing the
+    row the budget exists to protect, while the docstring claimed escape
+    syntax did not consume it.
+    """
+    bracket_heavy = "[" * 40 + "x" * 40
+    preview = make_prompt_preview(bracket_heavy)
+    assert cell_len(preview) <= PROMPT_PREVIEW_CELL_BUDGET
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["summarize [draft]", "[TODO] write tests", "[/b] prompt", "[IMPORTANT]"],
+)
+def test_the_manage_modal_escapes_the_preview_it_renders_as_markup(raw: str) -> None:
+    """The other half of the contract the preview no longer carries itself."""
+    from tldw_chatbook.Utils.input_validation import escape_markup
+
+    preview = make_prompt_preview(raw)
+    assert preview == raw  # literal on the way out of the queue
+    assert Content.from_markup(escape_markup(preview)).plain == raw
 
 
 @pytest.mark.parametrize(
@@ -807,7 +841,7 @@ def test_preview_truncates_by_cells_without_splitting_graphemes(
     raw: str,
     complete_suffix: str,
 ) -> None:
-    rendered = Text.from_markup(make_prompt_preview(raw)).plain
+    rendered = make_prompt_preview(raw)
     assert rendered.endswith("…")
     assert cell_len(rendered) <= PROMPT_PREVIEW_CELL_BUDGET
     assert rendered.endswith(complete_suffix)

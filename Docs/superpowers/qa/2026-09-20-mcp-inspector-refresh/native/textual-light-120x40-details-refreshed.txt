@@ -1,0 +1,40 @@
+                                                                                           ╭────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││                                                     ││                               │
+│ Source                       ││  Root: local MCP serving and Hub tests. Blank       ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  uses the serving process's current folder.         ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││  Console uses Chat scratch and admitted Workspace   ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  folders.                                           ││  chatbook's tools.            │
+│                              ││                                                     ││  Add server                   │
+│ Servers                      ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▆ ││  search_notes —               │
+│  ◦ off · ⌂ built-in          ││  ▊  Filter tools…   ▎▊  All servers          ▼  ▎   ││  tldw_chatbook                │
+│    All servers               ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  Search notes using the       │
+│  ◦ ⌂ tldw_chatbook (bu…      ││                                                     ││  current catalog.             │
+│                              ││  Tool                                  State  Se    ││  Tags: —                      │
+│                              ││  library_get_prompt                    Ask    tl    ││                               │
+│                              ││  library_get_skill                     Ask    tl▂▂  ││  Parameters: form             │
+│                              ││  library_list_chunk_specs              Ask    tl    ││                               │
+│                              ││  library_list_conversations            Ask    tl    ││  Tool details changed.        │
+│                              ││  library_list_media                    Ask    tl    ││  Reopen Test Tool to review   │
+│                              ││  library_list_notes                    Ask    tl    ││  the current parameters and   │
+│                              ││  library_list_prompts                  Ask    tl    ││  permissions.                 │
+│                              ││  library_list_skills                   Ask    tl▄▄  ││    Test Tool                  │
+│                              ││  library_rechunk_media                 Ask    tl    ││  search_notes —               │
+│                              ││  library_save_chunk_spec               Ask    tl    ││  tldw_chatbook                │
+│                              ││  library_save_note                     Ask    tl    ││  Permission: Ask              │
+│                              ││  library_search_conversations          Ask    tl    ││                               │
+│                              ││  library_search_media                  Ask    tl    ││  Inherited from the global    │
+│                              ││  library_search_notes                  Ask    tl    ││  default.                     │
+│                              ││  library_search_prompts                Ask    tl    ││  Change in Permissions        │
+│                              ││  library_search_skills                 Ask    tl    ││    Advanced…                  │
+│                              ││  list_characters                       Ask    tl    ││                               │
+│                              ││  search_conversations                  Ask    tl    ││                               │
+│                              ││  search_notes                          Ask    tl    ││                               │
+│                              ││                           ▎                         ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

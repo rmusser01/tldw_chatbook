@@ -1,6 +1,5 @@
 """Controller lifecycle tests for artifact share sessions."""
 
-import json
 from pathlib import Path
 
 import pytest
@@ -12,7 +11,6 @@ from tldw_chatbook.Web_Server.artifact_share import (
 )
 from tldw_chatbook.Web_Server.artifact_share_manifest import (
     ArtifactShareError,
-    share_root_dir,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.loopback_network]
@@ -88,7 +86,9 @@ def test_single_active_share_second_start_replaces_first(tmp_path, isolated_shar
     controller.stop_share()
 
 
-def test_start_share_without_web_deps_is_clean_error(tmp_path, isolated_share_root, monkeypatch):
+def test_start_share_without_web_deps_is_clean_error(
+    tmp_path, isolated_share_root, monkeypatch
+):
     import tldw_chatbook.Web_Server.artifact_share as controller_module
 
     monkeypatch.setattr(controller_module, "is_web_server_available", lambda: False)
@@ -97,7 +97,9 @@ def test_start_share_without_web_deps_is_clean_error(tmp_path, isolated_share_ro
         controller.start_share(records=[_record(tmp_path, 1)], share_name="x")
 
 
-def test_start_share_popen_failure_cleans_staging(tmp_path, isolated_share_root, monkeypatch):
+def test_start_share_popen_failure_cleans_staging(
+    tmp_path, isolated_share_root, monkeypatch
+):
     # Qodo #9: a spawn failure must surface as ArtifactShareError and must
     # not strand the staged directory.
     import subprocess
@@ -135,3 +137,36 @@ def test_startup_sweep_removes_stale_dirs(tmp_path, isolated_share_root):
     removed = controller.startup_sweep()
     assert removed == [stale]
     assert not stale.exists()
+
+
+def test_status_listeners_preserve_constructor_sink_and_allow_removal(tmp_path):
+    """Worker emissions snapshot listeners; one failing observer cannot stop another."""
+    import threading
+
+    constructor_events, listener_events = [], []
+    controller = ArtifactShareController(status_callback=constructor_events.append)
+    status = ShareStatus("Field kit", ("http://127.0.0.1:1234",), 2, tmp_path)
+
+    def broken(_status):
+        raise RuntimeError("observer failed")
+
+    def remove_self(current):
+        listener_events.append(current)
+        controller.remove_status_listener(remove_self)
+
+    controller.add_status_listener(broken)
+    controller.add_status_listener(remove_self)
+    controller.add_status_listener(remove_self)
+    controller._status = status
+    thread = threading.Thread(target=controller._emit_status)
+    thread.start()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert constructor_events == [status]
+    assert listener_events == [status]
+    controller.remove_status_listener(broken)
+    controller.remove_status_listener(broken)
+    controller._status = None
+    controller._emit_status()
+    assert constructor_events == [status, None]
+    assert listener_events == [status]

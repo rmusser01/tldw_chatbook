@@ -1,0 +1,12 @@
+....................                                                     [100%]
+------------ generated xml file: /private/tmp/mcp-2728-qodo-001.xml ------------
+============================= slowest 25 durations =============================
+3.50s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[current]
+3.30s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[failure]
+3.30s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[service]
+3.11s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]
+2.99s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[round_trip]
+2.87s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[mode]
+
+(19 durations < 1s hidden.)
+20 passed in 20.20s

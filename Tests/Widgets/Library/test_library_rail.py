@@ -795,3 +795,25 @@ async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
         # ...and the failure sentence is on screen, in the body row.
         assert "Collections count unavailable (waited 5 s)" in body
         assert "open Collections to load it." in body
+
+
+@pytest.mark.parametrize("artifacts_open", [True, False])
+async def test_artifact_disclosure_uses_saved_state_and_routes_reports(
+    widget_pilot, artifacts_open
+):
+    shell = build_library_shell_state(
+        LibraryShellInput(), selected_row_id="artifacts-reports"
+    )
+    async with await widget_pilot(
+        LibraryRail,
+        shell=shell,
+        preferences=LibraryRailPreferences(artifacts_open=artifacts_open),
+    ) as pilot:
+        await pilot.pause()
+        rail = pilot.app.test_widget
+        assert rail.query_one("#library-rail-section-header-artifacts")
+        body = rail.query_one("#library-rail-section-body-artifacts")
+        assert body.display is artifacts_open
+        row = rail.query_one("#library-row-artifacts-reports", Button)
+        assert row.target_id == "artifacts-reports"
+        assert row.has_class("library-rail-row-selected")

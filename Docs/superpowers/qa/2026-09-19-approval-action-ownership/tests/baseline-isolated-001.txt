@@ -1,0 +1,1486 @@
+FFFFFFFFFFFFFFFFFFF                                                      [100%]
+=================================== FAILURES ===================================
+_________ test_raw_shell_command_view_has_bounded_scrollable_geometry __________
+
+    def test_raw_shell_command_view_has_bounded_scrollable_geometry():
+>       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row-full-command",
+            ("width: 1fr", "height: 6", "min-height: 3"),
+        )
+
+Tests/UI/test_console_mcp_approval.py:373:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row-full-command'
+expected_declarations = ('width: 1fr', 'height: 6', 'min-height: 3')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                       ^^^^^^^^^^^^^^^^^^^^
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 08:21:54.690 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-19 08:21:54.712 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 08:21:54.713 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-19 08:21:54.713 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+______ test_descriptor_effects_reach_the_mounted_production_approval_card ______
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_descriptor_effects_reach_0')
+
+    @pytest.mark.asyncio
+    async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
+        """A controller-marshaled local descriptor reaches the real card unchanged."""
+        app = _ControllerCardsHarness()
+        assert _BUNDLED_STYLESHEET.resolve() in {
+            path.resolve() for path in app.css_path
+        }
+        async with app.run_test(size=(200, 40)) as pilot:
+            cards = app.query_one(ChatTaskCards)
+>           gate = LocalToolProvider(
+                workspace_root=tmp_path,
+                resolve_state=lambda _hub: EffectiveToolState(
+                    state="ask", origin="global_default"
+                ),
+            ).pending_gate_for("fs_list", {"effects": ["network"], "path": "."})
+
+Tests/UI/test_console_mcp_approval.py:1414:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+___ test_approved_definitive_tool_stays_mounted_until_real_terminal[success] ___
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_approved_definitive_tool_0')
+crash_after_release = False
+
+    @pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+    @pytest.mark.asyncio
+    async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+        tmp_path, crash_after_release
+    ):
+        """Approval becomes a disabled finishing card until the keyed terminal.
+
+        This uses the production task-card hierarchy, a real local descriptor,
+        the real review bridge, and ``AgentService._make_invoke_tool``.  The
+        handler is event-blocked so the assertion cannot race a fast mutation;
+        the crash case proves the same terminal cleanup runs for ``BaseException``.
+        """
+        from tldw_chatbook.Agents.agent_models import (
+            AgentConfig,
+            RunBudget,
+            ToolCall,
+            ToolResult,
+        )
+        from tldw_chatbook.Agents.agent_service import AgentService
+        from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+            WatchlistBundleService,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+
+        app = _ControllerCardsHarness()
+        entered = threading.Event()
+        release = threading.Event()
+        result_box: dict[str, ToolResult] = {}
+        subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+        bundles = WatchlistBundleService(subscriptions)
+
+        def blocked_create(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test never released definitive handler")
+            if crash_after_release:
+                raise SystemExit("secret definitive crash detail")
+            return bundles.create_with_sources(**kwargs)
+
+        def unavailable(*_args, **_kwargs):
+            return None
+
+        commands = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=unavailable,
+            create_collection=blocked_create,
+            update_collection_sources=unavailable,
+        )
+>       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1519:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+----------------------------- Captured stderr call -----------------------------
+2026-09-19 08:21:55.415 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_approved_definitive_tool_0/subscriptions.db [Client: test]
+____ test_approved_definitive_tool_stays_mounted_until_real_terminal[crash] ____
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_approved_definitive_tool_1')
+crash_after_release = True
+
+    @pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+    @pytest.mark.asyncio
+    async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+        tmp_path, crash_after_release
+    ):
+        """Approval becomes a disabled finishing card until the keyed terminal.
+
+        This uses the production task-card hierarchy, a real local descriptor,
+        the real review bridge, and ``AgentService._make_invoke_tool``.  The
+        handler is event-blocked so the assertion cannot race a fast mutation;
+        the crash case proves the same terminal cleanup runs for ``BaseException``.
+        """
+        from tldw_chatbook.Agents.agent_models import (
+            AgentConfig,
+            RunBudget,
+            ToolCall,
+            ToolResult,
+        )
+        from tldw_chatbook.Agents.agent_service import AgentService
+        from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+            WatchlistBundleService,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+
+        app = _ControllerCardsHarness()
+        entered = threading.Event()
+        release = threading.Event()
+        result_box: dict[str, ToolResult] = {}
+        subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+        bundles = WatchlistBundleService(subscriptions)
+
+        def blocked_create(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test never released definitive handler")
+            if crash_after_release:
+                raise SystemExit("secret definitive crash detail")
+            return bundles.create_with_sources(**kwargs)
+
+        def unavailable(*_args, **_kwargs):
+            return None
+
+        commands = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=unavailable,
+            create_collection=blocked_create,
+            update_collection_sources=unavailable,
+        )
+>       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1519:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+----------------------------- Captured stderr call -----------------------------
+2026-09-19 08:21:55.698 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_approved_definitive_tool_1/subscriptions.db [Client: test]
+_____ test_local_same_name_finishing_rows_complete_by_call_id_out_of_order _____
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_local_same_name_finishing0')
+
+    def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_path):
+        """Two approved local mutations remain independently addressable."""
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+
+>       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1738:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_______ test_finishing_card_is_not_counted_and_keyboard_focuses_the_card _______
+
+    @pytest.mark.asyncio
+    async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
+        """Finishing is status, not a pending decision or disabled focus target."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1840:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+___________ test_alt_a_focuses_the_pending_approval_decision_select ____________
+
+    @pytest.mark.asyncio
+    async def test_alt_a_focuses_the_pending_approval_decision_select():
+        """With a batch pending, Alt+A lands focus on the row's decision
+        Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+        contract)."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1896:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_________________ test_alt_a_notifies_when_nothing_is_pending __________________
+
+    @pytest.mark.asyncio
+    async def test_alt_a_notifies_when_nothing_is_pending():
+        """With nothing pending, Alt+A notifies rather than focusing anything --
+        same fallback message as the inspector's Review approval button
+        (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1923:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_______ test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed ________
+
+    @pytest.mark.asyncio
+    async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+        """AC#3: the route works at 80 columns with the inspector closed."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1941:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_ test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+
+    @pytest.mark.asyncio
+    async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+        """Without an explicit width, `_conversations.tcss`'s bare `Select {
+        width: 100%; }` rule would size a row's decision Select to the FULL
+        row width (not just its own share), overlapping/clipping it behind the
+        header and args Statics laid out before it in the row's Horizontal --
+        verified empirically before landing the fix. Asserts all three
+        per-row widgets render with real size AND stay within the row's own
+        bounds in left-to-right order, under the real bundled stylesheet.
+
+        T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+        stays compact (height <= 6 -- three stacked lines since TASK-1846 split
+        header/args/controls, plus slack for a multi-arg collapsed row; a row
+        that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
+        container doesn't balloon (height <= rows*3 + slack), and the
+        `#approval-batch-actions` bar sits close after the rows (region.y within
+        a few rows of the last row's bottom), matching the audit-mode geometry
+        tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1987:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_ test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+
+    @pytest.mark.asyncio
+    async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+        """task-1234 review round 1: the sibling multi-row geometry test above
+        only ever mounts a 2-row batch, so `.approval-row-fast-approve`/
+        `.approval-row-fast-deny` (single-row-only, see `set_batch`'s
+        `single_row` gate) never actually render under the REAL bundled
+        stylesheet in any existing test. Asserts both fast buttons get real,
+        non-overlapping geometry, sit after the decision Select, and stay
+        inside the row's own bounds -- the same class of `Select { width:
+        100%; }`-style cascade surprise the sibling test guards against, now
+        for the two new buttons.
+
+        The production Console is allowed to mount and settle before the pending
+        approval state is delivered, matching the real worker-to-UI round trip."""
+>       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:2111:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_ test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle _
+
+    def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
+        None
+    ):
+        """T9: id-scoped bundle rule directly on `.approval-row-decision`
+        (a class selector -- higher specificity than `_conversations.tcss`'s
+        bare `Select { width: 100%; }` type selector, so it wins regardless of
+        the two files' relative concatenation order in build_css.py) -- same
+        Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
+        / `#mcp-audit-filter-decision` above, applied to the approval card."""
+>       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row-decision {", ("width: 27;",)
+        )
+
+Tests/UI/test_console_mcp_approval.py:2160:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row-decision {', expected_declarations = ('width: 27;',)
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                       ^^^^^^^^^^^^^^^^^^^^
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError
+_______ test_approval_row_height_rule_pinned_in_bundle_source_and_bundle _______
+
+    def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+        """T9: `.approval-row` (a Horizontal, which defaults to `height: 1fr`)
+        needs an explicit `height: auto` -- otherwise each row would try to
+        claim a `1fr` share of its `#approval-batch-rows` parent's remaining
+        space instead of hugging its own single-line content, the same
+        fr-inside-auto-parent collapse class documented on
+        `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
+>       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row {", ("height: auto;", "width: 1fr;")
+        )
+
+Tests/UI/test_console_mcp_approval.py:2172:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row {'
+expected_declarations = ('height: auto;', 'width: 1fr;')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                       ^^^^^^^^^^^^^^^^^^^^
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError
+_____ test_refusing_one_call_does_not_get_overwritten_by_approving_another _____
+
+    @pytest.mark.unit
+    def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
+        """A per-call REFUSAL must reach the runtime, not be flattened away.
+
+        TASK-1861. Verdicts are keyed per `call_id` so the user can allow
+        `spec.md` and refuse `secrets.md` in one batch -- but both enforcement
+        consumers are name-keyed (`builtin_gate.stamp` records a grant against a
+        tool NAME; `apply_batch_decisions` takes llm_names), and the hook
+        returned a flat `{name: "proceed"}`. So two rows of one tool disagreeing
+        resolved LAST-WRITE-WINS on a single name:
+
+            stamped: [("read_file", "deny"), ("read_file", "approve_once")]
+
+        Refuse `secrets.md` first, approve `spec.md` second, and the surviving
+        stamp is `approve_once` -- the file the user explicitly refused is read.
+        This fails OPEN, which is why it is pinned rather than left to the
+        round-trip tests: the card offers a decision the pipeline could not
+        honour.
+
+        The fix enforces refusals PER CALL at the runtime hook (the runtime
+        resolves `call_id` before name, and a non-"proceed" verdict string
+        becomes the call's result without dispatch), leaving the name-keyed
+        stamps to carry only what was APPROVED.
+        """
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+        stamped: list[tuple[str, str]] = []
+
+        class _Gate:
+            def begin_turn(self, run_id):
+                pass
+
+            def resolve(self, tool):
+                return SimpleNamespace(state="ask", risk_floored=False)
+
+            def stamp(self, run_id, name, decision):
+                stamped.append((name, decision))
+
+            def is_session_approved(self, name):
+                return False
+
+            def options_for(self, tool):
+                return ("approve_once", "approve_session", "deny")
+
+        class _Provider:
+            def tool_for(self, name):
+                return SimpleNamespace(name=name)
+
+        def request_approvals(pending):
+            by_path = {row.call_id: (row.arguments or {}).get("path") for row in pending}
+            # Refuse secrets.md; allow spec.md. Refusal FIRST is the fail-open
+            # ordering -- the later approval used to overwrite it.
+            return {
+                call_id: ("deny" if path == "secrets.md" else "approve_once")
+                for call_id, path in by_path.items()
+            }
+
+        hook = build_tool_review_hook(
+            _Gate(), _Provider(), None, request_approvals, workspace_id=None
+        )
+        verdicts = hook(
+            [
+                ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
+                ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
+            ],
+            RUN,
+        )
+
+        refusal = verdicts.get("call-1")
+        assert refusal and refusal != "proceed", (
+            "the refusal of secrets.md never reached the runtime, so the "
+            f"name-keyed approval of spec.md let it through: {verdicts}"
+        )
+>       assert verdicts.get("call-2", "proceed") == "proceed", (
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            f"approving spec.md must still let it run: {verdicts}"
+        )
+E       AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}
+
+Tests/UI/test_console_mcp_approval.py:3873: AssertionError
+_____ test_request_mcp_approvals_marks_human_input_wait_while_round_armed ______
+
+    def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
+        """While a round waits, its OWNING run is marked in the human-input
+        wait registry so `_call_with_timeout` pauses the per-call clock --
+        keyed by the round's `use_run_id` binding, cleared when it resolves."""
+        from tldw_chatbook.Agents.human_input_wait import human_input_wait_active
+
+        controller, _ = _build_controller()
+        received: list[dict | None] = []
+        controller.app = _FakeApp()
+        controller.set_pending_approval = received.append
+        controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+        result: dict[str, object] = {}
+
+        def _run_round() -> None:
+            with use_run_id("run-approval-wait"):
+                result["decisions"] = controller.request_mcp_approvals([_pending()])
+
+        def _sample_then_decide() -> None:
+            # Wait for the round to arm, sample the mark from THIS thread (the
+            # wrapper's vantage point -- the mark must be process state, not
+            # worker-thread-local), then resolve the round.
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not received:
+                time.sleep(0.01)
+            assert received, "round never armed"
+            result["marked_while_armed"] = human_input_wait_active("run-approval-wait")
+            controller.resolve_pending_approval(
+                {"mcp__srv__tool": "deny"}, round_id=received[0]["round_id"]
+            )
+
+        worker = threading.Thread(target=_run_round)
+        decider = threading.Thread(target=_sample_then_decide)
+        worker.start()
+        decider.start()
+        worker.join(timeout=10.0)
+        decider.join(timeout=10.0)
+
+        assert result["decisions"] == {"mcp__srv__tool": "deny"}
+>       assert result["marked_while_armed"] is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+Tests/UI/test_console_mcp_approval.py:4652: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-09-19 08:21:56.975 | DEBUG    | tldw_chatbook.Chat.console_interrupt_rounds:_note_pending:495 - Pending-round attention hook failed for approval
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/UI/test_console_mcp_approval.py", line 4629, in _run_round
+    result["decisions"] = controller.request_mcp_approvals([_pending()])
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_chat_controller.py", line 14047, in request_mcp_approvals
+    self._interrupt_host.run_round(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_interrupt_rounds.py", line 785, in run_round
+    self._note_pending(kind, raised=True)
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_interrupt_rounds.py", line 493, in _note_pending
+    hook(self.pending_total(), kind, raised)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_chat_controller.py", line 14925, in on_pending_rounds_changed
+    and self._interrupt_bell_enabled()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Chat/console_chat_controller.py", line 14961, in _interrupt_bell_enabled
+    config_value = _bool_or_none(get_cli_setting("console", "interrupt_bell", None))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/config.py", line 8478, in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/config.py", line 6257, in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Backup_Recovery/config_participants.py", line 419, in wrapped
+    with operation(source, target=target):
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Backup_Recovery/config_participants.py", line 352, in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Backup_Recovery/raw_participants.py", line 611, in _scope
+    participant = _raw_participant(source)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Backup_Recovery/raw_participants.py", line 269, in _raw_participant
+    state = _participant_state(participant)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Backup_Recovery/raw_participants.py", line 127, in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______ test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook _______
+
+    def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+        """The MCP review hook's end of the same bug: an unanswered round must
+        not reach `MCPToolProvider.record_user_denial`."""
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import (
+            USER_DENIED_REFUSAL,
+            build_tool_review_hook,
+        )
+
+        controller, _ = _build_controller()
+        assert controller.app is None  # the branch under test
+
+        denials: list[str] = []
+
+        class _McpProvider:
+            def apply_batch_decisions(self, run_id, stamps):
+                pass
+
+            def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+                return _pending(llm_name=name, call_id=call_id)
+
+            def record_user_denial(self, llm_name):
+                denials.append(llm_name)
+
+        class _BuiltinGate:
+            def begin_turn(self, run_id):
+                pass
+
+            def stamp(self, run_id, name, decision):
+                pass
+
+        class _BuiltinProvider:
+            def tool_for(self, name):
+                return None
+
+        hook = build_tool_review_hook(
+            _BuiltinGate(),
+            _BuiltinProvider(),
+            _McpProvider(),
+            controller.request_mcp_approvals,
+            workspace_id=None,
+        )
+        verdicts = hook(
+            [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+        )
+
+>       assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+Tests/UI/test_console_mcp_approval.py:4770: AssertionError
+_________ test_the_approval_route_reaches_a_pending_skill_install_card _________
+
+    @pytest.mark.asyncio
+    async def test_the_approval_route_reaches_a_pending_skill_install_card():
+        """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+        FIVE interrupt kinds, not just approvals and questions.
+
+        A pending skill-install (or skill-script) confirm registers in the same
+        round registry and marks the tab, but the route knew only approval and
+        question cards -- so clicking that tab, or pressing Alt+A, reached the
+        "No approval is pending." warning while its decision card sat mounted on
+        screen. What this pins is the routing decision: the route finds that card
+        and declines to warn. Where focus lands inside a card is the card's own
+        contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+        Synced WITHOUT an intervening pause on purpose: with no real round armed,
+        the controller's next projection tick clears the pending payload again.
+        """
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:4788:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+____________ test_a_route_with_nothing_pending_can_decline_to_warn _____________
+
+    @pytest.mark.asyncio
+    async def test_a_route_with_nothing_pending_can_decline_to_warn():
+        """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+        ordinary tab press, not warn -- so the shared route takes
+        `notify_missing=False` and reports whether it focused anything."""
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:4834:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+___________ test_local_provider_refuses_write_after_revoke_then_arm ____________
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3158/test_local_provider_refuses_wr0')
+
+    def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
+        ctrl, sid = _revocation_controller()
+        mounted = _revocation_auto_answer(ctrl, "approval")
+>       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            allow_write=True,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            approval_callback=lambda rows: ctrl.request_mcp_approvals(rows, session_id=sid),
+        )
+
+Tests/UI/test_console_mcp_approval.py:5040:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10db2c5f0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1be9b32e-bc14-4403-a212-aab84551eba4/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1be9b32e-bc14-4403-a212-aab84551eba4/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1be9b32e-bc14-4403-a212-aab84551eba4
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1be9b32e-bc14-4403-a212-aab84551eba4'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_mcp_approval.py::test_raw_shell_command_view_has_bounded_scrollable_geometry
+FAILED Tests/UI/test_console_mcp_approval.py::test_descriptor_effects_reach_the_mounted_production_approval_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_approved_definitive_tool_stays_mounted_until_real_terminal[success]
+FAILED Tests/UI/test_console_mcp_approval.py::test_approved_definitive_tool_stays_mounted_until_real_terminal[crash]
+FAILED Tests/UI/test_console_mcp_approval.py::test_local_same_name_finishing_rows_complete_by_call_id_out_of_order
+FAILED Tests/UI/test_console_mcp_approval.py::test_finishing_card_is_not_counted_and_keyboard_focuses_the_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_focuses_the_pending_approval_decision_select
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_notifies_when_nothing_is_pending
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed
+FAILED Tests/UI/test_console_mcp_approval.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+FAILED Tests/UI/test_console_mcp_approval.py::test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+FAILED Tests/UI/test_console_mcp_approval.py::test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_console_mcp_approval.py::test_approval_row_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_console_mcp_approval.py::test_refusing_one_call_does_not_get_overwritten_by_approving_another
+FAILED Tests/UI/test_console_mcp_approval.py::test_request_mcp_approvals_marks_human_input_wait_while_round_armed
+FAILED Tests/UI/test_console_mcp_approval.py::test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook
+FAILED Tests/UI/test_console_mcp_approval.py::test_the_approval_route_reaches_a_pending_skill_install_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_a_route_with_nothing_pending_can_decline_to_warn
+FAILED Tests/UI/test_console_mcp_approval.py::test_local_provider_refuses_write_after_revoke_then_arm
+19 failed, 2 warnings in 4.08s

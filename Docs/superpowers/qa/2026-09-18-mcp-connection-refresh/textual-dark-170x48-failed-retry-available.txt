@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││   ← All servers  ! Needs attention  wire-review                           ││                                             │
+│ Source                                     ││        Edit          Connect          Delete                              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Failed to connect profile: wire-review                                   ││  ! Needs attention  wire-review             │
+│ ▊  Local                              ▼  ▎ ││                                                                           ││  Why · Tool discovery failed                │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Command ·                                                                ││                                             │
+│                                            ││  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-  ││  Refresh tools                              │
+│ Servers                                    ││  pattern-library/.venv/bin/python                                         ││  View details                               │
+│  ! needs attention · ◦ off (opt-in) · ⌂    ││  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-  ││    Advanced…                                │
+│  built-in                                  ││  pattern-library/Tests/MCP/fixtures/stdio_catalog_server.py               ││                                             │
+│    All servers                             ││  /private/tmp/tldw-32830-native-002/fixture-state.json                    ││                                             │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  /private/tmp/tldw-32830-native-002/fixture-trace.jsonl                   ││                                             │
+│  ! wire-review                  1          ││  Tools · 1: updated_tool                                                  ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Resources · 1: fixture://updated                                         ││                                             │
+│                                            ││  Prompts · 1: updated_prompt                                              ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                             ╭──────────────────────────────────────────────────────────╮ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             │ wire-review: refresh failed — Failed to connect profile: │ │
+│                                            ││                                                             │ wire-review                                              │ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             ╰──────────────────────────────────────────────────────────╯ │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

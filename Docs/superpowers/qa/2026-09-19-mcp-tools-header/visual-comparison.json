@@ -1,0 +1,130 @@
+[
+  {
+    "capture": "textual-dark-120x40-tools",
+    "changed_terminal_lines": [
+      {
+        "line": 25,
+        "before": "│                              ││  Tool  State  Server  Tags  Schema                  ││                               │",
+        "after": "│                              ││  Tool                 State  Server     Tags        ││                               │"
+      }
+    ],
+    "pixel_difference_bbox": [
+      706,
+      1395,
+      1675,
+      1424
+    ],
+    "fixed_capture_identical_to_inspected_first_run": true,
+    "renderer": "macOS Quick Look: qlmanage -t -s 2400",
+    "png_receipts": {
+      "first_inspected_fixed": {
+        "path": "/private/tmp/mcp-header-ql-previews/after/textual-dark-120x40-tools.svg.png",
+        "sha256": "eefcced38597f57fa907a37888cd3c39dfb504a92c2238009fd0b5d1ea7cb37a"
+      },
+      "final_before": {
+        "path": "/private/tmp/mcp-header-final-previews/before/textual-dark-120x40-tools.svg.png",
+        "sha256": "cec3b6437c49178a520f0d3c16b58579ffa0690c8ceb758d516bccf5702a9c71"
+      },
+      "final_after": {
+        "path": "/private/tmp/mcp-header-final-previews/after/textual-dark-120x40-tools.svg.png",
+        "sha256": "eefcced38597f57fa907a37888cd3c39dfb504a92c2238009fd0b5d1ea7cb37a"
+      }
+    }
+  },
+  {
+    "capture": "textual-dark-170x48-tools",
+    "changed_terminal_lines": [
+      {
+        "line": 24,
+        "before": "│                                            ││  Tool  State  Server  Tags  Schema                                        ││                                             │",
+        "after": "│                                            ││  Tool                 State  Server     Tags       Schema                 ││                                             │"
+      }
+    ],
+    "pixel_difference_bbox": [
+      696,
+      1198,
+      1494,
+      1219
+    ],
+    "fixed_capture_identical_to_inspected_first_run": true,
+    "renderer": "macOS Quick Look: qlmanage -t -s 2400",
+    "png_receipts": {
+      "first_inspected_fixed": {
+        "path": "/private/tmp/mcp-header-ql-previews/after/textual-dark-170x48-tools.svg.png",
+        "sha256": "aee852dfdfd1f7cd9eb1f51c993381f5387ceec88c1fb63efcef9a6baf0268b4"
+      },
+      "final_before": {
+        "path": "/private/tmp/mcp-header-final-previews/before/textual-dark-170x48-tools.svg.png",
+        "sha256": "0ad38b232cb7a7d6db979531fa333b313d56b299ed8c8a56004711a0b6eed307"
+      },
+      "final_after": {
+        "path": "/private/tmp/mcp-header-final-previews/after/textual-dark-170x48-tools.svg.png",
+        "sha256": "aee852dfdfd1f7cd9eb1f51c993381f5387ceec88c1fb63efcef9a6baf0268b4"
+      }
+    }
+  },
+  {
+    "capture": "textual-light-120x40-tools",
+    "changed_terminal_lines": [
+      {
+        "line": 25,
+        "before": "│                              ││  Tool  State  Server  Tags  Schema                  ││                               │",
+        "after": "│                              ││  Tool                 State  Server     Tags        ││                               │"
+      }
+    ],
+    "pixel_difference_bbox": [
+      706,
+      1395,
+      1675,
+      1424
+    ],
+    "fixed_capture_identical_to_inspected_first_run": true,
+    "renderer": "macOS Quick Look: qlmanage -t -s 2400",
+    "png_receipts": {
+      "first_inspected_fixed": {
+        "path": "/private/tmp/mcp-header-ql-previews/after/textual-light-120x40-tools.svg.png",
+        "sha256": "2452761986e35760aac5ab7ef61fc948e29e4d042703087da922a4c5f1991924"
+      },
+      "final_before": {
+        "path": "/private/tmp/mcp-header-final-previews/before/textual-light-120x40-tools.svg.png",
+        "sha256": "c1ac9f2741a8c2d8c302db26e5dc2391f2db73b90ca00df6e641583c08e77ce3"
+      },
+      "final_after": {
+        "path": "/private/tmp/mcp-header-final-previews/after/textual-light-120x40-tools.svg.png",
+        "sha256": "2452761986e35760aac5ab7ef61fc948e29e4d042703087da922a4c5f1991924"
+      }
+    }
+  },
+  {
+    "capture": "textual-light-170x48-tools",
+    "changed_terminal_lines": [
+      {
+        "line": 24,
+        "before": "│                                            ││  Tool  State  Server  Tags  Schema                                        ││                                             │",
+        "after": "│                                            ││  Tool                 State  Server     Tags       Schema                 ││                                             │"
+      }
+    ],
+    "pixel_difference_bbox": [
+      696,
+      1199,
+      1494,
+      1219
+    ],
+    "fixed_capture_identical_to_inspected_first_run": true,
+    "renderer": "macOS Quick Look: qlmanage -t -s 2400",
+    "png_receipts": {
+      "first_inspected_fixed": {
+        "path": "/private/tmp/mcp-header-ql-previews/after/textual-light-170x48-tools.svg.png",
+        "sha256": "781f853ffc2e4c748db029d617260e9cc97dbef622e64ea1c3b251998a1910e0"
+      },
+      "final_before": {
+        "path": "/private/tmp/mcp-header-final-previews/before/textual-light-170x48-tools.svg.png",
+        "sha256": "9ea995993c12fb218d4d327bc1cbe06876ad81f9577f3cb5f226a3378ca20c0d"
+      },
+      "final_after": {
+        "path": "/private/tmp/mcp-header-final-previews/after/textual-light-170x48-tools.svg.png",
+        "sha256": "781f853ffc2e4c748db029d617260e9cc97dbef622e64ea1c3b251998a1910e0"
+      }
+    }
+  }
+]

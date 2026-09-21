@@ -1,0 +1,58 @@
+[
+  {
+    "source": "/private/tmp/32831-ci-admission-green.xml",
+    "name": "admission.xml",
+    "source_sha256": "1cfaec8db94b74b65d3265c9dd0659ad275a3ceba92591645a75c2550a0724b4",
+    "export_sha256": "f5d1112dcc54d09cd8cc787f9fbf1f09fe18f49d18fece67de0d3bd50aeedcca",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-budget-green.xml",
+    "name": "ci-contracts.xml",
+    "source_sha256": "690bc0c51133c2794a1ea85e70ab7cb67c8cc4538bf8879e1273109fdea55321",
+    "export_sha256": "e6a240f81ece2855b84c8f91b5fbd6a0e5ae93a3bd1584a6092e1d3432412a2d",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-startup-green-003.xml",
+    "name": "isolated.xml",
+    "source_sha256": "40944a3933d1e0d8b78f1927c5519601d6548f14036e1ea84088800f97600c54",
+    "export_sha256": "b464244ee1fff29cad8754baa0a2f9d99c70f3cd7a3622060d542306001a6bfe",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-mermaid.txt",
+    "name": "mermaid.txt",
+    "source_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "export_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-preflight.txt",
+    "name": "preflight.txt",
+    "source_sha256": "654f0c3817919cac6d9da02fb34dbee743cd890ac29a5bfe0c5924298aab220f",
+    "export_sha256": "654f0c3817919cac6d9da02fb34dbee743cd890ac29a5bfe0c5924298aab220f",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-static.json",
+    "name": "static.json",
+    "source_sha256": "0aa57f1849af161f3274125df4fc12c31ddb06b3d13b8f1d6981371c78a1a4a9",
+    "export_sha256": "0aa57f1849af161f3274125df4fc12c31ddb06b3d13b8f1d6981371c78a1a4a9",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/32831-ci-startup-red.txt",
+    "source_sha256": "b0820b8f82aea3ce577c975af7a005ccf6716e15f175ee5b56a09a8fa036d8c7",
+    "name": "ci-startup-red.txt",
+    "export_sha256": "294cf0d09379c8d9572afd4987533937824852459b2ac4063f665fd95a36cacf",
+    "normalization": "failure excerpt before captured stderr"
+  },
+  {
+    "source": "/private/tmp/32831-ci-budget-red.txt",
+    "source_sha256": "a23dd0f668ced6d4de1632e2e61a0def8abfdb36ceb5a6c72a55f8d92e60fccd",
+    "name": "ci-budget-red.txt",
+    "export_sha256": "dcc3dd7bf2ac9c820c8931552a5468315b7e17cf6db9431741579fd71955b7ab",
+    "normalization": "failure excerpt before captured stderr"
+  }
+]

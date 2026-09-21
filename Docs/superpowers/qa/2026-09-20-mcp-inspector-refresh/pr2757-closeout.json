@@ -1,0 +1,152 @@
+{
+  "verified_head": "d93498014f59aea80a62d3f53a30e23e2115ad7c",
+  "premerge": {
+    "baseRefName": "dev",
+    "baseRefOid": "6e9e94c79483bbb641501516076ac52faad96239",
+    "headRefOid": "d93498014f59aea80a62d3f53a30e23e2115ad7c",
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:40:12Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601882/job/106119745454",
+        "name": "platform-evidence",
+        "startedAt": "2026-09-20T17:40:13Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-19637 pinned workspace platform evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:40:12Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601897/job/106119761345",
+        "name": "Linux storage - Python ${{ matrix.python }}",
+        "startedAt": "2026-09-20T17:40:19Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-32011 one-off Linux storage evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:40:37Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601912/job/106119744092",
+        "name": "No duplicate backlog task IDs",
+        "startedAt": "2026-09-20T17:40:15Z",
+        "status": "COMPLETED",
+        "workflowName": "Backlog Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:40:38Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601905/job/106119744221",
+        "name": "CSS bundle reproduces from its sources",
+        "startedAt": "2026-09-20T17:40:15Z",
+        "status": "COMPLETED",
+        "workflowName": "CSS Bundle Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:57:08Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601887/job/106120162802",
+        "name": "PR Fast Lane",
+        "startedAt": "2026-09-20T17:43:16Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:45:37Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526602023/job/106119744588",
+        "name": "UI latency guardrails",
+        "startedAt": "2026-09-20T17:40:15Z",
+        "status": "COMPLETED",
+        "workflowName": "Perf Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:00:28Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35526601887/job/106122075123",
+        "name": "Derived artifacts reproduce from their sources",
+        "startedAt": "2026-09-20T17:57:11Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T17:40:24Z",
+        "conclusion": "NEUTRAL",
+        "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2757",
+        "name": "cubic \u00b7 AI code reviewer",
+        "startedAt": "2026-09-20T17:40:22Z",
+        "status": "COMPLETED",
+        "workflowName": ""
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "CodeRabbit",
+        "startedAt": "2026-09-20T17:40:13Z",
+        "state": "SUCCESS",
+        "targetUrl": ""
+      }
+    ]
+  },
+  "review_threads": [
+    {
+      "id": "PRRT_kwDOOcyyl86kKuZG",
+      "isResolved": true,
+      "isOutdated": false
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kKuZH",
+      "isResolved": true,
+      "isOutdated": false
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kKuZJ",
+      "isResolved": true,
+      "isOutdated": false
+    }
+  ],
+  "qodo": {
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2757#issuecomment-5751419341",
+    "head": "d93498014f59aea80a62d3f53a30e23e2115ad7c",
+    "body_sha256": "19b862815462e24e6091b7c1fd2277440c82c2e76da91f8bc290137bfa17602e",
+    "reported_bugs": 1,
+    "rule_violations": 0,
+    "disposition": "One unsupported mount-race allegation: Textual8.2.8 synchronously attaches before await. Two real-mount cases and independent review disprove premise. All three review threads resolved. Evidence in committed qodo/review.json."
+  },
+  "baseRefName": "dev",
+  "headRefOid": "d93498014f59aea80a62d3f53a30e23e2115ad7c",
+  "mergeCommit": {
+    "oid": "62d43190ce3ca21bda0f0ff03e5148971eedc7ca"
+  },
+  "mergedAt": "2026-09-20T18:01:22Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2757",
+  "recorded_at": "2026-09-20T18:01:50.641072+00:00",
+  "merge_parents": [
+    "6e9e94c79483bbb641501516076ac52faad96239",
+    "d93498014f59aea80a62d3f53a30e23e2115ad7c"
+  ],
+  "verified_tree": "ede0791b0d05bb65258c4aa7d4a4ddc967d802f1",
+  "actual_merge_tree": "ede0791b0d05bb65258c4aa7d4a4ddc967d802f1",
+  "actual_merge_tree_equals_verified": true,
+  "local_targeted": {
+    "current_source_passed": 316,
+    "full_sweep": false,
+    "earlier_validation": "475 passes and one unrelated Workflows dimension failure reproduced unchanged on dev"
+  },
+  "visual_approval": "Owner approved gallery and merge. Six final captures pixel-identical; two differ only by blinking caret, manually inspected with SVG element deltas. No layout, copy or style changes.",
+  "next": "Compact MCP action reachability and long-path readability; connected-runtime journeys remain separate.",
+  "ci_test_summary": [
+    "PR Fast Lane\tRun fast PR contract\t2026-09-20T17:57:02.7453311Z ================= 1152 passed, 1 warning in 746.67s (0:12:26) =================="
+  ]
+}
