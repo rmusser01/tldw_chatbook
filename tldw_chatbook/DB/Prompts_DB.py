@@ -2814,7 +2814,11 @@ class PromptsDatabase:
                     (current_time, new_version, client_id, kw_id, current_version),
                 )
                 if cursor.rowcount == 0:
-                    raise ConflictError("PromptKeywordsTable", kw_id)
+                    raise ConflictError(
+                        "Failed to soft-delete keyword due to a version mismatch.",
+                        "PromptKeywordsTable",
+                        kw_id,
+                    )
 
                 delete_payload = {
                     "uuid": kw_uuid,
