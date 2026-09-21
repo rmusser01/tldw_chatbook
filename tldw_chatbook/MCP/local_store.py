@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+from tldw_chatbook.Utils.datetime_codec import datetime_to_iso, iso_to_datetime
 
 _LOCAL_MCP_STORE_FILENAME = "local_mcp_store.json"
 
@@ -138,27 +139,11 @@ def _validate_profile_id(value: str) -> str:
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime_to_iso(value)
 
 
 def _iso_to_datetime(value: Any) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return None
+    return iso_to_datetime(value)
 
 
 def _text(value: Any) -> str:

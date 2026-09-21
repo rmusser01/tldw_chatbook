@@ -23,6 +23,7 @@ from tldw_chatbook.UX_Interop.server_connection_contracts import (
     build_credential_store_unavailable_contract,
     build_server_switch_invalidation_contract as build_server_switch_invalidation_contract,
 )
+from tldw_chatbook.Utils.datetime_codec import datetime_to_iso
 
 CONTRACT_ID = "server-parity-ux-handoff"
 CONTRACT_VERSION = "1.0"
@@ -563,6 +564,6 @@ def _utc_now_iso() -> str:
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat().replace("+00:00", "Z")
+    # TASK-32862: delegate to the shared tz-normalizing codec; the old
+    # body emitted naive-local ISO for naive datetimes.
+    return datetime_to_iso(value)
