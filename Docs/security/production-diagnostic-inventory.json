@@ -1800,13 +1800,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "48d4bbeb2a5c196ff625",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/RAG_Search/pipeline_integration.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 28,
       "diagnostic_digest": "f515dea1e2f64240fe13",
       "owner": "TASK-494",
@@ -3550,13 +3543,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "a674e6d483b3efde56e9",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/debug_helpers.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 3,
       "diagnostic_digest": "a588b00ee09271441ef7",
       "owner": "TASK-494",
@@ -3582,13 +3568,6 @@
       "diagnostic_digest": "876052bd926f9f3f907c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/github_api_client.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 6,
-      "diagnostic_digest": "51c7bcb594144faf708b",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/ingestion_preferences.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3620,24 +3599,10 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "de03f4abf99521311647",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/pagination.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 9,
       "diagnostic_digest": "5c87aa034fdb12365052",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/path_validation.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 6,
-      "diagnostic_digest": "8baad40748260b87df44",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/paths.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3669,13 +3634,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "d7b790428d23da7450dc",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/text.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 1,
       "diagnostic_digest": "84a766671e679a7f5287",
       "owner": "TASK-494",
@@ -3694,13 +3652,6 @@
       "diagnostic_digest": "32d4e61618ad604cdafb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/token_counter.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 7,
-      "diagnostic_digest": "b7919db0194c407f200a",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/ui_helpers.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -4082,31 +4033,10 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "1e67452b57a601b52aaa",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/file_list_item_enhanced.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 2,
       "diagnostic_digest": "886acbd53a6db54b57e1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/file_picker_dialog.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 9,
-      "diagnostic_digest": "9781ad97e8c13f80ba44",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/lazy_widgets.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 22,
-      "diagnostic_digest": "4462244f55936fa4e376",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/media_details_widget.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10297,67 +10227,6 @@
     {
       "candidates": [
         {
-          "call_digest": "0257f742389328a1",
-          "method": "debug",
-          "path_expressions": [
-            "full_path",
-            "safe_db_filename"
-          ],
-          "scope": "get_project_database_path",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "1b71248c178cbed2",
-          "method": "error",
-          "path_expressions": [
-            "PROJECT_DATABASES_DIR"
-          ],
-          "scope": "get_project_databases_dir",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "fc0d56c70450ff59",
-          "method": "info",
-          "path_expressions": [
-            "PROJECT_DATABASES_DIR"
-          ],
-          "scope": "get_project_databases_dir",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "60d8867a39b08f40",
-          "method": "debug",
-          "path_expressions": [
-            "absolute_path",
-            "relative_path_str"
-          ],
-          "scope": "get_project_relative_path",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "372a9b0db3c8ab61",
-          "method": "debug",
-          "path_expressions": [
-            "PROJECT_ROOT_DIR"
-          ],
-          "scope": "get_project_root",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "ffc21eb9adefe9f3",
-          "method": "info",
-          "path_expressions": [
-            "project_root"
-          ],
-          "scope": "get_project_root",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Utils/paths.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "c7b5bebb7673581b",
           "method": "debug",
           "path_expressions": [
@@ -10596,20 +10465,6 @@
         }
       ],
       "path": "tldw_chatbook/Widgets/file_extraction_dialog.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "ee06db7f0ef8255f",
-          "method": "error",
-          "path_expressions": [
-            "self.file_path"
-          ],
-          "scope": "FileListItemEnhanced._get_file_metadata",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Widgets/file_list_item_enhanced.py"
     },
     {
       "candidates": [
@@ -11561,11 +11416,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 615,
-    "path_privacy_candidate_calls": 701,
+    "owner_files": 605,
+    "path_privacy_candidate_calls": 694,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
     "task_492_calls": 1355,
-    "task_494_calls": 7770
+    "task_494_calls": 7709
   }
 }

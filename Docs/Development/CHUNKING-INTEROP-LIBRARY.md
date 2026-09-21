@@ -178,7 +178,7 @@ The service has been integrated into all relevant widgets:
 - Validates templates before saving
 - Handles InputError for user-friendly messages
 
-### MediaDetailsWidget
+### MediaDetailsWidget (⚠️ removed — TASK-32807, deleted as dead code)
 - Gets/sets document configurations via service
 - Loads template configurations
 - Clear functionality for resetting

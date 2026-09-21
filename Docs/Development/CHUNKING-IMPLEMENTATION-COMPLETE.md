@@ -83,8 +83,10 @@ Parent document inclusion features:
 
 ### 4. UI Components
 
-#### MediaDetailsWidget Enhancement (✅ Complete)
-**File**: `/tldw_chatbook/Widgets/media_details_widget.py`
+#### MediaDetailsWidget Enhancement (⚠️ Removed — TASK-32807)
+**File**: `/tldw_chatbook/Widgets/media_details_widget.py` — *deleted as dead
+code (no importers). The chunking config it once hosted is documented here
+for history only.*
 
 - Collapsible chunking configuration section
 - Template selection dropdown
@@ -92,8 +94,9 @@ Parent document inclusion features:
 - Save/Preview/Reset functionality
 - Fixed Select widget initialization issue
 
-#### Chunk Preview Modal (✅ Complete)
-**File**: `/tldw_chatbook/Widgets/chunk_preview_modal.py`
+#### Chunk Preview Modal (⚠️ Removed — TASK-32807)
+**File**: `/tldw_chatbook/Widgets/chunk_preview_modal.py` — *deleted as dead
+code (no importers).*
 
 - Live preview of chunking results
 - Statistics display (total chunks, words, characters)
