@@ -1,0 +1,23 @@
+.................                                                        [100%]
+---------- generated xml file: /private/tmp/32825-ownership-final.xml ----------
+============================= slowest 25 durations =============================
+8.60s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]
+8.31s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]
+7.55s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]
+7.46s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]
+2.88s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]
+2.52s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]
+2.45s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]
+1.82s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]
+1.82s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]
+1.80s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[edit]
+1.79s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[disconnect]
+1.79s call     Tests/UI/test_mcp_server_action_ownership.py::test_accepted_delete_keeps_its_target_across_toolbar_rebuild
+1.77s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete]
+1.77s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[connect]
+1.74s call     Tests/UI/test_mcp_server_action_ownership.py::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open
+1.72s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[refresh]
+1.69s call     Tests/UI/test_mcp_server_action_ownership.py::test_old_server_action_is_retired_before_first_detail_refresh_await
+
+(8 durations < 1s hidden.)
+17 passed in 58.61s

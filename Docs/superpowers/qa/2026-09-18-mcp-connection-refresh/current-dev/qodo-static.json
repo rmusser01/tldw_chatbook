@@ -1,0 +1,7 @@
+{
+  "existing_service_diagnostics": 5,
+  "current_service_diagnostics": 5,
+  "introduced": 0,
+  "fixture_test_runner_lint": "pass",
+  "format": "five changed/new files pass; production edits are docstrings/comment only"
+}

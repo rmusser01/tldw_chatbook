@@ -9,13 +9,13 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import hashlib
 import json
+import contextlib
 import os
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 import re
-import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -458,16 +458,11 @@ def _write_spill(spill_dir: Path, invocation_id: str, text: str) -> Path:
     spill_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     safe_id = re.sub(r"[^A-Za-z0-9_.-]", "-", invocation_id)[:60] or "call"
     final = spill_dir / f"{safe_id}-{uuid4().hex[:8]}.txt"
-    fd, tmp_name = tempfile.mkstemp(dir=spill_dir, prefix=".spill-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.chmod(tmp_name, 0o600)
-        os.replace(tmp_name, final)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_name)
-        raise
+    # task-32808.5: shared atomic-write helper (temp + fsync + os.replace),
+    # keeping the restrictive 0o600 mode for potentially-sensitive tool output
+    # via the helper's `mode=` param; replaces a hand-rolled mkstemp/chmod that
+    # skipped fsync.
+    atomic_write_text(final, text, mode=0o600)
     return final
 
 

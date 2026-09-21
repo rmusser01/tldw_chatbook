@@ -1,0 +1,30 @@
+........................................................................ [ 80%]
+..................                                                       [100%]
+------------- generated xml file: /private/tmp/32825-ui-final.xml --------------
+============================= slowest 25 durations =============================
+10.92s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]
+9.86s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]
+8.63s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]
+8.06s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]
+3.26s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]
+3.16s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]
+2.81s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]
+2.73s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+2.67s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+2.58s call     Tests/UI/test_mcp_server_action_departure.py::test_departure_refresh_preserves_actions_from_a_newer_sync[after_release]
+2.57s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+2.54s call     Tests/UI/test_mcp_server_action_departure.py::test_departure_refresh_preserves_actions_from_a_newer_sync[before_release]
+2.08s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]
+1.96s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]
+1.90s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]
+1.87s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete]
+1.86s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]
+1.85s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]
+1.78s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]
+1.77s call     Tests/UI/test_mcp_server_action_ownership.py::test_accepted_delete_keeps_its_target_across_toolbar_rebuild
+1.76s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]
+1.74s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[refresh]
+1.74s call     Tests/UI/test_mcp_server_action_ownership.py::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open
+1.73s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]
+1.72s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[connect]
+90 passed in 102.96s (0:01:42)

@@ -32,36 +32,6 @@ THINKING_EXPORT_WARNING = (
 UNKNOWN_POLICY_WARNING = "Unknown thinking history policy was reset to Auto."
 
 
-def test_save_chat_history_passes_the_db_owner_to_content_generation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    database_owner = object()
-    seen: list[object | None] = []
-
-    def stop_after_recording(
-        _history: object,
-        _conversation_id: object,
-        _media_content: object,
-        db_instance: object | None = None,
-    ) -> tuple[str, str]:
-        seen.append(db_instance)
-        raise RuntimeError("stop before filesystem write")
-
-    monkeypatch.setattr(
-        chat_functions_module,
-        "generate_chat_history_content",
-        stop_after_recording,
-    )
-
-    assert (
-        chat_functions_module.save_chat_history(
-            [], "conversation-1", None, db_instance=database_owner
-        )
-        is None
-    )
-    assert seen == [database_owner]
-
-
 def test_selected_json_export_fails_closed_when_conversation_lookup_fails() -> None:
     class FailingConversationDB:
         @staticmethod

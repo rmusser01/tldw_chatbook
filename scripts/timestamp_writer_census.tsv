@@ -1,0 +1,4 @@
+# Timestamp-writer census (ADR-173 / TASK-32803.1). Ratchet: counts
+# only shrink as TASK-32803.5 adopts Utils/timestamps.py. Regenerate
+# with: python scripts/check_timestamp_writers.py --write
+# module	symbol	kind	count

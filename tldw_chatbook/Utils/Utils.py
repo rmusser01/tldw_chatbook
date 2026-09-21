@@ -250,15 +250,34 @@ def convert_to_seconds(time_str):
         raise ValueError(f"Invalid time format: {time_str}")
 
 
-def truncate_content(content: Optional[str], max_length: int = 200) -> Optional[str]:
-    """Truncate content to the specified maximum length with ellipsis."""
-    if not content:
-        return content
+def truncate(text: Optional[str], limit: int, *, marker: str = "\u2026") -> Optional[str]:
+    """Truncate `text` to at most `limit` characters, appending `marker` when cut.
 
-    if len(content) <= max_length:
-        return content
+    The returned string (including `marker`) never exceeds `limit`. Text at or
+    under the limit is returned unchanged; `None`/empty passes through. The
+    default marker is the single-character ellipsis ``"\u2026"`` (TASK-32808.3
+    decision, 2026-09-20); pass ``marker="..."`` for plain-ASCII or terminal
+    contexts that should not emit a multibyte glyph. This is the one shared
+    truncator the scattered ``text[:n] + "..."`` re-rolls and the various
+    ``_truncate*``/``_ellipsize`` helpers should adopt.
 
-    return content[: max_length - 3] + "..."
+    Args:
+        text: The string to truncate (or None).
+        limit: Maximum length of the result, including the marker.
+        marker: Appended when the text is cut. Defaults to ``"\u2026"``.
+
+    Returns:
+        The original text when it is None, empty, or within `limit`; otherwise a
+        string of exactly `limit` characters ending in `marker` (or a hard cut
+        when `limit` is too small to hold the marker).
+    """
+    if not text or len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    if limit <= len(marker):
+        return text[:limit]
+    return text[: limit - len(marker)] + marker
 
 
 def elide_path_middle(path: str, budget: int = 48) -> str:
@@ -726,18 +745,83 @@ class FileProcessor:
         return name
 
 
-def _format_size_bytes(size_bytes: int) -> str:
-    """Return ``size_bytes`` as a human-readable B/KB/MB/GB string."""
+def format_size_bytes(size_bytes: int) -> str:
+    """Format a byte count as a human-readable B/KB/MB/GB string.
+
+    Uses binary (1024) divisors and thresholds so the scale is monotonic.
+
+    Scales through PB so it can serve file/repo-size displays (which exceed GB),
+    not just the sub-GB database-size case (TASK-32808.1): values up to and
+    including GB are unchanged from the original GB-capped helper, so existing
+    callers and their pins are unaffected.
+
+    Args:
+        size_bytes: A non-negative byte count. Negative values are clamped
+            to 0 (a byte count is never negative; TASK-32808.1 / Qodo #3).
+
+    Returns:
+        A string such as ``"512 B"``, ``"1.0 KB"``, ``"3.5 MB"``, ``"2.0 GB"``,
+        ``"4.0 TB"`` or ``"1.5 PB"`` (capped at PB).
+    """
+    if size_bytes < 0:
+        size_bytes = 0
     if size_bytes < 1024:
         return f"{size_bytes} B"
-    size_kb = size_bytes / 1024
-    if size_kb < 1024:
-        return f"{size_kb:.1f} KB"
-    size_mb = size_kb / 1024
-    if size_mb < 1024:
-        return f"{size_mb:.1f} MB"
-    size_gb = size_mb / 1024
-    return f"{size_gb:.1f} GB"
+    size = size_bytes / 1024.0
+    for unit in ("KB", "MB", "GB", "TB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
+
+#: Back-compat private alias (TASK-32808.1: this is now the package's one
+#: public byte-size formatter; new callers import format_size_bytes).
+_format_size_bytes = format_size_bytes
+
+
+#: The "wide" boolean-flag vocabulary (case-insensitive, whitespace-stripped).
+#: This is the vocabulary a handful of user-facing feature-flag readers had
+#: each re-rolled identically -- it accepts "on"/"off" and returns the caller's
+#: default for anything it cannot understand. It is deliberately DISTINCT from
+#: config.coerce_bool_setting, whose narrower fail-closed vocabulary (no "on";
+#: an unrecognized value reads False) backs config/security gates and is pinned
+#: by tests as "the repo's vocabulary" -- do NOT merge the two (TASK-32808.4).
+_BOOL_FLAG_TRUE = frozenset({"true", "1", "yes", "on"})
+_BOOL_FLAG_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def coerce_bool_flag(value: object, default: bool) -> bool:
+    """Coerce a user-facing feature-flag value to a bool (wide vocabulary).
+
+    A real bool passes through. A string or int is matched (via its lowercased
+    string form) against the true/false vocabularies above (true: true/1/yes/on;
+    false: false/0/no/off); the integer 1 is true and 0 is false. Any other value -- None, a float, an object, or an
+    unrecognized string -- returns `default`, so a flag that ships on stays on
+    for garbage input.
+
+    This is the one shared implementation of the vocabulary that
+    `console_background_effects`, `Image_Generation.config` and
+    `character_expression_playback` had each copied verbatim (TASK-32808.4).
+    For config/security gates use `config.coerce_bool_setting` instead: its
+    narrower fail-closed vocabulary is intentional and separately pinned.
+
+    Args:
+        value: Raw flag value to coerce.
+        default: Fallback when the value cannot be coerced to a boolean.
+
+    Returns:
+        The coerced boolean, or `default` when coercion is not possible.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, int)):
+        text = str(value).strip().lower()
+        if text in _BOOL_FLAG_TRUE:
+            return True
+        if text in _BOOL_FLAG_FALSE:
+            return False
+    return default
 
 
 def get_formatted_file_size(file_path: Path) -> Optional[str]:

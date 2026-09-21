@@ -3772,6 +3772,12 @@ class MCPWorkbench(Container):
     # -- modes & view state ---------------------------------------------------
 
     def set_mode(self, mode: str) -> None:
+        """Select a mounted mode, retiring server actions before departure.
+
+        Args:
+            mode: Requested hub mode; unknown values select Servers. Requests
+                for a deferred canvas are retained until that canvas mounts.
+        """
         if mode != self._active_mode:
             self._mcp_recovery_token = None
         if mode not in MCP_HUB_MODES:
@@ -3785,6 +3791,8 @@ class MCPWorkbench(Container):
             self._pending_deferred_mode = mode
             return
         mode_changed = mode != self._active_mode
+        if mode_changed:
+            retired_revision = self.query_one(MCPServersMode).retire_detail_actions()
         self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
         if mode_changed:
@@ -3797,9 +3805,9 @@ class MCPWorkbench(Container):
             # confirmation -- the ContentSwitcher hides the servers canvas
             # without unmounting it, so nothing else resets the arm state on
             # a Servers -> Tools -> Servers round-trip. Dispatched as a
-            # worker (set_mode is sync); no-op when unarmed.
+            # worker (set_mode is sync), after synchronous retirement above.
             self.run_worker(
-                self._disarm_canvas_delete,
+                partial(self._disarm_canvas_delete, retired_revision),
                 group="mcp-detail-disarm",
                 exclusive=True,
             )
@@ -3864,13 +3872,15 @@ class MCPWorkbench(Container):
         # rationale as the `show_audit_entry(None)` call above.
         await self.query_one(MCPInspector).show_finding(None)
 
-    async def _disarm_canvas_delete(self) -> None:
+    async def _disarm_canvas_delete(self, retired_revision: int) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
         # toolbar (awaited remove+mount), which must not interleave with a
         # concurrently running `_sync_children()` doing the same via
         # `show_detail()` -- same DuplicateIds hazard the lock exists for.
         async with self._sync_children_lock:
-            await self.query_one(MCPServersMode).disarm_delete()
+            await self.query_one(MCPServersMode).disarm_delete(
+                retired_revision=retired_revision
+            )
 
     def get_view_state(self) -> dict[str, Any]:
         return {

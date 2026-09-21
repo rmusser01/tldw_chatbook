@@ -34,6 +34,7 @@ from ..config import (
     get_subscriptions_db_path,
     load_console_library_migration_seed,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 #
 ########################################################################################################################
 #
@@ -103,8 +104,8 @@ class SiteConfig:
 
         # Metadata
         self.notes = config.get("notes", "")
-        self.created_at = config.get("created_at", datetime.now().isoformat())
-        self.updated_at = config.get("updated_at", datetime.now().isoformat())
+        self.created_at = config.get("created_at", utc_now_iso())
+        self.updated_at = config.get("updated_at", utc_now_iso())
         self.last_error = config.get("last_error")
         self.success_count = config.get("success_count", 0)
         self.error_count = config.get("error_count", 0)
@@ -186,13 +187,13 @@ class SiteConfig:
     def record_success(self):
         """Record a successful request."""
         self.success_count += 1
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = utc_now_iso()
 
     def record_error(self, error: str):
         """Record a failed request."""
         self.error_count += 1
         self.last_error = error
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = utc_now_iso()
 
 
 class RateLimiter:
@@ -339,7 +340,7 @@ class SiteConfigManager:
         """Save configuration to database."""
         try:
             # Update timestamp
-            config.updated_at = datetime.now().isoformat()
+            config.updated_at = utc_now_iso()
 
             # Encrypt sensitive data
             config_data = config.to_dict()
@@ -630,7 +631,7 @@ class SiteConfigManager:
             # Write export file
             export_data = {
                 "version": "1.0",
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": utc_now_iso(),
                 "configs": configs,
             }
 

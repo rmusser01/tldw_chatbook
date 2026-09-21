@@ -3,7 +3,6 @@
 
 import os
 import sys
-from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -44,6 +43,7 @@ from ..config import (
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 class RecentLocations:
@@ -107,7 +107,7 @@ class RecentLocations:
             "path": path_str,
             "name": path.name,
             "type": file_type,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": utc_now_iso()
         })
 
         # Trim to max

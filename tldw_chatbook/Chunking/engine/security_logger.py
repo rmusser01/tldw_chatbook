@@ -11,7 +11,7 @@ here trips ``Tests/Architecture/test_security_logger_write_surface.py``.
 """
 
 import threading
-from datetime import datetime
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -73,7 +73,7 @@ class SecurityLogger:
             severity: Event severity (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         """
         event = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now_iso(),
             "type": event_type.value,
             "message": message,
             "severity": severity,

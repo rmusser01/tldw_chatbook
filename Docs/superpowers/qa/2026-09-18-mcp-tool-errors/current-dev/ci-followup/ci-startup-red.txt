@@ -1,0 +1,20 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle ___
+Tests/UI/test_console_runtime_ownership.py:2391: in test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+    asyncio.run(exercise_app_lifecycle())
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/UI/test_console_runtime_ownership.py:2364: in exercise_app_lifecycle
+    assert app.query(ChatScreen), "Console must mount before lifecycle teardown"
+E   AssertionError: Console must mount before lifecycle teardown
+E   assert <DOMQuery query='ChatScreen'>
+E    +  where <DOMQuery query='ChatScreen'> = query(ChatScreen)
+E    +    where query = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).query

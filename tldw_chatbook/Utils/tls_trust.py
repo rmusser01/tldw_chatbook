@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import os
 import ssl
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,9 @@ _TRUE_STRINGS = frozenset({"true", "1", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
 
 _warned_modes: set[str] = set()
+
+
+from .atomic_file_ops import atomic_write_text
 
 
 def tls_verify_setting() -> bool | str:
@@ -193,14 +195,9 @@ def _merged_bundle_path() -> str:
     if merged.is_file() and merged.read_text(errors="replace").startswith(header):
         return str(merged)
     body = header + "".join(p.read_text() + "\n" for p in (certifi_path, custom_path))
-    fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(tmp, merged)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    # task-32808.5: shared atomic-write helper (temp + fsync + os.replace)
+    # instead of a hand-rolled mkstemp/replace that skipped fsync.
+    atomic_write_text(merged, body)
     return str(merged)
 
 

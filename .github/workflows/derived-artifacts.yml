@@ -65,7 +65,9 @@ jobs:
     name: PR Fast Lane
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # TASK-32831: the main and admission-sensitive invocations measured 14m45s
+    # and 4m59s, plus setup; keep both required steps within one bounded job.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +98,23 @@ jobs:
             Tests/UI/test_mcp_workbench.py \
             Tests/UI/test_mcp_tools_mode.py \
             --timeout=180 \
+            --tb=short
+
+      # TASK-32873: the admission-sensitive suites enroll the process
+      # against the collection-time profile (keep_bootstrap_profile in
+      # Tests/conftest.py); running them in the SAME pytest invocation as
+      # sandboxed suites lets the enrollment poison their config access
+      # (RecoveryRequired: raw_source_selection_changed). Their own
+      # invocation, after the sandboxed one, keeps both green.
+      - name: Run admission-sensitive suites
+        if: always()
+        run: |
+          pytest \
+            Tests/UI/test_console_runtime_ownership.py \
+            Tests/Chat/test_console_viewless_hooks.py \
+            Tests/Agents/test_install_skill_runtime_tool.py \
+            Tests/Chat/test_console_chat_create_integration.py \
+            --timeout=300 \
             --tb=short
 
   derived-artifacts:
@@ -208,3 +227,13 @@ jobs:
           # and failing on all of them would be a guard that gets muted. Pure
           # AST scan, stdlib only; seconds.
           python scripts/check_textual_worker_contract.py
+      - name: Timestamp writers go through the shared UTC helper
+        if: ${{ !cancelled() }}
+        run: |
+          # ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is
+          # forbidden, and naive datetime.now().isoformat() writers are pinned
+          # in scripts/timestamp_writer_census.tsv as a ratchet that only
+          # shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new
+          # or grown naive-timestamp writer. Pure AST scan, no database built.
+          python scripts/check_timestamp_writers.py
+
