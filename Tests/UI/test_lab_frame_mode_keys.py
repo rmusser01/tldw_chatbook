@@ -4,6 +4,9 @@ from __future__ import annotations
 
 
 import pytest
+
+#: TASK-32628 admission / TASK-32873 opt-in (same as the other Lab/Evals suites).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
@@ -145,7 +148,7 @@ async def test_the_footer_advertises_the_mode_keys():
         footer = screen.query_one(AppFooterStatus)
         # `shortcut_text` is the assertable surface; AppFooterStatus has no
         # render() of its own. Existing hint tests use the same property.
-        assert "[ / ]" in footer.shortcut_text
+        assert "←/→ [ ]" in footer.shortcut_text
         # "Move mode focus", not "Switch mode": the action moves focus along
         # the strip and never navigates -- the adjacent `Enter  Go` hint is
         # the half that commits. The footer must not promise otherwise.

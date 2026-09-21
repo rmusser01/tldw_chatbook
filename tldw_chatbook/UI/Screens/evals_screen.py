@@ -2060,6 +2060,45 @@ class EvalsScreen(LabScreen):
         except Exception:
             return
 
+    def action_show_workbench_help(self) -> None:
+        """TASK-32887: teachful F1 help for the Evals screen.
+
+        The generic fallback (app.py's ``_show_generic_screen_help``)
+        rendered two lines of raw binding identifiers with nothing about
+        the screen's features -- a newcomer's only in-app documentation
+        said "left_square_bracket: Prev mode" and stopped. This replaces
+        it on this screen only: a short orientation (word benches,
+        character benches, skill evals), the honest gap (model/target
+        setup), and the real shortcuts as glyphs.
+        """
+        from tldw_chatbook.UI.Workbench.help import (
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
+        )
+
+        state = WorkbenchHelpState(
+            route_id="evals",
+            title="Evals — skill harnesses, benchmark runs, and reports",
+            notes_heading="On this screen",
+            notes=(
+                "Word benches measure a dataset; character benches probe a "
+                "persona; skill evals grade one SKILL (static checks, an "
+                "LLM judge, and optional deep simulation).",
+                "Create things from the Catalog rail on the left; the "
+                "detail pane configures, the inspector runs and explains.",
+                "Skill evals need a subject (a store skill or a directory "
+                "containing SKILL.md) plus generator and judge models "
+                "('+ New target' in a bench editor, or 'Create sample "
+                "bench' once).",
+            ),
+            shortcuts=(
+                ("←/→ [ ]", "Move mode focus (Enter goes)"),
+                ("F6", "Next pane (rail / detail / inspector)"),
+                ("F1", "Toggle this help"),
+            ),
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
+
     def on_mount(self) -> None:
         """TASK-32886: probe the skills store once, after mount, so the
         rail's empty state can steer a skills-holding user to

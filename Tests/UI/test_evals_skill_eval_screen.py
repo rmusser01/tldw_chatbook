@@ -1120,3 +1120,55 @@ async def test_deep_worker_persists_sim_cell_evidence(
         assert cell["input_data"] == {"prompt_index": 3, "repeat": 2}
         assert cell["metrics"]["activated"] is True
         assert cell["metrics"]["error"] is None
+
+
+# ---------------------------------------------------------------------------
+# TASK-32887: teachful F1 help, no leaked binding identifiers, arrow chips
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_f1_help_is_teachful_and_identifier_free(evals_app):
+    """TASK-32887: the Evals F1 help used to be two lines rendering the
+    raw binding identifiers ('left_square_bracket: Prev mode') with
+    nothing about the screen's actual features. It must teach the screen
+    (skill evals included) and render key GLYPHS, never identifiers."""
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        # The harness app is a fake (no app-level F1 delegation), so the
+        # test drives the screen's own action -- the delegation path from
+        # the real app's F1 binding is generic app plumbing.
+        pilot.app.screen.action_show_workbench_help()
+        await pilot.pause()
+        body = pilot.app.screen.query_one("#workbench-help-body")
+        text = str(body.renderable)
+        assert "left_square_bracket" not in text
+        assert "right_square_bracket" not in text
+        assert "skill eval" in text
+        assert "[" in text and "]" in text
+
+
+@pytest.mark.asyncio
+async def test_arrow_keys_move_mode_chip_focus(evals_app):
+    """TASK-32887: the mode strip ignored arrow keys; the mechanism was
+    [ / ] only, advertised as cryptic footer copy. Left/Right must move
+    chip focus exactly like the brackets (widgets that bind arrows for
+    their own navigation still win -- this is a screen-level fallback)."""
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        rail_button = screen.query_one("#evals-rail-toggle-benches")
+        rail_button.focus()
+        await pilot.pause()
+
+        await pilot.press("right")
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None and focused.id == "lab-mode-models", (
+            f"right from Evals should wrap focus to the Models chip, got {focused and focused.id}"
+        )
+
+        await pilot.press("left")
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None and focused.id == "lab-mode-evals", (
+            f"left from Models should land on the Evals chip, got {focused and focused.id}"
+        )

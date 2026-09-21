@@ -99,6 +99,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.events import AppFocus, Resize
+from textual.keys import KEY_DISPLAY_ALIASES
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -1235,18 +1236,43 @@ def _navigate_via_screen(
     app.notify(success_message, severity="information")
 
 
+#: TASK-32887: spelled-out punctuation key names that appear in this
+#: repo's BINDINGS (left/right square brackets, comma -- see
+#: lab_frame.py, personas_screen.py, trajectory_timeline.py) rendered as
+#: the glyphs users actually press. Textual's own KEY_DISPLAY_ALIASES
+#: covers arrows/escape but not the spelled punctuation; anything not in
+#: either map passes through unchanged.
+_KEY_DISPLAY_SUPPLEMENT = {
+    "left_square_bracket": "[",
+    "right_square_bracket": "]",
+    "comma": ",",
+    "period": ".",
+    "slash": "/",
+    "minus": "-",
+    "equal": "=",
+}
+
+
+def _display_key(key: str) -> str:
+    """One binding key as the user-facing glyph for help surfaces."""
+    display = KEY_DISPLAY_ALIASES.get(key) or _KEY_DISPLAY_SUPPLEMENT.get(key)
+    return display if display is not None else key
+
+
 def _bindings_to_shortcuts(bindings: Any) -> tuple[tuple[str, str], ...]:
     """Flatten BINDINGS entries into (key, description) pairs for help display.
 
     Accepts both Binding objects and the legacy tuple form so any screen's
-    BINDINGS can be rendered as truthful shortcut help.
+    BINDINGS can be rendered as truthful shortcut help. Keys render as
+    display glyphs (TASK-32887): the Evals help leaked the raw binding
+    identifiers ``left_square_bracket``/``right_square_bracket`` as copy.
     """
     pairs: list[tuple[str, str]] = []
     for entry in bindings or ():
         if isinstance(entry, Binding):
-            pairs.append((entry.key, entry.description))
+            pairs.append((_display_key(entry.key), entry.description))
         elif isinstance(entry, (tuple, list)) and entry:
-            key = str(entry[0])
+            key = _display_key(str(entry[0]))
             description = str(entry[2]) if len(entry) > 2 else ""
             pairs.append((key, description))
     return tuple(pairs)
