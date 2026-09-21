@@ -16374,6 +16374,8 @@ UPDATE db_schema_version
 
         except InputError:
             raise
+        except CharactersRAGDBError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error creating message variant: exception_type={type(e).__name__}"
@@ -16425,6 +16427,8 @@ UPDATE db_schema_version
 
                 return variants
 
+        except CharactersRAGDBError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error getting message variants: exception_type={type(e).__name__}"
@@ -16491,6 +16495,8 @@ UPDATE db_schema_version
                 return True
 
         except InputError:
+            raise
+        except CharactersRAGDBError:
             raise
         except Exception as e:
             logger.error(
@@ -23596,7 +23602,7 @@ UPDATE db_schema_version
     # migration's job.
 
     def search_flashcards(
-        self, query: str, deck_id: Optional[str] = None
+        self, query: str, deck_id: Optional[str] = None, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Search flashcards using FTS; every token of ``query`` must appear.
 
@@ -23615,6 +23621,9 @@ UPDATE db_schema_version
         if deck_id:
             base_query += " AND f.deck_id = ?"
             params.append(deck_id)
+
+        base_query += " LIMIT ?"
+        params.append(limit)
 
         conn = self.get_connection()
         cursor = conn.cursor()
