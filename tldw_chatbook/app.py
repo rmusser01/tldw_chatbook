@@ -532,29 +532,6 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .Widgets.splash_screen import SplashScreen
-from .LLM_Calls.LLM_API_Calls import (
-    chat_with_openai,
-    chat_with_anthropic,
-    chat_with_cohere,
-    chat_with_groq,
-    chat_with_openrouter,
-    chat_with_huggingface,
-    chat_with_deepseek,
-    chat_with_mistral,
-    chat_with_google,
-)
-from .LLM_Calls.LLM_API_Calls_Local import (
-    chat_with_llama,
-    chat_with_kobold,
-    chat_with_oobabooga,
-    chat_with_vllm,
-    chat_with_tabbyapi,
-    chat_with_aphrodite,
-    chat_with_ollama,
-    chat_with_custom_openai,
-    chat_with_custom_openai_2,
-    chat_with_local_llm,
-)
 from tldw_chatbook.config import (
     get_chachanotes_db_path,
     settings,
@@ -597,7 +574,6 @@ from .Prompt_Management.prompt_variables import PromptVariableApplication
 # `Tools_Settings_Window` here dragged `Agents.local_tool_provider` ->
 # `Tools.workspace_tool_executor` and 7 further modules onto the boot
 # import path for a window that is nav-unreachable (TASK-1346).
-from .UI.tools_settings_messages import IngestUiStyleChanged  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
 from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
@@ -818,7 +794,6 @@ if TYPE_CHECKING:
 
 _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
 
-API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 #: Collections capture persistence and remote adapters are first-use work.
@@ -1110,38 +1085,8 @@ _TTS_GLOBAL_OVERRIDE_PROMPT_COPY: dict[str | None, str] = {
 #
 # Statics
 
-if API_IMPORTS_SUCCESSFUL:
-    API_FUNCTION_MAP = {
-        "OpenAI": chat_with_openai,
-        "Anthropic": chat_with_anthropic,
-        "Cohere": chat_with_cohere,
-        "HuggingFace": chat_with_huggingface,
-        "DeepSeek": chat_with_deepseek,
-        "Google": chat_with_google,  # Key from config
-        "Groq": chat_with_groq,
-        "koboldcpp": chat_with_kobold,  # Key from config
-        "llama_cpp": chat_with_llama,  # Key from config
-        "MistralAI": chat_with_mistral,  # Key from config
-        "Oobabooga": chat_with_oobabooga,  # Key from config
-        "OpenRouter": chat_with_openrouter,
-        "vllm": chat_with_vllm,  # Key from config
-        "TabbyAPI": chat_with_tabbyapi,  # Key from config
-        "Aphrodite": chat_with_aphrodite,  # Key from config
-        "Ollama": chat_with_ollama,  # Key from config
-        "Custom": chat_with_custom_openai,  # Key from config
-        "Custom_2": chat_with_custom_openai_2,  # Key from config
-        "local-llm": chat_with_local_llm,
-    }
-    logging.info(f"API_FUNCTION_MAP populated with {len(API_FUNCTION_MAP)} entries.")
-else:
-    API_FUNCTION_MAP = {}
-    logging.error("API_FUNCTION_MAP is empty due to import failures.")
 
-ALL_API_MODELS = {
-    **API_MODELS_BY_PROVIDER,
-    **LOCAL_PROVIDERS,
-}  # If needed for sidebar defaults
-AVAILABLE_PROVIDERS = list(ALL_API_MODELS.keys())  # If needed
+AVAILABLE_PROVIDERS = list({**API_MODELS_BY_PROVIDER, **LOCAL_PROVIDERS}.keys())  # provider order for sidebar defaults
 #
 #
 #####################################################################################################################
@@ -2272,11 +2217,6 @@ class DeveloperProvider(Provider):
             self.app.notify(f"Failed to show keybindings: {e}", severity="error")
 
 
-class TabDropdown(Widget):
-    """Placeholder for dropdown navigation (not yet implemented)."""
-
-    def update_active_tab(self, tab_id: str) -> None:
-        """No-op until the dropdown is implemented."""
 
 
 def _sanitize_library_ingest_error_text(message: str) -> str:
@@ -7827,22 +7767,6 @@ class TldwCli(
     # standalone Notes tab / Notes_Window.py it belonged to is gone, replaced
     # by the Library workbench's Notes canvas), confirmed via
     # `grep -rn 'id="notes-window"' tldw_chatbook/`.
-    ALL_MAIN_WINDOW_IDS = [  # Assuming these are your main content window IDs
-        # task-577 T4: "chat-window" removed -- id composed nowhere (the
-        # ChatWindowEnhanced surface that owned it was retired in T1/T2).
-        "conversations_characters_prompts-window",
-        "ingest-window",
-        "tools_settings-window",
-        "llm_management-window",
-        "media-window",
-        "search-window",
-        "logs-window",
-        "stats-window",
-        "coding-window",
-        "stts-window",
-        "study-window",
-        "chatbooks-window",
-    ]
 
     # Define reactive at class level with a placeholder default and type hint
     current_tab: reactive[str] = reactive("")
@@ -7855,9 +7779,6 @@ class TldwCli(
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
     # Fetching default provider from config:
-    _default_rag_expansion_provider = APP_CONFIG.get("chat_defaults", {}).get(
-        "provider", "OpenAI"
-    )
 
     def query_one(self, selector, expect_type=None):
         """Resolve legacy app-level queries against the active pushed screen when needed."""
@@ -7883,17 +7804,12 @@ class TldwCli(
     # Media services and type catalog
     _media_types_for_ui: List[str] = []
 
-    # Add media_types_for_ui to store fetched types
-    media_types_for_ui: List[str] = []
     media_db: Optional[MediaDatabase] = None
     selected_note_files_for_import: List[Path]
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
-    note_import_success_handler: Optional[Callable] = None
-    note_import_failure_handler: Optional[Callable] = None
 
-    _prompt_search_timer: Optional[Timer] = None
 
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
@@ -7902,8 +7818,6 @@ class TldwCli(
     mlx_server_process: Optional[subprocess.Popen] = None
     onnx_server_process: Optional[subprocess.Popen] = None
 
-    # Make API_IMPORTS_SUCCESSFUL accessible if needed by old methods or directly
-    API_IMPORTS_SUCCESSFUL = API_IMPORTS_SUCCESSFUL
 
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
@@ -7921,7 +7835,6 @@ class TldwCli(
         self._server_credential_store_unavailable_reason: str | None = None
 
         # Tab switching optimization
-        self._initialized_tabs = set()  # Track which tabs have been initialized
 
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -8274,7 +8187,6 @@ class TldwCli(
 
         # Prompts service is initialized in parallel above
         # Set up timer
-        self._prompt_search_timer = None
 
         # Media DB is initialized in parallel above
         # Ensure we have media types for UI
@@ -12290,32 +12202,6 @@ class TldwCli(
         # Initialize current log widget reference
         self._current_log_widget = None
 
-    def _display_buffered_logs(self, log_widget):
-        """Display all buffered logs in the RichLog widget.
-
-        Reads ``_log_records`` (the live-view store), NOT ``_log_buffer``
-        (the metadata-only clipboard artifact) -- TASK-19555. This legacy
-        path currently has no callers; it is pointed at the right store so
-        that reviving it shows a maintainer real diagnostics rather than a
-        screen of redaction markers.
-        """
-        if not hasattr(self, "_log_records"):
-            return
-
-        # Store reference to current log widget
-        self._current_log_widget = log_widget
-
-        # Clear the widget first to avoid duplicates
-        log_widget.clear()
-
-        # Write all buffered messages to the widget
-        for _level, _name, msg in self._log_records:
-            log_widget.write(msg)
-
-        # Scroll to the latest entry
-        log_widget.scroll_end()
-
-        logger.debug(f"Displayed {len(self._log_records)} buffered log entries")
 
     def _setup_logging(self):
         """Set up logging for the application.
@@ -15049,22 +14935,6 @@ class TldwCli(
         except Exception as e:
             self.loguru_logger.error(f"Error updating TTS progress: {e}")
 
-    @on(IngestUiStyleChanged)
-    async def handle_ingest_ui_style_changed(
-        self,
-        event: IngestUiStyleChanged,
-    ) -> None:
-        """Refresh the active ingest view after a style change from Tools & Settings."""
-        try:
-            ingest_window = self.query_one("#ingest-window")
-            ingest_window.refresh(recompose=True)
-            self.loguru_logger.info(
-                f"Requested recompose for ingest window after UI style change to {event.new_style}"
-            )
-        except QueryError:
-            self.loguru_logger.debug(
-                "Ingest window not found during UI style refresh; the new style will apply when it is opened"
-            )
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
@@ -16942,20 +16812,6 @@ class TldwCli(
         except Exception as exc:
             self.notify(f"Failed to open setup wizard: {exc}", severity="error")
 
-    def hide_inactive_windows(self) -> None:
-        """Hides all windows that are not the current active tab."""
-        initial_tab = self._initial_tab_value
-        self.loguru_logger.debug(
-            f"Hiding inactive windows, keeping '{initial_tab}-window' visible."
-        )
-        # Query both actual windows and placeholders
-        for window in self.query(".window, .placeholder-window"):
-            # Placeholders should always be hidden
-            if window.has_class("placeholder-window"):
-                window.display = False
-                continue
-            is_active = window.id == f"{initial_tab}-window"
-            window.display = is_active
 
     async def _push_initial_screen(self) -> None:
         """Push the configured initial screen for screen-based navigation startup."""
@@ -17066,7 +16922,6 @@ class TldwCli(
         try:
             await self._push_initial_screen()
             await self._post_mount_setup()
-            self.hide_inactive_windows()
         except Exception as e:
             logger.opt(exception=True).error(f"No-splash post-mount setup failed: {e}")
 
@@ -19844,14 +19699,6 @@ class TldwCli(
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 
-    def _log_view_dimensions(self, view, parent):
-        """Helper to log view dimensions after refresh."""
-        self.loguru_logger.info(
-            f"After refresh - View {view.id} dimensions: width={view.size.width}, height={view.size.height}"
-        )
-        self.loguru_logger.info(
-            f"After refresh - Parent dimensions: width={parent.size.width}, height={parent.size.height}"
-        )
 
     ########################################################################
     #
