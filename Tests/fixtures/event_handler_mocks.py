@@ -42,7 +42,6 @@ def create_comprehensive_app_mock():
     app.prompts_db = MagicMock()
 
     # Mock core app properties
-    app.API_IMPORTS_SUCCESSFUL = True
     app.app_config = {
         "api_settings": {
             "openai": {"streaming": True, "api_key_env_var": "OPENAI_API_KEY"},
