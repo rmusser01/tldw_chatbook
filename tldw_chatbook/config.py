@@ -9057,7 +9057,18 @@ def get_api_key(api_name: str) -> Optional[str]:
         api_name: The API provider name (e.g., 'openai', 'anthropic', 'groq')
 
     Returns:
-        The API key if found, None otherwise
+        A usable API key, or None.
+
+        TASK-32806.1: every branch below is screened by
+        ``resolve_provider_api_key``, the same rule the rest of the codebase
+        uses, so this can no longer hand a caller a value that rule rejects.
+        It previously screened one literal (``<API_KEY_HERE>``) on one branch
+        and returned everything raw, so a configured ``YOUR_KEY``, a
+        whitespace-padded key, or a blank string reached five live spend and
+        readiness paths -- and the realtime pre-connect gate, which tested
+        truthiness, passed the placeholder straight to the provider session.
+        Screening here also strips, so a padded key now WORKS rather than
+        being sent with its spaces.
     """
     # Normalize the API name
     api_name_lower = api_name.lower()
@@ -9088,28 +9099,43 @@ def get_api_key(api_name: str) -> Optional[str]:
             api_settings = settings.get(api_settings_key)
 
         if isinstance(api_settings, dict):
-            # Check environment variable first if specified
-            if "api_key_env_var" in api_settings:
-                env_var = api_settings["api_key_env_var"]
-                env_value = os.getenv(env_var)
-                if env_value:
-                    return env_value
-
-            # Fall back to config file API key
+            # TASK-32806.2: the STORED key outranks the environment variable
+            # here, matching `_normalize_legacy_provider_api_key` and the
+            # rule CLAUDE.md already records ("except provider API keys,
+            # where an explicit api_settings.<provider>.api_key now outranks
+            # the matching environment variable"). This accessor resolved
+            # env-first, so with both set the chat path spent the Settings
+            # key while MCP tools and Console realtime spent the env key --
+            # the same readiness-and-spend disagreement ADR-012 exists to
+            # prevent, moved from two readers to two accessors.
+            #
+            # The env var is still read; it is simply the fallback, which is
+            # what makes a key typed into Settings take effect without the
+            # user having to find and unset a shell variable first.
             if (
                 "api_key" in api_settings
                 and api_settings["api_key"] != "<API_KEY_HERE>"
             ):
-                return api_settings["api_key"]
+                resolved = resolve_provider_api_key(api_settings["api_key"])
+                if resolved is not None:
+                    return resolved
+
+            if "api_key_env_var" in api_settings:
+                env_var = api_settings["api_key_env_var"]
+                resolved = resolve_provider_api_key(os.getenv(env_var))
+                if resolved is not None:
+                    return resolved
     except Exception as e:
         logger.debug(f"Error accessing api_settings for {api_name}: {e}")
 
     # Try the legacy approach used elsewhere in the codebase
     try:
         # This is the pattern used in other files like Summarization_General_Lib.py
-        api_key = get_cli_setting("API", f"{api_name_lower}_api_key", "")
-        if api_key:
-            return api_key
+        resolved = resolve_provider_api_key(
+            get_cli_setting("API", f"{api_name_lower}_api_key", "")
+        )
+        if resolved is not None:
+            return resolved
     except Exception as e:
         logger.debug(f"Error getting API key via get_cli_setting for {api_name}: {e}")
 
@@ -9117,9 +9143,9 @@ def get_api_key(api_name: str) -> Optional[str]:
     env_var_names = [f"{api_name_lower.upper()}_API_KEY", f"{api_name.upper()}_API_KEY"]
 
     for env_var in env_var_names:
-        env_value = os.getenv(env_var)
-        if env_value:
-            return env_value
+        resolved = resolve_provider_api_key(os.getenv(env_var))
+        if resolved is not None:
+            return resolved
 
     # No API key found
     logger.debug(f"No API key found for provider: {api_name}")

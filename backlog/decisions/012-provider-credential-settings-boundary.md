@@ -97,6 +97,52 @@ an issued immutable mutation in the wizard bypasses the shared owner's
 validation boundary. No new credential storage or authentication fallback is
 introduced.
 
+## Amendment 2026-09-19: stored key over environment variable (TASK-32806.2)
+
+The core-runtime review of 2026-09-17 found two accessors resolving provider
+credentials in opposite orders, with **both orders asserted by test name**:
+
+- `config.py` `_normalize_legacy_provider_api_key` (the chat spend path):
+  modern `api_settings.<provider>.api_key` > environment variable > legacy
+  `[API]`.
+- `config.py` `get_api_key` (MCP tools, Console realtime): the
+  `api_key_env_var` environment variable > stored `api_key` > legacy.
+
+Reproduced with `[api_settings.anthropic] api_key = "sk-ant-modern"` and
+`ANTHROPIC_API_KEY=sk-ant-from-env` set together:
+
+    bridge anthropic_api.api_key : 'sk-ant-modern'
+    get_api_key('anthropic')     : 'sk-ant-from-env'
+
+So `chat_api_call` spent the Settings key while MCP tools and Console
+realtime spent the environment key. The shipped configuration template gives
+every `[api_settings.<provider>]` table an `api_key_env_var`, so the
+disagreement is reachable by default rather than by unusual configuration.
+This is the same "readiness and spend disagree" failure this ADR exists to
+prevent, relocated from two readers to two accessors.
+
+**Ruling: the stored `api_key` outranks the environment variable it names.**
+
+This is not a new decision. It is the rule already recorded in CLAUDE.md --
+"Priority: env vars -> config.toml -> defaults, EXCEPT provider API keys,
+where an explicit `api_settings.<provider>.api_key` now outranks the matching
+environment variable" -- and already implemented on the spend path by PR-T2.
+`get_api_key` was the accessor out of line, and now matches it.
+
+The reason the exception exists at all: a key the user types into Settings
+must take effect. Under environment-first, a stale `OPENAI_API_KEY` exported
+in a shell profile silently outranked what the UI showed and what the user
+had just entered, with no surface anywhere saying which one would be spent.
+
+The environment variable is unchanged as the FALLBACK, so an env-only
+deployment keeps working exactly as before. Precedence below those two --
+legacy `[API] <provider>_api_key`, then the conventional `<NAME>_API_KEY` --
+is untouched.
+
+`Tests/Utils/test_config_api_key_resolution.py` carried the contradicting
+assertion. It was rewritten to the ruling rather than deleted, and a
+companion test pins the fallback, so both halves of the order are asserted.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-06-30-provider-credentials-console-setup-polish-design.md)

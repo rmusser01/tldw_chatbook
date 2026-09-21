@@ -148,6 +148,17 @@ class DateTimeTool(Tool):
             raise ValueError(f"Invalid timezone '{timezone}': {e}")
 
 
+# TASK-32806.4: bounds for the always-on calculator. Sized to be far above
+# any arithmetic a person would ask for and far below anything that costs
+# real time or memory: 65,536 bits is a ~19,700-digit integer, and the
+# string cap is a screenful of screenfuls. They are checked against the
+# OPERANDS, before the result is built.
+MAX_RESULT_BITS = 1 << 16
+MAX_EXPONENT = 1 << 16
+MAX_STRING_RESULT_LENGTH = 10_000
+MAX_EXPRESSION_LENGTH = 1_000
+
+
 class CalculatorTool(Tool):
     """Tool for performing mathematical calculations."""
 
@@ -196,6 +207,64 @@ class CalculatorTool(Tool):
             "max": max,
         }
 
+        def _reject_if_oversized(op, left, right) -> None:
+            """Refuse an operand pair whose RESULT would be enormous.
+
+            TASK-32806.4: this tool is always on, inherits allow, and
+            evaluates whatever the model sends, so a prompt injection is
+            enough to reach it. Measured before this check: ``'ab' * 10**7``
+            allocated 20 MB in 1 ms and ``7 ** (10**6)`` built a 0.37 MB
+            integer in 0.1 s, with bignum powers scaling superlinearly. The
+            enclosing timeout does not help -- it abandons the thread rather
+            than stopping it, so the CPU stays pinned for the life of the
+            process.
+
+            The size is predicted from the operands instead of being
+            discovered by computing the result, which is the whole point:
+            by the time the result exists the damage is done.
+            """
+            if op is ast.Mult:
+                for text, count in ((left, right), (right, left)):
+                    # bytes/bytearray repetition (b'x' * 10**9) blows up memory
+                    # exactly like str repetition (Qodo #2).
+                    if isinstance(text, (str, bytes, bytearray)) and isinstance(
+                        count, int
+                    ):
+                        if len(text) * max(count, 0) > MAX_STRING_RESULT_LENGTH:
+                            raise ValueError(
+                                "sequence repetition would produce more than "
+                                f"{MAX_STRING_RESULT_LENGTH} characters"
+                            )
+                        return
+                if isinstance(left, int) and isinstance(right, int):
+                    if left.bit_length() + right.bit_length() > MAX_RESULT_BITS:
+                        raise ValueError(
+                            "multiplication would produce a number larger than "
+                            f"{MAX_RESULT_BITS} bits"
+                        )
+                return
+            if op is ast.Mod and isinstance(left, (str, bytes, bytearray)):
+                # '%1000000000s' % 'x' allocates an enormous string. In a
+                # calculator, %% is numeric modulo, never string formatting
+                # (Qodo #2).
+                raise ValueError(
+                    "string/bytes formatting with %% is not a calculator operation"
+                )
+            if op is ast.Pow:
+                if not isinstance(right, int) or not isinstance(left, int):
+                    return  # floats overflow to a normal OverflowError
+                if right < 0:
+                    return
+                if right > MAX_EXPONENT:
+                    raise ValueError(
+                        f"exponent {right} exceeds the maximum of {MAX_EXPONENT}"
+                    )
+                if max(left.bit_length(), 1) * right > MAX_RESULT_BITS:
+                    raise ValueError(
+                        "exponentiation would produce a number larger than "
+                        f"{MAX_RESULT_BITS} bits"
+                    )
+
         def safe_eval(node):
             if isinstance(node, ast.Constant):
                 return node.value
@@ -205,6 +274,7 @@ class CalculatorTool(Tool):
                     raise ValueError(f"Operator {op.__name__} not allowed")
                 left = safe_eval(node.left)
                 right = safe_eval(node.right)
+                _reject_if_oversized(op, left, right)
                 return allowed_operators[op](left, right)
             elif isinstance(node, ast.UnaryOp):
                 op = type(node.op)
@@ -222,6 +292,14 @@ class CalculatorTool(Tool):
                 raise ValueError(f"Expression type {type(node).__name__} not allowed")
 
         try:
+            # Qodo #4: reject a non-string model argument at the boundary
+            # before it reaches parsing/business logic.
+            if not isinstance(expression, str):
+                raise ValueError("expression must be a string")
+            if len(expression) > MAX_EXPRESSION_LENGTH:
+                raise ValueError(
+                    f"expression exceeds {MAX_EXPRESSION_LENGTH} characters"
+                )
             # Parse the expression
             tree = ast.parse(expression, mode="eval")
             result = safe_eval(tree.body)

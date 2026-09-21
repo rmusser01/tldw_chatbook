@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Utils.private_paths import secure_private_directory
 from tldw_chatbook.Workspaces.git_workspace import (
     GitWorkspaceError,
     GitWorkspaceInfo,
@@ -67,7 +69,19 @@ def unsupported_execution_boundary() -> WorktreeRefusal:
 
 
 def _worktrees_base() -> Path:
-    return Path(tempfile.gettempdir()) / "tldw_agent_worktrees"
+    """The private root agent worktrees are created under.
+
+    TASK-32806.7: this was a fixed-name, default-mode directory in the
+    shared system temp dir (`/tmp/tldw_agent_worktrees`), which the first
+    process to create it owns -- another local user could pre-create it and
+    read or tamper with every checkout beneath it. It now lives under the
+    profile's own data directory, created 0700. The per-run leaf is still a
+    uuid, so nothing collides; only the parent moved off the shared temp.
+    Tests monkeypatch this, so they are unaffected.
+    """
+    base = get_user_data_dir() / "agent_worktrees"
+    secure_private_directory(base, create=True, application_owned=True)
+    return base
 
 
 def _detect(repo_root: Path) -> WorktreeRefusal | None:

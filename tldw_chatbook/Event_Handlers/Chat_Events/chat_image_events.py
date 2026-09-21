@@ -7,6 +7,7 @@
 import logging
 import mimetypes
 import re
+import warnings
 from io import BytesIO
 from pathlib import Path
 from typing import Tuple
@@ -82,6 +83,50 @@ class ChatImageHandler:
 
         image_data = path.read_bytes()
         extension = path.suffix.lower()
+
+        # TASK-32806.8: the byte cap above says nothing about pixels -- a
+        # ~96-megapixel flat image compresses well under 10 MB and decodes
+        # to ~288 MB. PIL only WARNS above `MAX_IMAGE_PIXELS` and decodes
+        # anyway, so the guard has to be ours.
+        #
+        # It lives HERE, beside the byte cap and OUTSIDE the try/except
+        # below, for the reason that block's own comment gives: a policy
+        # rejection is not a processing failure and must not trigger the
+        # original-bytes fallback. Escalating the warning inside
+        # `prepare_image_payload` alone would have been swallowed by that
+        # fallback and the bomb sent anyway.
+        #
+        # Reading the header is cheap: `open()` parses metadata and `size`
+        # is available before any decode.
+        if extension != ".svg":
+            pixel_cap = PILImage.MAX_IMAGE_PIXELS
+            pixels = None
+            try:
+                with warnings.catch_warnings():
+                    # PIL warns above the cap and raises above twice it, so
+                    # both arms have to mean the same thing here. A first
+                    # version of this guard caught the raise as "unreadable"
+                    # and went inert -- the bomb sailed through.
+                    warnings.simplefilter(
+                        "error", PILImage.DecompressionBombWarning
+                    )
+                    with PILImage.open(BytesIO(image_data)) as header:
+                        pixels = header.width * header.height
+            except (
+                PILImage.DecompressionBombError,
+                PILImage.DecompressionBombWarning,
+            ) as exc:
+                raise ValueError(
+                    "Image has too many pixels to decode safely "
+                    f"(limit {pixel_cap} pixels)."
+                ) from exc
+            except Exception:
+                pixels = None  # unreadable here fails informatively below
+            if pixel_cap and pixels is not None and pixels > pixel_cap:
+                raise ValueError(
+                    f"Image has too many pixels ({pixels / 1_000_000:.1f} MP). "
+                    f"Maximum: {pixel_cap / 1_000_000:.1f} MP"
+                )
 
         if extension == ".svg":
             # No usable fallback for un-rasterized SVG bytes — errors reject.
@@ -201,7 +246,17 @@ class ChatImageHandler:
             except Exception as exc:
                 raise ValueError(f"Could not render SVG: {exc}") from exc
 
-        pil_image = PILImage.open(BytesIO(image_data))
+        # TASK-32806.8: PIL only WARNS above `MAX_IMAGE_PIXELS` -- it decodes
+        # anyway -- so the 10 MB size cap upstream lets a ~96-megapixel flat
+        # image through to a ~288 MB decode. Five other modules in this repo
+        # escalate that warning, including `console_chat_fork`, which
+        # re-validates this very payload and imports a constant from this
+        # module; the two disagreed about the same bytes. Escalating here
+        # makes the attachment path fail where its sibling already fails.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PILImage.DecompressionBombWarning)
+            pil_image = PILImage.open(BytesIO(image_data))
+            pil_image.load()
         actual_format = (pil_image.format or "").upper()
         max_dimension = image_resize_max_dimension()
         needs_resize = (
