@@ -958,10 +958,14 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         """Exclude or restore the selected entry for agent file tools.
 
         The path-or-under match against the binding's exclusion snapshot
-        decides the direction.  Unexcluding a path covered by a parent
-        exclusion restores the covering entry itself, because registry
-        removal is exact-path (Task 1); toggling the deeper path alone would
-        be a registry no-op.
+        decides the direction.  Unexcluding a path covered by one or more
+        exclusions removes only the DEEPEST covering entry, because registry
+        removal is exact-path (Task 1): every covering entry is a path
+        prefix of the selection, so the longest one is the narrowest layer
+        and one press never restores more visibility than the selection's
+        own layer.  Nested layers unexclude one press at a time, and the
+        status copy reports remaining parent coverage instead of claiming
+        the path is included while it is not.
         """
         binding = self._selected_binding()
         if binding is None or binding.scope is None or not binding.available:
@@ -970,14 +974,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         if not selected_parts:
             return
         relative_path = "/".join(selected_parts)
-        covering = next(
-            (
-                exclusion
-                for exclusion in binding.exclusions
-                if self._is_excluded(relative_path, (exclusion,))
-            ),
-            None,
-        )
+        covering_candidates = [
+            exclusion
+            for exclusion in binding.exclusions
+            if self._is_excluded(relative_path, (exclusion,))
+        ]
+        covering = max(covering_candidates, key=len) if covering_candidates else None
         try:
             if covering is not None:
                 await asyncio.to_thread(
@@ -991,7 +993,18 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     for exclusion in binding.exclusions
                     if exclusion != covering
                 )
-                status_copy = f"Included {relative_path} for agent file tools."
+                remaining_cover = [
+                    exclusion
+                    for exclusion in updated_exclusions
+                    if self._is_excluded(relative_path, (exclusion,))
+                ]
+                if remaining_cover:
+                    status_copy = (
+                        f"Still excluded by {max(remaining_cover, key=len)} "
+                        "— unexclude again to remove that layer."
+                    )
+                else:
+                    status_copy = f"Included {relative_path} for agent file tools."
             else:
                 await asyncio.to_thread(
                     self._inspector.set_exclusion,

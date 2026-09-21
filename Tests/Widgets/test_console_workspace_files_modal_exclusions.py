@@ -264,6 +264,55 @@ async def test_toggle_action_excludes_selected_plain_entry_and_badges_it() -> No
         ), labels
 
 
+async def test_nested_unexclude_strips_deepest_layer_first_with_truthful_status() -> None:
+    service = _FakeFilesService(_root_page())
+    modal = _files_modal(service, exclusions=("secrets", "secrets/keys"))
+    app = App[None]()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.push_screen(modal)
+        for _ in range(50):
+            await pilot.pause()
+            if list(modal.query(".console-workspace-files-entry")):
+                break
+        modal._state = replace(
+            modal._state, selected_tree_parts=("secrets", "keys", "a.pem")
+        )
+
+        # First press removes only the deepest covering layer; the selected
+        # path stays excluded by the parent, and the status must say so.
+        await modal.action_toggle_exclusion()
+        await pilot.pause()
+
+        assert service.exclusion_calls == [("binding-1", "secrets/keys", False)]
+        assert "Still excluded by secrets" in modal.state.status_copy
+        labels = [
+            button.label.plain
+            for button in modal.query(".console-workspace-files-entry")
+        ]
+        assert any(
+            "secrets" in label and " [excluded]" in label for label in labels
+        ), labels
+
+        # Second press removes the remaining parent layer and only then
+        # claims the path is included.
+        await modal.action_toggle_exclusion()
+        await pilot.pause()
+
+        assert service.exclusion_calls == [
+            ("binding-1", "secrets/keys", False),
+            ("binding-1", "secrets", False),
+        ]
+        assert (
+            modal.state.status_copy
+            == "Included secrets/keys/a.pem for agent file tools."
+        )
+        labels = [
+            button.label.plain
+            for button in modal.query(".console-workspace-files-entry")
+        ]
+        assert not any(" [excluded]" in label for label in labels), labels
+
+
 async def test_toggle_action_without_selection_calls_nothing() -> None:
     service = _FakeFilesService(_root_page())
     modal = _files_modal(service, exclusions=("secrets",))
