@@ -332,6 +332,31 @@ class TestDBInitialization:
 
 
 class TestCharacterCards:
+    def test_deserialize_row_fields_logs_fingerprint_not_raw_content(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A malformed JSON field is logged by content fingerprint, never as raw
+        content (the fields hold user character-card / quiz data). Guards the
+        privacy fix on the corruption path in `_deserialize_row_fields`.
+        """
+        from loguru import logger
+        from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
+
+        malformed = '{"unterminated": "SECRET-CANARY'
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            result = db_instance._deserialize_row_fields(
+                {"id": 7, "tags": malformed}, ["tags"]
+            )
+        finally:
+            logger.remove(sink)
+
+        assert result["tags"] is None  # unchanged: bad field -> None
+        warning = "\n".join(messages)
+        assert "SECRET-CANARY" not in warning  # raw content must not leak
+        assert content_fingerprint(malformed) in warning
+
     def test_add_character_card(self, db_instance: CharactersRAGDB):
         card_data = _create_sample_card_data("Add")
         card_id = db_instance.add_character_card(card_data)

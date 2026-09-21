@@ -8836,7 +8836,8 @@ UPDATE db_schema_version
                         "uuid", "N/A"
                     )  # Try to get an identifier
                     logger.warning(
-                        f"Failed to decode JSON for field '{field}' in row (ID: {pk_val}). Value: '{item[field][:100]}...'"
+                        f"Failed to decode JSON for field '{field}' in row (ID: {pk_val}). "
+                        f"Value fingerprint: {content_fingerprint(item[field])}"
                     )
                     item[field] = None  # Or sensible default
         return item
