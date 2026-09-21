@@ -31,16 +31,12 @@
 # Import necessary libraries
 from pathlib import Path
 import hashlib
-import json
 import logging
 import os
 import re
 from .secure_temp_files import get_temp_manager
-import time
-import uuid
-from datetime import timedelta, datetime
+from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 #
 # 3rd-Party Imports
@@ -115,10 +111,6 @@ def extract_text_from_segments(segments, include_timestamps=True):
         return "Error: Unable to extract transcription"
 
 
-def ensure_directory_exists(path):
-    """Ensure that a directory exists, creating it if necessary."""
-    os.makedirs(path, exist_ok=True)
-
 
 global_api_endpoints = [
     "anthropic",
@@ -168,29 +160,6 @@ openai_tts_voices = [
 ]
 
 
-def format_api_name(api):
-    name_mapping = {
-        "openai": "OpenAI",
-        "anthropic": "Anthropic",
-        "cohere": "Cohere",
-        "google": "Google",
-        "groq": "Groq",
-        "huggingface": "HuggingFace",
-        "openrouter": "OpenRouter",
-        "deepseek": "DeepSeek",
-        "mistral": "Mistral",
-        "custom_openai_api": "Custom-OpenAI-API",
-        "custom_openai_api_2": "Custom-OpenAI-API-2",
-        "llama": "Llama.cpp",
-        "ooba": "Ooba",
-        "kobold": "Kobold",
-        "tabby": "Tabbyapi",
-        "vllm": "VLLM",
-        "ollama": "Ollama",
-        "aphrodite": "Aphrodite",
-    }
-    return name_mapping.get(api, api.title())
-
 
 #
 # End of Config loading
@@ -219,35 +188,6 @@ def format_api_name(api):
 #
 # print(format_metadata_as_text(example_metadata))
 
-
-def convert_to_seconds(time_str):
-    if not time_str:
-        return 0
-
-    # If it's already a number, assume it's in seconds
-    if time_str.isdigit():
-        return int(time_str)
-
-    # Parse time string in format HH:MM:SS, MM:SS, or SS
-    time_parts = time_str.split(":")
-    if len(time_parts) == 3:
-        return int(
-            timedelta(
-                hours=int(time_parts[0]),
-                minutes=int(time_parts[1]),
-                seconds=int(time_parts[2]),
-            ).total_seconds()
-        )
-    elif len(time_parts) == 2:
-        return int(
-            timedelta(
-                minutes=int(time_parts[0]), seconds=int(time_parts[1])
-            ).total_seconds()
-        )
-    elif len(time_parts) == 1:
-        return int(time_parts[0])
-    else:
-        raise ValueError(f"Invalid time format: {time_str}")
 
 
 def truncate(text: Optional[str], limit: int, *, marker: str = "\u2026") -> Optional[str]:
@@ -379,29 +319,6 @@ def save_to_file(video_urls, filename):
     logging.info(f"Video URLs saved to {filename}")
 
 
-def save_segments_to_json(segments, file_name="transcription_segments.json"):
-    """
-    Save transcription segments to a JSON file.
-
-    Parameters:
-    segments (list): List of transcription segments
-    file_name (str): Name of the JSON file to save (default: "transcription_segments.json")
-
-    Returns:
-    str: Path to the saved JSON file
-    """
-    # Ensure the Results directory exists
-    os.makedirs("Results", exist_ok=True)
-
-    # Full path for the JSON file
-    json_file_path = os.path.join("Results", file_name)
-
-    # Save segments to JSON file
-    with open(json_file_path, "w", encoding="utf-8") as json_file:
-        json.dump(segments, json_file, ensure_ascii=False, indent=4)
-
-    return json_file_path
-
 
 def safe_read_file(file_path):
     encodings = [
@@ -480,19 +397,6 @@ def generate_unique_filename(base_path, base_filename):
     return filename
 
 
-def generate_unique_identifier(file_path):
-    filename = os.path.basename(file_path)
-    timestamp = int(time.time())
-
-    # Generate a hash of the file content
-    hasher = hashlib.md5()
-    with open(file_path, "rb") as f:
-        buf = f.read()
-        hasher.update(buf)
-    content_hash = hasher.hexdigest()[:8]  # Use first 8 characters of the hash
-
-    return f"local:{timestamp}:{content_hash}:{filename}"
-
 
 #
 # End of UUID-Functions
@@ -559,73 +463,9 @@ def normalize_title(title, preserve_spaces=False):
     return title.strip("_")
 
 
-def clean_youtube_url(url):
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
-    if "list" in query_params:
-        query_params.pop("list")
-    cleaned_query = urlencode(query_params, doseq=True)
-    cleaned_url = urlunparse(parsed_url._replace(query=cleaned_query))
-    return cleaned_url
 
 
-def sanitize_user_input(message):
-    """
-    Removes or escapes '{{' and '}}' to prevent placeholder injection.
 
-    Args:
-        message (str): The user's message.
-
-    Returns:
-        str: Sanitized message.
-    """
-    # Replace '{{' and '}}' with their escaped versions
-    message = re.sub(r"\{\{", "{ {", message)
-    message = re.sub(r"\}\}", "} }", message)
-    return message
-
-
-def format_file_path(file_path, fallback_path=None):
-    if file_path and os.path.exists(file_path):
-        logging.debug(f"File exists: {file_path}")
-        return file_path
-    elif fallback_path and os.path.exists(fallback_path):
-        logging.debug(
-            f"File does not exist: {file_path}. Returning fallback path: {fallback_path}"
-        )
-        return fallback_path
-    else:
-        logging.debug(f"File does not exist: {file_path}. No fallback path available.")
-        return None
-
-
-def safe_float(value: str, default: float, name: str) -> float:
-    """Safely converts a string to a float, returning a default on failure."""
-    if not value:  # Handles empty string case
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        logging.warning(
-            f"Invalid float value for {name}: '{value}'. Using default: {default}."
-        )
-        return default
-
-
-def safe_int(value: str, default: Optional[int], name: str) -> Optional[int]:
-    """
-    Safely converts a string to an int, returning a default on failure.
-    Allows default to be None, in which case None is returned on failure if default is None.
-    """
-    if not value:  # Handles empty string case
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        logging.warning(
-            f"Invalid integer value for {name}: '{value}'. Using default: {default}."
-        )
-        return default
 
 
 #
@@ -639,28 +479,12 @@ def safe_int(value: str, default: Optional[int], name: str) -> Optional[int]:
 
 
 # Secure temporary file management using the new secure utilities
-def save_temp_file(file):
-    """Save uploaded file to a secure temporary location."""
-    temp_manager = get_temp_manager()
-
-    # Read file content
-    file_content = file.read()
-
-    # Create secure temporary file
-    temp_path = temp_manager.create_temp_file(
-        file_content, suffix=f"_{file.name}", prefix="upload_"
-    )
-    return temp_path
-
 
 def cleanup_temp_files():
     """Clean up all temporary files using secure deletion."""
     temp_manager = get_temp_manager()
     temp_manager.cleanup_all()
 
-
-def generate_unique_id():
-    return f"uploaded_file_{uuid.uuid4()}"
 
 
 class FileProcessor:
@@ -932,29 +756,6 @@ def extract_media_id_from_result_string(result_msg: Optional[str]) -> Optional[s
         # The pattern "Media ID: <id>" was not found in the string
         return None
 
-
-def get_api_name(app_instance, provider: str, endpoints: dict) -> Optional[str]:
-    if not app_instance._ui_ready:
-        return None
-    provider_key_map = {
-        "llama_cpp": "llama_cpp",
-        "Ollama": "Ollama",
-        "Oobabooga": "Oobabooga",
-        "koboldcpp": "koboldcpp",
-        "vllm": "vllm",
-        "Custom": "Custom",
-        "Custom-2": "Custom_2",
-    }
-    endpoint_key = provider_key_map.get(provider)
-    if endpoint_key:
-        url = endpoints.get(endpoint_key)
-        if url:
-            return url
-        else:
-            logging.warning(
-                f"URL key '{endpoint_key}' for provider '{provider}' missing in config [api_endpoints]."
-            )
-    return None
 
 
 #
