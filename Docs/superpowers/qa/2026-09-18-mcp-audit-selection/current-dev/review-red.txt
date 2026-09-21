@@ -1,0 +1,344 @@
+FFFF.                                                                    [100%]
+=================================== FAILURES ===================================
+_______ test_refresh_cannot_identify_which_duplicate_execution_survived ________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-review-red-temp/test_refresh_cannot_identify_w0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_refresh_cannot_identify_which_duplicate_execution_survived ________
+E
+E   request = <FixtureRequest for <Coroutine test_refresh_cannot_identify_which_duplicate_execution_survived>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_refresh_cannot_identify_which_duplicate_execution_survived(request):
+E           entry = _audit_record(tool_name="search")
+E           app = AuditApp([dict(entry), dict(entry)])
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench = app.query_one(MCPWorkbench)
+E               workbench.set_mode("audit")
+E               await pilot.pause()
+E               await _select_audit_mode_row(app, pilot, 1)
+E               app.unified_mcp_service.execution_log._records = [dict(entry)]
+E               await workbench._sync_audit_log_entries()
+E               await pilot.pause()
+E   >           assert not app.query_one("#mcp-inspector-audit").display
+E   E           AssertionError: assert not True
+E   E            +  where True = Vertical(id='mcp-inspector-audit').display
+E   E            +    where Vertical(id='mcp-inspector-audit') = query_one('#mcp-inspector-audit')
+E   E            +      where query_one = AuditApp(title='AuditApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'}).query_one
+E
+E   Tests/UI/test_mcp_audit_selection.py:174: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 00:20:38.496 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 00:20:38.563 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 00:20:38.590 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 00:20:38.611 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 00:20:38.983 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 00:20:39.484 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-review-red-temp/test_refresh_cannot_identify_w0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.62s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+E   1.16s setup    Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+E
+E   (1 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+E   1 failed in 4.33s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-21 00:20:36.660 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-21 00:20:36.734 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-21 00:20:36.746 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-21 00:20:36.748 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+__ test_retired_execution_gesture_stays_retired_after_round_trip[mode-table] ___
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-review-red-temp/test_retired_execution_gesture0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __ test_retired_execution_gesture_stays_retired_after_round_trip[mode-table] ___
+E
+E   request = <FixtureRequest for <Coroutine test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae44e30>
+E   gesture = 'table', departure = 'mode'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("gesture", ["table", "canvas"])
+E       @pytest.mark.parametrize("departure", ["mode", "subview"])
+E       @private_profile_test
+E       async def test_retired_execution_gesture_stays_retired_after_round_trip(
+E           request, monkeypatch, gesture, departure
+E       ):
+E           app = AuditApp([_audit_record(tool_name="search")])
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench = app.query_one(MCPWorkbench)
+E               workbench.set_mode("audit")
+E               await pilot.pause()
+E               canvas = app.query_one(MCPAuditMode)
+E               table = app.query_one("#mcp-audit-table", DataTable)
+E               key, _ = table.coordinate_to_cell_key((0, 0))
+E               old_gesture = DataTable.RowSelected(table, 0, key)
+E               held = []
+E               original = canvas.post_message
+E
+E               def hold_selection(message):
+E                   if isinstance(message, MCPAuditMode.EntrySelected):
+E                       held.append(message)
+E                       return True
+E                   return original(message)
+E
+E               if gesture == "canvas":
+E                   monkeypatch.setattr(canvas, "post_message", hold_selection)
+E                   canvas.on_data_table_row_selected(old_gesture)
+E                   assert len(held) == 1
+E                   monkeypatch.setattr(canvas, "post_message", original)
+E               if departure == "mode":
+E                   workbench.set_mode("tools")
+E                   await pilot.pause()
+E                   workbench.set_mode("audit")
+E               else:
+E                   await pilot.click("#mcp-audit-subview-findings")
+E                   await pilot.click("#mcp-audit-subview-executions")
+E               await pilot.pause()
+E               assert not app.query_one("#mcp-inspector-audit").display
+E               if gesture == "table":
+E                   canvas.on_data_table_row_selected(old_gesture)
+E               else:
+E                   await workbench.on_mcp_audit_mode_entry_selected(held[0])
+E               await pilot.pause()
+E   >           assert not app.query_one("#mcp-inspector-audit").display
+E   E           AssertionError: assert not True
+E   E            +  where True = Vertical(id='mcp-inspector-audit').display
+E   E            +    where Vertical(id='mcp-inspector-audit') = query_one('#mcp-inspector-audit')
+E   E            +      where query_one = AuditApp(title='AuditApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).query_one
+E
+E   Tests/UI/test_mcp_audit_selection.py:222: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 00:20:44.647 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 00:20:44.780 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 00:20:44.792 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 00:20:44.794 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 00:20:44.974 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 00:20:45.653 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-review-red-temp/test_retired_execution_gesture0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.81s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+E   1.31s setup    Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+E
+E   (1 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+E   1 failed in 4.68s
+__ test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas] __
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-review-red-temp/test_retired_execution_gesture1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __ test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas] __
+E
+E   request = <FixtureRequest for <Coroutine test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d281b80>
+E   gesture = 'canvas', departure = 'mode'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("gesture", ["table", "canvas"])
+E       @pytest.mark.parametrize("departure", ["mode", "subview"])
+E       @private_profile_test
+E       async def test_retired_execution_gesture_stays_retired_after_round_trip(
+E           request, monkeypatch, gesture, departure
+E       ):
+E           app = AuditApp([_audit_record(tool_name="search")])
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench = app.query_one(MCPWorkbench)
+E               workbench.set_mode("audit")
+E               await pilot.pause()
+E               canvas = app.query_one(MCPAuditMode)
+E               table = app.query_one("#mcp-audit-table", DataTable)
+E               key, _ = table.coordinate_to_cell_key((0, 0))
+E               old_gesture = DataTable.RowSelected(table, 0, key)
+E               held = []
+E               original = canvas.post_message
+E
+E               def hold_selection(message):
+E                   if isinstance(message, MCPAuditMode.EntrySelected):
+E                       held.append(message)
+E                       return True
+E                   return original(message)
+E
+E               if gesture == "canvas":
+E                   monkeypatch.setattr(canvas, "post_message", hold_selection)
+E                   canvas.on_data_table_row_selected(old_gesture)
+E                   assert len(held) == 1
+E                   monkeypatch.setattr(canvas, "post_message", original)
+E               if departure == "mode":
+E                   workbench.set_mode("tools")
+E                   await pilot.pause()
+E                   workbench.set_mode("audit")
+E               else:
+E                   await pilot.click("#mcp-audit-subview-findings")
+E                   await pilot.click("#mcp-audit-subview-executions")
+E               await pilot.pause()
+E               assert not app.query_one("#mcp-inspector-audit").display
+E               if gesture == "table":
+E                   canvas.on_data_table_row_selected(old_gesture)
+E               else:
+E                   await workbench.on_mcp_audit_mode_entry_selected(held[0])
+E               await pilot.pause()
+E   >           assert not app.query_one("#mcp-inspector-audit").display
+E   E           AssertionError: assert not True
+E   E            +  where True = Vertical(id='mcp-inspector-audit').display
+E   E            +    where Vertical(id='mcp-inspector-audit') = query_one('#mcp-inspector-audit')
+E   E            +      where query_one = AuditApp(title='AuditApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'}).query_one
+E
+E   Tests/UI/test_mcp_audit_selection.py:222: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 00:20:51.201 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 00:20:51.268 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 00:20:51.276 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 00:20:51.278 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 00:20:51.758 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 00:20:52.446 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-review-red-temp/test_retired_execution_gesture1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.61s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+E   1.54s setup    Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+E
+E   (1 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+E   1 failed in 4.60s
+_ test_retired_execution_gesture_stays_retired_after_round_trip[subview-table] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-review-red-temp/test_retired_execution_gesture2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_retired_execution_gesture_stays_retired_after_round_trip[subview-table] _
+E
+E   request = <FixtureRequest for <Coroutine test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cc14d70>
+E   gesture = 'table', departure = 'subview'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("gesture", ["table", "canvas"])
+E       @pytest.mark.parametrize("departure", ["mode", "subview"])
+E       @private_profile_test
+E       async def test_retired_execution_gesture_stays_retired_after_round_trip(
+E           request, monkeypatch, gesture, departure
+E       ):
+E           app = AuditApp([_audit_record(tool_name="search")])
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench = app.query_one(MCPWorkbench)
+E               workbench.set_mode("audit")
+E               await pilot.pause()
+E               canvas = app.query_one(MCPAuditMode)
+E               table = app.query_one("#mcp-audit-table", DataTable)
+E               key, _ = table.coordinate_to_cell_key((0, 0))
+E               old_gesture = DataTable.RowSelected(table, 0, key)
+E               held = []
+E               original = canvas.post_message
+E
+E               def hold_selection(message):
+E                   if isinstance(message, MCPAuditMode.EntrySelected):
+E                       held.append(message)
+E                       return True
+E                   return original(message)
+E
+E               if gesture == "canvas":
+E                   monkeypatch.setattr(canvas, "post_message", hold_selection)
+E                   canvas.on_data_table_row_selected(old_gesture)
+E                   assert len(held) == 1
+E                   monkeypatch.setattr(canvas, "post_message", original)
+E               if departure == "mode":
+E                   workbench.set_mode("tools")
+E                   await pilot.pause()
+E                   workbench.set_mode("audit")
+E               else:
+E                   await pilot.click("#mcp-audit-subview-findings")
+E                   await pilot.click("#mcp-audit-subview-executions")
+E               await pilot.pause()
+E               assert not app.query_one("#mcp-inspector-audit").display
+E               if gesture == "table":
+E                   canvas.on_data_table_row_selected(old_gesture)
+E               else:
+E                   await workbench.on_mcp_audit_mode_entry_selected(held[0])
+E               await pilot.pause()
+E   >           assert not app.query_one("#mcp-inspector-audit").display
+E   E           AssertionError: assert not True
+E   E            +  where True = Vertical(id='mcp-inspector-audit').display
+E   E            +    where Vertical(id='mcp-inspector-audit') = query_one('#mcp-inspector-audit')
+E   E            +      where query_one = AuditApp(title='AuditApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'}).query_one
+E
+E   Tests/UI/test_mcp_audit_selection.py:222: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 00:20:58.266 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 00:20:58.636 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 00:20:58.727 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 00:20:58.730 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 00:20:59.646 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 00:21:00.405 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-review-red-temp/test_retired_execution_gesture2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   3.42s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+E   2.48s setup    Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+E
+E   (1 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+E   1 failed in 7.75s
+============================= slowest 25 durations =============================
+9.76s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+8.09s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+6.59s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+6.36s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+5.85s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+FAILED Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+4 failed, 1 passed, 10 deselected in 39.02s

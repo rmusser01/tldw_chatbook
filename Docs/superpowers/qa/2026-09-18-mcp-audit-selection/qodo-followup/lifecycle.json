@@ -1,0 +1,90 @@
+{
+  "root": "/private/tmp/tldw-32834-qodo-004",
+  "pid": 24024,
+  "pid_absent": true,
+  "exit_code": 0,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null,
+  "qualification_passed": true,
+  "database_checks": {
+    "data/db/agent_runs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/chachanotes.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/evals.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/library_collections.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/media.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/prompts.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/subscriptions.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/workspaces.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      [
+        "ok"
+      ]
+    ]
+  },
+  "counts": {
+    "conversations": 0,
+    "messages": 0
+  },
+  "defaults_unchanged": true,
+  "default_before": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "a13c53fd3d92b318dec1e5371e8fb045d8460106d28087bb2f504f66cd691979",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "default_after": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "a13c53fd3d92b318dec1e5371e8fb045d8460106d28087bb2f504f66cd691979",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "instance_lock_reacquired": true,
+  "faulthandler_bytes": {
+    "data/default_user/faulthandler.log": 0
+  },
+  "errors": [],
+  "source_hashes_match": true,
+  "runner_hash_matches": true,
+  "network_attempts": [],
+  "preexisting_fixture_files_unchanged": true,
+  "fixture_pids_absent": {
+    "24134": true,
+    "24135": true
+  }
+}

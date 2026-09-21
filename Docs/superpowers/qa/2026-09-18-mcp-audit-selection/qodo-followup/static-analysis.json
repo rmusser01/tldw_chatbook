@@ -1,0 +1,14 @@
+[
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "base_findings": 2,
+    "current_findings": 2,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "base_findings": 66,
+    "current_findings": 66,
+    "introduced": []
+  }
+]

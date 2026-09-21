@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────────────┐
+│                                            ││             Local workspace, web, and Watchlists tools: on ▸              ││                                             │
+│ Source                                     ││  Applies immediately - no Save needed.                                    ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Available by default. Calls still follow Ask, Allow, or Off              ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  permissions.                                                             ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││  Add server                                 │
+│                                            ││  ▊  Local MCP / Hub test root                         ▎                   ││  review_echo — audit-beta                   │
+│ Servers                                    ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││                                             │
+│  ● ready · ◦ off (opt-in) · ⌂ built-in     ││                                                                           ││  A local tool result fixture.               │
+│    All servers                             ││  Root: local MCP serving and Hub tests. Blank uses the serving            ││                                             │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  process's current folder. Console uses Chat scratch and admitted         ││  Tags: —                                    │
+│  ● audit-alpha                  1          ││  Workspace folders.                                                       ││                                             │
+│  ● audit-beta                   1          ││                                                                           ││  Parameters: form                           │
+│                                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                                             │
+│                                            ││  ▊  Filter tools…                         ▎▊  All servers          ▼  ▎   ││  Test Tool                                  │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  review_echo — audit-beta                   │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Tool                                  State  Server                      ││  Permission: Ask                            │
+│                                            ││  watchlists_get_item                   Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_operation_status       Ask    Local workspace, web, a…    ││  Inherited from the global default.         │
+│                                            ││  watchlists_get_operations_status      Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_list_briefings             Ask    Local workspace, web, a…    ││  Change in Permissions                      │
+│                                            ││  watchlists_list_collections           Ask    Local workspace, web, a…    ││  Advanced…                                  │
+│                                            ││  watchlists_list_sources               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_search_items               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_set_briefing_schedule      Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_update_collection_sources  Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  web_crawl                             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  web_fetch                             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  web_search                            Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  shell_exec                            Ask    Raw CLI (unsafe host sh…    ││                                             │
+│                                            ││  cat                                   Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  find                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_blame                             Ask    Virtual CLI (read-only) ▃▃  ││                                             │
+│                                            ││  git_branches                          Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_diff                              Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_log                               Ask    Virtual CLI (read-only)   ▅ ││                                             │
+│                                            ││  git_status                            Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  grep                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  ls                                    Ask    Virtual CLI (read-only)     ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────────────┘
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

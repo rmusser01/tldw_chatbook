@@ -1,0 +1,8 @@
+........................................................................ [ 47%]
+........................................................................ [ 94%]
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+1.32s setup    Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-selection]
+
+(24 durations < 1s hidden.)
+152 passed in 28.01s

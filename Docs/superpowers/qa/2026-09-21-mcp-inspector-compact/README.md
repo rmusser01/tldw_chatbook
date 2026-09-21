@@ -79,3 +79,12 @@ intermediate/retry argument and permission captures in its private evidence root
 | Light / 80×24 | [View](textual-light-80x24-failed-arguments.svg) | [View](textual-light-80x24-failed-permission.svg) | [View](textual-light-80x24-failed.svg) | [View](textual-light-80x24-recovered.svg) |
 | Dark / 170×48 | [View](textual-dark-170x48-failed-arguments.svg) | [View](textual-dark-170x48-failed-permission.svg) | [View](textual-dark-170x48-failed.svg) | [View](textual-dark-170x48-recovered.svg) |
 | Light / 170×48 | [View](textual-light-170x48-failed-arguments.svg) | [View](textual-light-170x48-failed-permission.svg) | [View](textual-light-170x48-failed.svg) | [View](textual-light-170x48-recovered.svg) |
+
+
+## Approved merge — 2026-09-21
+
+PR2770 merged as `ba5aa6e9ec60bb93aec4adc6aae219deb9266b78`. Its tree
+exactly matches qualified head `d6c15f9e4a`. All required checks passed,
+including 1,152 fast-contract and 123 admission cases (one expected failure).
+Qodo reports zero outstanding findings and its thread is resolved.
+[Closeout receipt](pr2770-closeout.json). TASK-32882 is Done.

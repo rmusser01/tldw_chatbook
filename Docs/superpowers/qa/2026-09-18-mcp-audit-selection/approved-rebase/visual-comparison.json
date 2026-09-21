@@ -1,0 +1,145 @@
+[
+  {
+    "capture": "textual-dark-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "1010fbfcbca1b15a256b20c4527badde912c6a42a9dcd1b1c41eaa395bcdfd07",
+    "approved_svg_sha256": "b9b3f501c8ddfffc850a3962899d2200d54a8d334fc8e7084b2bd3f3e272d32e"
+  },
+  {
+    "capture": "textual-dark-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e",
+    "approved_svg_sha256": "f319c1070d0bcf4538cbc86a46fff08248da8b1353d0ec1103ae5a5cbf4a14b7"
+  },
+  {
+    "capture": "textual-dark-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "ab6f3e46057818985be9e491af38da8650faba035dc2de191ad0d9628bb789bf",
+    "approved_svg_sha256": "f2ec47b0d389d6fdf7f431684846995bf496297be81fd5e9006b5eb395bc2447",
+    "remaining_difference": "Input caret blink on the first letter of audit-alpha."
+  },
+  {
+    "capture": "textual-dark-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "9817276daaa34f61f153e52bc3cf114d85a41bc436b021c49d34f3e489c403e2",
+    "approved_svg_sha256": "71f6c31eb000468ca184789e347b5a0ff738ef1bd234acc489ec193d1968659a"
+  },
+  {
+    "capture": "textual-dark-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "4bfe613127671a52dc6618ab1a96add869a1d56ca57960d37c3270c4c0c8e1f1",
+    "approved_svg_sha256": "804fd2a6d4d69e27268dc0aafdd2e85e89ebe8804105de4c33055bf92d8951a2"
+  },
+  {
+    "capture": "textual-dark-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "ee661d6c351e7b4ec71bdbb14bf01d6b9a9dffc82b3cdeea1b5e12fb45fca4b5",
+    "approved_svg_sha256": "5faec9fe1dfae9be77364a6018701b5d73045f398d85e39d0536b14d4c0b217b"
+  },
+  {
+    "capture": "textual-dark-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f",
+    "approved_svg_sha256": "ca0827e6301554ea639a83764edbb901bd6f971cd42825380979f05f8426b26e"
+  },
+  {
+    "capture": "textual-dark-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "4bea97ef5c0f5480067051ff0192e252217d855ba3a4d30665b2d14c7c09343c",
+    "approved_svg_sha256": "0a25646f775484e377d7d46580263bceb30e93bd508f766393845095a2843d16"
+  },
+  {
+    "capture": "textual-dark-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "3d9bb0b9a2f0197bc7089036526ce9bbd2555b1b17cc3335a46b5d48be42b65f",
+    "approved_svg_sha256": "5b9b1cf2d91ae549e1dddf3a04f0bdbd51508858e1f0d33f35f325ec1610685e"
+  },
+  {
+    "capture": "textual-dark-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "0acd1e9125c2c44231c3bd76e926480dd8d9e66a41e69e09aa66cc1f26ccfc30",
+    "approved_svg_sha256": "aa18922bf026e03dfd083f990a9fba2e7e98a14787e46546c15d9b0c5d1a0e80"
+  },
+  {
+    "capture": "textual-light-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "edb69abb07d16ec3b7615f28a6bc0ec67600ff203bdb5ec556c39a2b291f9a03",
+    "approved_svg_sha256": "e83923467c24e0ecfc70084eb6864c1b114ac2e37852620e0ee78f47c138de07"
+  },
+  {
+    "capture": "textual-light-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6",
+    "approved_svg_sha256": "8504a59cd6744370ac61ef06c70ec1834cd2985231b08a0fe9e2f8ca11ccad07"
+  },
+  {
+    "capture": "textual-light-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "61a81cfcb8010bb5430356301262aa1ef914ef879562c6507829aba2a74d9b7a",
+    "approved_svg_sha256": "f3a4785711a3f891ff15e19ef2d1f63c2c7bc490efb31cb8e9c8c44582d97d15",
+    "remaining_difference": "Input caret blink on the first letter of audit-alpha."
+  },
+  {
+    "capture": "textual-light-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "431c5a3df3f523a04cada69c56245589d916d23e5f345ec83aac06430b7610d7",
+    "approved_svg_sha256": "572c07147dc1dc8c6b6814ee289607515f6117d44650f54133c9e813d7234293"
+  },
+  {
+    "capture": "textual-light-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "6afa1269c97c23114d355f6632d9b82c53e33b87c4e90dcfff4e7bc6f5de752f",
+    "approved_svg_sha256": "50ed8be46ef298b3e26cadfc7e0b8cc60922678b939d85ab66d0ec59dbff4f1e"
+  },
+  {
+    "capture": "textual-light-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "4204065096ceafe8bff3ce0f1315ab3fa3874bab3672f0702bc69545ec7fdf07",
+    "approved_svg_sha256": "f6516d547ebbbfc0e7cd8b5441635da36a36bd1c81ecdde77bc98cb83383e1fe"
+  },
+  {
+    "capture": "textual-light-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694",
+    "approved_svg_sha256": "0dcde7fb389650a574f50b653e056da389b8fdb452f0e4afba5bd935ce6e2e63"
+  },
+  {
+    "capture": "textual-light-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "18323b13b2e887b8c6bf344d941672341f2c2cbea59bd25fdddd63b9ccd4f2a4",
+    "approved_svg_sha256": "f7be1c7c3111d33f80dc23a0effd468ac3d510da191e1a56cdfbd5a6d2881b02",
+    "remaining_difference": "Input caret blink; compact light difference is zero-width and invisible."
+  },
+  {
+    "capture": "textual-light-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "390b0b01994ba83e1af5ca1968a9520444ac7778f3467ff72026a1e6d8e98096",
+    "approved_svg_sha256": "92cc393d8712925f28b81c990a9be4777dd23e9c4407bfa507c66064e7ceb860"
+  },
+  {
+    "capture": "textual-light-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "abb2d368b53126a5f9339b7d470930221200af3b96ad6416c527a50c49a1535e",
+    "approved_svg_sha256": "9466ffbebb5e0fa39500f27631a2ba5f24235c04d890acbe38002b5cb7a53e9b"
+  }
+]

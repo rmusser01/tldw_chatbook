@@ -1,0 +1,413 @@
+FFFFFFF.                                                                 [100%]
+=================================== FAILURES ===================================
+______ test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0] ______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0] ______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]>>
+E   old_count = 1, new_count = 1, expected = 'new-0'
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:30.294 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:30.360 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:30.426 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:30.433 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:30.434 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:30.550 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:30.772 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+E   1 failed in 1.07s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-21 07:41:29.427 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-21 07:41:29.526 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-21 07:41:29.576 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-21 07:41:29.584 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-21 07:41:29.585 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+______ test_refresh_requires_unique_identity_in_both_snapshots[1-0-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[1-0-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]>>
+E   old_count = 1, new_count = 0, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:31.930 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:32.000 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:32.070 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:32.077 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:32.078 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:32.203 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:32.432 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]
+E   1 failed in 1.12s
+______ test_refresh_requires_unique_identity_in_both_snapshots[0-1-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[0-1-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]>>
+E   old_count = 0, new_count = 1, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:33.537 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:33.606 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:33.679 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:33.687 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:33.689 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:33.824 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:34.076 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]
+E   1 failed in 1.13s
+______ test_refresh_requires_unique_identity_in_both_snapshots[2-1-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[2-1-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]>>
+E   old_count = 2, new_count = 1, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:35.138 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:35.202 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:35.266 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:35.273 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:35.274 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:35.388 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:35.609 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i3/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+E   1 failed in 1.04s
+______ test_refresh_requires_unique_identity_in_both_snapshots[1-2-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i4/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[1-2-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]>>
+E   old_count = 1, new_count = 2, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:36.649 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:36.712 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:36.776 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:36.783 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:36.784 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:36.897 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:37.117 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i4/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]
+E   1 failed in 1.05s
+______ test_refresh_requires_unique_identity_in_both_snapshots[2-2-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i5/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[2-2-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]>>
+E   old_count = 2, new_count = 2, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:38.204 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:38.268 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:38.332 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:38.339 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:38.340 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:38.453 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:38.675 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i5/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]
+E   1 failed in 1.04s
+______ test_refresh_requires_unique_identity_in_both_snapshots[0-0-None] _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i6/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ______ test_refresh_requires_unique_identity_in_both_snapshots[0-0-None] _______
+E   
+E   request = <FixtureRequest for <Coroutine test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]>>
+E   old_count = 0, new_count = 0, expected = None
+E   
+E       @pytest.mark.parametrize(
+E           ("old_count", "new_count", "expected"),
+E           [(1, 1, "new-0"), (1, 0, None), (0, 1, None), (2, 1, None),
+E            (1, 2, None), (2, 2, None), (0, 0, None)],
+E       )
+E       @private_profile_test
+E       def test_refresh_requires_unique_identity_in_both_snapshots(
+E           request, old_count, new_count, expected
+E       ):
+E           entry = {"ts": "fixture", "server_key": "local:alpha", "tool_name": "echo"}
+E           old = {f"old-{i}": (i, dict(entry)) for i in range(old_count)}
+E           new = {f"new-{i}": (i + 1, dict(entry)) for i in range(new_count)}
+E           # Same tool name on another server must not create ambiguity or a match.
+E           new["other-server"] = (0, {**entry, "server_key": "local:beta"})
+E   >       assert mcp_audit_mode._unique_entry_key(entry, old, new) == expected
+E                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E       AttributeError: module 'tldw_chatbook.UI.MCP_Modules.mcp_audit_mode' has no attribute '_unique_entry_key'
+E   
+E   Tests/UI/test_mcp_audit_identity.py:23: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-21 07:41:39.705 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-21 07:41:39.768 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-21 07:41:39.831 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-21 07:41:39.838 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-21 07:41:39.839 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-21 07:41:39.953 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-21 07:41:40.183 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: /private/tmp/32834-qodo-red2-temp/test_refresh_requires_unique_i6/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]
+E   1 failed in 1.05s
+============================= slowest 25 durations =============================
+1.62s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]
+1.58s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]
+1.53s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+1.52s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]
+1.48s call     Tests/UI/test_mcp_audit_identity.py::test_renewed_row_keys_never_reactivate_an_older_snapshot
+1.48s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]
+1.47s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+1.46s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]
+FAILED Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]
+7 failed, 1 passed in 13.17s

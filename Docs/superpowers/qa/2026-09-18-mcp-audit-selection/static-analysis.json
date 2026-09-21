@@ -1,0 +1,12 @@
+{
+  "mcp_audit_mode.py": {
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  },
+  "mcp_workbench.py": {
+    "baseline": 65,
+    "current": 65,
+    "new": []
+  }
+}
