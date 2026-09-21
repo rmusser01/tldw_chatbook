@@ -1,0 +1,20 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+7.11s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[canvas]
+6.90s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[decision]
+6.89s call     Tests/UI/test_mcp_audit_selection.py::test_ambiguous_identical_events_clear_selection_on_refresh
+6.85s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+6.70s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+6.67s call     Tests/UI/test_mcp_audit_selection.py::test_newer_execution_keeps_selected_event_and_drill_target
+6.41s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[initiator]
+6.40s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+6.38s call     Tests/UI/test_mcp_audit_selection.py::test_duplicate_event_keeps_its_row_within_same_filtered_snapshot
+6.24s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+6.05s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[text]
+6.04s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[table]
+5.90s call     Tests/UI/test_mcp_audit_selection.py::test_execution_eviction_clears_detail_without_selecting_replacement
+5.64s call     Tests/UI/test_mcp_audit_selection.py::test_filtering_out_selected_execution_clears_detail
+5.60s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+
+(10 durations < 1s hidden.)
+15 passed in 98.53s (0:01:38)

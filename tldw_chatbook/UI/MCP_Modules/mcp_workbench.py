@@ -3768,6 +3768,8 @@ class MCPWorkbench(Container):
         mode_changed = mode != self._active_mode
         if mode_changed:
             retired_revision = self.query_one(MCPServersMode).retire_detail_actions()
+            if self._active_mode == "audit":
+                self.query_one(MCPAuditMode).retire_selection()
         self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
         if mode_changed:

@@ -1,5 +1,12 @@
 # MCP Audit selection — TASK-32834
 
+The current integration is qualified on merged PR2770 dev. See the
+[2026-09-21 qualification](current-dev/README.md): 305 targeted cases, nine
+artifact guards and twenty native captures. PR2720 still requires its own
+current-head CI/review and owner visual approval before merge.
+
+## Historical qualification — 2026-09-18
+
 Filtering away or evicting a selected execution now clears its detail and drill
 actions. A newest-first refresh preserves the same uniquely identifiable event
 and cursor. Retired row keys and delayed selection messages cannot redirect a

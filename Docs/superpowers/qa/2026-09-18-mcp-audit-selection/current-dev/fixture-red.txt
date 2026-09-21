@@ -1,0 +1,64 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-audit-selection-alpha] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-21 00:17:18.990 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-21 00:17:19.210 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_hz5sedzj/config/config.toml
+2026-09-21 00:17:19.211 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_hz5sedzj/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-21 00:17:19.213 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_hz5sedzj/config/config.toml
+2026-09-21 00:17:19.214 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6248 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-21 00:17:19.215 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6252 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-21 00:17:19.237 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-21 00:17:19.237 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-21 00:17:19.238 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1890 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-21 00:17:19.239 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2211 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-21 00:17:19.284 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_hz5sedzj/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-21 00:17:19.285 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3445 - load_settings: Configuration cached for future use
+2026-09-21 00:17:19.285 | INFO     | tldw_chatbook.config:<module>:9768 - Default API Endpoint (from config.py global scope): openai
+2026-09-21 00:17:19.286 | DEBUG    | tldw_chatbook.config:<module>:9791 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-21 00:17:19.497 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-21 00:17:19.625 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-21 00:17:19.804 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-21 00:17:19.822 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-21 00:17:19.826 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-audit-selection-beta] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+_ test_fixture_preserves_existing_profile_and_runtime[other-audit-selection-alpha] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+_ test_fixture_preserves_existing_profile_and_runtime[other-audit-selection-beta] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+_ test_fixture_preserves_existing_profile_and_runtime[None-audit-selection-alpha] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+_ test_fixture_preserves_existing_profile_and_runtime[None-audit-selection-beta] _
+Tests/Utils/test_mcp_cancellation_native_fixture.py:98: in test_fixture_preserves_existing_profile_and_runtime
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_save_fixture_profile'
+============================= slowest 25 durations =============================
+1.24s setup    Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-audit-selection-alpha]
+
+(17 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-audit-selection-alpha]
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-audit-selection-beta]
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[other-audit-selection-alpha]
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[other-audit-selection-beta]
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[None-audit-selection-alpha]
+FAILED Tests/Utils/test_mcp_cancellation_native_fixture.py::test_fixture_preserves_existing_profile_and_runtime[None-audit-selection-beta]
+6 failed, 15 deselected in 2.71s

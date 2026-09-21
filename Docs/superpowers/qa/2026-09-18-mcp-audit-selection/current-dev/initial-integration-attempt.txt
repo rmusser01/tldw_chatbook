@@ -1,0 +1,63 @@
+.......................................FF.FF............................ [ 51%]
+...................................................................      [100%]
+=================================== FAILURES ===================================
+_______ test_audit_table_height_rule_pinned_in_bundle_source_and_bundle ________
+Tests/UI/test_mcp_audit_mode.py:790: in test_audit_table_height_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+Tests/UI/test_mcp_audit_mode.py:58: in _assert_rule_pinned_in_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '#mcp-audit-table {' block is missing 'max-height: 70%;'
+E   assert 'max-height: 70%;' in '#mcp-audit-table {\n    height: auto;\n    max-height: $ds-agentic-mcp-table-cap;\n'
+______ test_findings_table_height_rule_pinned_in_bundle_source_and_bundle ______
+Tests/UI/test_mcp_audit_mode.py:797: in test_findings_table_height_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+Tests/UI/test_mcp_audit_mode.py:58: in _assert_rule_pinned_in_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '#mcp-audit-findings-table {' block is missing 'max-height: 70%;'
+E   assert 'max-height: 70%;' in '#mcp-audit-findings-table {\n    height: auto;\n    max-height: $ds-agentic-mcp-table-cap;\n'
+__ test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle ___
+Tests/UI/test_mcp_audit_mode.py:821: in test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+Tests/UI/test_mcp_audit_mode.py:88: in _assert_rule_pinned_in_default_css_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-decision {' block is missing 'width: 24;'
+E   assert 'width: 24;' in '#mcp-audit-filter-decision {\n    width: $ds-size-24;\n'
+__ test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle __
+Tests/UI/test_mcp_audit_mode.py:831: in test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+Tests/UI/test_mcp_audit_mode.py:88: in _assert_rule_pinned_in_default_css_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-initiator {' block is missing 'width: 20;'
+E   assert 'width: 20;' in '#mcp-audit-filter-initiator {\n    width: $ds-size-20;\n'
+============================= slowest 25 durations =============================
+22.47s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]
+20.46s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]
+20.42s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]
+19.85s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]
+19.85s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]
+19.34s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]
+18.96s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]
+17.64s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]
+11.44s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]
+10.42s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[tools]
+9.82s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]
+9.48s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-open-tool-AuditOpenToolRequested]
+9.06s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[tools]
+8.68s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]
+8.54s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-tools]
+8.49s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+8.44s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-permissions]
+8.35s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+8.33s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[permissions]
+8.22s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-tools]
+8.08s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[permissions]
+8.03s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]
+8.02s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+7.78s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+7.69s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_mode.py::test_audit_table_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_findings_table_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle
+4 failed, 135 passed in 546.93s (0:09:06)

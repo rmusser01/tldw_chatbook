@@ -13,17 +13,108 @@ import runpy
 import subprocess
 import sys
 import traceback
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
-    socket, session = sys.argv[2:4]
+async def _save_fixture_profile(
+    service: "UnifiedMCPControlPlaneService",
+    repo: Path,
+    evidence: Path,
+    profile_id: str,
+) -> str:
+    """Create one unoccupied, caller-owned Audit catalog fixture.
+
+    Args:
+        service: Control plane bound to the admitted private profile.
+        repo: Checkout containing the validated stdio fixture.
+        evidence: Exclusive directory containing fixture state and wire trace.
+        profile_id: One of this journey's two fixed catalog identities.
+
+    Returns:
+        The created profile ID, now owned by this runner.
+
+    Raises:
+        ValueError: The ID is unsupported or already belongs to another profile.
+    """
+    if profile_id not in ("audit-alpha", "audit-beta"):
+        raise ValueError("Unsupported Audit fixture identity")
+    if service.local_service.store.get_profile(profile_id) is not None:
+        raise ValueError("Native Audit fixture profile already exists")
+    await service.save_local_profile(
+        {
+            "profile_id": profile_id,
+            "command": sys.executable,
+            "args": [
+                str(repo / "Tests/MCP/fixtures/stdio_tool_result_server.py"),
+                str(evidence / "fixture-state.json"),
+                str(evidence / "fixture-trace.jsonl"),
+                str(evidence.resolve()),
+            ],
+            "env_placeholders": {},
+            "env_literals": {},
+        }
+    )
+    return profile_id
+
+
+async def _remove_fixture_profile(
+    service: "UnifiedMCPControlPlaneService",
+    profile_id: str,
+    process: asyncio.subprocess.Process | None = None,
+) -> None:
+    """Remove an owned fixture only after its runtime has been released.
+
+    Args:
+        service: Control plane bound to the admitted private profile.
+        profile_id: Successfully created fixture owned by this runner.
+        process: Captured child handle, retained even if its session was removed.
+
+    Raises:
+        RuntimeError: A child, connection registration or stored profile remains.
+    """
+    client = service.local_service._get_client()
+    owner = client.sessions.get(profile_id) or client._pending_connections.get(
+        profile_id
+    )
+    if process is None:
+        process = getattr(owner, "process", None)
+    await service.disconnect_local_profile(profile_id)
+    if (
+        profile_id in client.sessions
+        or profile_id in client._pending_connections
+        or (process is not None and process.returncode is None)
+    ):
+        raise RuntimeError("Native Audit fixture runtime cleanup incomplete")
+    await service.delete_local_profile(profile_id)
+    if service.local_service.store.get_profile(profile_id) is not None:
+        raise RuntimeError("Native Audit fixture profile cleanup incomplete")
+
+
+def main() -> None:
+    """Qualify Audit selection in an unused private native terminal profile.
+
+    ROOT TMUX_SOCKET SESSION are admitted before app imports or output writes.
+    Both themes and compact/wide sizes use real JSONL metadata and two local
+    catalogs. No tool is executed.
+
+    Raises:
+        SystemExit: Zero for success, one for journey failure, two for invalid CLI.
+    """
     here = Path(__file__).resolve()
     repo = here.parents[4]
-    runpy.run_path(
-        str(repo / "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py")
-    )["validate_profile"](root)
+    sys.path.insert(0, str(repo))
+    args = runpy.run_path(str(repo / "Docs/superpowers/qa/native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, socket, session = args.root, args.tmux_socket, args.session
+    tmux_path = args.tmux_path
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -40,10 +131,15 @@ def main():
         "SERPER_API_KEY",
     ):
         os.environ.pop(key, None)
-    sys.path.insert(0, str(repo))
+    from loguru import logger
     from textual.css.query import NoMatches, QueryError
     from textual.widgets import Button, DataTable, Input, Select
-    from textual_image._terminal import probe_terminal
+
+    from Tests.network_guard import blocked_attempts, install
+
+    install()
+    logger.remove()
+    logger.add(root / "native.log", level="INFO")
 
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.MCP.execution_log import build_record
@@ -51,12 +147,29 @@ def main():
     from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.Utils.app_shutdown import claim_process_exit
+    from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
 
     evidence = root / "evidence"
     evidence.mkdir(exist_ok=False)
-    (root / "launch.json").write_text(json.dumps({"pid": os.getpid()}))
+    (root / "launch.json").write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "started_at": datetime.now(UTC).isoformat(),
+                "repo": str(repo),
+                "head": subprocess.check_output(
+                    ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+                ).strip(),
+                "dirty_status": subprocess.check_output(
+                    ["git", "-C", str(repo), "status", "--short"], text=True
+                ),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     claim_process_exit()
-    probe_terminal()
+    warm_up_image_protocol()
     app = TldwCli()
     paths = [
         "tldw_chatbook/UI/MCP_Modules/" + p + ".py"
@@ -76,12 +189,14 @@ def main():
         "tldw_chatbook/MCP/client.py",
         "tldw_chatbook/MCP/local_control_service.py",
         "tldw_chatbook/MCP/unified_control_plane_service.py",
-        "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
-        "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/stdio_server.py",
+        "tldw_chatbook/Utils/input_validation.py",
+        "Docs/superpowers/qa/native_runner_args.py",
+        "Tests/MCP/fixtures/stdio_tool_result_server.py",
     ]
     result = {
         "pid": os.getpid(),
         "cells": [],
+        "module_origins": {},
         "source_hashes": {
             p: hashlib.sha256((repo / p).read_bytes()).hexdigest() for p in paths
         },
@@ -94,7 +209,7 @@ def main():
     async def tmux(*args):
         return await asyncio.to_thread(
             subprocess.run,
-            ["/opt/homebrew/bin/tmux", "-L", socket, *args],
+            [tmux_path, "-L", socket, *args],
             check=True,
             text=True,
             capture_output=True,
@@ -121,7 +236,14 @@ def main():
 
         def visible(control):
             region, clip = app.screen._compositor.visible_widgets[control]
+            assert region.width > 0 and region.height > 0
             assert region.intersection(clip) == region, (control.id, region, clip)
+            assert (
+                app.screen.get_widget_at(
+                    region.x + region.width // 2, region.y + region.height // 2
+                )[0]
+                is control
+            )
 
         async def focus(selector):
             control = app.screen.query_one(selector)
@@ -139,6 +261,9 @@ def main():
             pane = await tmux("capture-pane", "-p", "-t", session)
             (evidence / (stem + ".txt")).write_text(pane.stdout)
 
+        service = None
+        owned_profiles = []
+        processes = {}
         try:
             assert app._instance_lock_status.acquired
             assert type(app._driver).__name__ == "LinuxDriver"
@@ -163,30 +288,30 @@ def main():
                 ),
                 "MCP loaded",
             )
+            for module_name in (
+                "tldw_chatbook.app",
+                "tldw_chatbook.UI.MCP_Modules.mcp_workbench",
+                "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode",
+                "tldw_chatbook.UI.MCP_Modules.mcp_inspector",
+                "tldw_chatbook.MCP.unified_control_plane_service",
+                "tldw_chatbook.Utils.input_validation",
+            ):
+                path = Path(sys.modules[module_name].__file__).resolve()
+                assert path.is_relative_to(repo), (module_name, path)
+                result["module_origins"][module_name] = str(path)
             service = app.unified_mcp_service
-            trace = root / "fixture-trace.jsonl"
-            state = root / "fixture-result.json"
+            trace = evidence / "fixture-trace.jsonl"
+            state = evidence / "fixture-state.json"
             state.write_text(json.dumps({"content": []}))
-            processes = []
             for name in ("audit-alpha", "audit-beta"):
-                await service.save_local_profile(
-                    {
-                        "profile_id": name,
-                        "command": sys.executable,
-                        "args": [
-                            str(here.with_name("stdio_server.py")),
-                            str(state),
-                            str(trace),
-                        ],
-                        "env_placeholders": {},
-                        "env_literals": {},
-                    }
+                owned_profiles.append(
+                    await _save_fixture_profile(service, repo, evidence, name)
                 )
                 await service.connect_local_profile(name)
-                processes.append(
+                processes[name] = (
                     service.local_service._get_client().sessions[name].process
                 )
-            result["fixture_pids"] = [process.pid for process in processes]
+            result["fixture_pids"] = [process.pid for process in processes.values()]
             workbench._snapshots = await workbench._collect_snapshots()
             await workbench._sync_children()
             log = service.execution_log
@@ -291,28 +416,27 @@ def main():
                         "filter_cleared_detail": True,
                         "zero_and_combined_filters": True,
                     }
-                    if width == 170:
-                        await focus("#mcp-audit-open-tool")
-                        await pilot.press("enter")
-                        await wait_for(
-                            lambda: (
-                                workbench.active_mode == "tools"
-                                and inspector.current_tool is not None
-                            ),
-                            "exact tool drilldown",
-                        )
-                        assert inspector.current_tool.server_key == "local:audit-beta"
-                        assert inspector.current_tool.name == "review_echo"
-                        tools_table = workbench.query_one("#mcp-tools-table", DataTable)
-                        assert (
-                            tools_table.coordinate_to_cell_key(
-                                (tools_table.cursor_row, 0)
-                            )[0].value
-                            == "local:audit-beta::review_echo"
-                        )
-                        assert not inspector.query_one("#mcp-inspector-audit").display
-                        await capture(stem + "-exact-tool")
-                        cell["exact_same_name_tool_drilldown"] = True
+                    await focus("#mcp-audit-open-tool")
+                    await pilot.press("enter")
+                    await wait_for(
+                        lambda: (
+                            workbench.active_mode == "tools"
+                            and inspector.current_tool is not None
+                        ),
+                        "exact tool drilldown",
+                    )
+                    assert inspector.current_tool.server_key == "local:audit-beta"
+                    assert inspector.current_tool.name == "review_echo"
+                    tools_table = workbench.query_one("#mcp-tools-table", DataTable)
+                    assert (
+                        tools_table.coordinate_to_cell_key((tools_table.cursor_row, 0))[
+                            0
+                        ].value
+                        == "local:audit-beta::review_echo"
+                    )
+                    assert not inspector.query_one("#mcp-inspector-audit").display
+                    await capture(stem + "-exact-tool")
+                    cell["exact_same_name_tool_drilldown"] = True
                     result["cells"].append(cell)
                     record()
             result["records"] = log.read_recent(200)
@@ -320,16 +444,24 @@ def main():
             assert not any(row["method"] == "tools/call" for row in requests)
             result["wire_requests"] = requests
             for name in ("audit-alpha", "audit-beta"):
-                await service.disconnect_local_profile(name)
-                await service.delete_local_profile(name)
+                await _remove_fixture_profile(service, name, processes.get(name))
+                owned_profiles.remove(name)
             result["fixture_returncodes"] = [
-                process.returncode for process in processes
+                process.returncode for process in processes.values()
             ]
             result["passed"] = True
         except Exception:  # noqa: BLE001 - preserve failure and shut down the native app
             result.update(passed=False, error=traceback.format_exc())
             app.save_screenshot("failed-state.svg", path=str(evidence))
         finally:
+            for name in owned_profiles:
+                try:
+                    await _remove_fixture_profile(service, name, processes.get(name))
+                except Exception:  # noqa: BLE001 - retain failed owned cleanup
+                    result.update(passed=False, cleanup_error=traceback.format_exc())
+            result["network_attempts"] = blocked_attempts()
+            if result["network_attempts"]:
+                result["passed"] = False
             record()
             await tmux("send-keys", "-t", session, "C-q")
 

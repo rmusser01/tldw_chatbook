@@ -1,0 +1,7 @@
+{
+  "pid": 67231,
+  "started_at": "2026-09-21T07:30:13.371251+00:00",
+  "repo": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+  "head": "8f905d3b669d867b219be1230b15053aa23fe9fd",
+  "dirty_status": " M Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py\n D Docs/superpowers/qa/2026-09-18-mcp-audit-selection/stdio_server.py\n M Tests/UI/test_mcp_audit_selection.py\n M Tests/Utils/test_mcp_cancellation_native_fixture.py\n M Tests/Utils/test_mcp_native_qa_args.py\n M \"backlog/tasks/task-32834 - Keep-MCP-Audit-selection-tied-to-its-visible-execution.md\"\n M tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py\n M tldw_chatbook/UI/MCP_Modules/mcp_workbench.py\n"
+}

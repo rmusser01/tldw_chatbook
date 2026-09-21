@@ -159,6 +159,75 @@ async def test_duplicate_event_keeps_its_row_within_same_filtered_snapshot(reque
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_refresh_cannot_identify_which_duplicate_execution_survived(request):
+    entry = _audit_record(tool_name="search")
+    app = AuditApp([dict(entry), dict(entry)])
+    async with app.run_test(size=(170, 48)) as pilot:
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 1)
+        app.unified_mcp_service.execution_log._records = [dict(entry)]
+        await workbench._sync_audit_log_entries()
+        await pilot.pause()
+        assert not app.query_one("#mcp-inspector-audit").display
+        assert not app.query("#mcp-audit-open-tool")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["table", "canvas"])
+@pytest.mark.parametrize("departure", ["mode", "subview"])
+@private_profile_test
+async def test_retired_execution_gesture_stays_retired_after_round_trip(
+    request, monkeypatch, gesture, departure
+):
+    app = AuditApp([_audit_record(tool_name="search")])
+    async with app.run_test(size=(170, 48)) as pilot:
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        canvas = app.query_one(MCPAuditMode)
+        table = app.query_one("#mcp-audit-table", DataTable)
+        key, _ = table.coordinate_to_cell_key((0, 0))
+        old_gesture = DataTable.RowSelected(table, 0, key)
+        held = []
+        original = canvas.post_message
+
+        def hold_selection(message):
+            if isinstance(message, MCPAuditMode.EntrySelected):
+                held.append(message)
+                return True
+            return original(message)
+
+        if gesture == "canvas":
+            monkeypatch.setattr(canvas, "post_message", hold_selection)
+            canvas.on_data_table_row_selected(old_gesture)
+            assert len(held) == 1
+            monkeypatch.setattr(canvas, "post_message", original)
+        if departure == "mode":
+            workbench.set_mode("tools")
+            await pilot.pause()
+            workbench.set_mode("audit")
+        else:
+            await pilot.click("#mcp-audit-subview-findings")
+            await pilot.click("#mcp-audit-subview-executions")
+        await pilot.pause()
+        assert not app.query_one("#mcp-inspector-audit").display
+        if gesture == "table":
+            canvas.on_data_table_row_selected(old_gesture)
+        else:
+            await workbench.on_mcp_audit_mode_entry_selected(held[0])
+        await pilot.pause()
+        assert not app.query_one("#mcp-inspector-audit").display
+        assert not app.query("#mcp-audit-open-tool")
+        table.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-audit").display
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("filter_kind", ["text", "decision", "initiator"])
 @private_profile_test
 async def test_filters_retain_matching_detail_and_clear_zero_matches(

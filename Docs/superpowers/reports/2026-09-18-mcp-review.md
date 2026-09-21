@@ -653,3 +653,22 @@ review finds no blockers. The fresh native replay matches all 24 approved termin
 captures except fixture timestamps. PR2724 is ready for review and awaits
 current-head CI/review before its authorized merge. Same-ID definition freshness
 remains in PR2726.
+
+
+## PR2770 merged; saved Audit selection PR2720 resumed — 2026-09-21
+
+PR2770 merged as `ba5aa6e9ec60bb93aec4adc6aae219deb9266b78` after owner
+visual approval, resolved Qodo review and all current-head required checks.
+The merge tree exactly matches qualified head `d6c15f9e4a`; CI passed 1,152
+fast-contract cases and 123 admission cases (one expected failure).
+[Closeout receipt](../qa/2026-09-21-mcp-inspector-compact/pr2770-closeout.json).
+
+Saved PR2720 / TASK-32834 now follows that merged state. The selection repair
+also clears ambiguous duplicate contraction and retires gestures across mode
+and subview round trips. [Current qualification](../qa/2026-09-18-mcp-audit-selection/current-dev/README.md)
+records 305 targeted passing cases, four known unchanged CSS assertions excluded,
+nine guards, twenty inspected native captures and clean private lifecycle.
+Two documentation conflicts retain both histories; no product conflicts occurred.
+Its own current-head CI/review and fresh visual approval remain merge gates.
+Next are saved PR2721 (compact filters) and PR2722 (guidance ownership).
+The broader component workstream remains open; the heartbeat remains paused.

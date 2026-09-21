@@ -1,0 +1,232 @@
+[
+  {
+    "file": "fixture-state.json",
+    "original_sha256": "782d0d64e787527210dd226a57bdb86bc2707742728adc0876f09d923f1faea4",
+    "retained_sha256": "b7c23a5cade56ff91941f9807bece1ce6dd3d720a5bfd00d36441159ebb2b2b1"
+  },
+  {
+    "file": "fixture-trace.jsonl",
+    "original_sha256": "fd89910c8facf8f34b0a2aed5ae0ced7f7ad771900299bef3d5920a51d1dda2e",
+    "retained_sha256": "fd89910c8facf8f34b0a2aed5ae0ced7f7ad771900299bef3d5920a51d1dda2e"
+  },
+  {
+    "file": "result.json",
+    "original_sha256": "6cd7927487cf5c99421ff017a58257fe3e87881ea94bbf74607d05bbca14508b",
+    "retained_sha256": "6cd7927487cf5c99421ff017a58257fe3e87881ea94bbf74607d05bbca14508b"
+  },
+  {
+    "file": "textual-dark-170x48-combined-filters.svg",
+    "original_sha256": "d14e1c3301b259ea2624389a7e32e2c89f7c8db2c19ee0bd385dfe34de6b3c3f",
+    "retained_sha256": "b9b3f501c8ddfffc850a3962899d2200d54a8d334fc8e7084b2bd3f3e272d32e"
+  },
+  {
+    "file": "textual-dark-170x48-combined-filters.txt",
+    "original_sha256": "8f17fd008fe883d5b910ac37c41a0e1d1821e7789bc8ab68d95ab3109727c8ec",
+    "retained_sha256": "8f17fd008fe883d5b910ac37c41a0e1d1821e7789bc8ab68d95ab3109727c8ec"
+  },
+  {
+    "file": "textual-dark-170x48-exact-tool.svg",
+    "original_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e",
+    "retained_sha256": "f319c1070d0bcf4538cbc86a46fff08248da8b1353d0ec1103ae5a5cbf4a14b7"
+  },
+  {
+    "file": "textual-dark-170x48-exact-tool.txt",
+    "original_sha256": "091fd33eda6be99d9270350d4e0d8de19c52aef76bb8400e5a04e48ad7fb729c",
+    "retained_sha256": "091fd33eda6be99d9270350d4e0d8de19c52aef76bb8400e5a04e48ad7fb729c"
+  },
+  {
+    "file": "textual-dark-170x48-filtered.svg",
+    "original_sha256": "f11369ad6abf0d14161d91a3185e47e051568a80cba938e206286c208708c33d",
+    "retained_sha256": "f2ec47b0d389d6fdf7f431684846995bf496297be81fd5e9006b5eb395bc2447"
+  },
+  {
+    "file": "textual-dark-170x48-filtered.txt",
+    "original_sha256": "6247a564cacf27f620445ce370983444189dd481865d67cd73b4d964cabc7613",
+    "retained_sha256": "6247a564cacf27f620445ce370983444189dd481865d67cd73b4d964cabc7613"
+  },
+  {
+    "file": "textual-dark-170x48-refreshed.svg",
+    "original_sha256": "ede654e2cc7d11915568879d2b4368a4df0a22447e776b73708a2d0cb05d4606",
+    "retained_sha256": "71f6c31eb000468ca184789e347b5a0ff738ef1bd234acc489ec193d1968659a"
+  },
+  {
+    "file": "textual-dark-170x48-refreshed.txt",
+    "original_sha256": "030a62915b4b933f89848b5c0e2a2192863c8f55b3375d4afeda117ac2e78b5d",
+    "retained_sha256": "030a62915b4b933f89848b5c0e2a2192863c8f55b3375d4afeda117ac2e78b5d"
+  },
+  {
+    "file": "textual-dark-170x48-selected.svg",
+    "original_sha256": "98ff756c8022abe6dce005914665ebbc5cf27f92de8af77432e6eaa27b900f4d",
+    "retained_sha256": "804fd2a6d4d69e27268dc0aafdd2e85e89ebe8804105de4c33055bf92d8951a2"
+  },
+  {
+    "file": "textual-dark-170x48-selected.txt",
+    "original_sha256": "5e28370e9137a434d39144f466bbbf6e6ce8e3f904f13ab298fc587fa5ae3917",
+    "retained_sha256": "5e28370e9137a434d39144f466bbbf6e6ce8e3f904f13ab298fc587fa5ae3917"
+  },
+  {
+    "file": "textual-dark-80x24-combined-filters.svg",
+    "original_sha256": "7050212d0695698bac213dfd12a2460937829f6f55792fc0b70f2b583fec40f4",
+    "retained_sha256": "5faec9fe1dfae9be77364a6018701b5d73045f398d85e39d0536b14d4c0b217b"
+  },
+  {
+    "file": "textual-dark-80x24-combined-filters.txt",
+    "original_sha256": "d18e65cc3e20bf2dadfd4eb2112ab51df45c4e9c438d8821d1f7d5974ceec0df",
+    "retained_sha256": "d18e65cc3e20bf2dadfd4eb2112ab51df45c4e9c438d8821d1f7d5974ceec0df"
+  },
+  {
+    "file": "textual-dark-80x24-exact-tool.svg",
+    "original_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f",
+    "retained_sha256": "ca0827e6301554ea639a83764edbb901bd6f971cd42825380979f05f8426b26e"
+  },
+  {
+    "file": "textual-dark-80x24-exact-tool.txt",
+    "original_sha256": "2f1b10e0b2f4c6d9d1db3c144b750675ec748f7b439093ddb7145305d18a507f",
+    "retained_sha256": "2f1b10e0b2f4c6d9d1db3c144b750675ec748f7b439093ddb7145305d18a507f"
+  },
+  {
+    "file": "textual-dark-80x24-filtered.svg",
+    "original_sha256": "ec013febc4c66a0f217f04e494ad8c071c9257196098e0b8770a73e781f2cf6a",
+    "retained_sha256": "0a25646f775484e377d7d46580263bceb30e93bd508f766393845095a2843d16"
+  },
+  {
+    "file": "textual-dark-80x24-filtered.txt",
+    "original_sha256": "03590078d8ad7c4bc3a2e2bd79b0296970c262837f420575e306a93367adc86c",
+    "retained_sha256": "03590078d8ad7c4bc3a2e2bd79b0296970c262837f420575e306a93367adc86c"
+  },
+  {
+    "file": "textual-dark-80x24-refreshed.svg",
+    "original_sha256": "ed35403451f4a075984090f84263e35de862466c92fdf95daa6a7e802d607b2a",
+    "retained_sha256": "5b9b1cf2d91ae549e1dddf3a04f0bdbd51508858e1f0d33f35f325ec1610685e"
+  },
+  {
+    "file": "textual-dark-80x24-refreshed.txt",
+    "original_sha256": "45e0559b9538b4652c509af10899c22998039d237802b65b266fc870dac94c88",
+    "retained_sha256": "45e0559b9538b4652c509af10899c22998039d237802b65b266fc870dac94c88"
+  },
+  {
+    "file": "textual-dark-80x24-selected.svg",
+    "original_sha256": "736458813e26bb5793f71bc5fbb87175a26526e35d24bd014a5bc02922b177ff",
+    "retained_sha256": "aa18922bf026e03dfd083f990a9fba2e7e98a14787e46546c15d9b0c5d1a0e80"
+  },
+  {
+    "file": "textual-dark-80x24-selected.txt",
+    "original_sha256": "8f923dd8a071726d1e373107cfeef2bb7701d17de1dfc59286208d53b5d4fe53",
+    "retained_sha256": "8f923dd8a071726d1e373107cfeef2bb7701d17de1dfc59286208d53b5d4fe53"
+  },
+  {
+    "file": "textual-light-170x48-combined-filters.svg",
+    "original_sha256": "a570263250dcea9d70d9be1dd47d41750f149637fbd06ddb0956dc6c37ecaccc",
+    "retained_sha256": "e83923467c24e0ecfc70084eb6864c1b114ac2e37852620e0ee78f47c138de07"
+  },
+  {
+    "file": "textual-light-170x48-combined-filters.txt",
+    "original_sha256": "8f17fd008fe883d5b910ac37c41a0e1d1821e7789bc8ab68d95ab3109727c8ec",
+    "retained_sha256": "8f17fd008fe883d5b910ac37c41a0e1d1821e7789bc8ab68d95ab3109727c8ec"
+  },
+  {
+    "file": "textual-light-170x48-exact-tool.svg",
+    "original_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6",
+    "retained_sha256": "8504a59cd6744370ac61ef06c70ec1834cd2985231b08a0fe9e2f8ca11ccad07"
+  },
+  {
+    "file": "textual-light-170x48-exact-tool.txt",
+    "original_sha256": "091fd33eda6be99d9270350d4e0d8de19c52aef76bb8400e5a04e48ad7fb729c",
+    "retained_sha256": "091fd33eda6be99d9270350d4e0d8de19c52aef76bb8400e5a04e48ad7fb729c"
+  },
+  {
+    "file": "textual-light-170x48-filtered.svg",
+    "original_sha256": "4e168de98de5697bdc5e60541994b62305914e544d133e9c34422a740311a748",
+    "retained_sha256": "f3a4785711a3f891ff15e19ef2d1f63c2c7bc490efb31cb8e9c8c44582d97d15"
+  },
+  {
+    "file": "textual-light-170x48-filtered.txt",
+    "original_sha256": "8bc89a4749ae8ea425a05aaa5fdf00bedc15ce9fe35ca312cd73af91027f3756",
+    "retained_sha256": "8bc89a4749ae8ea425a05aaa5fdf00bedc15ce9fe35ca312cd73af91027f3756"
+  },
+  {
+    "file": "textual-light-170x48-refreshed.svg",
+    "original_sha256": "035f6cc97edb3ccd78e0f04486ad798af8c73ae8e8eebf72dbc9adc36d464c4c",
+    "retained_sha256": "572c07147dc1dc8c6b6814ee289607515f6117d44650f54133c9e813d7234293"
+  },
+  {
+    "file": "textual-light-170x48-refreshed.txt",
+    "original_sha256": "637ef4922da5a1d6a4d2f82472a514a4253f505a6f12e8606de1ba0ef0a1d412",
+    "retained_sha256": "637ef4922da5a1d6a4d2f82472a514a4253f505a6f12e8606de1ba0ef0a1d412"
+  },
+  {
+    "file": "textual-light-170x48-selected.svg",
+    "original_sha256": "3ef5e9105bbf53d83d40cf4a2f64c7f9ab389c42e229f662d2c1d143540ebe90",
+    "retained_sha256": "50ed8be46ef298b3e26cadfc7e0b8cc60922678b939d85ab66d0ec59dbff4f1e"
+  },
+  {
+    "file": "textual-light-170x48-selected.txt",
+    "original_sha256": "a4f66ab2e9b52e1e845ee704a0a420b74815a99c5d7286896cd849c27f1260e1",
+    "retained_sha256": "a4f66ab2e9b52e1e845ee704a0a420b74815a99c5d7286896cd849c27f1260e1"
+  },
+  {
+    "file": "textual-light-80x24-combined-filters.svg",
+    "original_sha256": "02caebbf933b96cfbeba15dd1382cb349fae721ad88b007ca265cb0a39a3c739",
+    "retained_sha256": "f6516d547ebbbfc0e7cd8b5441635da36a36bd1c81ecdde77bc98cb83383e1fe"
+  },
+  {
+    "file": "textual-light-80x24-combined-filters.txt",
+    "original_sha256": "24b32e269be6b774ff023ed304211acd3f376ae6d693f3618efef0b6df8c8838",
+    "retained_sha256": "24b32e269be6b774ff023ed304211acd3f376ae6d693f3618efef0b6df8c8838"
+  },
+  {
+    "file": "textual-light-80x24-exact-tool.svg",
+    "original_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694",
+    "retained_sha256": "0dcde7fb389650a574f50b653e056da389b8fdb452f0e4afba5bd935ce6e2e63"
+  },
+  {
+    "file": "textual-light-80x24-exact-tool.txt",
+    "original_sha256": "3111d0571f7204b52ad0f583be9d2a5898457f1ab7621eade5d6bcff9342355b",
+    "retained_sha256": "3111d0571f7204b52ad0f583be9d2a5898457f1ab7621eade5d6bcff9342355b"
+  },
+  {
+    "file": "textual-light-80x24-filtered.svg",
+    "original_sha256": "65545c45eee199454aea0a20af0162ca0faf7fe38e567a15da00a1e29137062f",
+    "retained_sha256": "f7be1c7c3111d33f80dc23a0effd468ac3d510da191e1a56cdfbd5a6d2881b02"
+  },
+  {
+    "file": "textual-light-80x24-filtered.txt",
+    "original_sha256": "3978df423819d5d08cbcee32ac132db7571af6632216a6c6bdcb2d96c17e0324",
+    "retained_sha256": "3978df423819d5d08cbcee32ac132db7571af6632216a6c6bdcb2d96c17e0324"
+  },
+  {
+    "file": "textual-light-80x24-refreshed.svg",
+    "original_sha256": "cdcfa9941cdf1be84e98a11658adf19369e2ce90852145c80851a7c4cd8d96e8",
+    "retained_sha256": "92cc393d8712925f28b81c990a9be4777dd23e9c4407bfa507c66064e7ceb860"
+  },
+  {
+    "file": "textual-light-80x24-refreshed.txt",
+    "original_sha256": "1026602780aa1adec4b84acefe77b5922f696fe2dcd7791529f84a1ecc3a0e0a",
+    "retained_sha256": "1026602780aa1adec4b84acefe77b5922f696fe2dcd7791529f84a1ecc3a0e0a"
+  },
+  {
+    "file": "textual-light-80x24-selected.svg",
+    "original_sha256": "ee7dda4cd3578239f735841a4338516593212a8fc072ff500b0120ec91fce166",
+    "retained_sha256": "9466ffbebb5e0fa39500f27631a2ba5f24235c04d890acbe38002b5cb7a53e9b"
+  },
+  {
+    "file": "textual-light-80x24-selected.txt",
+    "original_sha256": "fed0d971f3258682bb6d92c7bdbf3a45766cdd63461fbe214198d54e8d01bdfa",
+    "retained_sha256": "fed0d971f3258682bb6d92c7bdbf3a45766cdd63461fbe214198d54e8d01bdfa"
+  },
+  {
+    "file": "lifecycle.json",
+    "original_sha256": "441e3025d5456cebf68d26c7efebeb91ad8e894ae841e9d7146aa76a1ae37ed4",
+    "retained_sha256": "441e3025d5456cebf68d26c7efebeb91ad8e894ae841e9d7146aa76a1ae37ed4"
+  },
+  {
+    "file": "launch.json",
+    "original_sha256": "1a24936598b199a0681a0b7aa86ae645fa21b3b5800e1f44a2b131361fdcef59",
+    "retained_sha256": "1a24936598b199a0681a0b7aa86ae645fa21b3b5800e1f44a2b131361fdcef59"
+  },
+  {
+    "file": "launch-command.txt",
+    "original_sha256": "1262e41002370abf4dba7ab7b45c213a7f2cb58a6218ae4778a36a9f0e75e12b",
+    "retained_sha256": "1262e41002370abf4dba7ab7b45c213a7f2cb58a6218ae4778a36a9f0e75e12b"
+  }
+]

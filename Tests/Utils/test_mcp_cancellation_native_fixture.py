@@ -26,6 +26,8 @@ RUNNER = (
         "tool-errors",
         "server-actions-alpha",
         "server-actions-beta",
+        "audit-selection-alpha",
+        "audit-selection-beta",
     ],
 )
 @pytest.mark.parametrize("existing", ["cleanup-demo", "other", None])
@@ -45,6 +47,8 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         "tool-errors": "execution-review",
         "server-actions-alpha": "alpha",
         "server-actions-beta": "beta",
+        "audit-selection-alpha": "audit-alpha",
+        "audit-selection-beta": "audit-beta",
     }[kind]
     if existing == "cleanup-demo":
         existing = fixture_id
@@ -53,6 +57,11 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         runner = (
             Path(__file__).resolve().parents[2]
             / "Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py"
+        )
+    elif kind.startswith("audit-selection"):
+        runner = (
+            Path(__file__).resolve().parents[2]
+            / "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py"
         )
     elif kind != "cancellation":
         directory = "mcp-connection-refresh" if kind == "refresh" else "mcp-tool-errors"
@@ -63,6 +72,8 @@ async def test_fixture_preserves_existing_profile_and_runtime(
     arguments = () if kind == "cancellation" else (runner.parents[5], tmp_path)
     if kind.startswith("server-actions"):
         arguments = (fixture_id,)
+    elif kind.startswith("audit-selection"):
+        arguments = (runner.parents[4], tmp_path, fixture_id)
     store_path = tmp_path / "mcp.json"
     store = LocalMCPStore(store_path)
     if existing is not None:
@@ -101,3 +112,48 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         if existing:
             assert store.get_profile(existing) == original
             assert store.get_profile_runtime_state(existing) == original_runtime
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["process", "session", "pending", "profile", None])
+async def test_audit_fixture_cleanup_requires_complete_release(tmp_path, failure):
+    runner = (
+        Path(__file__).resolve().parents[2]
+        / "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py"
+    )
+    remove = runpy.run_path(str(runner))["_remove_fixture_profile"]
+    store = LocalMCPStore(tmp_path / "mcp.json")
+    store.save_profile(
+        LocalExternalMCPProfile(profile_id="audit-alpha", command="python")
+    )
+    process = SimpleNamespace(returncode=None)
+    owner = SimpleNamespace(process=process)
+    client = SimpleNamespace(sessions={"audit-alpha": owner}, _pending_connections={})
+
+    async def disconnect(profile_id):
+        if failure != "process":
+            process.returncode = 0
+        if failure != "session":
+            client.sessions.pop(profile_id)
+        if failure == "pending":
+            client._pending_connections[profile_id] = owner
+        return failure is None
+
+    async def delete(profile_id):
+        if failure != "profile":
+            store.delete_profile(profile_id)
+
+    service = SimpleNamespace(
+        local_service=SimpleNamespace(store=store, _get_client=lambda: client),
+        disconnect_local_profile=disconnect,
+        delete_local_profile=delete,
+    )
+    if failure:
+        with pytest.raises(RuntimeError):
+            await remove(service, "audit-alpha", process)
+        assert store.get_profile("audit-alpha") is not None
+    else:
+        await remove(service, "audit-alpha", process)
+        assert store.get_profile("audit-alpha") is None
+        assert process.returncode is not None
+        assert not client.sessions and not client._pending_connections

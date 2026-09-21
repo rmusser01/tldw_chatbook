@@ -1,11 +1,11 @@
 ---
 id: TASK-32834
 title: Keep MCP Audit selection tied to its visible execution
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 03:45'
-updated_date: '2026-09-19 03:58'
+updated_date: '2026-09-21 07:38'
 labels: []
 dependencies: []
 ---
@@ -26,20 +26,21 @@ Keep the execution shown in MCP Audit consistent with the selected visible row w
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reproduce selection loss or stale detail across filters and newest-first refresh.
-2. Keep row activation tied to the rendered execution and clear invalid selection without implicit replacement.
-3. Verify exact tool drilldown, targeted regressions and private native dark/light states; retain evidence and open a bounded draft PR.
-ADR required: no
-ADR path: backlog/decisions/170-table-repopulation-selection-boundary.md; backlog/decisions/150-design-token-system-and-design-language.md
-Reason: repair selection continuity within the existing Audit flow without changing log storage, permissions or runtime boundaries.
+ADR required: no. ADR path: backlog/decisions/170-table-repopulation-selection-boundary.md; existing ADR-150/161 also apply. Reason: integrate the saved execution-selection repair within current table/inspector boundaries, without log schema or authority changes.
+1. Resume PR2720 on an isolated branch and preserve both histories in the two documentation conflicts; no product conflicts occurred.
+2. Run saved selection regressions and relevant Audit/navigation/architecture checks against the current runtime. Repair concrete integration failures while retaining exact displayed-event identity and absent/ambiguous selection clearing.
+3. Modernize the saved native entry point to the existing shared CLI/private-profile/provenance/lifecycle conventions before launch; exercise affected admission checks.
+4. Rebase onto actual merged PR2770 dev, qualify dark/light compact/wide native selection/filter/refresh/drill behavior, and retain exact source and cleanup receipts.
+5. Update existing PR2720 with current tests, conflicts and native evidence; obtain its own visual approval before the authorized CI/Qodo/dev-check merge. Filter layout and inspector guidance remain separate saved PRs.
+6. Independent review reproduced duplicate contraction and retired gestures across mode/subview round trips. Require uniqueness in both snapshots when restoring by metadata, and renew execution row keys while retiring selection on departure; preserve current live activation and same-snapshot duplicate rows.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Preserve the selected execution by snapshot row key during filtering and unique metadata match during refresh. Retire old row keys, carry rendered entries in selection messages, and clear absent or ambiguous selections without implicitly choosing another row. Delayed messages cannot select a replacement at an old index.
-102 targeted cases and seven preflight guards pass. Three initial regressions and the independently discovered same-snapshot duplicate case failed before repair. New Python files pass Ruff; production adds no lint diagnostics. Independent review has no remaining blocker.
-Private native TldwCli/LinuxDriver checks cover dark/light 80x24 and 170x48, with 18 inspected captures, real JSONL storage and two same-name local stdio catalogs. Wide Open tool reaches the exact server/tool; records are synthetic metadata and no tools/call runs. Clean exit, released lock, healthy private DBs and unchanged defaults verified.
-Files: MCP Audit/workbench selection, targeted tests, retained QA and review ledgers. Compact Audit filter clipping and stale built-in inspector guidance remain explicitly open for separate bounded reviews; PR2718 owns compact inspector reachability.
-ADR required: no; existing backlog/decisions/170-table-repopulation-selection-boundary.md and ADR150/161 apply. No log schema, runtime authority or visual token change.
+Preserve execution selection by snapshot row key during filtering and a unique match in both snapshots during refresh. Absent/ambiguous entries clear detail/actions. Departing Audit or Executions retires keys and selection; delayed gestures cannot target replacement rows. Independent review reproduced and verified duplicate-contraction and round-trip gesture fixes.
+Current integration: 305 targeted cases and nine artifact guards pass. Four unchanged CSS literal assertions remain documented baseline debt. No new Ruff findings; changed code formatting checked. Twenty inspected private native captures cover dark/light compact/wide selection, refresh, filtering and exact same-name tool navigation. Exit, fixture cleanup, lock release, ten DBs, unchanged defaults and source hashes verified; synthetic metadata, two real local catalogs, no tool execution or external network.
+PR2770 merged as ba5aa6e9ec60bb93aec4adc6aae219deb9266b78 with a tree identical to the qualified parent. Saved PR2720 documentation conflicts retain both histories; no product conflicts. Existing shared native admission and stdio fixture replace the outdated runner boundary and duplicate fixture.
+Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/current-dev/README.md. Fresh owner visual approval, current-head CI/review and current-dev review remain PR2720 merge gates. Compact filters and guidance remain saved PR2721/2722. Task remains In Progress until closeout.
+ADR required: no; existing backlog/decisions/170-table-repopulation-selection-boundary.md and ADR150/161 apply. No schema, runtime authority or token change.
 <!-- SECTION:NOTES:END -->

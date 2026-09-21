@@ -1,0 +1,18 @@
+...........................                                              [100%]
+============================= slowest 25 durations =============================
+7.62s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+5.97s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+4.54s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+4.50s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+4.35s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+4.29s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+4.29s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+4.22s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+4.15s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+3.89s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+3.88s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+3.78s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+3.45s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+
+(12 durations < 1s hidden.)
+27 passed in 61.07s (0:01:01)

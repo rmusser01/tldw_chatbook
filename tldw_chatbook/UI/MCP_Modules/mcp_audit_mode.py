@@ -543,12 +543,22 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 never re-sorts (the log is already newest-first).
         """
         self._entries = list(entries)
+        self._renew_entry_keys()
+        self._apply_filter()
+
+    def _renew_entry_keys(self) -> None:
         # Keys belong to one log snapshot. An old queued table activation
         # must not resolve to a new event at the same index.
         self._entry_keys = [
-            str(self._next_entry_key + index) for index in range(len(entries))
+            str(self._next_entry_key + index) for index in range(len(self._entries))
         ]
-        self._next_entry_key += len(entries)
+        self._next_entry_key += len(self._entries)
+
+    def retire_selection(self) -> None:
+        """Retire queued execution gestures when leaving their owning view."""
+        self.selected_entry = None
+        self._selected_entry_key = None
+        self._renew_entry_keys()
         self._apply_filter()
 
     def _matches(self, entry: dict[str, Any]) -> bool:
@@ -610,7 +620,10 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 for key, (_, entry) in visible_entries.items()
                 if entry == cursor_entry
             ]
-            cursor_key = matches[0] if len(matches) == 1 else None
+            old_matches = sum(
+                entry == cursor_entry for _, entry in self._visible_entries.values()
+            )
+            cursor_key = matches[0] if len(matches) == old_matches == 1 else None
         if (
             self.selected_entry is not None
             and self._selected_entry_key not in visible_entries
@@ -620,7 +633,13 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 for key, (_, entry) in visible_entries.items()
                 if entry == self.selected_entry
             ]
-            self._selected_entry_key = matches[0] if len(matches) == 1 else None
+            old_matches = sum(
+                entry == self.selected_entry
+                for _, entry in self._visible_entries.values()
+            )
+            self._selected_entry_key = (
+                matches[0] if len(matches) == old_matches == 1 else None
+            )
             if self._selected_entry_key is None:
                 self.selected_entry = None
                 self.post_message(self.EntrySelected(None, None))
@@ -796,8 +815,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.SubViewChanged(self._sub_view))
         elif event.button.id == "mcp-audit-subview-findings":
             event.stop()
-            self.selected_entry = None
-            self._selected_entry_key = None
+            self.retire_selection()
             self._sub_view = "findings"
             self._apply_subview_display()
             self.post_message(self.SubViewChanged(self._sub_view))

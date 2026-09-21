@@ -1,11 +1,11 @@
 ---
 id: TASK-32882
 title: Keep MCP Test Tool reachable in compact inspectors
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-21 05:48'
-updated_date: '2026-09-21 07:07'
+updated_date: '2026-09-21 07:37'
 labels:
   - mcp
   - ui
