@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-21 05:48'
-updated_date: '2026-09-21 05:48'
+updated_date: '2026-09-21 06:31'
 labels:
   - mcp
   - ui
@@ -22,8 +22,8 @@ Terminal users must be able to inspect a selected tool, edit its arguments, revi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Keyboard users can reach and read Test Tool, argument fields, permission preview, Run and Close in dark and light themes at 80x24, with wide behavior preserved.
-- [ ] #2 Resize and focus changes preserve entered arguments, selected tool identity and existing permission or execution behavior.
+- [x] #1 Keyboard users can reach and read Test Tool, argument fields, permission preview, Run and Close in dark and light themes at 80x24, with wide behavior preserved.
+- [x] #2 Resize and focus changes preserve entered arguments, selected tool identity and existing permission or execution behavior.
 - [ ] #3 Targeted regressions and real native error/retry journeys qualify compact reachability and clean private-profile shutdown; separate visual approval gates the layout PR.
 <!-- AC:END -->
 
@@ -37,4 +37,11 @@ Reason: restore keyboard reachability in the existing MCP inspector, preserving 
 2. Give the inspector a usable scrolling viewport using the existing Textual container and design tokens. Keep focus and arguments stable through size changes; preserve tool, permission and execution authority.
 3. Run targeted reachability and neighboring inspector regressions, static/derived-artifact guards and independent review.
 4. Reuse the admitted private real-stdio error/retry journey for fresh dark/light compact and wide native evidence with full labels, hit targets, source provenance and clean lifecycle checks. Present a bounded follow-up PR and its own visual approval after PR2769 closes.
+5. Current-dev QA compatibility: PR2741 removed validate_username, which the shared native CLI still imports. Preserve the exact documented tmux identifier contract with a local stdlib fullmatch; retain all profile/path admission checks and verify the existing cross-runner invalid-CLI/positive-profile cases before native qualification.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented existing-token compact inspector scrolling, natural form height and wrapped actions; deferred resize reveal preserves current focused editors. Four scalar/raw keyboard journeys pass across both themes and three sizes;372 neighboring and134 native admission/fixture cases pass (510 total), plus nine artifact guards. No introduced Ruff findings and14 changed ranges formatted; independent production/test/runner review clear. Reused real-stdio native runner for four theme/size journeys, actual typed arguments and keyboard permission/Run, real failure/retry and clean profile lifecycle. All14 source hashes and runner hash match final native captures. Shared QA identifier validation preserves its documented contract after upstream removed validate_username. Existing ADR-150/161; no new ADR. Evidence: Docs/superpowers/qa/2026-09-21-mcp-inspector-compact/README.md. Remains In Progress pending PR2769 closure, bounded PR, visual approval and CI/review/current-dev checks.
+<!-- SECTION:NOTES:END -->

@@ -1092,6 +1092,16 @@ ListItem.personas-library-row.is-active.-highlight {
     min-height: $ds-size-0;
 }
 
+/* Inspector actions must fit beside the scrollbar, including approval copy.
+   Override the shared single-row action height only in this scrolling pane. */
+#mcp-hub-inspector .console-action-primary,
+#mcp-hub-inspector .console-action-secondary {
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
    MCPWorkbench.on_resize) the triad rebalances toward the canvas so the
    servers table keeps its primary columns in-viewport; the rail/inspector
