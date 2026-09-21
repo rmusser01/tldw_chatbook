@@ -1,0 +1,29 @@
+................................................                         [100%]
+---------------- generated xml file: /private/tmp/32825-css.xml ----------------
+============================= slowest 25 durations =============================
+16.64s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+14.15s call     Tests/UI/test_css_build_integrity.py::test_schedules_visit_loads_the_screen_owned_sheet
+9.43s call     Tests/UI/test_css_build_integrity.py::test_schedules_as_initial_tab_loads_the_screen_owned_sheet
+7.97s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+3.13s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+2.97s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.49s call     Tests/UI/test_css_build_integrity.py::test_file_notes_error_ink_and_disabled_opacity_are_app_tier
+2.48s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+2.12s call     Tests/UI/test_css_build_integrity.py::test_library_notes_compact_geometry_matches_fallback_source_and_bundle
+2.06s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.05s call     Tests/UI/test_css_build_integrity.py::test_build_css_rejects_a_missing_declared_module
+1.99s call     Tests/UI/test_css_build_integrity.py::test_split_demotion_sees_later_modules
+1.97s call     Tests/UI/test_css_build_integrity.py::test_css_manifest_declares_only_existing_settings_source
+1.97s call     Tests/UI/test_css_build_integrity.py::test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with
+1.96s call     Tests/UI/test_css_build_integrity.py::test_build_css_preserves_existing_output_when_a_module_is_missing
+1.92s call     Tests/UI/test_css_build_integrity.py::test_library_notes_compact_source_module_is_exactly_bundled
+1.80s call     Tests/UI/test_css_build_integrity.py::test_split_sheets_carry_only_their_own_owners_rules
+1.78s call     Tests/UI/test_css_build_integrity.py::test_settings_splash_theme_rules_have_source_and_bundle_integrity
+1.77s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.76s call     Tests/UI/test_css_build_integrity.py::test_screens_do_not_take_owned_sheets_onto_css_path
+1.75s call     Tests/UI/test_css_build_integrity.py::test_console_bounded_sections_have_no_legacy_fractional_css_owner
+1.75s call     Tests/UI/test_css_build_integrity.py::test_console_inspector_handle_full_height_rule_reaches_generated_bundle
+1.74s call     Tests/UI/test_css_build_integrity.py::test_css_bundle_build_is_independent_of_wall_clock
+1.74s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.73s call     Tests/UI/test_css_build_integrity.py::test_relocated_shared_component_rules_are_present
+48 passed in 125.57s (0:02:05)

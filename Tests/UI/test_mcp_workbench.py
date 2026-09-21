@@ -1381,14 +1381,19 @@ def test_active_mode_property_rejects_direct_assignment():
         workbench.active_mode = "tools"
 
 
-def test_set_mode_defers_async_workers_as_callables():
+@pytest.mark.asyncio
+async def test_set_mode_defers_async_workers_as_callables():
     """Exclusive cancellation must not strand already-created coroutines."""
+    from inspect import iscoroutinefunction
+
     switcher = SimpleNamespace(current=None)
+    canvas = SimpleNamespace(retire_detail_actions=lambda: 17)
     queued: list[tuple[Any, dict[str, Any]]] = []
     posted: list[Any] = []
+    refreshed: list[int] = []
 
-    async def disarm_canvas_delete() -> None:
-        return None
+    async def disarm_canvas_delete(retired_revision: int) -> None:
+        refreshed.append(retired_revision)
 
     async def clear_tool_view() -> None:
         return None
@@ -1400,7 +1405,9 @@ def test_set_mode_defers_async_workers_as_callables():
         # the switcher (deferred canvases stash instead); a non-empty result
         # models "canvas mounted".
         query=lambda _selector: [object()],
-        query_one=lambda _widget_type: switcher,
+        query_one=lambda widget_type: (
+            canvas if widget_type is MCPServersMode else switcher
+        ),
         post_message=lambda message: posted.append(message),
         run_worker=lambda work, **kwargs: queued.append((work, kwargs)),
         _disarm_canvas_delete=disarm_canvas_delete,
@@ -1411,11 +1418,12 @@ def test_set_mode_defers_async_workers_as_callables():
 
     assert switcher.current == "mcp-mode-canvas-tools"
     assert [message.mode for message in posted] == ["tools"]
-    assert [work for work, _kwargs in queued] == [
-        disarm_canvas_delete,
-        clear_tool_view,
-    ]
-    assert all(callable(work) for work, _kwargs in queued)
+    assert len(queued) == 2
+    assert all(iscoroutinefunction(work) for work, _kwargs in queued)
+    assert refreshed == []
+    for work, _kwargs in queued:
+        await work()
+    assert refreshed == [17]
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,1999 @@
+{
+  "distinct_passed": 230,
+  "note": "Latest result wins per test node. Initial Workbench fixture failure is retained and superseded by the one-test worker-contract pass. The initial 90-case UI run is supplemented by the 12-case departure run including the final overlap fix. All 17 ownership/geometry cases were rechecked after the final production change.",
+  "runs": [
+    {
+      "file": "ui-final.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[edit]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[refresh]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_old_server_action_is_retired_before_first_detail_refresh_await",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_accepted_delete_keeps_its_target_across_toolbar_rebuild",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[before_release]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[after_release]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_overview_renders_aggregate_table_and_callouts",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_overview_shows_readiness_glyph_legend",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_status_column_cells_carry_semantic_color_by_readiness_state",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_overview_summary_glyph_carries_worst_state_class_sentence_stays_neutral",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_overview_callouts_are_left_aligned_with_bundled_css",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_table_row_selection_posts_server_key",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_update_overview_survives_markup_like_labels_and_renders_plain",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_row_selection_for_deduped_row_posts_canonical_server_key",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_second_update_overview_leaves_only_latest_callouts",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_update_overview_dedupes_colliding_row_keys_without_crashing",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_detail_text_redacts_secret_query_params_in_base_url",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_detail_text_marks_env_placeholder_missing_despite_whitespace",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_detail_renders_redacted_config_and_builtin_snippet",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_detail_lists_resources_and_prompts_from_discovery_snapshot",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_detail_resources_prompts_empty_copy_is_none",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_server_external_record_detail_shows_resource_prompt_counts_only",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_note",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_builtin_toggles_container_does_not_expand_past_content",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_builtin_checkboxes_do_not_appear_for_non_builtin_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_showing_builtin_detail_does_not_post_builtin_flag_changed",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_group_dependents_are_disabled_while_master_is_off",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_group_dependents_are_enabled_while_master_is_on",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_tool_gate_buttons_do_not_appear_for_non_builtin_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_showing_builtin_detail_does_not_post_tool_gate_changed",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_gate_row_state_is_spelled_out_and_follows_the_saved_value",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_toggling_builtin_enabled_checkbox_posts_builtin_flag_changed",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_toggling_builtin_expose_checkboxes_posts_matching_keys",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_delete_requires_arm_then_confirm",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_delete_confirm_focuses_keep_and_escape_disarms",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_builtin_detail_has_no_delete_toolbar",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_server_source_detail_has_no_delete_toolbar",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_disconnect_button_gated_by_is_connected",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_disconnect_button_posts_disconnect_requested",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_edit_button_posts_edit_config_hub_action",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_every_detail_toolbar_button_has_a_tooltip",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_import_button_posts_import_servers_requested",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_import_button_gated_off_under_server_source",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_show_import_hides_overview_and_mounts_panel",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_hide_form_closes_import_panel_and_restores_overview",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_breadcrumb_posts_clear_and_returning_restores_table_cursor",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_returning_to_overview_without_a_prior_selection_leaves_cursor_alone",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_callout_click_posts_server_row_selected_with_its_key",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_off_builtin_gets_enable_affordance_not_problem_callout",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_pristine_off_builtin_summary_is_calm_not_a_false_alarm",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_off_builtin_table_row_reads_off_opt_in_not_needs_setup",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_genuine_problem_still_files_callout_alongside_off_builtin",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_callouts_cap_at_four_with_overflow_static",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_source_overview_omits_scope_column_and_shows_env_var_copy",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_server_source_overview_keeps_scope_column",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_switching_source_between_calls_rebuilds_columns",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_overview_table_hugs_content_so_callouts_sit_close_below",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_servers_table_height_rule_pinned_in_bundle_source_and_bundle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_named_items_text_accepts_tuple_not_just_list",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_named_items_text_truncates_at_named_items_cap",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_two_gate_presses_before_a_resync_request_opposite_values",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_servers_mode::test_local_detail_toolbar_offers_lifecycle_actions",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "overlap-green.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_an_overlapping_departure_toolbar_refresh",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[before_release]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[after_release]",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "workbench.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_mode_switch_shows_audit_canvas",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_detail_disconnect_button_routes_through_start_lifecycle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_active_mode_property_rejects_direct_assignment",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_set_mode_defers_async_workers_as_callables",
+          "status": "failed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_screen_hosts_workbench_with_mode_action_and_tolerant_restore",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_mcp_hub_modes_registry_is_complete",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_add_server_requested_shows_add_mode_form",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_delete_confirmed_deletes_profile_clears_selection_and_notifies",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_double_delete_confirm_dispatches_exactly_one_delete",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_mode_round_trip_disarms_pending_delete_confirmation",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_delete_confirmed_ignores_non_local_server_key",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_delete_local_profile_notify_escapes_markup_in_profile_id",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_canvas_replaces_placeholder",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_shows_tools_from_local_catalog_snapshots",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_empty_diagnosis_connect_routes_to_servers_mode_with_notify",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_shows_server_source_tools_from_embedded_inventory",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_switching_mode_clears_tool_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_detail_rejects_missing_profile_context",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_test_tool_preview_mode_switch_revokes_nonce_while_mounted",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_raw_mode_tool_run_posts_parsed_json_to_service",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_renders_pinned_grouped_sorted_matrix",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_shows_builtin_section_with_no_mcp_servers",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_builtin_server_inventory_renders_tools_mode_rows",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_renders_fail_soft_without_t4_seams",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_selection_shows_permission_block_via_gate_tool_test",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_tool_row_selection_shows_permission_block",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_pinned_row_selection_clears_inspector_without_crash",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_tool_row_selection_shows_permission_block",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_pinned_row_selection_clears_inspector",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_jumps_to_permissions_row",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_clears_stale_tool_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_state_column_reflects_effective_tool_states",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_server_source_shows_governance_profiles_readonly_listing",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_local_source_has_no_governance_section",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_fetch_failure_leaves_section_absent",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_non_mapping_payload_renders_empty_section",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_profiles_not_list_renders_empty_section",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_execution_log_entries_into_canvas",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_completed_run_repopulates_audit_table_when_audit_mode_is_active",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_mode_guarded_when_service_has_no_execution_log_attribute",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_mode_guarded_when_execution_log_property_raises",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_entry_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_server_findings_into_findings_subview",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_finding_view_details_action_routes_to_servers_mode_using_rail_fallback",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_finding_detail",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_local_controls_round_trip_master_and_workspace",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_failed_master_save_restores_persisted_truth",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_rejects_non_directory_workspace_root",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_tools_mode_workspace_root_uses_shared_path_validator",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_entering_permissions_mode_focuses_the_matrix",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_save_and_connect_runs_lifecycle_after_save",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "worker-contract.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_workbench::test_set_mode_defers_async_workers_as_callables",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "css.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_css_bundle_build_is_independent_of_wall_clock",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_library_notes_compact_source_module_is_exactly_bundled",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_console_bounded_sections_have_no_legacy_fractional_css_owner",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_library_notes_compact_geometry_matches_fallback_source_and_bundle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_file_notes_error_ink_and_disabled_opacity_are_app_tier",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_build_css_rejects_a_missing_declared_module",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_build_css_preserves_existing_output_when_a_module_is_missing",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_css_manifest_declares_only_existing_settings_source",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_settings_splash_theme_rules_have_source_and_bundle_integrity",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_splash_theme_module_has_no_bare_or_generic_component_selectors",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_relocated_shared_component_rules_are_present",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_console_inspector_handle_full_height_rule_reaches_generated_bundle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_library_modular_css_compact_shell_and_emergency_return_reach_bundle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_console_edge_ownership_rules_reach_generated_bundle",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_settings_category_rules_have_source_and_bundle_integrity",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_split_partition_is_lossless_and_ownership_is_conservative",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_split_demotion_sees_later_modules",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_split_sheets_carry_only_their_own_owners_rules",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_evals.tcss]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_scheduling.tcss]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_workflows.tcss]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screen_owned_splitter_multi_prefix_and_keep_shapes",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_cross_split_selector_overlap_refuses_to_build",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screen_owned_sheets_are_wired_to_app_routes",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_screens_do_not_take_owned_sheets_onto_css_path",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_schedules_visit_loads_the_screen_owned_sheet",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_schedules_as_initial_tab_loads_the_screen_owned_sheet",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_build_integrity::test_stale_split_sheets_are_removed_when_their_module_leaves",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_ignores_the_generated_timestamp",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_names_the_changed_module",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_bundle_sync_guard::test_committed_bundle_reproduces_from_sources",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_end_with_one_newline",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.QA.test_agentic_terminal_css_tokens::test_agentic_pane_borders_use_design_grid_token",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Performance.test_textual_css_fastpath::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Performance.test_textual_css_fastpath::test_fastpath_computes_identical_styles_for_every_node",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Performance.test_textual_css_fastpath::test_ancestor_requirements_only_claims_what_it_can_prove",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Performance.test_textual_css_fastpath::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Performance.test_textual_css_fastpath::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "runner-green.txt",
+      "cases": [
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-server-actions]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names0]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names1]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[outside]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[alias]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[traversal]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[tmp-base]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-home]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-db]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[native.log]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[launch.json]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[evidence]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[dangling-log]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-cancellation]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-refresh]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-tool-errors]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-server-actions-alpha]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-server-actions-beta]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-cancellation]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-refresh]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-tool-errors]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-server-actions-alpha]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-server-actions-beta]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-cancellation]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-refresh]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-tool-errors]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-server-actions-alpha]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-server-actions-beta]",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "ownership-final.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[edit]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[connect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[refresh]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_old_server_action_is_retired_before_first_detail_refresh_await",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_accepted_delete_keeps_its_target_across_toolbar_rebuild",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]",
+          "status": "passed"
+        }
+      ]
+    }
+  ],
+  "latest_by_test": {
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[edit]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[connect]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[refresh]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[disconnect]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_old_server_action_is_retired_before_first_detail_refresh_await": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_accepted_delete_keeps_its_target_across_toolbar_rebuild": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_ownership::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]": {
+      "status": "passed",
+      "evidence": "ownership-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[before_release]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_departure_refresh_preserves_actions_from_a_newer_sync[after_release]": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_overview_renders_aggregate_table_and_callouts": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_overview_shows_readiness_glyph_legend": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_status_column_cells_carry_semantic_color_by_readiness_state": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_overview_summary_glyph_carries_worst_state_class_sentence_stays_neutral": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_overview_callouts_are_left_aligned_with_bundled_css": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_table_row_selection_posts_server_key": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_update_overview_survives_markup_like_labels_and_renders_plain": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_row_selection_for_deduped_row_posts_canonical_server_key": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_second_update_overview_leaves_only_latest_callouts": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_update_overview_dedupes_colliding_row_keys_without_crashing": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_detail_text_redacts_secret_query_params_in_base_url": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_detail_text_marks_env_placeholder_missing_despite_whitespace": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_detail_renders_redacted_config_and_builtin_snippet": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_detail_lists_resources_and_prompts_from_discovery_snapshot": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_detail_resources_prompts_empty_copy_is_none": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_server_external_record_detail_shows_resource_prompt_counts_only": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_note": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_builtin_toggles_container_does_not_expand_past_content": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_builtin_checkboxes_do_not_appear_for_non_builtin_detail": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_showing_builtin_detail_does_not_post_builtin_flag_changed": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_group_dependents_are_disabled_while_master_is_off": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_group_dependents_are_enabled_while_master_is_on": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_tool_gate_buttons_do_not_appear_for_non_builtin_detail": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_showing_builtin_detail_does_not_post_tool_gate_changed": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_gate_row_state_is_spelled_out_and_follows_the_saved_value": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_toggling_builtin_enabled_checkbox_posts_builtin_flag_changed": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_toggling_builtin_expose_checkboxes_posts_matching_keys": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_delete_requires_arm_then_confirm": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_delete_confirm_focuses_keep_and_escape_disarms": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_builtin_detail_has_no_delete_toolbar": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_server_source_detail_has_no_delete_toolbar": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_disconnect_button_gated_by_is_connected": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_disconnect_button_posts_disconnect_requested": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_edit_button_posts_edit_config_hub_action": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_every_detail_toolbar_button_has_a_tooltip": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_import_button_posts_import_servers_requested": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_import_button_gated_off_under_server_source": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_show_import_hides_overview_and_mounts_panel": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_hide_form_closes_import_panel_and_restores_overview": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_breadcrumb_posts_clear_and_returning_restores_table_cursor": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_returning_to_overview_without_a_prior_selection_leaves_cursor_alone": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_callout_click_posts_server_row_selected_with_its_key": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_off_builtin_gets_enable_affordance_not_problem_callout": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_pristine_off_builtin_summary_is_calm_not_a_false_alarm": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_off_builtin_table_row_reads_off_opt_in_not_needs_setup": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_genuine_problem_still_files_callout_alongside_off_builtin": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_callouts_cap_at_four_with_overflow_static": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_source_overview_omits_scope_column_and_shows_env_var_copy": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_server_source_overview_keeps_scope_column": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_switching_source_between_calls_rebuilds_columns": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_overview_table_hugs_content_so_callouts_sit_close_below": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_servers_table_height_rule_pinned_in_bundle_source_and_bundle": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_named_items_text_accepts_tuple_not_just_list": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_named_items_text_truncates_at_named_items_cap": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_two_gate_presses_before_a_resync_request_opposite_values": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_servers_mode::test_local_detail_toolbar_offers_lifecycle_actions": {
+      "status": "passed",
+      "evidence": "ui-final.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_an_overlapping_departure_toolbar_refresh": {
+      "status": "passed",
+      "evidence": "overlap-green.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_mode_switch_shows_audit_canvas": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_detail_disconnect_button_routes_through_start_lifecycle": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_active_mode_property_rejects_direct_assignment": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_set_mode_defers_async_workers_as_callables": {
+      "status": "passed",
+      "evidence": "worker-contract.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_screen_hosts_workbench_with_mode_action_and_tolerant_restore": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_mcp_hub_modes_registry_is_complete": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_add_server_requested_shows_add_mode_form": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_delete_confirmed_deletes_profile_clears_selection_and_notifies": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_double_delete_confirm_dispatches_exactly_one_delete": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_mode_round_trip_disarms_pending_delete_confirmation": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_delete_confirmed_ignores_non_local_server_key": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_delete_local_profile_notify_escapes_markup_in_profile_id": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_canvas_replaces_placeholder": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_shows_tools_from_local_catalog_snapshots": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_empty_diagnosis_connect_routes_to_servers_mode_with_notify": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_shows_server_source_tools_from_embedded_inventory": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_switching_mode_clears_tool_detail": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_detail_rejects_missing_profile_context": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_test_tool_preview_mode_switch_revokes_nonce_while_mounted": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_raw_mode_tool_run_posts_parsed_json_to_service": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_renders_pinned_grouped_sorted_matrix": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_shows_builtin_section_with_no_mcp_servers": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_builtin_server_inventory_renders_tools_mode_rows": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_renders_fail_soft_without_t4_seams": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_selection_shows_permission_block_via_gate_tool_test": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_tool_row_selection_shows_permission_block": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_pinned_row_selection_clears_inspector_without_crash": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_tool_row_selection_shows_permission_block": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_pinned_row_selection_clears_inspector": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_jumps_to_permissions_row": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_clears_stale_tool_detail": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_state_column_reflects_effective_tool_states": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_server_source_shows_governance_profiles_readonly_listing": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_local_source_has_no_governance_section": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_fetch_failure_leaves_section_absent": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_non_mapping_payload_renders_empty_section": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_permissions_mode_governance_profiles_not_list_renders_empty_section": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_execution_log_entries_into_canvas": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_completed_run_repopulates_audit_table_when_audit_mode_is_active": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_mode_guarded_when_service_has_no_execution_log_attribute": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_mode_guarded_when_execution_log_property_raises": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_entry_detail": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_server_findings_into_findings_subview": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_finding_view_details_action_routes_to_servers_mode_using_rail_fallback": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_finding_detail": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_local_controls_round_trip_master_and_workspace": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_failed_master_save_restores_persisted_truth": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_rejects_non_directory_workspace_root": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_tools_mode_workspace_root_uses_shared_path_validator": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_entering_permissions_mode_focuses_the_matrix": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_mcp_workbench::test_save_and_connect_runs_lifecycle_after_save": {
+      "status": "passed",
+      "evidence": "workbench.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_css_bundle_build_is_independent_of_wall_clock": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_library_notes_compact_source_module_is_exactly_bundled": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_console_bounded_sections_have_no_legacy_fractional_css_owner": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_library_notes_compact_geometry_matches_fallback_source_and_bundle": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_file_notes_error_ink_and_disabled_opacity_are_app_tier": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_build_css_rejects_a_missing_declared_module": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_build_css_preserves_existing_output_when_a_module_is_missing": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_css_manifest_declares_only_existing_settings_source": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_settings_splash_theme_rules_have_source_and_bundle_integrity": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_splash_theme_module_has_no_bare_or_generic_component_selectors": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_relocated_shared_component_rules_are_present": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_console_inspector_handle_full_height_rule_reaches_generated_bundle": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_library_modular_css_compact_shell_and_emergency_return_reach_bundle": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_console_edge_ownership_rules_reach_generated_bundle": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_settings_category_rules_have_source_and_bundle_integrity": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_split_partition_is_lossless_and_ownership_is_conservative": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_split_demotion_sees_later_modules": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_split_sheets_carry_only_their_own_owners_rules": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_evals.tcss]": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_scheduling.tcss]": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screen_owned_module_is_exactly_partitioned[features/_workflows.tcss]": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screen_owned_splitter_multi_prefix_and_keep_shapes": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_cross_split_selector_overlap_refuses_to_build": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screen_owned_sheets_are_wired_to_app_routes": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_screens_do_not_take_owned_sheets_onto_css_path": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_schedules_visit_loads_the_screen_owned_sheet": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_schedules_as_initial_tab_loads_the_screen_owned_sheet": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_build_integrity::test_stale_split_sheets_are_removed_when_their_module_leaves": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_ignores_the_generated_timestamp": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_names_the_changed_module": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_bundle_sync_guard::test_committed_bundle_reproduces_from_sources": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_end_with_one_newline": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.QA.test_agentic_terminal_css_tokens::test_agentic_pane_borders_use_design_grid_token": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Performance.test_textual_css_fastpath::test_upstream_apply_still_has_the_shape_the_fastpath_assumes": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Performance.test_textual_css_fastpath::test_fastpath_computes_identical_styles_for_every_node": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Performance.test_textual_css_fastpath::test_ancestor_requirements_only_claims_what_it_can_prove": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Performance.test_textual_css_fastpath::test_filter_follows_a_class_added_to_an_ancestor_at_runtime": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Performance.test_textual_css_fastpath::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet": {
+      "status": "passed",
+      "evidence": "css.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-server-actions]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names0]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names1]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[outside]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[alias]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[traversal]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[tmp-base]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-home]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-db]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[native.log]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[launch.json]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[evidence]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[dangling-log]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-cancellation]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-refresh]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-tool-errors]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-server-actions-alpha]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[cleanup-demo-server-actions-beta]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-cancellation]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-refresh]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-tool-errors]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-server-actions-alpha]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[other-server-actions-beta]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-cancellation]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-refresh]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-tool-errors]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-server-actions-alpha]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    },
+    "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-server-actions-beta]": {
+      "status": "passed",
+      "evidence": "runner-green.txt"
+    }
+  }
+}

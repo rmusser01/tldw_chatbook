@@ -1,0 +1,86 @@
+...F...................................................                  [100%]
+=================================== FAILURES ===================================
+_______________ test_set_mode_defers_async_workers_as_callables ________________
+
+    def test_set_mode_defers_async_workers_as_callables():
+        """Exclusive cancellation must not strand already-created coroutines."""
+        switcher = SimpleNamespace(current=None)
+        queued: list[tuple[Any, dict[str, Any]]] = []
+        posted: list[Any] = []
+
+        async def disarm_canvas_delete() -> None:
+            return None
+
+        async def clear_tool_view() -> None:
+            return None
+
+        workbench = SimpleNamespace(
+            _active_mode="servers",
+            ModeChanged=lambda mode: SimpleNamespace(mode=mode),
+            # task-2901: set_mode probes for the target canvas before touching
+            # the switcher (deferred canvases stash instead); a non-empty result
+            # models "canvas mounted".
+            query=lambda _selector: [object()],
+            query_one=lambda _widget_type: switcher,
+            post_message=lambda message: posted.append(message),
+            run_worker=lambda work, **kwargs: queued.append((work, kwargs)),
+            _disarm_canvas_delete=disarm_canvas_delete,
+            _clear_tool_view=clear_tool_view,
+        )
+
+>       MCPWorkbench.set_mode(workbench, "tools")
+
+Tests/UI/test_mcp_workbench.py:1410:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = namespace(_active_mode='servers', ModeChanged=<function test_set_mode_defers_async_workers_as_callables.<locals>.<lamb...ion test_set_mode_defers_async_workers_as_callables.<locals>.clear_tool_view at 0x11f7b84a0>, _mcp_recovery_token=None)
+mode = 'tools'
+
+    def set_mode(self, mode: str) -> None:
+        """Select a mounted mode, retiring server actions before departure.
+
+        Args:
+            mode: Requested hub mode; unknown values select Servers. Requests
+                for a deferred canvas are retained until that canvas mounts.
+        """
+        if mode != self._active_mode:
+            self._mcp_recovery_token = None
+        if mode not in MCP_HUB_MODES:
+            mode = "servers"
+        # task-2901: `ContentSwitcher.current` raises for an id with no
+        # child. A mode request landing before the deferred canvases mount
+        # (a fast chip click in the first paint-to-load window) is stashed
+        # and replayed by `_mount_deferred_canvases` — the same stash idea
+        # `_reloading` uses for restores.
+        if not self.query(f"#mcp-mode-canvas-{mode}"):
+            self._pending_deferred_mode = mode
+            return
+        mode_changed = mode != self._active_mode
+        if mode_changed:
+>           retired_revision = self.query_one(MCPServersMode).retire_detail_actions()
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'types.SimpleNamespace' object has no attribute 'retire_detail_actions'
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:3774: AttributeError
+------------- generated xml file: /private/tmp/32825-workbench.xml -------------
+============================= slowest 25 durations =============================
+3.54s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.88s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.77s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+1.66s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync
+1.37s call     Tests/UI/test_mcp_workbench.py::test_delete_confirmed_deletes_profile_clears_selection_and_notifies
+1.37s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_failed_master_save_restores_persisted_truth
+1.36s call     Tests/UI/test_mcp_workbench.py::test_finding_view_details_action_routes_to_servers_mode_using_rail_fallback
+1.21s call     Tests/UI/test_mcp_workbench.py::test_raw_mode_tool_run_posts_parsed_json_to_service
+1.18s call     Tests/UI/test_mcp_workbench.py::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
+1.17s call     Tests/UI/test_mcp_workbench.py::test_save_and_connect_runs_lifecycle_after_save
+1.12s call     Tests/UI/test_mcp_workbench.py::test_detail_disconnect_button_routes_through_start_lifecycle
+1.10s call     Tests/UI/test_mcp_workbench.py::test_mode_round_trip_disarms_pending_delete_confirmation
+1.09s call     Tests/UI/test_mcp_workbench.py::test_switching_mode_away_from_audit_clears_finding_detail
+1.01s call     Tests/UI/test_mcp_workbench.py::test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail
+1.01s call     Tests/UI/test_mcp_workbench.py::test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_workbench.py::test_set_mode_defers_async_workers_as_callables
+1 failed, 54 passed, 295 deselected in 52.91s

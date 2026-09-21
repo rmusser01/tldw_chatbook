@@ -1,0 +1,509 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us0')
+arguments = []
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 21, in main
+E           root = Path(sys.argv[1]).resolve()
+E                       ~~~~~~~~^^^
+E       IndexError: list index out of range
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 18:16:41.695 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-20 18:16:41.736 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_6yv27fiy/config/config.toml
+2026-09-20 18:16:41.736 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6165 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_6yv27fiy/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-20 18:16:41.738 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6174 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_6yv27fiy/config/config.toml
+2026-09-20 18:16:41.738 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-20 18:16:41.738 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-20 18:16:41.745 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 18:16:41.745 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 18:16:41.746 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-20 18:16:41.747 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-20 18:16:41.770 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_6yv27fiy/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-20 18:16:41.770 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+2026-09-20 18:16:41.771 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+2026-09-20 18:16:41.771 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-20 18:16:41.890 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-20 18:16:41.972 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 18:16:42.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 18:16:42.052 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 18:16:42.054 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us1')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us1/profile']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 22, in main
+E           socket, session = sys.argv[2:4]
+E           ^^^^^^^^^^^^^^^
+E       ValueError: not enough values to unpack (expected 2, got 0)
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us2')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us2/profile', 'socket', 'session', 'extra']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 25, in main
+E           runpy.run_path(
+E         File "<frozen runpy>", line 286, in run_path
+E         File "<frozen runpy>", line 254, in _get_code_from_file
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/2026-09-16-ingest-lifecycle/native_check.py'
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us3')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us3/profile', '../socket', 'session']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 25, in main
+E           runpy.run_path(
+E         File "<frozen runpy>", line 286, in run_path
+E         File "<frozen runpy>", line 254, in _get_code_from_file
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/2026-09-16-ingest-lifecycle/native_check.py'
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us4')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us4/profile', 'socket', 'session:window']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 25, in main
+E           runpy.run_path(
+E         File "<frozen runpy>", line 286, in run_path
+E         File "<frozen runpy>", line 254, in _get_code_from_file
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/2026-09-16-ingest-lifecycle/native_check.py'
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us5')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us5/profile', 'socket', 'space name']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 25, in main
+E           runpy.run_path(
+E         File "<frozen runpy>", line 286, in run_path
+E         File "<frozen runpy>", line 254, in _get_code_from_file
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/2026-09-16-ingest-lifecycle/native_check.py'
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-server-actions] _
+
+tmp_path = PosixPath('/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us6')
+arguments = ['/private/tmp/32825-native-cli-red-pytest/test_invalid_cli_exits_with_us6/profile', 'socket', 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py')
+
+    @pytest.mark.parametrize(
+        "runner",
+        RUNNERS,
+        ids=[
+            "server-actions",
+            "tool-errors",
+            "connection-refresh",
+            "lifecycle-cancellation",
+            "inspector-refresh",
+            "approval-actions",
+            "recovery-catalog",
+            "restored-roots",
+            "tools-header",
+            "modal-selector",
+            "catalog-freshness",
+            "audit-navigation",
+            "revoke",
+            "rule-actions",
+            "permission-navigation",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(
+        tmp_path, arguments, runner
+    ):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+>       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 314, in <module>
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py", line 25, in main
+E           runpy.run_path(
+E         File "<frozen runpy>", line 286, in run_path
+E         File "<frozen runpy>", line 254, in _get_code_from_file
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-server-actions/2026-09-16-ingest-lifecycle/native_check.py'
+
+Tests/Utils/test_mcp_native_qa_args.py:84: AssertionError
+---------- generated xml file: /private/tmp/32825-native-cli-red.xml -----------
+============================= slowest 25 durations =============================
+
+(21 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-server-actions]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-server-actions]
+7 failed, 112 deselected in 0.99s

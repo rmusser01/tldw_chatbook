@@ -1,5 +1,27 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2712 server actions ready for fresh visual review — 2026-09-21
+
+Existing draft [PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712)
+resumed on merged PR2716 dev `9cf5ba67b2`, without conflicts. Toolbar actions
+retain displayed profile identity and reject retired/unavailable controls.
+Mode departure revokes queued presses immediately; delayed refreshes preserve
+newer input, and overlapping rendering cannot interrupt accepted deletion.
+Compact actions use a token-backed two-column grid; wide layout is unchanged.
+
+[Current qualification](../qa/2026-09-18-mcp-server-actions/current-dev/README.md):
+230 distinct targeted cases, eight artifact guards, no introduced Ruff findings,
+independent review clear, four native theme/size journeys and 16 inspected captures.
+Real private profile persistence verifies Keep/Escape, ignored retired presses
+and exact-target deletion. Clean shutdown, healthy private databases, unchanged
+defaults, matching provenance and zero network attempts pass. The obsolete saved
+runner is retired behind its immutable reference.
+
+TASK-32825 remains In Progress. Fresh owner visual approval, current-head CI,
+accumulated Qodo review and current-dev/conflict checks gate merge. PR2716's
+approval does not approve this slice. Compact rail truncation, compact Test Tool
+reachability, Audit and other screens remain separate bounded reviews.
+
 ## PR2716 merged; server-action review resumes — 2026-09-21
 
 [PR2716](https://github.com/rmusser01/tldw_chatbook/pull/2716) merged into dev
