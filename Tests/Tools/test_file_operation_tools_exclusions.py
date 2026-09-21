@@ -34,6 +34,18 @@ from tldw_chatbook.Tools.file_operation_tools import (
 )
 from tldw_chatbook.Tools.workspace_file_roots import current_folder_binding_exclusions
 
+# Targeted-run guard (known environmental failure): the first real
+# ``add_folder_binding`` call lazily imports the RAG config-profile chain,
+# whose module-level internal-prompt reads run the config bootstrap under
+# the PER-TEST sandboxed ``TLDW_CONFIG_PATH`` while the config raw
+# participant was opened against the collection-time bootstrap path --
+# aborting with ``RecoveryRequired: raw_source_selection_changed``. A full
+# suite run imports this chain during collection (before the per-test
+# sandbox diverges), which is why only single-file runs hit it. Importing
+# it here, under the same collection-time env, keeps targeted runs as
+# green as full runs without touching any behavior under test.
+import tldw_chatbook.RAG_Search.config_profiles  # noqa: F401
+
 KEY_MARKER = "SYNTHETIC-NOT-A-REAL-PRIVATE-KEY-EXCL"
 WORKSPACE_ID = "ws-x"
 
@@ -86,6 +98,66 @@ def plain_root(tmp_path, monkeypatch) -> Path:
 
 def test_exclusions_empty_outside_a_run_workspace(excluded_root) -> None:
     assert current_folder_binding_exclusions() == ()
+
+
+def test_active_workspace_fallback_still_enforces_exclusions(
+    excluded_root: Path,
+) -> None:
+    """Finding A (PR #2767): the fallback must mirror ``allowed_file_roots``.
+
+    With no run workspace bound, ``allowed_file_roots`` still admits the
+    ACTIVE workspace's bindings via ``registry.get_active_workspace()``.
+    The exclusions helper used to return () there, so the builtin file
+    tools reached those bound folders with ZERO exclusions. It must
+    resolve the same fallback workspace and enforce its exclusions.
+    """
+    registry = wfr._registry_factory()
+    registry.set_active_workspace(WORKSPACE_ID)
+    assert wfr.current_run_workspace_id() is None  # the fallback case, not a bound run
+    paths = current_folder_binding_exclusions()
+    assert (excluded_root / "secrets").resolve(strict=False) in paths
+
+
+def test_mid_run_removal_stays_enforced_for_frozen_run(
+    excluded_root: Path,
+) -> None:
+    """Finding B (PR #2767): family-2 exclusions are monotone within a run.
+
+    Console runs freeze binding authority as snapshots that carry the
+    exclusions admitted at turn start. A registry-side removal mid-run must
+    NOT stop enforcement for that run (family-1 high-water parity), while
+    the frozen snapshot still matches the live binding.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _capture_project_root_identity,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        fingerprint_canonical_locator,
+    )
+    from tldw_chatbook.Chat.console_turn_context import ConsoleProjectBindingSnapshot
+
+    registry = wfr._registry_factory()
+    binding = registry.list_folder_bindings(WORKSPACE_ID)[0]
+    root = Path(str(binding.locator))
+    root_identity = _capture_project_root_identity(root)
+    assert root_identity is not None
+    snapshot = ConsoleProjectBindingSnapshot(
+        binding_id=str(binding.binding_id),
+        workspace_id=WORKSPACE_ID,
+        display_name="binding",
+        root=str(root),
+        locator_fingerprint=fingerprint_canonical_locator(str(root)),
+        allow_write=True,
+        root_identity=root_identity,
+        exclusions=("secrets",),
+    )
+    # Mid-run removal: the live binding no longer carries any exclusion.
+    registry.remove_binding_exclusion(WORKSPACE_ID, binding.binding_id, "secrets")
+    assert registry.list_binding_exclusions(binding.binding_id) == ()
+
+    with wfr.run_workspace(WORKSPACE_ID, binding_authority=(snapshot,)):
+        paths = current_folder_binding_exclusions()
+    assert (root / "secrets").resolve(strict=False) in paths
 
 
 def test_exclusions_resolve_bound_binding_entries(excluded_root: Path) -> None:

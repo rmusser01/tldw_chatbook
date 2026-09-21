@@ -569,12 +569,21 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
     on the READ side (the superset: a read-admitted binding's exclusions apply
     to its writes too), so a binding dropped for path drift, narrowed run
     scopes, or a frozen-authority mismatch also drops its exclusions here.
+    Mirrors ``allowed_file_roots`` exactly: with no run workspace bound, the
+    ACTIVE workspace's bindings (and their exclusions) still apply.
+
+    Exclusions frozen into the run's ``ConsoleProjectBindingSnapshot``
+    authority are UNIONED with the live entries per admitted binding: a
+    mid-run registry removal stays enforced for the rest of the run
+    (family-1 high-water parity -- run authority never expands mid-run),
+    while a mid-run addition applies on the next call.
 
     Returns:
-        Resolved exclusion paths from the admitted bindings; ``()`` outside a
-        run workspace, for the default workspace, when no admitted binding
-        carries exclusions, or when the registry is unavailable (consistent
-        with ``allowed_file_roots`` degrading to sandbox-only there, which
+        Resolved exclusion paths from the admitted bindings; ``()`` when no
+        workspace resolves (no run workspace and no active workspace), for
+        the default workspace, when no admitted binding carries exclusions,
+        or when the registry is unavailable (consistent with
+        ``allowed_file_roots`` degrading to sandbox-only there, which
         already makes every bound path unreachable). An individual entry
         that cannot be resolved (e.g. replaced by a symlink loop mid-run)
         is skipped with a warning while the resolvable rest stays enforced.
@@ -584,9 +593,16 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
         workspace_id = current_run_workspace_id()
         from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
+        registry = _registry_factory()
+        if workspace_id is None:
+            # Fallback parity (Finding A, PR #2767): ``allowed_file_roots``
+            # admits the ACTIVE workspace's bindings when no run workspace
+            # is bound; the exclusions here must follow the same fallback or
+            # the builtin tools reach those folders with ZERO exclusions.
+            active = registry.get_active_workspace()
+            workspace_id = active.workspace_id if active is not None else None
         if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
             return ()
-        registry = _registry_factory()
         maximum_binding_ids = _RUN_WORKSPACE_READ_BINDING_IDS.get()
         frozen_authority = _RUN_WORKSPACE_BINDING_AUTHORITY.get()
         authority_by_id = (
@@ -621,9 +637,21 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
                 folder, frozen
             ):
                 continue
-            for entry in binding_exclusion_entries(binding):
+            # Live entries first, then the run's frozen exclusion rels that
+            # are no longer live (union; deduped). Frozen rels keep mid-run
+            # removals enforced for this run exactly as family-1's
+            # high-water provider does; live rels make additions apply on
+            # the next call.
+            rels = [entry.path for entry in binding_exclusion_entries(binding)]
+            if frozen is not None:
+                seen = set(rels)
+                for rel in tuple(getattr(frozen, "exclusions", ()) or ()):
+                    if isinstance(rel, str) and rel and rel not in seen:
+                        seen.add(rel)
+                        rels.append(rel)
+            for rel in rels:
                 try:
-                    paths.append((folder / entry.path).resolve(strict=False))
+                    paths.append((folder / rel).resolve(strict=False))
                 except Exception:  # noqa: BLE001 - per-entry isolation (final
                     # review Finding 2c): skip the unresolvable entry at
                     # warning, keep the resolvable rest. Collapsing to () here

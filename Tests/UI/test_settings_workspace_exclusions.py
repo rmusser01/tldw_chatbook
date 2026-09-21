@@ -72,3 +72,47 @@ async def test_exclusion_add_remove_and_inline_errors(tmp_path) -> None:
         assert registry.list_binding_exclusions(binding.binding_id) == ()
         assert "effective for new runs" in _visible_text(screen)
         assert "Excluded (0)" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_malformed_exclusion_metadata_still_renders(tmp_path) -> None:
+    """Finding E (PR #2767): the pane never crashes on malformed metadata.
+
+    ``metadata["exclusions"]`` is loosely typed; a non-list value (here the
+    string ``"bogus"``) must render as "Excluded (0)" via the defensive
+    reader rather than raising during pane composition.
+    """
+    from dataclasses import replace
+
+    from textual.widgets import Button, Input
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-excl", name="Exclusions WS")
+    project = tmp_path / "project"
+    project.mkdir()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-excl", Button).press()
+        await pilot.pause(0.2)
+
+        screen.query_one("#settings-workspace-folder-path", Input).value = str(project)
+        screen.query_one("#settings-workspace-folder-add", Button).press()
+        await pilot.pause(0.3)
+        binding = registry.list_folder_bindings("ws-excl")[0]
+        assert "Excluded (0)" in _visible_text(screen)
+
+        # Corrupt the persisted metadata directly (simulating an older
+        # writer or hand-edited state), then recompose the pane.
+        registry.save_runtime_binding(
+            replace(binding, metadata={**binding.metadata, "exclusions": "bogus"})
+        )
+        screen.query_one("#settings-workspace-row-ws-excl", Button).press()
+        await pilot.pause(0.3)
+        assert "Excluded (0)" in _visible_text(screen)
+        assert screen.query_one(
+            f"#settings-workspace-excl-path-{binding.binding_id}", Input
+        )

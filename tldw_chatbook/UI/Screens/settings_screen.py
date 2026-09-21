@@ -145,6 +145,7 @@ from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
+    binding_exclusion_entries,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_endpoint_template_modal import (
@@ -20545,7 +20546,10 @@ class SettingsScreen(BaseAppScreen):
                 remove_button.binding_id = binding.binding_id
                 yield remove_button
             yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
-            exclusions = binding.metadata.get("exclusions") or []
+            # Defensive reader (never the raw metadata list): malformed
+            # persisted exclusions must render as "Excluded (0)" rather than
+            # crash pane composition.
+            exclusions = binding_exclusion_entries(binding)
             yield Static(
                 f"  Excluded ({len(exclusions)}): agent cannot see these",
                 classes="settings-detail-row",
@@ -20553,7 +20557,7 @@ class SettingsScreen(BaseAppScreen):
             for index, entry in enumerate(exclusions):
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        f"  {entry.get('path', '')} ({entry.get('kind', 'directory')})",
+                        f"  {entry.path} ({entry.kind})",
                         id=f"settings-workspace-excl-label-{binding.binding_id}-{index}",
                         classes="settings-detail-row",
                     )
@@ -20567,7 +20571,7 @@ class SettingsScreen(BaseAppScreen):
                     # folder-remove class handler also matches this class and
                     # reads ``binding_id`` -- these attrs keep it a no-op here.
                     unexclude_button.exclusion_binding_id = binding.binding_id
-                    unexclude_button.exclusion_path = str(entry.get("path", ""))
+                    unexclude_button.exclusion_path = str(entry.path)
                     yield unexclude_button
             with Horizontal(classes="settings-input-row"):
                 yield Input(

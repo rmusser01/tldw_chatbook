@@ -660,6 +660,18 @@ def merge_sensitive_context(
     enforce them with no further call-site changes. Extras that fail
     resolution are dropped, mirroring how the base set's own unresolved
     entries are dropped.
+
+    Args:
+        base: The call's base sensitive-path context (denylist plus any
+            earlier folds).
+        extra_files: Additional absolute file paths to protect (e.g.
+            per-binding user exclusions of file kind).
+        extra_dirs: Additional absolute directory paths to protect; a
+            directory entry also shields its descendants.
+
+    Returns:
+        A new ``SensitivePathContext`` with the extras merged in; ``base``
+        is never mutated. Unresolvable extras are silently omitted.
     """
     files = list(base.files)
     dirs = list(base.dirs)

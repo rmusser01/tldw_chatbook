@@ -1030,6 +1030,8 @@ def _project_binding_snapshot(
     workspace_id: str,
 ) -> ConsoleProjectBindingSnapshot:
     binding = selection.binding
+    from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
     return ConsoleProjectBindingSnapshot(
         binding_id=str(binding.binding_id),
         workspace_id=str(getattr(binding, "workspace_id", workspace_id)),
@@ -1042,6 +1044,12 @@ def _project_binding_snapshot(
         locator_fingerprint=selection.locator_fingerprint,
         allow_write=selection.allow_write,
         root_identity=selection.root_identity,
+        # Freeze the exclusions admitted with the binding so a mid-run
+        # registry removal cannot relax this run's family-2 enforcement
+        # (the roots helper unions these with the live entries).
+        exclusions=tuple(
+            entry.path for entry in binding_exclusion_entries(binding)
+        ),
     )
 
 
