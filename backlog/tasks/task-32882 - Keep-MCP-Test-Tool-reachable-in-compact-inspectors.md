@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-21 05:48'
-updated_date: '2026-09-21 06:42'
+updated_date: '2026-09-21 07:07'
 labels:
   - mcp
   - ui
@@ -24,7 +24,7 @@ Terminal users must be able to inspect a selected tool, edit its arguments, revi
 <!-- AC:BEGIN -->
 - [x] #1 Keyboard users can reach and read Test Tool, argument fields, permission preview, Run and Close in dark and light themes at 80x24, with wide behavior preserved.
 - [x] #2 Resize and focus changes preserve entered arguments, selected tool identity and existing permission or execution behavior.
-- [ ] #3 Targeted regressions and real native error/retry journeys qualify compact reachability and clean private-profile shutdown; separate visual approval gates the layout PR.
+- [x] #3 Targeted regressions and real native error/retry journeys qualify compact reachability and clean private-profile shutdown; separate visual approval gates the layout PR.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,11 +37,12 @@ Reason: restore keyboard reachability in the existing MCP inspector, preserving 
 2. Give the inspector a usable scrolling viewport using the existing Textual container and design tokens. Keep focus and arguments stable through size changes; preserve tool, permission and execution authority.
 3. Run targeted reachability and neighboring inspector regressions, static/derived-artifact guards and independent review.
 4. Reuse the admitted private real-stdio error/retry journey for fresh dark/light compact and wide native evidence with full labels, hit targets, source provenance and clean lifecycle checks. Present a bounded follow-up PR and its own visual approval after PR2769 closes.
-5. Current-dev QA compatibility: PR2741 removed validate_username, which the shared native CLI still imports. Preserve the exact documented tmux identifier contract with a local stdlib fullmatch; retain all profile/path admission checks and verify the existing cross-runner invalid-CLI/positive-profile cases before native qualification.
+5. Current-dev QA compatibility: PR2741 removed validate_username, which the shared native CLI still imports. Preserve the exact documented tmux identifier contract through a strict shared input-validation helper; retain all profile/path admission checks and verify the existing cross-runner invalid-CLI/positive-profile cases before native qualification.
+6. Address PR2770 Qodo validation feedback by using the shared input-validation boundary for tmux names; preserve exact ASCII/length/leading-character admission, cover non-coercion and newline rejection, and rerun native admission checks. Owner approved the compact layout on 2026-09-21; this QA-only repair does not change it.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented token-backed compact inspector scrolling, natural form height and wrapped actions. Deferred resize reveal preserves the current focused editor without replacing fields. Four scalar/raw keyboard journeys pass across both themes and three sizes;372 neighboring and134 native admission/fixture cases pass (510 distinct cases), plus nine artifact guards. No introduced Ruff findings and14 changed ranges formatted; independent production/test/runner review clear. Four real-stdio native theme/size journeys verify typed arguments, permission/Run, real failure/retry and clean profile lifecycle. All14 source hashes and runner hash match final captures;16 final images match the inspected layouts. The shared QA identifier validator retains its exact contract after upstream removed validate_username. Existing ADR-150/161 apply; no new ADR. PR2769 merged as85e7153158; this branch rebased without conflicts and all4 keyboard cases passed again. Evidence: Docs/superpowers/qa/2026-09-21-mcp-inspector-compact/README.md. Remains In Progress for its bounded PR, fresh owner visual approval and CI/review/current-dev checks.
+Implemented token-backed inspector scrolling, natural form height and wrapped actions; deferred resize reveal preserves the current focused editor and arguments. The 510-case initial inventory and four clean native dark/light compact/wide journeys qualified the layout, approved by the owner on 2026-09-21. PR2770 Qodo feedback is addressed by a strict shared Pydantic tmux identifier validator preserving the exact ASCII/length/leading-character contract, without coercion or trailing-newline acceptance. All 153 direct/admission/fixture cases and eight import checks pass; pre-existing validation AST and all other captured sources remain unchanged. Existing ADR-150/161 apply; no new ADR. Evidence: Docs/superpowers/qa/2026-09-21-mcp-inspector-compact/README.md. Remains In Progress pending current-head CI, review and current-dev merge checks.
 <!-- SECTION:NOTES:END -->

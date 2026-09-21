@@ -6,8 +6,9 @@
 PR2741 removed `validate_username` while the shared launcher under
 `Docs/superpowers/qa/` still imported it. Main CI did not exercise that entry
 point. The existing cross-runner invalid-CLI checks reproduced the failure; a
-local standard-library match preserved the exact identifier contract, and all
-134 admission/fixture checks passed. Include executable QA documentation when
+local match first preserved the exact identifier contract; Qodo then caught the
+shared-boundary policy gap. A strict shared Pydantic validator preserves that
+contract, and all 153 boundary/admission/fixture checks pass. Include executable QA documentation when
 checking callers of a removed helper, and run its admission tests before launch.
 
 ## DOM presence outlives an inspector form's ownership

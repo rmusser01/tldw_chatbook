@@ -1,0 +1,114 @@
+{
+  "python": "3.12.11",
+  "executable": "/private/tmp/32882-pydantic24-z5glqm3h/runtime/bin/python",
+  "pydantic": "2.4.2",
+  "pydantic_core": "2.10.1",
+  "scope": "Actual validator AST and source test parameter values only; no application or profile imports",
+  "source_sha256": "95661b235cc40f42fb0a3354124cfd6c7af4d35d4c3802a09e7498f92342425e",
+  "tests_sha256": "ba71d6ab81d8a3475d76be293ba55dc3334a3d1a712e2f182396172a805fbf51",
+  "passed": 19,
+  "failed": 0,
+  "cases": [
+    {
+      "case": "'a'",
+      "expected": "accept unchanged",
+      "passed": true
+    },
+    {
+      "case": "'0'",
+      "expected": "accept unchanged",
+      "passed": true
+    },
+    {
+      "case": "'A0_b-c'",
+      "expected": "accept unchanged",
+      "passed": true
+    },
+    {
+      "case": "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "expected": "accept unchanged",
+      "passed": true
+    },
+    {
+      "case": "None",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "1",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "True",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "b'name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "''",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'_name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'-name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'../name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'name:window'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'space name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'name\\n'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'name\\r'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'\u00e9name'",
+      "expected": "reject ValueError",
+      "passed": true
+    },
+    {
+      "case": "'name\\x00'",
+      "expected": "reject ValueError",
+      "passed": true
+    }
+  ],
+  "old_compiled_pattern": {
+    "reproduced": true,
+    "exception": "SchemaError",
+    "message": "Invalid Schema:\nstr.pattern\n  Input should be a valid string [type=string_type, input_value=re.compile('\\\\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\\\Z'), input_type=Pattern]\n    For further information visit https://errors.pydantic.dev/2.4/v/string_type"
+  },
+  "repository_imports": []
+}

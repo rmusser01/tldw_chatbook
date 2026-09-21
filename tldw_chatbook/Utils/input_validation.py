@@ -10,7 +10,7 @@ import time
 import unicodedata
 from collections.abc import Mapping
 from itertools import islice
-from typing import Any, Literal, NoReturn, Optional, TypeVar, Union
+from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
 import regex
@@ -32,6 +32,28 @@ from .reasoning_config import REASONING_HISTORY_MODES
 _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
 )
+_TMUX_IDENTIFIER = TypeAdapter(
+    Annotated[
+        str,
+        Field(strict=True, pattern=r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z"),
+    ]
+)
+
+
+def validate_tmux_identifier(value: object) -> str:
+    """Validate a native QA socket or session name without coercion.
+
+    Args:
+        value: Candidate containing 1–64 ASCII letters, digits, underscores or
+            hyphens, starting with a letter or digit.
+
+    Returns:
+        The exact validated name, without trimming or normalization.
+
+    Raises:
+        ValueError: The value is not a supported string identifier.
+    """
+    return _TMUX_IDENTIFIER.validate_python(value)
 
 
 def validate_batch_transcription_provider(value: object) -> str:

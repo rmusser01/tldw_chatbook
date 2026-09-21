@@ -13,7 +13,8 @@ source hashes remain identical. The final width token substitution leaves
 generated CSS byte-identical, and [17 focused keyboard/governance cases pass](token-final.txt).
 [All four keyboard journeys pass again on merged dev](merged-dev.txt). All 16
 final native images are pixel-identical to the inspected captures.
-Fresh visual approval and normal CI/review/current-dev checks gate this layout PR.
+The owner approved this layout on 2026-09-21. Current-head CI/review and
+current-dev checks still gate merge.
 Audit and the remaining MCP/component review scope remain open.
 
 ## Verification
@@ -41,8 +42,9 @@ attempts used unsupported TextArea selection keys and skipped an already-focused
 Close button; those were corrected before the four final passing cases.
 
 The shared native CLI also depended on `validate_username`, removed by upstream
-PR2741. Its exact documented ASCII identifier contract is now a local standard
-library fullmatch. Profile/path admission is unchanged. The first launch stopped
+PR2741. Its exact documented ASCII identifier contract is now in the shared
+input-validation module; a strict Pydantic adapter rejects coercion and uses
+absolute string anchors. Profile/path admission is unchanged. The first launch stopped
 at that import before starting the app; all 134 admission checks now pass.
 
 ## Native evidence
@@ -56,7 +58,10 @@ Fresh [compact result](compact-native-result.json) and [wide result](wide-native
 each cover dark/light failure then recovery over the same live connection.
 Each private profile records four real wire invocations and four audit rows.
 Launch receipts: [compact](compact-native-launch.json), [wide](wide-native-launch.json).
-Both final runs match all 14 captured source hashes and the runner hash.
+Both native runs matched all 14 captured source hashes and the runner hash at
+qualification. The later review repair changes only the shared validation
+module among those captured sources; all pre-existing executable AST is
+unchanged there. See [review follow-up](review-followup/README.md).
 
 [Compact cleanup](compact-native-lifecycle.json) and [wide cleanup](wide-native-lifecycle.json)
 verify app/fixture exit, lock release, ten healthy databases, zero conversations

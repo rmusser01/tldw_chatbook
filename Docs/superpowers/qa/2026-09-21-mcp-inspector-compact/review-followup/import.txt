@@ -1,0 +1,17 @@
+........                                                                 [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/Performance/test_app_import_weight.py:325: UserWarning: boot-import-weight: 675/686 modules (headroom 11); snapshot drift +7/-1
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.06s call     Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed
+1.29s call     Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+1.19s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+1.16s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+1.15s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+1.12s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+
+(18 durations < 1s hidden.)
+8 passed, 1 warning in 10.49s
