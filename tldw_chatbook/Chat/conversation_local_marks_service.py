@@ -546,11 +546,8 @@ class ConversationLocalMarksService:
     ) -> ConversationLocalMark | None:
         """Fetch one mark row with its timestamps, or ``None`` if absent.
 
-        PR3a-2 Task 5: the auto-wake mount-claim uses ``created_at`` as
-        the since-when boundary for "which terminal sub-agent runs are
-        still undelivered" -- ``set_mark`` refreshes only ``updated_at``
-        on conflict, so ``created_at`` is stable at "the first undelivered
-        completion since the mark was last cleared".
+        ``set_mark`` refreshes only ``updated_at`` on conflict, so
+        ``created_at`` stays at the first insert for this mark.
 
         Args:
             conversation_id: Conversation identifier to look up.

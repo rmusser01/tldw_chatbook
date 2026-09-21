@@ -5199,7 +5199,6 @@ class ChatScreen(BaseAppScreen):
 
     def _console_rail_focus_active(self) -> bool:
         """Return whether live focus is inside either mounted rail (TASK-32322)."""
-        from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
         try:
             focused = self.app.focused
@@ -7092,7 +7091,6 @@ class ChatScreen(BaseAppScreen):
 
     async def _copy_console_conversation_markdown(self, target, fidelity: str) -> None:
         """Copy one conversation to the clipboard as markdown."""
-        import asyncio
 
         # PR #2262 review: the paginated read + render are blocking work;
         # coroutine workers still run on the UI loop, so push them off it.
@@ -7113,14 +7111,12 @@ class ChatScreen(BaseAppScreen):
 
     async def _save_console_conversation_markdown(self, target) -> None:
         """Prompt for a path and write the Clean markdown rendering."""
-        from pathlib import Path
 
         from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
             ConsoleSaveMarkdownModal,
             markdown_filename_slug,
         )
 
-        import asyncio
 
         markdown = await asyncio.to_thread(
             self._render_console_conversation_markdown, target, "clean"
@@ -7148,7 +7144,6 @@ class ChatScreen(BaseAppScreen):
 
     async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
         """Validate and write one markdown export off the loop."""
-        from pathlib import Path
 
         import aiofiles
 
@@ -8544,7 +8539,6 @@ class ChatScreen(BaseAppScreen):
         that window -- the Perf Guard tour tests hit it three times in one
         day. An empty stack means "not active", not an error.
         """
-        from textual.app import ScreenStackError
 
         try:
             return self.app.screen is self

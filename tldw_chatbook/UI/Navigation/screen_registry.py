@@ -173,12 +173,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "llm": ScreenRoute(
         "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
     ),
-    "customize": ScreenRoute(
-        "customize",
-        "customize",
-        "tldw_chatbook.UI.Screens.customize_screen",
-        "CustomizeScreen",
-    ),
     "logs": ScreenRoute(
         "logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"
     ),
