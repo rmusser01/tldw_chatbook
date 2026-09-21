@@ -3506,33 +3506,32 @@ def test_local_custom_openai_success_hides_input_prompt_key_endpoint_and_respons
 
     assert result == CUSTOM_OPENAI_RESPONSE_CANARY
     assert settings_calls == [((), {})]
-    assert transport_calls == [
-        (
-            (variant.endpoint,),
+    # TASK-32854 re-key: the shared _post_with_retry transport adds
+    # timeout/stream/allow_redirects/verify kwargs, so the pin asserts the
+    # payload-bearing subset instead of the exact kwargs dict.
+    assert len(transport_calls) == 1
+    call_args, call_kwargs = transport_calls[0]
+    assert call_args == (variant.endpoint,)
+    assert call_kwargs["headers"] == {
+        "Authorization": f"Bearer {variant.api_key}",
+        "Content-Type": "application/json",
+    }
+    assert call_kwargs["json"] == {
+        "model": variant.model,
+        "messages": [
+            {"role": "system", "content": "fixed system message"},
             {
-                "headers": {
-                    "Authorization": f"Bearer {variant.api_key}",
-                    "Content-Type": "application/json",
-                },
-                "json": {
-                    "model": variant.model,
-                    "messages": [
-                        {"role": "system", "content": "fixed system message"},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"{CUSTOM_OPENAI_INPUT_CANARY} "
-                                f"\n\n\n\n{CUSTOM_OPENAI_PROMPT_CANARY}"
-                            ),
-                        },
-                    ],
-                    "max_tokens": 64,
-                    "temperature": 0.2,
-                    "stream": False,
-                },
+                "role": "user",
+                "content": (
+                    f"{CUSTOM_OPENAI_INPUT_CANARY} "
+                    f"\n\n\n\n{CUSTOM_OPENAI_PROMPT_CANARY}"
+                ),
             },
-        )
-    ]
+        ],
+        "max_tokens": 64,
+        "temperature": 0.2,
+        "stream": False,
+    }
     for canary in (
         CUSTOM_OPENAI_INPUT_CANARY,
         CUSTOM_OPENAI_PROMPT_CANARY,
