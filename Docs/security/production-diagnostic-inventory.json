@@ -1206,7 +1206,7 @@
     },
     {
       "call_count": 133,
-      "diagnostic_digest": "7db71eb22661618ffcdf",
+      "diagnostic_digest": "8997d2bf7c45661398f0",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1226,8 +1226,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 269,
-      "diagnostic_digest": "e8225e3610bdbf11071a",
+      "call_count": 260,
+      "diagnostic_digest": "d4706f334d47d8c53ebf",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11401,7 +11401,7 @@
     "path_privacy_candidate_calls": 692,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
-    "task_492_calls": 1360,
+    "task_492_calls": 1351,
     "task_494_calls": 7704
   }
 }

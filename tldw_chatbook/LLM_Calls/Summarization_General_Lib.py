@@ -1707,8 +1707,6 @@ def summarize_with_openrouter(
     system_message=None,
     streaming=False,
 ):
-    import requests
-    import json
 
     try:
         # Prioritize the API key passed as a parameter
@@ -1736,7 +1734,7 @@ def summarize_with_openrouter(
             logging.error("OpenRouter: No valid API key available")
             raise ValueError("No valid Anthropic API key available")
     except Exception as e:
-        logging.error("OpenRouter: Error in processing: {str(e)}")
+        logging.error(f"OpenRouter: Error in processing: {str(e)}")
         return f"OpenRouter: Error occurred while processing config file with OpenRouter: {str(e)}"
 
     logging.debug("OpenRouter: Credential configured")
@@ -2732,59 +2730,6 @@ def summarize_with_mock_llm(
 
 
 # FIXME
-def summarize_chunk(
-    api_name, text, custom_prompt_input, api_key, temp=None, system_message=None
-):
-    logging.debug("Entered 'summarize_chunk' function")
-    if api_name in (None, "None", "none"):
-        logging.warning("summarize_chunk: API name not provided for summarization")
-        return "No summary available"
-
-    try:
-        result = analyze(
-            text, custom_prompt_input, api_name, api_key, temp, system_message
-        )
-
-        # Handle streaming generator responses
-        if inspect.isgenerator(result):
-            logging.debug(f"Handling streaming response from {api_name}")
-            collected_chunks = []
-            for chunk in result:
-                # Check for error chunks first
-                if isinstance(chunk, str) and chunk.startswith("Error:"):
-                    logging.warning(
-                        "Streaming summarization failed; provider=%s",
-                        safe_metadata_token(api_name),
-                    )
-                    return chunk
-                collected_chunks.append(chunk)
-            final_result = "".join(collected_chunks)
-            logging.info(f"Summarization with {api_name} streaming successful")
-            return final_result
-
-        # Handle regular string responses
-        elif isinstance(result, str):
-            if result.startswith("Error:"):
-                logging.warning(
-                    "Summarization failed; provider=%s",
-                    safe_metadata_token(api_name),
-                )
-                return None
-            logging.info(f"Summarization with {api_name} successful")
-            return result
-
-        # Handle unexpected response types
-        else:
-            logging.error(f"Unexpected response type from {api_name}: {type(result)}")
-            return None
-
-    except Exception as e:
-        logging.error(
-            "Error in summarize_chunk; provider=%s exception_type=%s",
-            safe_metadata_token(api_name),
-            safe_metadata_token(type(e).__name__),
-        )
-        return None
 
 
 def extract_metadata_and_content(input_data):
