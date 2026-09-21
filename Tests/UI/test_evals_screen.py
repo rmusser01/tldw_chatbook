@@ -125,9 +125,28 @@ class EvalsHarness(ConsolidatedCSSApp):
     Container, AppFooterStatus) it runs through in production. See the
     module-level ``_BUNDLED_CSS_PATH`` comment for why the real stylesheet
     is also loaded.
+
+    The bundle alone is NOT the app's full styling for this screen: every
+    ``evals-*``/rail rule lives in the screen-owned split
+    (``css/screen_feature_evals.tcss``), which the real app registers on
+    first navigation to the evals tab (``TldwCli._ensure_screen_owned_
+    css``, TAB_EVALS mapping -- see ``EvalsScreen``'s own TASK-24459
+    comment for why that is deliberately not ``CSS_PATH`` on the screen
+    class). Without it, ``LibraryRail``'s section bodies keep Textual's
+    bare ``Vertical { height: 1fr }`` instead of ``.evals-rail-section-
+    body { height: auto }`` -- three equal-height section boxes that CLIP
+    whichever section's content outgrows its share, so real-coordinate
+    ``pilot.click``s on rail rows silently miss (the rail layout failures
+    this suite historically carried). Loaded here explicitly, bundle
+    first then split, matching the real app's registration order (boot
+    bundle, split on first visit) so tie-breaks resolve the same way.
     """
 
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = [
+        _BUNDLED_CSS_PATH,
+        str(Path(tldw_chatbook.__file__).parent / "css"
+            / "screen_feature_evals.tcss"),
+    ]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

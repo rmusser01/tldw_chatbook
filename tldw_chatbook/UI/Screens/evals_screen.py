@@ -31,6 +31,7 @@ removes only the children it put there (see ``_replace_region``).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from loguru import logger
@@ -39,10 +40,11 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import QueryError
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from ..focus_ownership import focus_is_on_screen
 from ...Chat.Chat_Functions import chat_api_call
+from ...config import get_user_data_dir
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.character_probe.cards import snapshot_cards
 from ...Evals.character_probe.models import CharacterProbeConfig
@@ -59,10 +61,34 @@ from ...Evals.character_probe.storage import (
     save_character_bench,
     save_conversations,
 )
+from ...Evals.skill_eval.models import (
+    CancelToken as SkillEvalCancelToken,
+    EvalTarget,
+    SkillEvalConfig,
+    SkillEvalDepth,
+)
+from ...Evals.skill_eval.runner import SkillEvalRunner, estimate_calls
+from ...Evals.skill_eval.storage import (
+    SkillEvalStorageError,
+    create_skill_eval_run,
+    load_skill_eval_bench,
+    save_artifact,
+    save_report,
+    save_skill_eval_bench,
+)
+from ...Evals.skill_eval.subject import (
+    SubjectError,
+    subject_from_directory,
+    subject_from_store,
+)
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
 from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
 from ...Evals.word_bench.storage import _unique_name, duplicate_bench
+from ...Skills_Interop.local_skills_service import (
+    LocalSkillsService,
+    default_local_skills_store_dir,
+)
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
@@ -71,6 +97,13 @@ from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import CharacterBenchEstimate, EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Evals.results_grid import ResultsGrid
+from ..Evals.skill_eval_detail import SkillEvalDetail
+from ..Evals.skill_eval_launch import (
+    builtin_tool_names,
+    make_skill_eval_chat,
+    store_skill_names,
+)
+from ..Evals.skill_eval_panel import SkillEvalPanel
 from ..Evals.snippet_editor import SnippetEditor
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Lab_Modules.lab_rail_layout import LabRailLayout
@@ -369,6 +402,35 @@ class EvalsScreen(LabScreen):
         self._character_probe_chat_factory: Optional[
             Callable[[CharacterProbeConfig], ChatCallable]
         ] = None
+        #: True for the duration of one skill-eval run flow -- the fourth
+        #: member of the same cross-worker guard family as
+        #: ``_sample_bench_running``/``_bench_run_running``/
+        #: ``_character_bench_run_running`` above (see those fields' own
+        #: comments; a skill-eval run lives in its OWN ``exclusive`` group,
+        #: so only the flag cross-check stops it overlapping any of the
+        #: other three, or vice versa).
+        self._skill_eval_run_running: bool = False
+        #: The skill-eval bench id + press-time run parameters, captured in
+        #: ``_on_skill_eval_run_requested`` from the ``SkillEvalPanel``'s
+        #: own ``RunRequested`` payload and never re-read from
+        #: ``self._selection`` inside the worker -- the same
+        #: capture-at-press-time rationale as ``_bench_run_task_id`` (the
+        #: selection can move while the worker is in flight). Depth and
+        #: model picks come from the PANEL (live UI state the user may have
+        #: changed since the bench was saved -- the panel has no Save), so
+        #: they are snapshotted here rather than re-read from the stored
+        #: config; everything else the run needs (subject ref/kind,
+        #: concurrency, seed, ...) still comes from the loaded bench.
+        self._skill_eval_bench_id: Optional[str] = None
+        self._skill_eval_depth: SkillEvalDepth = SkillEvalDepth.STANDARD
+        self._skill_eval_generator_target_id: str = ""
+        self._skill_eval_judge_target_id: str = ""
+        #: The active skill-eval run's cooperative cancel token, or ``None``
+        #: -- set by the worker, read by the panel's Cancel button handler
+        #: (``_on_skill_eval_cancel_requested``). Unlike the word/character
+        #: benches' own no-current-reader tokens documented above, this one
+        #: has a real Cancel affordance from day one.
+        self._skill_eval_cancel: Optional[SkillEvalCancelToken] = None
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -434,7 +496,8 @@ class EvalsScreen(LabScreen):
         Args:
             kind: The selected object's kind (``SelectionKind`` --
                 ``"none"``, ``"bench"``, ``"classic"``, ``"character_
-                bench"``, ``"dataset"``, or ``"run_group"``).
+                bench"``, ``"skill_eval_bench"``, ``"dataset"``, or
+                ``"run_group"``).
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
@@ -755,6 +818,21 @@ class EvalsScreen(LabScreen):
             return False
         return self._view_model.character_bench_by_id(group.get("task_id")) is not None
 
+    def _skill_eval_run_group(self, group: Optional[Mapping[str, Any]]) -> bool:
+        """Whether a resolved run-group row belongs to a SKILL-EVAL bench.
+
+        The skill-eval sibling of ``_character_run_group`` just above --
+        shared by the same two bench-type-specific sites (``_compose_detail_
+        pane`` mounts ``SkillEvalDetail`` instead of ``ResultsGrid``; the
+        cell inspector and grid-shortcut registration are skipped for a run
+        with no word-bench grid to act on), classified the same way: by the
+        group's own ``task_id`` resolving through the view model's
+        kind-specific bench lookup.
+        """
+        if group is None:
+            return False
+        return self._view_model.skill_eval_bench_by_id(group.get("task_id")) is not None
+
     def _register_grid_shortcuts(self) -> None:
         """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
         ``results_grid.ResultsGrid.BINDINGS``) through the shared
@@ -781,9 +859,11 @@ class EvalsScreen(LabScreen):
         database, via ``run_groups()``, just to answer this one
         selection's bench type) -- this method already runs on every
         selection change, so it must stay cheap even when nothing is
-        actually selected in the "run_group" kind.
+        actually selected in the "run_group" kind. A SKILL-EVAL run group
+        clears them for the identical reason (``SkillEvalDetail`` mounts,
+        not ``ResultsGrid``), classified off the same single row.
         """
-        is_character_run = False
+        is_non_grid_run = False
         if (
             self._selection.kind == "run_group"
             and self._selection.id
@@ -793,11 +873,12 @@ class EvalsScreen(LabScreen):
                 run_group_id=self._selection.id, limit=1
             )
             if rows:
-                is_character_run = (
-                    self._view_model.character_bench_by_id(rows[0].get("task_id"))
-                    is not None
+                task_id = rows[0].get("task_id")
+                is_non_grid_run = (
+                    self._view_model.character_bench_by_id(task_id) is not None
+                    or self._view_model.skill_eval_bench_by_id(task_id) is not None
                 )
-        if self._selection.kind == "run_group" and self._selection.id and not is_character_run:
+        if self._selection.kind == "run_group" and self._selection.id and not is_non_grid_run:
             self.register_footer_shortcuts(
                 source="evals-grid",
                 shortcuts=(
@@ -981,6 +1062,66 @@ class EvalsScreen(LabScreen):
             )
         self.select(kind="character_bench", id=bench_id)
 
+    @on(LibraryRail.NewSkillEvalRequested)
+    def _on_new_skill_eval_requested(
+        self, event: LibraryRail.NewSkillEvalRequested
+    ) -> None:
+        """Creates a draft skill-eval bench and selects it -- the skill-eval
+        mirror of ``_on_new_character_bench_requested`` just above. Like that
+        handler (and for the same reason -- see ``NewSkillEvalRequested``'s
+        own docstring in ``library_rail.py``), this is a plain DB write, no
+        worker.
+
+        The draft binds BOTH target slots (generator and judge) to the first
+        ``eval_models`` row ``skill_eval_targets()`` returns, or leaves them
+        empty when none exist -- unlike a character bench's never-editable
+        ``target_ids``, these are only the Selects' initial options: the
+        panel re-picks them at run time from the full target list, so an
+        empty-or-stale first row is recoverable, not a dead end. ``subject_
+        ref`` likewise starts empty (this task ships no subject picker; the
+        panel shows the bench's subject as-is, and a run of an unset subject
+        fails loudly in ``SubjectError`` handling rather than silently).
+
+        ``_unique_name`` (not the brief's bare ``"skill eval"`` literal):
+        ``eval_tasks.name`` is UNIQUE with no ``deleted_at`` exemption (see
+        ``_unique_name``'s own docstring), so a second press with a bare
+        literal would raise instead of creating the bench.
+        """
+        event.stop()
+        db = self._view_model.db
+        if db is None:
+            self.app_instance.notify(
+                "The evaluation service is unavailable.", severity="error"
+            )
+            return
+        targets = self._view_model.skill_eval_targets()
+        first_target = str(targets[0]["id"]) if targets else ""
+        config = SkillEvalConfig(
+            name=_unique_name("skill eval"),
+            subject_ref="",
+            subject_kind="store",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=first_target,
+            judge_target_id=first_target,
+        )
+        try:
+            bench_id = save_skill_eval_bench(db, config)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create skill eval bench.")
+            # markup=False: `exc` can carry free text (a name collision
+            # naming the bench itself) -- the same hazard the character-
+            # bench handler's identical call documents.
+            self.app_instance.notify(
+                f"Could not create skill eval bench: {exc}",
+                severity="error",
+                markup=False,
+            )
+            return
+        self.app_instance.notify(
+            "Skill eval bench created.", severity="information", markup=False
+        )
+        self.select(kind="skill_eval_bench", id=bench_id)
+
     @on(BenchEditor.CreateTargetRequested)
     async def _on_bench_create_target_requested(
         self, event: BenchEditor.CreateTargetRequested
@@ -1130,6 +1271,7 @@ class EvalsScreen(LabScreen):
             self._sample_bench_running
             or self._bench_run_running
             or self._character_bench_run_running
+            or self._skill_eval_run_running
         ):
             return
         self._sample_bench_launch_selection = self._selection
@@ -1327,6 +1469,7 @@ class EvalsScreen(LabScreen):
             self._bench_run_running
             or self._sample_bench_running
             or self._character_bench_run_running
+            or self._skill_eval_run_running
         ):
             return
         selection = self._selection
@@ -1756,6 +1899,298 @@ class EvalsScreen(LabScreen):
                     markup=False,
                 )
 
+    @on(SkillEvalPanel.RunRequested)
+    def _on_skill_eval_run_requested(
+        self, event: SkillEvalPanel.RunRequested
+    ) -> None:
+        """Runs the selected skill-eval bench via ``_run_skill_eval_worker``.
+
+        The guard mirrors ``_on_primary_action_pressed``'s four-way
+        cross-check (see that handler's own docstring for the full
+        same-worker/cross-worker rationale): the skill-eval worker lives in
+        its OWN ``exclusive`` group, so only this flag cross-check stops it
+        overlapping any of the other three run kinds, or vice versa.
+
+        The press-time payload (depth + both target ids) and the selected
+        bench id are snapshotted onto the instance HERE, never re-read from
+        ``self._selection``/the panel inside the worker -- see
+        ``_skill_eval_depth``'s own field comment for why depth and targets
+        come from the event rather than the stored bench.
+        """
+        event.stop()
+        if (
+            self._skill_eval_run_running
+            or self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
+            return
+        selection = self._selection
+        if selection.kind != "skill_eval_bench" or not selection.id:
+            # Defensive only: the panel that posts RunRequested is only
+            # ever mounted for a resolved skill_eval_bench selection.
+            return
+        self._skill_eval_bench_id = selection.id
+        self._skill_eval_depth = event.depth
+        self._skill_eval_generator_target_id = event.generator_target_id
+        self._skill_eval_judge_target_id = event.judge_target_id
+        self.run_worker(
+            self._run_skill_eval_worker,
+            exclusive=True,
+            group="evals-run-skill-eval",
+        )
+
+    @on(SkillEvalPanel.CancelRequested)
+    def _on_skill_eval_cancel_requested(
+        self, event: SkillEvalPanel.CancelRequested
+    ) -> None:
+        """Cooperatively cancels the in-flight skill-eval run, if one is
+        running -- a no-op press otherwise (the panel renders its Cancel
+        button unconditionally and nothing else owns the token)."""
+        event.stop()
+        if self._skill_eval_cancel is not None:
+            self._skill_eval_cancel.cancel()
+
+    def _on_skill_eval_progress(self, done: int, total: int) -> None:
+        """``SkillEvalRunner``'s progress callback -- called synchronously
+        from within the runner's own coroutine (this worker's, not a
+        separate OS thread; every provider call is ``to_thread``ed inside
+        the engine), so mutating the panel's Run button directly here is
+        safe, mirroring ``_on_bench_run_progress``."""
+        self._set_skill_eval_running_ui(done=done, total=total)
+
+    def _set_skill_eval_running_ui(self, *, done: int = 0, total: int = 0) -> None:
+        """Disables the panel's Run button and gives it a live label for as
+        long as a run is in flight -- the panel-mounted sibling of
+        ``_set_bench_run_running_ui`` (same visible-signal-not-a-guard
+        caveat that method's own docstring gives). No-ops via ``QueryError``
+        whenever the panel is not in the DOM (the user navigated away
+        mid-run -- the worker itself keeps running regardless)."""
+        try:
+            button = self.query_one("#skill-eval-run", Button)
+        except QueryError:
+            return
+        button.disabled = True
+        button.label = f"Running… ({done}/{total})" if total else "Running…"
+
+    def _reset_skill_eval_running_ui(self) -> None:
+        """Restores the panel's Run button after a run ends -- only matters
+        on the failure path (the success path's ``select(...)`` swaps the
+        whole panel out for ``SkillEvalDetail``), mirroring
+        ``_reset_bench_run_running_ui``'s own QueryError-guarded shape."""
+        try:
+            button = self.query_one("#skill-eval-run", Button)
+        except QueryError:
+            return
+        button.disabled = False
+        button.label = "Run"
+
+    async def _run_skill_eval_worker(self) -> None:
+        """Runs ``self._skill_eval_bench_id`` -- the skill-eval sibling of
+        ``_run_character_bench_worker`` above (see that method's docstring
+        for the guard/completion-rule parts not re-explained here).
+
+        Body order (controller ruling): load bench -> resolve subject ->
+        resolve targets -> CREATE the run -> preflight -> run -> persist ->
+        stamp. The run row is created BEFORE ``make_skill_eval_chat``'s
+        preflight so an unready provider leaves a VISIBLE failed run in the
+        rail (``run_groups()`` folds run-level ``failed`` into its
+        ``cancelled`` glyph) instead of a toast over nothing.
+
+        The chat callable handed to ``SkillEvalRunner`` is synchronous
+        (``skill_eval_launch.make_skill_eval_chat``'s plain ``def``); the
+        engine ``to_thread``s every call itself, exactly like the character
+        probe's -- this method never awaits it directly.
+
+        Status stamping: ``completed`` after ``save_report`` (the report
+        path stamps status itself); the only extra stamps are the failure
+        paths -- preflight problems (``failed`` + the problem text as
+        ``error_message``), a hard ``CancelledError`` (``cancelled``, then
+        re-raised so Textual's worker bookkeeping observes the real
+        cancellation -- the identical rule the character worker's own
+        clause states), and any other exception (``failed`` +
+        ``error_message``, then a toast; never re-raised out of the
+        worker).
+
+        Evidence persistence: every judge-layer artifact and every sim
+        cell is stored via ``storage.save_artifact`` (sim cells carry no
+        ``sample_id`` of their own -- this worker synthesizes
+        ``sim-<prompt_index>-<repeat>``, unique by construction, and tags
+        them ``kind="sim"``), so a graded run keeps its raw judge replies
+        and per-cell verdicts alongside the blended report.
+        """
+        bench_id = self._skill_eval_bench_id
+        cancel_token = SkillEvalCancelToken()
+        self._skill_eval_run_running = True
+        self._skill_eval_cancel = cancel_token
+        self._set_skill_eval_running_ui()
+        group_id: Optional[str] = None
+        finished_ok = False
+        db: Optional[EvalsDB] = None
+        run_id: Optional[str] = None
+        try:
+            db = self._view_model.db
+            if db is None:
+                raise RuntimeError("The evaluation service is unavailable.")
+            config = load_skill_eval_bench(db, bench_id)
+            # Press-time depth wins over the stored config's (see the
+            # ``_skill_eval_depth`` field comment); everything else the
+            # engine reads (subject ref/kind, concurrency, seed, ...)
+            # comes from the stored bench.
+            config = replace(config, depth=self._skill_eval_depth)
+            if config.subject_kind == "directory":
+                subject = subject_from_directory(config.subject_ref)
+            else:
+                # The same store-dir resolution app.py's own local skills
+                # stack uses (app.py:8635 precedent, copied verbatim --
+                # see ``skill_eval_launch.store_skill_names``'s docstring).
+                service = LocalSkillsService(
+                    store_dir=default_local_skills_store_dir(get_user_data_dir())
+                )
+                subject = await subject_from_store(service, config.subject_ref)
+            generator = self._skill_eval_target(
+                db, self._skill_eval_generator_target_id
+            )
+            judge = self._skill_eval_target(db, self._skill_eval_judge_target_id)
+            estimate = estimate_calls(config.depth, config.deep_sim_total)
+            run_id, group_id = create_skill_eval_run(
+                db, bench_id, config, subject, generator, judge, estimate
+            )
+            app_config = self._current_app_config()
+            chat, problems = make_skill_eval_chat(app_config, generator, judge)
+            if problems:
+                db.update_run(
+                    run_id,
+                    {"status": "failed", "error_message": "; ".join(problems)},
+                )
+                # markup=False: problem text can quote provider/config
+                # strings -- the same hazard the character worker's
+                # identical notify documents.
+                self.app_instance.notify(
+                    f"Skill eval preflight failed: {'; '.join(problems)}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            skill_summaries, skill_names = await store_skill_names(app_config)
+            builtin = builtin_tool_names()
+            runner = SkillEvalRunner(chat, cancel_token)
+            report = await runner.run(
+                subject,
+                config,
+                generator=generator,
+                judge=judge,
+                decoy_pool=skill_summaries,
+                builtin_tool_names=builtin,
+                reserved_names=frozenset(skill_names | builtin),
+                progress=self._on_skill_eval_progress,
+            )
+            if runner.judge_result is not None:
+                for artifact in runner.judge_result.artifacts:
+                    save_artifact(db, run_id, artifact)
+            if runner.sim_result is not None:
+                for cell in runner.sim_result.cells:
+                    save_artifact(
+                        db,
+                        run_id,
+                        {
+                            **cell,
+                            "sample_id": (
+                                f"sim-{cell['prompt_index']}-{cell['repeat']}"
+                            ),
+                            "kind": "sim",
+                        },
+                    )
+            status = "cancelled" if cancel_token.is_cancelled else "completed"
+            save_report(db, run_id, report, status=status)
+            finished_ok = True
+        except asyncio.CancelledError:
+            # Re-raised, never swallowed -- Textual's worker bookkeeping
+            # needs to observe the real cancellation (the character
+            # worker's identical clause's own rule). Stamping is
+            # best-effort first: no report exists on this path, so the
+            # stamp is the bare run-status update.
+            if run_id is not None and db is not None:
+                try:
+                    db.update_run(run_id, {"status": "cancelled"})
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not mark skill eval run {run_id!r} cancelled."
+                    )
+            logger.info("Skill eval run worker was cancelled.")
+            raise
+        except Exception as exc:
+            if run_id is not None and db is not None:
+                try:
+                    db.update_run(
+                        run_id,
+                        {"status": "failed", "error_message": str(exc)},
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not mark skill eval run {run_id!r} failed."
+                    )
+            # Type only: persistent exception diagnostics can serialize
+            # frame locals, which here include the subject's full SKILL.md.
+            logger.warning(
+                "Skill eval run failed (exception_category={}).",
+                type(exc).__name__,
+            )
+            self.app_instance.notify(
+                f"Could not run the skill eval: {exc}",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            self._skill_eval_run_running = False
+            self._skill_eval_cancel = None
+            self._reset_skill_eval_running_ui()
+        if group_id is not None and finished_ok:
+            launch_selection = EvalsSelection(kind="skill_eval_bench", id=bench_id)
+            if self._selection_unmoved_since_launch(launch_selection, bench_id):
+                self.app_instance.notify(
+                    "Skill eval run finished.", severity="information", markup=False
+                )
+                # select() defaults rail_dirty=True -- the rail refresh
+                # that makes the new run row (and its status glyph) appear.
+                self.select(kind="run_group", id=group_id)
+            else:
+                # The user navigated elsewhere while the run was in flight
+                # -- see `_selection_unmoved_since_launch`'s own docstring.
+                # The run group still exists; only the auto-navigate is
+                # skipped.
+                self.app_instance.notify(
+                    "Skill eval run finished — see the Runs section.",
+                    severity="information",
+                    markup=False,
+                )
+
+    @staticmethod
+    def _skill_eval_target(db: EvalsDB, target_id: str) -> EvalTarget:
+        """One skill-eval target's ``EvalTarget``, resolved from its
+        ``eval_models`` row -- the sibling of ``_resolved_target_row``
+        above, with the row additionally shaped into the engine's frozen
+        dataclass, which is what ``make_skill_eval_chat`` and
+        ``SkillEvalRunner.run`` consume.
+
+        Raises:
+            RuntimeError: If no live row matches ``target_id`` (deleted
+                after the bench was created), naming the id -- the same
+                fail-loudly-not-silently contract its sibling documents.
+        """
+        model = db.get_model(target_id)
+        if model is None:
+            raise RuntimeError(
+                f"Target {target_id!r} could not be resolved — its "
+                "eval_models row is missing or was deleted."
+            )
+        return EvalTarget(
+            id=str(model["id"]),
+            provider=str(model.get("provider") or ""),
+            model_id=str(model.get("model_id") or ""),
+            name=str(model.get("name") or ""),
+        )
+
     def _on_bench_run_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
         ``WordBenchRunner.run``'s own coroutine (this worker's, not a
@@ -2066,6 +2501,7 @@ class EvalsScreen(LabScreen):
                 self._sample_bench_running
                 or self._bench_run_running
                 or self._character_bench_run_running
+                or self._skill_eval_run_running
             ),
             id="evals-library-pane",
         )
@@ -2164,6 +2600,70 @@ class EvalsScreen(LabScreen):
             )
             return
 
+        if selection.kind == "skill_eval_bench":
+            bench = (
+                self._view_model.skill_eval_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if bench is None:
+                yield Static(
+                    "This bench could not be found; it may have been deleted.",
+                    id="evals-detail-missing",
+                )
+                return
+            db = self._view_model.db
+            if db is None:
+                # Defensive only: the rail renders no rows to select
+                # without a wired evaluation service.
+                yield Static(
+                    "The evaluation service is unavailable.",
+                    id="evals-detail-missing",
+                    markup=False,
+                )
+                return
+            try:
+                config = load_skill_eval_bench(db, selection.id)
+            except SkillEvalStorageError:
+                yield Static(
+                    "This bench could not be loaded; its stored "
+                    "configuration is unreadable.",
+                    id="evals-detail-missing",
+                    markup=False,
+                )
+                return
+            # A DB-free widget (see its module docstring) -- the screen
+            # feeds it: subject summary line, target options, and the
+            # bench's saved depth restored into the depth Select AFTER
+            # mount (``call_after_refresh``; the panel's children do not
+            # exist until it composes), where the programmatic value
+            # assignment fires ``Select.Changed`` and re-syncs the panel's
+            # estimate line. Model picks are deliberately NOT restored --
+            # the panel's own Run guard requires a fresh pick, so a stale
+            # saved target can never silently become the run's target.
+            panel = SkillEvalPanel(id="evals-skill-eval-panel")
+            yield panel
+            panel.call_after_refresh(
+                panel.set_subject,
+                config.subject_ref or "(no subject set)",
+                config.subject_kind,
+            )
+            panel.call_after_refresh(
+                panel.set_targets, self._view_model.skill_eval_targets()
+            )
+
+            def _restore_depth(panel=panel, depth=config.depth) -> None:
+                try:
+                    panel.query_one("#skill-eval-depth", Select).value = depth
+                except Exception:
+                    # Defensive only: a remounted panel whose depth Select
+                    # is not (yet) queryable -- the panel still works on
+                    # its own STANDARD default.
+                    pass
+
+            panel.call_after_refresh(_restore_depth)
+            return
+
         if selection.kind == "classic":
             task = (
                 self._view_model.classic_task_by_id(selection.id)
@@ -2217,6 +2717,22 @@ class EvalsScreen(LabScreen):
                 yield Static(
                     "This run could not be found; it may have been deleted.",
                     id="evals-detail-missing",
+                )
+                return
+            if self._skill_eval_run_group(group):
+                # The skill-eval run group's own detail surface:
+                # composite/grade/confidence header, per-dimension bars,
+                # findings, warnings, artifact count (see
+                # `skill_eval_detail.py`). Checked BEFORE the character
+                # placeholder below so a skill-eval group can never fall
+                # through to a character- (or word-bench-) shaped surface;
+                # `ResultsGrid` stays word-bench-only for the same reason
+                # -- a skill-eval snapshot carries no snippets/logprobs
+                # vocabulary at all. (`_character_run_group`/`_skill_eval_
+                # run_group` are disjoint by bench type, so the order is
+                # belt-and-braces, not load-bearing.)
+                yield SkillEvalDetail(
+                    self._view_model, selection.id, id="evals-skill-eval-detail"
                 )
                 return
             if self._character_run_group(group):
@@ -2342,6 +2858,17 @@ class EvalsScreen(LabScreen):
                     id="evals-inspector-character-bench",
                 )
 
+        if selection.kind == "skill_eval_bench":
+            # No readiness/estimate panel and no `#evals-primary-action`
+            # here, mirroring the "classic" early-return below: a skill-
+            # eval's run control lives in the DETAIL pane's
+            # `SkillEvalPanel` (its own Run/Cancel + live call estimate,
+            # which knows the selected DEPTH -- the word-bench-shaped
+            # `EvalsInspector` vocabulary and this pane's generic primary
+            # action both belong to bench types this kind is not).
+            # `_primary_action_state()` is never consulted for this kind.
+            return
+
         if selection.kind == "classic":
             # Classic tasks are read-only in this workbench (see the design
             # spec's "Classic tasks" section and BenchEditor's
@@ -2357,7 +2884,7 @@ class EvalsScreen(LabScreen):
                 if selection.id
                 else None
             )
-            if group is not None and not self._character_run_group(group):
+            if group is not None and not self._character_run_group(group) and not self._skill_eval_run_group(group):
                 # Focused-cell detail (full top-K + probe table), updated
                 # by `_on_grid_cell_focused` as the grid's cell cursor
                 # moves -- see that handler and results_grid.py's module
@@ -2374,7 +2901,9 @@ class EvalsScreen(LabScreen):
                 # widget; it would sit forever on its own placeholder text
                 # ("...see its full top-K and probe table here"), both a
                 # dead control and a leak of top-K vocabulary into a bench
-                # type that carries none.
+                # type that carries none. Excluded for a SKILL-EVAL run
+                # group for the identical reason (`SkillEvalDetail`
+                # mounts, not the grid).
                 yield EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
@@ -2506,6 +3035,7 @@ class EvalsScreen(LabScreen):
             self._bench_run_running
             or self._sample_bench_running
             or self._character_bench_run_running
+            or self._skill_eval_run_running
         ):
             # Whole-branch review Important finding: this function used to
             # never consult either running-flag at all, so a rail click

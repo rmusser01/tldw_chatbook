@@ -19,7 +19,8 @@ from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
 SelectionKind = Literal[
-    "none", "bench", "classic", "character_bench", "dataset", "run_group"
+    "none", "bench", "classic", "character_bench", "skill_eval_bench",
+    "dataset", "run_group"
 ]
 
 #: EvalsDB.list_tasks/list_datasets/list_runs all page; the Evals workbench

@@ -10,7 +10,8 @@ from ...Chat.provider_readiness import get_provider_readiness
 from .judge import parse_judge_json, run_judge_layer
 from .models import (
     CancelToken, EvalTarget, JudgeLayerResult, ProgressCallback,
-    SkillEvalConfig, SkillEvalDepth, SkillEvalReport, SkillSubject,
+    SkillEvalConfig, SkillEvalDepth, SkillEvalReport, SimLayerResult,
+    SkillSubject,
 )
 from .scoring import build_report
 from .simulation import run_simulation_layer, select_decoys
@@ -39,6 +40,13 @@ class SkillEvalRunner:
     def __init__(self, chat: Any, cancel_token: Optional[CancelToken] = None):
         self._chat = chat
         self._cancel = cancel_token
+        #: The last ``run()``'s raw layer results, stashed for the caller
+        #: that must persist evidence the report itself does not carry
+        #: (judge artifacts / sim cells -> ``storage.save_artifact``).
+        #: Populated by ``run()``, never read by the engine itself --
+        #: additive state, no committed behaviour depends on it.
+        self.judge_result: Optional[JudgeLayerResult] = None
+        self.sim_result: Optional[SimLayerResult] = None
 
     async def run(self, subject: SkillSubject, config: SkillEvalConfig, *,
                   generator: EvalTarget, judge: EvalTarget,
@@ -105,6 +113,8 @@ class SkillEvalRunner:
         if self._cancel is not None and self._cancel.is_cancelled:
             warnings.append("run cancelled; partial results")
 
+        self.judge_result = judge_result
+        self.sim_result = sim_result
         return build_report(subject.to_provenance(), config.depth, static,
                             judge_result, sim_result, tuple(warnings))
 
