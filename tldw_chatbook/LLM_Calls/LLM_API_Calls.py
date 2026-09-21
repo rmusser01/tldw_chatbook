@@ -2003,7 +2003,7 @@ def chat_with_anthropic(
                                     yield f"data: {json.dumps(sse_chunk)}\n\n"
                             except json.JSONDecodeError:
                                 logger.warning(
-                                    f"Anthropic Stream: Could not decode JSON: {event_data_str}"
+                                    f"Anthropic Stream: Could not decode JSON: {safe_llm_error_detail(event_data_str)}"
                                 )
 
                     if output_captured:
@@ -2798,7 +2798,7 @@ def chat_with_cohere(
                         if not decoded_line.startswith("data:"):
                             if not decoded_line.startswith("event:"):
                                 logger.warning(
-                                    f"Cohere Stream: Unexpected line format: '{decoded_line}'"
+                                    f"Cohere Stream: Unexpected line format: '{safe_llm_error_detail(decoded_line)}'"
                                 )
                             continue
 
@@ -2907,7 +2907,7 @@ def chat_with_cohere(
                             logger.debug(f"Cohere stream: '{event_type}' event.")
                         elif event_type:
                             logger.debug(
-                                f"Cohere stream event type: {event_type}, data: {cohere_event}"
+                                f"Cohere stream event type: {event_type}, data: {safe_llm_error_detail(cohere_event)}"
                             )
 
                         if sse_delta or finish_reason:
@@ -3643,7 +3643,7 @@ def chat_with_google(
                                     yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': current_model, 'choices': [], 'usage': chunk_usage})}\n\n"
                             except json.JSONDecodeError:
                                 logger.warning(
-                                    f"Google Gemini: Could not decode JSON line: {json_str}"
+                                    f"Google Gemini: Could not decode JSON line: {safe_llm_error_detail(json_str)}"
                                 )
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.opt(exception=True).error(
@@ -4270,7 +4270,7 @@ def chat_with_huggingface(
                                     # For now, just yielding content as per OpenAI's typical text stream delta.
                                 except json.JSONDecodeError:
                                     logger.warning(
-                                        f"HuggingFace stream: JSON decode error for data: '{data_content}'"
+                                        f"HuggingFace stream: JSON decode error for data: '{safe_llm_error_detail(data_content)}'"
                                     )
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logger.error(

@@ -1206,7 +1206,7 @@
     },
     {
       "call_count": 133,
-      "diagnostic_digest": "7db71eb22661618ffcdf",
+      "diagnostic_digest": "8997d2bf7c45661398f0",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
