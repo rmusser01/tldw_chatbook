@@ -98,23 +98,14 @@ def _capture_anthropic_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> d
     _install_model_setting(monkeypatch, "anthropic_api", model)
     captured: dict = {}
 
-<<<<<<< HEAD
-=======
-    # TASK-32853 Phase C re-key: anthropic now posts through the shared
-    # _post_with_retry transport's session, so the fake moves to the
-    # Session.post seam like the other providers.
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
     def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return _FakeAnthropicResponse()
 
-<<<<<<< HEAD
     # TASK-32853 Phase C re-key: anthropic posts through the shared
     # _post_with_retry transport's session, so the fake moves to the
     # Session.post seam like the other providers.
-=======
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
     monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
     result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
     assert result == "anthropic summary", result
@@ -221,21 +212,13 @@ def test_anthropic_fallback_default_model_is_currently_served(monkeypatch):
     monkeypatch.setattr(sgl, "get_cli_setting", fake_get_cli_setting)
     captured: dict = {}
 
-<<<<<<< HEAD
-=======
-    # TASK-32853 Phase C re-key: anthropic posts through the shared
-    # transport's session now (Session.post seam, like the other providers).
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
     def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
         captured["json"] = json
         return _FakeAnthropicResponse()
 
-<<<<<<< HEAD
     # TASK-32853 Phase C re-key: anthropic posts through the shared
     # _post_with_retry transport's session, so the fake moves to the
     # Session.post seam like the other providers.
-=======
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
     monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
     result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
     assert result == "anthropic summary", result
