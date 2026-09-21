@@ -1,11 +1,11 @@
 ---
 id: TASK-32825
 title: Keep MCP server actions bound to their displayed target
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 00:33'
-updated_date: '2026-09-21 06:12'
+updated_date: '2026-09-21 06:40'
 labels:
   - mcp
   - ui
@@ -58,4 +58,6 @@ PR2712 merged as 4b61a5ca8f1dd33a4cc839b3f329a068decedea5 after visual approval,
 Post-merge integration repair moves the unchanged tool/audit/finding clearing sequence into MCPInspector.clear_mode_view. Workbench keeps the same deferred async worker and exclusive group; size falls to6760 and the ratchet is tightened. All106 focused architecture/MCP cases and nine artifact guards pass; no new Ruff findings and all17 changed ranges formatted. Independent review finds no blockers and confirms prior native visuals apply to this mechanical move. No new ADR required. Follow-up PR/CI and merge remain pending.
 
 PR2769 current-dev CI exposed the upstream timestamp helper raising UI-ready modules to1027. Deferred the existing Advanced execution readiness import (ADR-097), restoring1026 without changing budget, permission or audit logic. The isolated import regression is red before and green after;12 boot/import checks and8 Advanced execution cases pass. Three execution cases retained their collection-selected private profile using the existing bootstrap_profile marker after identical failures were reproduced on unchanged HEAD. Independent review clear; no introduced Ruff diagnostics and all5 changed ranges formatted. Final-head CI/current-dev merge checks remain pending.
+
+PR2769 merged as85e7153158 with all required CI green:1152 main passes and123 admission passes plus1 existing xfail. The actual merge tree733286f69189f4c67ff83cc657d83d286cf8b0c8 exactly matches the verified current-dev candidate against6622115c27. Two current-dev boot/import cases pass, accumulated Qodo has0findings/no unresolvedthreads and independent final-fix/integration reviews are clear. Integration receipt: current-dev/integration-merge-closeout.json. All acceptance criteria complete; approved rendered UI remains unchanged.
 <!-- SECTION:NOTES:END -->

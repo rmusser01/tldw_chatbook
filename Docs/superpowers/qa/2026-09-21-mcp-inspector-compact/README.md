@@ -7,7 +7,12 @@ child is revealed without restoring old focus. No tokens, tool authority,
 permission rules or execution behavior change. Existing ADR-150/161 apply;
 no new ADR is required.
 
-This is separate from PR2769's mechanical size/startup integration repair.
+PR2769's mechanical size/startup integration repair merged as `85e7153158`.
+This layout branch rebased onto it without conflicts; captured runtime/CSS
+source hashes remain identical. The final width token substitution leaves
+generated CSS byte-identical, and [17 focused keyboard/governance cases pass](token-final.txt).
+[All four keyboard journeys pass again on merged dev](merged-dev.txt). All 16
+final native images are pixel-identical to the inspected captures.
 Fresh visual approval and normal CI/review/current-dev checks gate this layout PR.
 Audit and the remaining MCP/component review scope remain open.
 

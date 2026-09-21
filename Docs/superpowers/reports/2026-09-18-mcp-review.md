@@ -1,5 +1,20 @@
 # MCP component review
 
+## PR2769 merged; integration repair complete — 2026-09-21
+
+[PR2769](https://github.com/rmusser01/tldw_chatbook/pull/2769) merged as
+`85e7153158` after successful current-head CI (1,152 main passes, 123 admission
+passes and one existing expected failure), zero accumulated Qodo findings,
+resolved review threads and independent review of the final import repair.
+The actual tree exactly matches the locally tested combination with dev
+`6622115c27`; no conflicts or UI changes were introduced. TASK-32825 is Done.
+
+The compact Test Tool inspector is the next separate visual review, TASK-32882:
+510 targeted cases, four clean native dark/light compact/wide journeys and
+16 inspected captures. It remains In Progress pending its own visual approval,
+PR CI/review and final current-dev checks. Other MCP and destination reviews
+remain open. Earlier checkpoints below are historical.
+
 ## PR2712 merged; bounded integration repair — 2026-09-21
 
 [PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712) merged into dev

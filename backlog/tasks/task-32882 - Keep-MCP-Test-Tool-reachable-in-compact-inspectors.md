@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-21 05:48'
-updated_date: '2026-09-21 06:31'
+updated_date: '2026-09-21 06:42'
 labels:
   - mcp
   - ui
@@ -43,5 +43,5 @@ Reason: restore keyboard reachability in the existing MCP inspector, preserving 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented existing-token compact inspector scrolling, natural form height and wrapped actions; deferred resize reveal preserves current focused editors. Four scalar/raw keyboard journeys pass across both themes and three sizes;372 neighboring and134 native admission/fixture cases pass (510 total), plus nine artifact guards. No introduced Ruff findings and14 changed ranges formatted; independent production/test/runner review clear. Reused real-stdio native runner for four theme/size journeys, actual typed arguments and keyboard permission/Run, real failure/retry and clean profile lifecycle. All14 source hashes and runner hash match final native captures. Shared QA identifier validation preserves its documented contract after upstream removed validate_username. Existing ADR-150/161; no new ADR. Evidence: Docs/superpowers/qa/2026-09-21-mcp-inspector-compact/README.md. Remains In Progress pending PR2769 closure, bounded PR, visual approval and CI/review/current-dev checks.
+Implemented token-backed compact inspector scrolling, natural form height and wrapped actions. Deferred resize reveal preserves the current focused editor without replacing fields. Four scalar/raw keyboard journeys pass across both themes and three sizes;372 neighboring and134 native admission/fixture cases pass (510 distinct cases), plus nine artifact guards. No introduced Ruff findings and14 changed ranges formatted; independent production/test/runner review clear. Four real-stdio native theme/size journeys verify typed arguments, permission/Run, real failure/retry and clean profile lifecycle. All14 source hashes and runner hash match final captures;16 final images match the inspected layouts. The shared QA identifier validator retains its exact contract after upstream removed validate_username. Existing ADR-150/161 apply; no new ADR. PR2769 merged as85e7153158; this branch rebased without conflicts and all4 keyboard cases passed again. Evidence: Docs/superpowers/qa/2026-09-21-mcp-inspector-compact/README.md. Remains In Progress for its bounded PR, fresh owner visual approval and CI/review/current-dev checks.
 <!-- SECTION:NOTES:END -->
