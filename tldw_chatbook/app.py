@@ -1272,7 +1272,6 @@ class ThemeProvider(Provider):
             self.app.notify(f"Theme changed to {theme_name}", severity="information")
 
             # Save the theme preference to config
-            from .config import save_setting_to_cli_config
 
             save_setting_to_cli_config("general", "default_theme", theme_name)
 
@@ -1404,7 +1403,6 @@ class TabNavigationProvider(Provider):
     @classmethod
     def _shell_destination_for_tab(cls, tab_id: str):
         from .UI.Navigation.shell_destinations import (
-            get_shell_destination,
             resolve_shell_route,
         )
 
@@ -6402,9 +6400,6 @@ class LibraryIngestQueueMixin:
             raise ValueError(
                 "The captured Server workspace authority is unavailable; restore it and retry."
             )
-        from tldw_chatbook.runtime_policy.server_event_scope import (
-            event_principal_id_from_active_context,
-        )
 
         context = get_context()
         profile_id = str(getattr(context, "active_server_id", "") or "").strip()
@@ -12217,7 +12212,6 @@ class TldwCli(
         diagnostic text. Their stores are bounded to the same session window.
         """
         from collections import deque
-        import logging
 
         from tldw_chatbook.UI.Logs_Window import MAX_LOG_RECORDS
         from tldw_chatbook.Utils.log_sanitizer import redact_log_line
@@ -13613,7 +13607,6 @@ class TldwCli(
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
-        from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
         shell_routes = {
             destination.primary_route for destination in SHELL_DESTINATION_ORDER
@@ -16545,7 +16538,6 @@ class TldwCli(
         mid-walk) are all covered by the one try/except below.
         """
         try:
-            from tldw_chatbook.config import get_cli_setting, get_user_data_dir
             from tldw_chatbook.Skills_Interop.project_skills_prompt import (
                 startup_discovery_for,
             )
@@ -16767,9 +16759,6 @@ class TldwCli(
             if getattr(self, "_deferred_focus_request", False):
                 self._deferred_focus_request = False
                 self.focus_mode = True
-            from tldw_chatbook.UI.Navigation.main_navigation import (
-                NavigateToScreen,
-            )
 
             self.post_message(NavigateToScreen(TAB_CHAT, {}))
             return
@@ -16874,7 +16863,6 @@ class TldwCli(
             )
             return
 
-        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
         if completed is not True:
             self.post_message(NavigateToScreen(exit_route, screen_context))
@@ -19450,7 +19438,6 @@ class TldwCli(
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
-        import asyncio
 
         # Do not close Notes or arm forced-exit cleanup while its worker is live.
         await self._shutdown_workflow_session()
@@ -19721,8 +19708,6 @@ class TldwCli(
 
         # Force cleanup of any remaining threads and processes
         try:
-            import threading
-            import subprocess
             import platform
 
             # On macOS, force kill any afplay processes
@@ -19746,7 +19731,6 @@ class TldwCli(
                             pass
                 except ImportError:
                     # Fallback if psutil not available - run in background
-                    from textual.worker import work
 
                     @work(thread=True)
                     def kill_afplay_processes():
@@ -20260,7 +20244,6 @@ class TldwCli(
 
     async def _confirm_workflow_session_quit(self) -> bool:
         """Pin the current session projection, including off-screen pending review."""
-        from .Widgets.confirmation_dialog import ConfirmationDialog
 
         self._workflow_quit_approved_view = None
         owner = getattr(self, "_workflow_session", None)
@@ -20542,7 +20525,6 @@ class TldwCli(
         controller = getattr(runtime, "chat_controller", None)
         if controller is None:
             return True
-        from .Widgets.confirmation_dialog import ConfirmationDialog
 
         while True:
             impact = controller.lifecycle_impact()
@@ -20649,7 +20631,6 @@ class TldwCli(
 # Initialize logging at the earliest possible point
 def initialize_early_logging():
     """Initialize logging as early as possible to capture all logs from startup."""
-    from .Logging_Config import configure_application_logging
 
     # Create a temporary app-like object with just enough attributes for configure_application_logging
     class EarlyLoggingApp:
@@ -20824,7 +20805,6 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     # legacy mtime rule; the manifest self-heals on the next rebuild.
     manifest = _load_css_build_manifest(css_dir)
     if manifest is not None:
-        import hashlib
 
         from .Utils.path_validation import validate_path
 
@@ -21229,7 +21209,6 @@ def get_app():
     Returns the TldwCli app instance without running it.
     """
     # Configure logging to suppress verbose debug messages early
-    import logging
 
     # Suppress various verbose loggers
     logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
@@ -21244,8 +21223,6 @@ def get_app():
     logging.getLogger("fsevents").setLevel(logging.WARNING)
 
     # Ensure CSS is built
-    from pathlib import Path
-    import sys
 
     package_root = Path(__file__).parent
     if _is_source_tree(package_root):
@@ -21257,7 +21234,6 @@ def get_app():
         stale, reason = _generated_css_is_stale(package_root)
         if stale and build_script_path.exists():
             print(f"Building modular CSS: {reason}")
-            import subprocess
 
             subprocess.run([sys.executable, str(build_script_path)], check=True)
 
@@ -21279,8 +21255,6 @@ def main_cli_runner():
     set_launch_cwd()
 
     # Configure logging to suppress verbose debug messages early
-    import logging
-    import os
     import warnings
 
     # Suppress various verbose loggers
@@ -21351,7 +21325,6 @@ def main_cli_runner():
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
-                import subprocess
 
                 # Build CSS synchronously before starting the app
                 result = subprocess.run(
