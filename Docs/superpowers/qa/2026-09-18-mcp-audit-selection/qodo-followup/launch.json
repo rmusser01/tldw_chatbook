@@ -1,0 +1,7 @@
+{
+  "pid": 24024,
+  "started_at": "2026-09-21T14:43:44.848458+00:00",
+  "repo": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+  "head": "919ae96fb58a7546ec8cc92e6e7b5d097c1d921c",
+  "dirty_status": " M \"backlog/tasks/task-32834 - Keep-MCP-Audit-selection-tied-to-its-visible-execution.md\"\n M tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py\n M tldw_chatbook/UI/MCP_Modules/mcp_workbench.py\n?? Tests/UI/test_mcp_audit_identity.py\n"
+}

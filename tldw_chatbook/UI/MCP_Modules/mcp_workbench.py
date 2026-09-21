@@ -4852,9 +4852,9 @@ class MCPWorkbench(Container):
         self, event: MCPAuditMode.FindingSelected
     ) -> None:
         """Route an Audit-mode Findings-table row selection to the
-        inspector's finding detail view (T8, MCP Hub Phase 5). Mirrors
-        `on_mcp_audit_mode_entry_selected()` exactly -- `event.index` is
-        looked up against `_last_audit_findings` (the SAME list `_sync_
+        inspector's finding detail view (T8, MCP Hub Phase 5). Findings retain
+        index-based routing: `event.index` is looked up against
+        `_last_audit_findings` (the SAME list `_sync_
         audit_mode()` handed `MCPAuditMode` this pass); an out-of-range
         index (a stale selection racing a background resync that shrank
         the list) resolves to `None`, which `show_finding()` renders as
@@ -4865,6 +4865,9 @@ class MCPWorkbench(Container):
         into `show_finding()`'s `server_key` keyword, so the detail view's
         new remediation-action buttons know which server a routed
         `HubActionRequested` belongs to.
+
+        Args:
+            event: Finding selection carrying its cached snapshot index.
         """
         event.stop()
         finding = (

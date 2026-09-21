@@ -60,6 +60,26 @@ _FINDINGS_FETCH_FAILED_MESSAGE = (
 _FINDINGS_NONE_FOUND_MESSAGE = "No governance findings for this connection."
 
 
+def _unique_entry_key(
+    entry: dict[str, Any],
+    previous: dict[str, tuple[int, dict[str, Any]]],
+    current: dict[str, tuple[int, dict[str, Any]]],
+) -> str | None:
+    """Find an execution only when both snapshots identify it uniquely.
+
+    Args:
+        entry: Metadata of the execution to retain.
+        previous: Visible row keys and records before the refresh.
+        current: Visible row keys and records after the refresh.
+
+    Returns:
+        The current row key, or None if the execution is absent or ambiguous.
+    """
+    matches = [key for key, (_, record) in current.items() if record == entry]
+    old_matches = sum(record == entry for _, record in previous.values())
+    return matches[0] if len(matches) == old_matches == 1 else None
+
+
 def _finding_field(finding: Mapping[str, Any], key: str) -> str:
     """Defensive raw-dict read for one Findings-table cell.
 
@@ -416,8 +436,10 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     class EntrySelected(Message, namespace="mcp_audit_mode"):
         """Carry the rendered execution, never resolve a queued index anew.
 
-        ``index`` describes its position at publication; ``entry=None`` clears
-        a selection removed by filtering or log rotation.
+        Args:
+            index: Position in the full snapshot at publication, or None when
+                clearing a selection removed by filtering or log rotation.
+            entry: Rendered execution metadata, or None to clear selection.
         """
 
         def __init__(self, index: int | None, entry: dict[str, Any] | None) -> None:
@@ -615,30 +637,15 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             if self._matches(entry)
         }
         if cursor_key not in visible_entries and cursor_entry is not None:
-            matches = [
-                key
-                for key, (_, entry) in visible_entries.items()
-                if entry == cursor_entry
-            ]
-            old_matches = sum(
-                entry == cursor_entry for _, entry in self._visible_entries.values()
+            cursor_key = _unique_entry_key(
+                cursor_entry, self._visible_entries, visible_entries
             )
-            cursor_key = matches[0] if len(matches) == old_matches == 1 else None
         if (
             self.selected_entry is not None
             and self._selected_entry_key not in visible_entries
         ):
-            matches = [
-                key
-                for key, (_, entry) in visible_entries.items()
-                if entry == self.selected_entry
-            ]
-            old_matches = sum(
-                entry == self.selected_entry
-                for _, entry in self._visible_entries.values()
-            )
-            self._selected_entry_key = (
-                matches[0] if len(matches) == old_matches == 1 else None
+            self._selected_entry_key = _unique_entry_key(
+                self.selected_entry, self._visible_entries, visible_entries
             )
             if self._selected_entry_key is None:
                 self.selected_entry = None

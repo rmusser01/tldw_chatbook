@@ -1,0 +1,28 @@
+.....................................                                    [100%]
+============================= slowest 25 durations =============================
+2.94s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[initiator]
+2.86s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+2.81s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[decision]
+2.79s call     Tests/UI/test_mcp_audit_selection.py::test_newer_execution_keeps_selected_event_and_drill_target
+2.69s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[text]
+2.64s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+2.33s call     Tests/UI/test_mcp_audit_selection.py::test_execution_eviction_clears_detail_without_selecting_replacement
+2.30s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+2.30s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+2.28s call     Tests/UI/test_mcp_audit_selection.py::test_duplicate_event_keeps_its_row_within_same_filtered_snapshot
+2.27s call     Tests/UI/test_mcp_audit_selection.py::test_filtering_out_selected_execution_clears_detail
+2.23s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+2.22s call     Tests/UI/test_mcp_audit_selection.py::test_ambiguous_identical_events_clear_selection_on_refresh
+2.09s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[table]
+2.00s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[canvas]
+1.46s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]
+1.45s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]
+1.43s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]
+1.43s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+1.41s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]
+1.40s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]
+1.39s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+1.39s call     Tests/UI/test_mcp_audit_identity.py::test_renewed_row_keys_never_reactivate_an_older_snapshot
+
+(2 durations < 1s hidden.)
+37 passed in 49.58s

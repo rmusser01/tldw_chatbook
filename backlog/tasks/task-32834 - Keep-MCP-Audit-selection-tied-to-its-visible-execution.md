@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 03:45'
-updated_date: '2026-09-21 14:33'
+updated_date: '2026-09-21 14:49'
 labels: []
 dependencies: []
 ---
@@ -33,6 +33,7 @@ ADR required: no. ADR path: backlog/decisions/170-table-repopulation-selection-b
 4. Rebase onto actual merged PR2770 dev, qualify dark/light compact/wide native selection/filter/refresh/drill behavior, and retain exact source and cleanup receipts.
 5. Update existing PR2720 with current tests, conflicts and native evidence; obtain its own visual approval before the authorized CI/Qodo/dev-check merge. Filter layout and inspector guidance remain separate saved PRs.
 6. Independent review reproduced duplicate contraction and retired gestures across mode/subview round trips. Require uniqueness in both snapshots when restoring by metadata, and renew execution row keys while retiring selection on departure; preserve current live activation and same-snapshot duplicate rows.
+7. Address Qodo by documenting nullable message arguments, extracting the duplicated uniqueness check for isolated unit coverage, retaining mounted integration coverage, and explaining the required deferred-import admission boundary. Recheck targeted behavior and native visuals; no layout or authority change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -45,4 +46,8 @@ Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/current-dev/README.
 ADR required: no; existing backlog/decisions/170-table-repopulation-selection-boundary.md and ADR150/161 apply. No schema, runtime authority or token change.
 
 Owner approved PR2720 at 6180cf54c9. Rebased without conflicts onto f1a027c12b (PR2766 Evals); all fourteen captured sources and the runner are unchanged. Fresh replay passes 27 selection/startup checks, nine artifact guards and all four private native cells with normal cleanup. Twenty captures match approved content apart from timestamps and caret blinking. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/approved-rebase/README.md. Current-head CI/Qodo and final dev review remain the authorized merge gates.
+
+Qodo review at 919ae96fb5 reports zero bugs and three rule findings. Follow-up plan: document nullable selection arguments, extract the duplicated old/new uniqueness check into one pure helper and add isolated matching/key-retirement coverage while preserving mounted regressions, and retain deferred runtime imports with a technical explanation because private admission and environment selection must precede app imports. Correct the adjacent Findings docstring that still describes the retired index symmetry. No layout, authority or schema change; verify focused behavior and a fresh native replay before push.
+
+Qodo follow-up verified: 37 focused tests (8 isolated, 15 mounted, 14 architecture), all nine artifact guards, no added Ruff findings and changed-range formatting pass. Independent review clear. Native run 004 passes all four theme/size cells; twenty captures preserve approved content with timestamp/caret-only differences. Lifecycle, two fixture exits, ten DBs, defaults/sentinels and source hashes verified. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/qodo-followup/README.md. Current-head CI/review and latest-dev gate remain.
 <!-- SECTION:NOTES:END -->
