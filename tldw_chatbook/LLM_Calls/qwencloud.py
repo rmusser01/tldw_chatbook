@@ -5,7 +5,7 @@ from __future__ import annotations
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.hosted_chat import _MAX_RETRY_AFTER_SECONDS
 
-import json
+from tldw_chatbook.Utils.input_validation import strict_json_loads
 import math
 import os
 import time
@@ -309,23 +309,6 @@ def _validate_scalar_parameters(
     return _normalize_stop(stop)
 
 
-def _reject_non_finite_json_constant(value: str) -> None:
-    raise ValueError(f"Non-finite JSON constant is not supported: {value}")
-
-
-def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    # task-32805.5: reconcile the non-streaming tool-call-argument parse with
-    # its streaming sibling (qwencloud_streaming._strict_json_loads) and the
-    # continuation checkpoint, which both reject duplicate keys. The same
-    # provider's function-call arguments must not be accepted last-wins on one
-    # path and refused on the other -- and these arguments drive tool
-    # execution, so a repeated key is ambiguity to reject, not to guess at.
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"Duplicate JSON key is not supported: {key}")
-        result[key] = value
-    return result
 
 
 def normalize_qwencloud_api_mode(
@@ -520,11 +503,7 @@ def _validate_tool_calls(
                 "QwenCloud function call arguments must be a JSON string."
             )
         try:
-            decoded_arguments = json.loads(
-                arguments,
-                parse_constant=_reject_non_finite_json_constant,
-                object_pairs_hook=_reject_duplicate_json_keys,
-            )
+            decoded_arguments = strict_json_loads(arguments)
         except (TypeError, ValueError) as exc:
             raise _bad_request(
                 "QwenCloud function call arguments must contain valid JSON."
@@ -888,11 +867,7 @@ def _normalize_response_tool_call(raw_call: Mapping[str, Any]) -> dict[str, Any]
     ):
         raise _provider_error("QwenCloud returned an incomplete function call.")
     try:
-        decoded_arguments = json.loads(
-            arguments,
-            parse_constant=_reject_non_finite_json_constant,
-            object_pairs_hook=_reject_duplicate_json_keys,
-        )
+        decoded_arguments = strict_json_loads(arguments)
     except (TypeError, ValueError) as exc:
         raise _provider_error(
             "QwenCloud returned malformed function-call arguments."
