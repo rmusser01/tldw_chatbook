@@ -166,7 +166,7 @@ Key sections:
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
-- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
+- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access. Workspace folder bindings may carry per-binding exclusions (exact user-marked paths, fully invisible to agent tools — see ADR-173).
 
 ### Console Run Hooks
 - User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-148).
