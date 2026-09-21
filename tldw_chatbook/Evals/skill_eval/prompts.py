@@ -40,6 +40,15 @@ def _wrap(subject: SkillSubject) -> str:
 
 
 def synthesis_messages(subject: SkillSubject) -> List[dict]:
+    """Messages for the generator's synthetic prompt-synthesis call.
+
+    Args:
+        subject: Skill snapshot under test (wrapped as inert data).
+
+    Returns:
+        Two-message list requesting exactly 10 should/shouldn't-trigger
+        prompts as strict JSON.
+    """
     system = (
         f"{INERT_DATA_RULE}\nYou write test prompts for routing evaluation."
     )
@@ -55,6 +64,20 @@ def synthesis_messages(subject: SkillSubject) -> List[dict]:
 
 def selection_messages(prompt: str, subject: SkillSubject,
                        decoys: Sequence[Mapping[str, Any]]) -> List[dict]:
+    """Messages for one single-shot skill-selection call.
+
+    Presents the subject inside a decoy catalog (both inert-delimited) so the
+    reply's ``skill`` choice measures routing against competition.
+
+    Args:
+        prompt: The user request to route.
+        subject: Skill snapshot under test.
+        decoys: Competing skill summaries (name/description mappings).
+
+    Returns:
+        Two-message list requesting a strict-JSON ``{"skill": ..., ...}``
+        reply.
+    """
     lines = [f"- {d.get('name')}: {d.get('description', '')}" for d in decoys]
     lines.append(f"- {subject.name}: {subject.description}")
     system = (
@@ -70,6 +93,16 @@ def selection_messages(prompt: str, subject: SkillSubject,
 
 
 def task_messages(subject: SkillSubject, index: int) -> List[dict]:
+    """Messages for one judge task-simulation rating call.
+
+    Args:
+        subject: Skill snapshot under test (wrapped as inert data).
+        index: Zero-based task number (1-3 in the judge battery).
+
+    Returns:
+        Two-message list asking the judge to invent a realistic task and
+        rate the expected output quality 1-5 as strict JSON.
+    """
     system = (
         f"{INERT_DATA_RULE}\nYou are evaluating a skill by simulation."
     )
@@ -85,6 +118,19 @@ def task_messages(subject: SkillSubject, index: int) -> List[dict]:
 
 
 def rubric_messages(kind: str, subject: SkillSubject) -> List[dict]:
+    """Messages for one anchored-rubric rating call.
+
+    Args:
+        kind: Rubric key; one of ``"instruction_fitness"`` or
+            ``"scope_calibration"``.
+        subject: Skill snapshot under test (wrapped as inert data).
+
+    Returns:
+        Two-message list requesting a strict-JSON 1-5 rating.
+
+    Raises:
+        KeyError: If ``kind`` is not a known rubric.
+    """
     system = f"{INERT_DATA_RULE}\nYou are a strict evaluator."
     user = (
         f"{_wrap(subject)}\n\n{rubric_text(kind)}\n"
@@ -95,4 +141,16 @@ def rubric_messages(kind: str, subject: SkillSubject) -> List[dict]:
 
 
 def rubric_text(kind: str) -> str:
+    """Return the versioned anchor text for one rating rubric.
+
+    Args:
+        kind: Rubric key (``"instruction_fitness"`` /
+            ``"scope_calibration"``).
+
+    Returns:
+        The anchored 1-5 rubric prompt text.
+
+    Raises:
+        KeyError: If ``kind`` is not a known rubric.
+    """
     return _RUBRICS[kind]

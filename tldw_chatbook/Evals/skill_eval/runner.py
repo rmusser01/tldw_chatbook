@@ -74,7 +74,6 @@ class SkillEvalRunner:
             cancel_token: Cooperative cancellation flag checked between cells.
         """
         self._chat = chat
-        self._chat = chat
         self._cancel = cancel_token
         #: The last ``run()``'s raw layer results, stashed for the caller
         #: that must persist evidence the report itself does not carry
