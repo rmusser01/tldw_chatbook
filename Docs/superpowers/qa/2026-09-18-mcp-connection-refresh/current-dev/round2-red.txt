@@ -1,0 +1,355 @@
+.FFFF.                                                                   [100%]
+=================================== FAILURES ===================================
+______ test_padded_profile_id_restores_canonical_connection_state[False] _______
+
+self = <Coroutine test_padded_profile_id_restores_canonical_connection_state[False]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'connected': False, 'request': <FixtureRequest for <Coroutine test_padded_profile_id_restores_canonical_connection_state[False]>>, 'tmp_path': PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1')}
+request = <FixtureRequest for <Coroutine test_padded_profile_id_restores_canonical_connection_state[False]>>
+work = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process')
+profile = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ______ test_padded_profile_id_restores_canonical_connection_state[False] _______
+E
+E           request = <FixtureRequest for <Coroutine test_padded_profile_id_restores_canonical_connection_state[False]>>
+E           tmp_path = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/pytest/test_padded_profile_id_restore0')
+E           connected = False
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("connected", [True, False])
+E               @private_profile_test
+E               async def test_padded_profile_id_restores_canonical_connection_state(
+E                   request: pytest.FixtureRequest, tmp_path: Path, connected: bool
+E               ) -> None:
+E                   """Accepted padded IDs must use the canonical session for state restoration."""
+E                   async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+E                       if connected:
+E                           await service.connect_profile("catalog")
+E                       assert_catalog(await service.refresh_external_profile(" catalog "), "original")
+E           >           assert ("catalog" in client.sessions) is connected
+E           E           AssertionError: assert ('catalog' in {'catalog': <tldw_chatbook.MCP.client._StdioJSONRPCConnection object at 0x10d8becf0>}) is False
+E           E            +  where {'catalog': <tldw_chatbook.MCP.client._StdioJSONRPCConnection object at 0x10d8becf0>} = <tldw_chatbook.MCP.client.MCPClient object at 0x10d2f2b10>.sessions
+E
+E           Tests/MCP/test_profile_refresh.py:186: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 15:21:07.235 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 15:21:07.327 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 15:21:07.399 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 15:21:07.407 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 15:21:07.408 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 15:21:07.429 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 15:21:07.542 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E           2026-09-20 15:21:07.543 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E           2026-09-20 15:21:07.554 | WARNING  | tldw_chatbook.MCP.client:disconnect_from_server:1325 - Server  catalog  not found
+E           2026-09-20 15:21:07.556 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 15:21:07.557 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E           - generated xml file: /private/tmp/32830-round2-red/test_padded_profile_id_restore1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[False]
+E           1 failed in 0.83s
+
+Tests/private_profile.py:84: Failed
+_________ test_padded_profile_id_cleans_owned_session_on_save_failure __________
+
+self = <Coroutine test_padded_profile_id_cleans_owned_session_on_save_failure>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10eed3c80>, 'request': <FixtureRequest for <Coroutine tes...wned_session_on_save_failure>>, 'tmp_path': PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0')}
+request = <FixtureRequest for <Coroutine test_padded_profile_id_cleans_owned_session_on_save_failure>>
+work = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process')
+profile = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_padded_profile_id_cleans_owned_session_on_save_failure __________
+E
+E           request = <FixtureRequest for <Coroutine test_padded_profile_id_cleans_owned_session_on_save_failure>>
+E           tmp_path = PosixPath('/private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/pytest/test_padded_profile_id_cleans_0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a73b350>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_padded_profile_id_cleans_owned_session_on_save_failure(
+E                   request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+E               ) -> None:
+E                   """A save failure after canonical connection must reap the owned subprocess."""
+E                   async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+E                       process = None
+E
+E                       def fail_save(*args: Any) -> None:
+E                           nonlocal process
+E                           process = client.sessions["catalog"].process
+E                           raise OSError("disk unavailable")
+E
+E                       monkeypatch.setattr(store, "save_discovery_snapshot", fail_save)
+E                       with pytest.raises(OSError, match="disk unavailable"):
+E                           await service.connect_profile(" catalog ")
+E           >           assert process is not None and process.returncode is not None
+E           E           assert (<Process 16833> is not None and None is not None)
+E           E            +  where None = <Process 16833>.returncode
+E
+E           Tests/MCP/test_profile_refresh.py:207: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 15:21:08.390 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 15:21:08.472 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 15:21:08.543 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 15:21:08.549 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-20 15:21:08.551 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 15:21:08.611 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 15:21:08.731 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E           2026-09-20 15:21:08.732 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E           2026-09-20 15:21:08.733 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 15:21:08.734 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E           - generated xml file: /private/tmp/32830-round2-red/test_padded_profile_id_cleans_0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_profile_refresh.py::test_padded_profile_id_cleans_owned_session_on_save_failure
+E           1 failed in 0.82s
+
+Tests/private_profile.py:84: Failed
+_ test_refresh_unit_does_not_report_success_with_retained_temporary_session[false] _
+
+service_parts = (<tldw_chatbook.MCP.local_control_service.LocalMCPControlService object at 0x10f6414c0>, <Tests.MCP.test_local_control...ol_service.FakeLocalStore object at 0x10f643200>, <Tests.MCP.test_profile_refresh.RefreshPolicy object at 0x10f641550>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f642c00>
+failure = 'false'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["false", "exception", "cancelled"])
+    async def test_refresh_unit_does_not_report_success_with_retained_temporary_session(
+        service_parts: tuple, monkeypatch: pytest.MonkeyPatch, failure: str
+    ) -> None:
+        """Failed temporary cleanup is visible; cancellation keeps its precedence."""
+        service, client, store, _policy = service_parts
+
+        async def fail_disconnect(profile_id: str) -> bool:
+            if failure == "exception":
+                raise OSError("process cleanup unavailable")
+            if failure == "cancelled":
+                raise asyncio.CancelledError
+            return False
+
+        monkeypatch.setattr(client, "disconnect_from_server", fail_disconnect)
+        expected = asyncio.CancelledError if failure == "cancelled" else RuntimeError
+>       with pytest.raises(expected):
+             ^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'RuntimeError'>
+
+Tests/MCP/test_profile_refresh_unit.py:128: Failed
+_ test_refresh_unit_does_not_report_success_with_retained_temporary_session[exception] _
+
+service_parts = (<tldw_chatbook.MCP.local_control_service.LocalMCPControlService object at 0x10f62d4f0>, <Tests.MCP.test_local_control...ol_service.FakeLocalStore object at 0x10f62c7d0>, <Tests.MCP.test_profile_refresh.RefreshPolicy object at 0x10f62d730>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f62f440>
+failure = 'exception'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["false", "exception", "cancelled"])
+    async def test_refresh_unit_does_not_report_success_with_retained_temporary_session(
+        service_parts: tuple, monkeypatch: pytest.MonkeyPatch, failure: str
+    ) -> None:
+        """Failed temporary cleanup is visible; cancellation keeps its precedence."""
+        service, client, store, _policy = service_parts
+
+        async def fail_disconnect(profile_id: str) -> bool:
+            if failure == "exception":
+                raise OSError("process cleanup unavailable")
+            if failure == "cancelled":
+                raise asyncio.CancelledError
+            return False
+
+        monkeypatch.setattr(client, "disconnect_from_server", fail_disconnect)
+        expected = asyncio.CancelledError if failure == "cancelled" else RuntimeError
+>       with pytest.raises(expected):
+             ^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'RuntimeError'>
+
+Tests/MCP/test_profile_refresh_unit.py:128: Failed
+============================= slowest 25 durations =============================
+1.47s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[True]
+1.13s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[False]
+1.10s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_cleans_owned_session_on_save_failure
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[False]
+FAILED Tests/MCP/test_profile_refresh.py::test_padded_profile_id_cleans_owned_session_on_save_failure
+FAILED Tests/MCP/test_profile_refresh_unit.py::test_refresh_unit_does_not_report_success_with_retained_temporary_session[false]
+FAILED Tests/MCP/test_profile_refresh_unit.py::test_refresh_unit_does_not_report_success_with_retained_temporary_session[exception]
+4 failed, 2 passed, 20 deselected in 5.09s

@@ -1,0 +1,12 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+3.32s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+
+(2 durations < 1s hidden.)
+1 passed in 4.06s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8b89affe-bd8d-40df-bcc4-f2cbad7917a5/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8b89affe-bd8d-40df-bcc4-f2cbad7917a5/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8b89affe-bd8d-40df-bcc4-f2cbad7917a5
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8b89affe-bd8d-40df-bcc4-f2cbad7917a5'
+  warnings.warn(

@@ -209,7 +209,11 @@ class ToolProfilesPanel(Vertical):
             reveal_result = focused is not None and focused is self._result_anchor
             context = self._button_actions.get(focused)
             focus_key = (context[0], context[1].profile_id) if context else None
-            if focused is self.query_one("#tool-profiles-import", Button):
+            # TASK-32800.4's guard: this resumes after the lock await, so the
+            # panel's children are not guaranteed to be the ones it entered
+            # with. A missing import button just means no import focus key.
+            imports = self.query("#tool-profiles-import")
+            if imports and focused is imports.first(Button):
                 focus_key = ("import", None)
             if focus_key is not None:
                 # Prevent teardown's automatic fallback from being mistaken for
@@ -239,8 +243,13 @@ class ToolProfilesPanel(Vertical):
                     (button for button, _, key in enabled if key == profile_id), None
                 )
             if target is None:
-                target = self.query_one("#tool-profiles-import", Button)
-                if target.disabled:
+                # TASK-32800.4's guard: this resumes after the recompose
+                # above, so the import button is a hope, not a guarantee.
+                # Falling through to the focusable ancestor is what this
+                # branch already does for a disabled one.
+                imports = self.query("#tool-profiles-import")
+                target = imports.first(Button) if imports else None
+                if target is None or target.disabled:
                     target = next(
                         (ancestor for ancestor in self.ancestors if ancestor.focusable),
                         None,

@@ -3,9 +3,11 @@ id: TASK-32873
 title: >-
   Fix five red test_console_runtime_ownership tests on dev (fleet-wake rename +
   tombstone order)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@robert'
 created_date: '2026-09-20 16:42'
+updated_date: '2026-09-20 22:19'
 labels: []
 dependencies: []
 ---
@@ -25,3 +27,9 @@ Five tests in Tests/UI/test_console_runtime_ownership.py fail on pure origin/dev
 <!-- AC:BEGIN -->
 - [ ] #1 All five named tests pass on dev,delivering_session_id references updated to delivering_session_ids where the coordinator renamed them,tombstone ordering expectation matches actual shutdown order or the order is fixed in code,Load-order flake root-caused or stabilized
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+All five AC reds fixed with root causes; suite added to CI (separate Fast Lane invocation); machine enrollment wedge remediated (backed up first); one rotted mount parked as strict xfail; flake stabilized.
+<!-- SECTION:NOTES:END -->

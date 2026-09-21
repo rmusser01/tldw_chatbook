@@ -1,0 +1,20 @@
+{
+  "registered_during_cleanup": false,
+  "notices_during_cleanup": [
+    [
+      "Cancelled.",
+      "information"
+    ]
+  ],
+  "calls_before_cleanup": [
+    [
+      "connect",
+      "docs"
+    ],
+    [
+      "connect",
+      "docs"
+    ]
+  ],
+  "registered_while_retry_waits": false
+}

@@ -1,0 +1,14 @@
+..................................                                       [100%]
+--------------- generated xml file: /private/tmp/32831-green.xml ---------------
+============================= slowest 25 durations =============================
+2.22s call     Tests/MCP/test_tool_error_results.py::test_control_plane_audits_tool_failure_without_error_body_and_recovers
+1.67s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[False]
+1.32s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[None]
+1.24s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]
+1.21s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]
+1.20s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]
+1.18s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]
+1.15s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]
+
+(17 durations < 1s hidden.)
+34 passed in 15.12s

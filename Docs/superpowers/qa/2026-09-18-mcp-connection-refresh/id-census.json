@@ -1,0 +1,11 @@
+{
+  "refs": 327,
+  "unique_commits": 267,
+  "worktrees": 31,
+  "max_committed_task": 32829,
+  "candidate": 32830,
+  "committed_matches": [],
+  "worktree_matches": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32830 - Refresh-connected-MCP-catalogs-through-actual-discovery.md"
+  ]
+}

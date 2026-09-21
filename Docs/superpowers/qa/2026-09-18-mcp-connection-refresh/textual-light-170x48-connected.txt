@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││   ← All servers  ● Ready  wire-review                                     ││                                             │
+│ Source                                     ││        Edit         Disconnect    Refresh tools       Delete              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Connected — 1 tools available.                                           ││  ● Ready  wire-review                       │
+│ ▊  Local                              ▼  ▎ ││                                                                           ││  Why · Ready — 1 tools available            │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Command ·                                                                ││                                             │
+│                                            ││  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-  ││  Open tool catalog                          │
+│ Servers                                    ││  pattern-library/.venv/bin/python                                         ││  Refresh tools                              │
+│  ● ready · ◦ off (opt-in) · ⌂ built-in     ││  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-  ││  View details                               │
+│    All servers                             ││  pattern-library/Tests/MCP/fixtures/stdio_catalog_server.py               ││    Advanced…                                │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  /private/tmp/tldw-32830-native-002/fixture-state.json                    ││                                             │
+│  ● wire-review                  1          ││  /private/tmp/tldw-32830-native-002/fixture-trace.jsonl                   ││                                             │
+│                                            ││  Tools · 1: original_tool                                                 ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Resources · 1: fixture://original                                        ││                                             │
+│                                            ││  Prompts · 1: original_prompt                                             ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                             ╭──────────────────────────────────────────────────────────╮ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             │ wire-review: disconnected.                               │ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             ╰──────────────────────────────────────────────────────────╯ │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                             ╭──────────────────────────────────────────────────────────╮ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             │ wire-review: connected — 1 tool.                         │ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             ╰──────────────────────────────────────────────────────────╯ │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

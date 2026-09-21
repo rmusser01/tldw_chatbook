@@ -1,0 +1,35 @@
+.......................................................                  [100%]
+------------- generated xml file: /private/tmp/32829-neighbors.xml -------------
+============================= slowest 25 durations =============================
+12.51s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-light]
+12.18s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-dark]
+5.11s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-removed]
+4.97s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-description]
+4.95s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-unchanged]
+4.92s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-schema]
+4.59s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_queued_old_preview_request_cannot_replace_reopened_preview
+4.57s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-schema]
+4.57s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-description]
+4.43s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+4.43s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-unchanged]
+4.37s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-removed]
+4.23s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+4.02s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-light]
+4.00s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_retirement_during_native_mount_cannot_leave_orphan_panel[close]
+3.95s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_retirement_during_native_mount_cannot_leave_orphan_panel[refresh]
+3.94s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[current]
+3.90s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-dark]
+3.84s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+3.79s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[failure]
+3.78s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_waiting_on_inspector_cannot_replace_newer_selection
+3.71s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[service]
+3.24s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[mode]
+3.13s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+3.10s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]
+55 passed in 168.45s (0:02:48)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7642a5c2-1714-4e3a-a055-ae25124e58b0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7642a5c2-1714-4e3a-a055-ae25124e58b0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7642a5c2-1714-4e3a-a055-ae25124e58b0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7642a5c2-1714-4e3a-a055-ae25124e58b0'
+  warnings.warn(

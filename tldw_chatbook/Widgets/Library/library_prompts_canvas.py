@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import events, on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
@@ -327,6 +327,15 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.browse_result = browse_result
         self.pager = pager
         self.mode = mode
+        # `compose()` only builds #library-prompt-more-actions-region in
+        # editor mode, so the flag must not outlive it: a recompose into list
+        # mode used to leave it set, and the next Escape dereferenced a region
+        # that was no longer there -- NoMatches into App._exception, i.e. the
+        # app exited (TASK-32800.2). This is the controller's only state
+        # funnel, so it is where the "open implies editor mode" invariant is
+        # restored.
+        if mode != "editor":
+            self.more_actions_open = False
         self.editor_state = editor_state
         self.editor_mode = coerce_prompt_editor_mode(editor_mode)
         self.basic_unavailable_reason = basic_unavailable_reason
@@ -557,8 +566,17 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             return
         event.stop()
         self.more_actions_open = False
-        self.query_one("#library-prompt-more-actions-region").display = False
-        self.query_one("#library-prompt-more-actions", Button).focus()
+        # Defence in depth behind `sync_state`'s invariant: an Escape arriving
+        # after the region has gone must close the flag, not the application.
+        # `mode` is a plain attribute, so a future path that changes it without
+        # going through `sync_state` would otherwise re-open TASK-32800.2.
+        region = self.query("#library-prompt-more-actions-region")
+        if not region:
+            return
+        region.first().display = False
+        opener = self.query("#library-prompt-more-actions")
+        if opener:
+            opener.first(Button).focus()
 
     def _compose_list(self) -> ComposeResult:
         state = self.state

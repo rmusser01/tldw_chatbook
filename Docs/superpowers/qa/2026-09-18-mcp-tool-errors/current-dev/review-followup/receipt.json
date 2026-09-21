@@ -1,0 +1,16 @@
+{
+  "base": "13e3bce8b50313c2e10d2e2bf95ff3cc23cf9d4f",
+  "approved_visual_head": "19ceab4dc39da5aca46088b9a77b7c932861128b",
+  "runtime_ast_unchanged_except_docstring": true,
+  "affected_passed": 31,
+  "new_unit_passed": 12,
+  "total_distinct_mcp_passed": 87,
+  "reviewer": "mcp_compact_review",
+  "review_followup": "Added propagated TypeError to the documented request exceptions. No remaining findings.",
+  "source_hashes": {
+    "tldw_chatbook/MCP/client.py": "bcca1d092ad3b6670cc91cb82988e4af0c81c27fea7fdf58bcaaba7bd18b2da0",
+    "Tests/MCP/test_tool_result_input.py": "59113ba436750f2372681626eb05be7bc90be1d45b6d9226fafafecf9f36615e",
+    "/private/tmp/32831-review-unit-green.xml": "6da311c8e89740e0c9c6c2f823af98751cd26eb5552b9092d2f91b3898ebbe6c"
+  },
+  "full_local_suite_run": false
+}

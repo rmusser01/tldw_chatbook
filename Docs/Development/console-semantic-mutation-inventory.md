@@ -46,7 +46,7 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Attachment mutation and selected image variant | model-visible | `ConsoleChatStore.append_generation_variant`, `keep_generation_variant`; `ChatPersistenceService.append_message_attachment`, `keep_message_attachment` | attachment append or scalar/attachment swap; generation metadata re-key is presentation-only |
 | Console fork and temporary promotion | model-visible | `ConsoleSessionController._commit_durable_console_chat_fork`; `ConsoleChatStore.promote_ephemeral_session`; `ChatPersistenceService.fork_console_conversation_bundle`, `promote_console_conversation_bundle` | creates each canonical message and its attachments in the destination conversation |
 | Canvas conversation hard purge | visibility/ownership-only | `CanvasRepository.hard_purge_conversation` | materializes semantic revisions children-before-parents through `SemanticRevisionCoordinator`, then deletes the conversation owner and cascading message/Canvas rows in the same transaction |
-| Classic chat bulk save | model-visible plus visibility | `Chat_Functions.save_chat_history_to_db_wrapper`; `ChatPersistenceService.save_history` | create/update retained rows and soft-delete omitted rows |
+| Classic chat bulk save | model-visible plus visibility | `ChatPersistenceService.save_history` | create/update retained rows and soft-delete omitted rows |
 | Classic character create/post/edit | model-visible | `Character_Chat_Lib.create_conversation`, `start_new_chat_session`, `add_message_to_conversation`, `post_message_to_conversation`, `edit_message_content` | `add_message` or semantic `update_message` |
 | Character API create/update | model-visible | `LocalCharacterPersonaService.create_character_chat_message`, `update_character_chat_message` | `add_message` or semantic `update_message` |
 | Console character-greeting projection and repair | model-visible | `ConsoleChatStore.persist_roleplay_projection_plan`; producer `_snapshot_roleplay_message_projection_write` | frozen `_RoleplayMessageProjectionWrite.writer` invokes `ChatPersistenceService.update_message_content` |
@@ -274,7 +274,6 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.create_character_chat_message::call:db:add_message` — model-visible
 - `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.delete_character_chat_message::call:db:soft_delete_message` — visibility/ownership-only
 - `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.update_character_chat_message::call:db:update_message` — model-visible
-- `tldw_chatbook/Chat/Chat_Functions.py::save_chat_history_to_db_wrapper::call:persistence:save_history` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_attachment::call:db:append_message_attachment_with_metadata` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_exchanges::call:db:append_message_exchanges_local` — presentation-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages` — model-visible
@@ -297,7 +296,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._create_terminal_message::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._discard_provider_continuation::call:db:update_provider_continuation` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._normalize_restored_provider_continuation::call:dispatch:normalize_provider_continuation_owner` — model-visible
-- `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_locked::call:persistence:append_message_exchanges` — presentation-only
+- `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_admitted::call:persistence:append_message_exchanges` — presentation-only
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_existing_message::call:persistence:update_message_content` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_generation_variant::call:persistence:replace_assistant_generation_projection` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_metadata_only::call:persistence:update_message_metadata` — presentation-only

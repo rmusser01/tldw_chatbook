@@ -1,0 +1,92 @@
+24	363b8c81a579	cancel@UI/Library_Modules/skill_import_choice_modal.py:100 _cancel@Widgets/workspace_persona_default.py:218 _not_now@Widgets/project_skills_import_modal.py:288 _cancel@Widgets/workspace_create_modal.py:278 _cancel@Widgets/Persona_Widgets/petdex_import_review.py:516 _cancel_pressed@Widgets/Persona_Widgets/buddy_character_review.py:441 _cancel@Widgets/Persona_Widgets/actor_pack_import_review.py:206 _cancel@Widgets/Settings_Widgets/tool_pack_import_review.py:222 _cancel@Widgets/Settings_Widgets/tool_pack_import_review.py:413 _cancel@Widgets/Settings_Widgets/tool_pack_import_review.py:593 _cancel@Widgets/Settings_Widgets/tool_pack_import_review.py:791 _cancel@Widgets/Console/prompt_variables_dialog.py:277 _cancel_pressed@Widgets/Console/console_rewind_modal.py:323 _cancel@Widgets/Console/console_fork_chat_modal.py:373 _cancel@Widgets/Console/console_endpoint_template_modal.py:651 _cancel@Widgets/Console/console_settings_modal.py:4184 _cancel@Widgets/Console/console_feedback_comment_modal.py:128 _cancel@Widgets/Console/console_rename_session_modal.py:87 _cancel@Widgets/Console/console_session_switcher_modal.py:2520 _cancel@Widgets/Console/console_workspace_switcher_modal.py:280 _cancel@Widgets/Console/console_workspace_switcher_modal.py:377 _cancel@Widgets/Console/trace_export_dialog.py:261 _cancel@Widgets/Console/console_system_prompt_modal.py:124 _close@Widgets/Console/console_side_chat_modal.py:344 _cancel@Widgets/Console/console_exchange_export_dialog.py:219 _cancel@Widgets/Console/console_terminal_session_modal.py:189 _cancel_pressed@Widgets/Console/console_capture_policy_dialog.py:730 _privacy_cancel_pressed@Widgets/Console/console_capture_policy_dialog.py:1005 _cancel@Widgets/Console/console_edit_message_modal.py:167 _cancel@Widgets/Console/console_edit_message_modal.py:300
+13	c316ae90f2b2	_cancel_button@UI/Library_Modules/prompt_collection_manager_modal.py:639 _cancel_safe@Widgets/enhanced_file_picker.py:1721 _cancel@Widgets/Library/library_note_folder_dialog.py:62 _cancel@Widgets/Library/library_note_folder_dialog.py:141 _close@Widgets/Library/library_review_set_picker.py:159 _cancel_pressed@Widgets/Console/console_scope_picker_modal.py:883 _close@Widgets/Console/console_conversation_inspector.py:2157 _cancel@Widgets/Console/console_summarize_preview_modal.py:127 _close@Widgets/Console/console_citation_sources_modal.py:306 _cancel@Widgets/Console/console_auto_speak_consent.py:155 _cancel@Widgets/Console/console_model_popover.py:1226 _cancel_pressed@Widgets/Console/console_appearance_picker_modal.py:383 _close@Widgets/Console/console_agent_progress_modal.py:193 _cancel_pressed@Widgets/Console/console_reaction_picker_modal.py:687
+9	39c74d03fd3f	_handle_cancel@UI/Screens/settings_screen.py:2550 _cancel_button@Widgets/settings_internal_prompts_editor_modal.py:163 _cancel@Widgets/Persona_Widgets/character_tts_portability_dialogs.py:99 _cancel@Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py:140 _cancel@Widgets/Persona_Widgets/dictionary_attach_picker.py:117 _cancel@Widgets/Persona_Widgets/conversation_attach_picker.py:116 handle_cancel@Widgets/Settings_Widgets/speech_tts_settings_panel.py:394 handle_cancel@Widgets/Settings_Widgets/speech_tts_settings_panel.py:542 handle_cancel_pressed@Widgets/Settings_Widgets/server_switch_modal.py:259 _cancel@Widgets/Console/console_save_markdown_modal.py:99
+4	e01ffd171430	_confirm@Widgets/Library/library_note_folder_dialog.py:67 _name_submitted@Widgets/Library/library_note_folder_dialog.py:72 _confirm@Widgets/Library/library_note_folder_dialog.py:146 _submit_button@Widgets/Console/console_feedback_comment_modal.py:133 _submit_input@Widgets/Console/console_feedback_comment_modal.py:138 _save@Widgets/Console/console_workspace_switcher_modal.py:382 _submitted@Widgets/Console/console_workspace_switcher_modal.py:387 _save@Widgets/Console/console_save_markdown_modal.py:104 _submitted@Widgets/Console/console_save_markdown_modal.py:109
+3	30634047d060	_notify_library_ingest_warning@UI/Screens/library_screen.py:28510 _notify_library_media_edit_warning@UI/Screens/library_screen.py:32251 _notify_library_media_delete_warning@UI/Screens/library_screen.py:32459 _notify_library_media_analysis_warning@UI/Screens/library_screen.py:33311 _notify_library_media_highlight_warning@UI/Library_Modules/library_media_controller.py:3610 _notify_library_media_read_later_warning@UI/Library_Modules/library_media_controller.py:4592 _notify_library_note_delete_warning@UI/Library_Modules/library_notes_controller.py:5906 _notify_library_note_create_warning@UI/Library_Modules/library_notes_controller.py:6331
+5	c9c45182d5d8	_cancel@Widgets/Persona_Widgets/dictionary_picker.py:129 close@Widgets/Persona_Widgets/buddy_conversation_modal.py:281 _cancel@Widgets/Persona_Widgets/world_book_picker.py:126 _cancel@Widgets/Persona_Widgets/buddy_management_modal.py:428 _close@Widgets/Library/library_file_notes_workspace.py:684 _close@Widgets/Library/library_file_notes_workspace.py:808
+5	c38e4896bc97	_datetime_to_iso@runtime_policy/source_state.py:133 _datetime_to_iso@MCP/unified_context_store.py:78 _datetime_to_iso@MCP/server_target_store.py:372 _datetime_to_iso@MCP/local_store.py:140 _datetime_to_iso@MCP/unified_control_models.py:15
+5	ab28630aa31b	_next_request_token@UI/Library_Modules/prompt_history.py:79 _next_request_token@UI/Library_Modules/prompt_collections.py:157 _next_request_token@UI/Library_Modules/library_skills_browse_controller.py:185 _next_request_token@UI/Library_Modules/library_prompt_browse_controller.py:137 _next_request_id@Widgets/Console/console_side_chat_modal.py:205
+5	11e3738a5b49	_perform_safe_cancel@Widgets/cancel_confirmation_dialog.py:101 _perform_safe_cancel@Widgets/Library/library_file_notes_git_panel.py:4270 _perform_safe_cancel@Widgets/ModelArtifacts/install_modal.py:127 _perform_safe_cancel@Widgets/Console/console_auto_speak_consent.py:159 _perform_safe_cancel@Widgets/Console/console_capture_policy_dialog.py:184
+5	87d9851007f6	_filter@Widgets/Persona_Widgets/dictionary_picker.py:93 _filter@Widgets/Persona_Widgets/world_book_picker.py:94 _filter@Widgets/Persona_Widgets/tag_filter_picker.py:88 _filter@Widgets/Persona_Widgets/dictionary_attach_picker.py:81 _filter@Widgets/Persona_Widgets/conversation_attach_picker.py:80
+4	99ee1fb9a866	_confirm@Widgets/Persona_Widgets/character_tts_portability_dialogs.py:182 _confirm_pressed@Widgets/Library/library_file_notes_git_panel.py:4284 handle_confirm@Widgets/Settings_Widgets/speech_tts_settings_panel.py:444 handle_confirm@Widgets/Settings_Widgets/speech_tts_settings_panel.py:488 _confirm@Widgets/Console/console_auto_speak_consent.py:164
+4	6f2d7b8db08d	_clean_text@Chat/chat_conversation_service.py:27 _optional_text@Chat/trajectory.py:1044 _text_or_none@MCP/unified_control_models.py:507 _cleaned_path_setting@RAG_Search/simplified/config.py:156
+4	2619ed884280	_confirm@Widgets/Persona_Widgets/dictionary_picker.py:124 _confirm@Widgets/Persona_Widgets/world_book_picker.py:121 _confirm@Widgets/Persona_Widgets/dictionary_attach_picker.py:112 _confirm@Widgets/Persona_Widgets/conversation_attach_picker.py:111
+3	638614406201	_split_leading_token@Chat/console_command_grammar.py:151 _split_skill_command_word@Chat/console_chat_controller.py:3041 _split_console_skill_name_args@UI/Console_Modules/skill.py:111
+3	9f79aa710f33	_manual_json_digest@Chat/console_chat_controller.py:22946 _digest_json@Chat/console_context_repository.py:1876 _digest_json@Chat/console_context_compaction.py:2657
+3	3b266ccf72b7	_thaw@Chat/console_trace_service.py:6565 _thaw@Chat/console_voice_trace_gateway.py:351 _thaw@Chat/console_trace_final_values.py:779
+3	bda05dc8004b	_maybe_await@Chat/chat_loop_scope_service.py:32 _maybe_await@Chat/chat_conversation_scope_service.py:144 _maybe_await@MCP/unified_control_plane_service.py:568
+3	342b6912408f	_identity@Agents/activation.py:24 _identity@MCP/activation.py:25 _identity@RAG_Search/activation.py:141
+3	ef68340899b2	_held_connection@DB/Workspace_DB.py:392 _held_connection@DB/AgentRuns_DB.py:341 _held_connection@DB/RAG_Indexing_DB.py:155
+3	6ebb934df25a	close@DB/Workspace_DB.py:464 close@DB/AgentRuns_DB.py:387 close@DB/RAG_Indexing_DB.py:242
+2	d7f3bbdc21d3	handle_library_media_empty_import@UI/Screens/library_screen.py:22704 open_workspace_import_sources@UI/Screens/library_screen.py:35346 open_import_export_from_library_rag@UI/Library_Modules/library_rag_search_controller.py:946
+3	717a3ff3f952	_handle_discard@UI/Screens/settings_screen.py:2607 handle_discard@Widgets/Settings_Widgets/speech_tts_settings_panel.py:607 _discard@Widgets/Console/console_video_capacity_modal.py:233
+3	245a997e36f4	_perform_safe_cancel@Widgets/modal_dismissal.py:256 _perform_safe_cancel@Widgets/ModelArtifacts/runtime_choice_modal.py:109 _perform_safe_cancel@Widgets/Console/console_summarize_preview_modal.py:131
+2	c7142a46740c	_cancel@Widgets/Persona_Widgets/character_tts_portability_dialogs.py:177 handle_cancel@Widgets/Settings_Widgets/speech_tts_settings_panel.py:439 handle_cancel@Widgets/Settings_Widgets/speech_tts_settings_panel.py:483
+2	276b628695c0	_field@Chat/trajectory_export.py:147 _field@Chat/library_activity.py:685
+2	e3ccd7ee9979	get_graph_epoch@Chat/console_trace_repository.py:1717 _graph_epoch@Chat/console_trace_maintenance.py:1359
+2	3c18a3c567f9	_mapping_value@Chat/console_provider_gateway.py:7036 _mapping_value@Chat/console_session_settings.py:1949
+2	c7b87c790a39	get_internal_prompt@Chat/console_chat_controller.py:526 get_internal_prompt@Agents/agent_service.py:213
+2	882563b0fae6	_empty_profile_context_snapshot@Chat/console_chat_controller.py:3537 _empty_profile_context_snapshot@Chat/console_chat_models.py:1395
+2	9d2db084bdc7	_metadata_object@Chat/console_appearance.py:166 _metadata_object@Chat/console_speech_preferences.py:109
+2	95b1ecc5b7a0	_utf8_prefix@Chat/console_raw_cli.py:84 _utf8_prefix@UI/Console_Modules/raw_cli.py:74
+2	f9bd6eb5d779	_format_size@Chat/attachment_core.py:64 _human_size@Widgets/Console/console_transcript.py:639
+2	8c8db24b59bd	_required@Chat/console_voice_trace_promotion.py:55 _required_string@Chat/console_voice_promotion.py:34
+2	3c31d62df9eb	_console_message_role_from_persisted@Chat/console_conversation_hydration.py:109 _console_message_role_from_persisted@UI/Console_Modules/message.py:597
+2	471e51c38f2d	_as_dict@Chat/chat_loop_scope_service.py:48 _as_dict@Chat/server_chat_loop_service.py:43
+2	3e4909354aea	_set_message_attachments@Chat/console_chat_store.py:10709 _apply_console_message_attachments@UI/Console_Modules/message.py:186
+2	86801d830ba2	stamp_scope@Agents/virtual_cli_provider.py:400 stamp_scope@Agents/local_tool_provider.py:1262
+2	585947de3fd4	_root_is_valid@Agents/virtual_cli_provider.py:594 _root_is_valid@Agents/local_tool_provider.py:2456
+2	69ffd17f5667	_require_field@MCP/unified_control_plane_service.py:2309 _require_payload_field@MCP/server_unified_service.py:3144
+2	e85d0d7fed65	get_schema_version@DB/Library_Collections_DB.py:757 get_schema_version@DB/Workspace_DB.py:810
+2	554301435efa	relocate@DB/recovery_operations.py:106 relocate@DB/recovery_core.py:276
+2	26c33b94f5de	__str__@DB/Prompts_DB.py:107 __str__@DB/Client_Media_DB_v2.py:114
+2	4b8572c66bea	transaction@DB/AgentRuns_DB.py:403 transaction@DB/RAG_Indexing_DB.py:214
+2	d6f3f49f1ddf	_artifact_postcondition_holds@DB/private_sqlite.py:801 _artifact_postcondition_holds@DB/private_sqlite_files.py:62
+2	c8241f4dde9e	_path_error_from_oserror@DB/private_sqlite.py:827 _path_error_from_oserror@DB/private_sqlite_files.py:88
+2	dc8b35f3113a	_optional_sidecar_restart_or_absent@DB/private_sqlite.py:843 _optional_sidecar_restart_or_absent@DB/private_sqlite_files.py:104
+2	2d63c9e333e2	_json_shape_is_bounded@LLM_Calls/moonshot.py:920 _json_shape_is_bounded@LLM_Calls/zai.py:913
+2	241a53c34e09	extract_text_recursive@Utils/Utils.py:88 extract_text_recursive@Utils/text.py:94
+2	b3723525c90a	_get_cached_memory_info@RAG_Search/simplified/vector_store.py:255 _get_cached_memory_info@RAG_Search/simplified/embeddings_wrapper.py:373
+2	5316baec6b41	get_image_generation_config@UI/Screens/settings_screen.py:464 get_image_generation_config@UI/Screens/personas_screen.py:380
+2	7f9380af8c40	_handle_cancel@UI/Screens/settings_screen.py:2602 handle_cancel@Widgets/Settings_Widgets/speech_tts_settings_panel.py:602
+2	c4caa7876dfb	_handle_save@UI/Screens/settings_screen.py:2612 handle_save@Widgets/Settings_Widgets/speech_tts_settings_panel.py:612
+2	5c63b0c91931	list_image_models_for_catalog@UI/Screens/personas_screen.py:388 list_image_models_for_catalog@UI/Console_Modules/image.py:55
+2	d168125e64ba	_blank_console_session_settings@UI/Console_Modules/session.py:3499 _blank_console_session_settings@UI/Console_Modules/workspace.py:1215
+2	5f8e2d15282a	_console_new_chat_default_generation@UI/Console_Modules/session.py:3506 _console_new_chat_default_generation@UI/Console_Modules/workspace.py:1222
+2	ad9dc3dbc157	_request_retry@UI/Console_Modules/right_rail.py:307 _retry@Widgets/Library/library_note_import_canvas.py:1364
+2	0375c0776457	pager@UI/Library_Modules/library_skills_browse_controller.py:101 pager@UI/Library_Modules/library_prompt_browse_controller.py:77
+2	ae14b2e5e5b0	dispatch@UI/Library_Modules/library_skills_browse_controller.py:204 dispatch@UI/Library_Modules/library_prompt_browse_controller.py:149
+2	d7d559422636	request@UI/Library_Modules/library_skills_browse_controller.py:240 request@UI/Library_Modules/library_prompt_browse_controller.py:176
+2	e6825d91231a	invalidate@UI/Library_Modules/library_skills_browse_controller.py:401 invalidate@UI/Library_Modules/library_prompt_browse_controller.py:277
+2	3d2cd97a5eb1	_key_source_line@Widgets/settings_video_gen_panel.py:54 _key_source_line@Widgets/settings_image_gen_panel.py:92
+2	99d152185b71	_secret_placeholder@Widgets/settings_video_gen_panel.py:65 _secret_placeholder@Widgets/settings_image_gen_panel.py:108
+2	1f3ff8b88f0a	_consume@Widgets/modal_dismissal.py:137 _consume@Widgets/Console/console_terminal_workspace.py:397
+2	ab021baec034	filter_func@Widgets/enhanced_file_picker.py:424 filter_func@Widgets/file_picker_dialog.py:46
+2	a4ba49e58073	_check_for_files@Widgets/Chat_Widgets/chat_message.py:350 _check_for_files@Widgets/Chat_Widgets/chat_message_enhanced.py:721
+2	1723fc2aac0f	_sync_narrow@Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py:188 _sync_narrow@Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py:332
+2	8d716056058c	_run_pressed@Widgets/Persona_Widgets/personas_dictionary_tryit.py:225 _run_pressed@Widgets/Persona_Widgets/personas_lore_tryit.py:210
+2	39542ea0df22	_row_selected@Widgets/Persona_Widgets/personas_lore_detail.py:568 _row_selected@Widgets/Persona_Widgets/personas_dictionary_detail.py:734
+2	5bc4d98065ef	_row_highlighted@Widgets/Persona_Widgets/personas_lore_detail.py:573 _row_highlighted@Widgets/Persona_Widgets/personas_dictionary_detail.py:739
+2	2f04bae25df9	_up_pressed@Widgets/Persona_Widgets/personas_lore_detail.py:635 _up_pressed@Widgets/Persona_Widgets/personas_dictionary_detail.py:809
+2	1249497c1414	_down_pressed@Widgets/Persona_Widgets/personas_lore_detail.py:640 _down_pressed@Widgets/Persona_Widgets/personas_dictionary_detail.py:814
+2	86f50354ab16	_schedule_validation@Widgets/Persona_Widgets/persona_profile_editor_widget.py:604 _schedule_validation@Widgets/Persona_Widgets/personas_character_editor_widget.py:1499
+2	6e7335e60843	_apply_filter_debounced@Widgets/Persona_Widgets/dictionary_attach_picker.py:90 _apply_filter_debounced@Widgets/Persona_Widgets/conversation_attach_picker.py:89
+2	6cedd70d293d	sync_state@Widgets/Library/library_export_canvas.py:101 sync_state@Widgets/Library/library_search_rag_panel.py:82
+2	671fb2b87fc9	_close_pressed@Widgets/Library/library_file_notes_git_panel.py:4103 close_pressed@Widgets/Library/notes_recovery_dialog.py:149
+2	9388703124bb	press@Widgets/NewIngest/ProcessingDashboard.py:23 press@Widgets/NewIngest/SmartFileDropZone.py:21
+2	63454aee8fc6	__setattr__@Widgets/NewIngest/ProcessingDashboard.py:40 __setattr__@Widgets/NewIngest/SmartFileDropZone.py:38
+2	b8ee4ac80811	_emit_message@Widgets/NewIngest/ProcessingDashboard.py:46 _emit_message@Widgets/NewIngest/SmartFileDropZone.py:44
+2	bc9b64d02e1a	_plain_text@Widgets/Settings_Widgets/tool_pack_import_review.py:27 _plain_text@Widgets/Settings_Widgets/tool_profiles_panel.py:32
+2	a90ab0424ad7	_bounded_label@Widgets/Settings_Widgets/personal_context_panel.py:86 _bounded_display@Widgets/Settings_Widgets/personal_context_review_modal.py:225
+2	c6482b86d14f	_filter_submitted@Widgets/Console/console_style_picker_modal.py:251 _filter_submitted@Widgets/Console/console_prompt_picker_modal.py:177
+2	540db2794221	_move_highlight@Widgets/Console/console_style_picker_modal.py:327 _move_highlight@Widgets/Console/console_prompt_picker_modal.py:321
+2	9bcfb5f65665	_select_highlighted@Widgets/Console/console_style_picker_modal.py:354 _select_highlighted@Widgets/Console/console_prompt_picker_modal.py:335
+2	1591d9cbb4ea	_format_seed@Widgets/Console/console_video_card.py:84 _format_seed@Widgets/Console/console_generation_card.py:137
+2	ba232bab5e1c	_keep@Widgets/Console/console_video_capacity_modal.py:223 _keep@Widgets/Console/console_prompt_comparison_modal.py:145
+2	3cd2cb582ea7	_show_page@Widgets/Console/console_conversation_action_menu.py:257 _show_page@Widgets/Console/console_workspace_action_menu.py:243
+2	8b68049a692f	await_detachment@Widgets/Console/console_conversation_action_menu.py:279 await_detachment@Widgets/Console/console_workspace_action_menu.py:264
+2	cec6ee0ca374	_detach@Widgets/Console/console_conversation_action_menu.py:291 _detach@Widgets/Console/console_workspace_action_menu.py:276
+2	79004208852e	_save@Widgets/Console/console_settings_modal.py:4242 _apply@Widgets/Console/console_model_popover.py:1231
+2	6560fd2c0240	_make_default@Widgets/Console/console_settings_modal.py:4263 _make_new_chat_default@Widgets/Console/console_model_popover.py:1242
+2	97bd9b72ec23	sync_state@Widgets/Console/console_retrieval_scope_row.py:145 sync_state@Widgets/Console/console_workspace_details.py:55
+2	34b00e0ae314	_record_get@Widgets/Writing/writing_detail_panel.py:233 _mapping_get@Widgets/Writing/writing_outline_tree.py:278

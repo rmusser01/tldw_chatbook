@@ -343,7 +343,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
@@ -3228,6 +3228,17 @@ class LibraryPromptsController:
                     isolate_in_worker=True,
                 )
             except Exception:
+                # TASK-32801.3: this read is the ONLY staleness check the save
+                # path has -- the write seam cannot detect a conflict itself
+                # (see this method's own docstring). Swallowing it silently
+                # turns "could not tell" into "no conflict", so a transient
+                # read failure downgrades a conflicting save into a
+                # last-writer-wins overwrite with nothing recorded anywhere.
+                logger.warning(
+                    "Prompt staleness pre-read failed; the save proceeds "
+                    "without its conflict check (prompt_id={})",
+                    prompt_id,
+                )
                 fresh = None
             if (
                 self._library_prompts_mutation_in_flight
