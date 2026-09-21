@@ -174,6 +174,15 @@ def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
     filesystem -- the cheap direction for a denylist. Never reuse the
     folded form for confinement checks: folding loosens those (see
     ``_compare_key`` for why).
+
+    Args:
+        path: Candidate path to test (file or directory).
+        excluded: Absolute resolved exclusion entries (files or
+            directories) to compare against.
+
+    Returns:
+        True when ``path`` is or lies under any excluded entry; False when
+        it does not or ``excluded`` is empty.
     """
     if not excluded:
         return False
@@ -217,6 +226,11 @@ class ProjectInstructionResolver:
 
         The snapshot contains only paths and digests for the instruction chain;
         unrelated instruction bodies are never returned.
+
+        Args:
+            excluded_dirs: Absolute resolved paths of user-excluded
+                files/directories; excluded instruction candidates are
+                treated as absent.
         """
         if not binding_id or not locator_fingerprint or activation_revision < 0:
             raise InstructionPromotionSnapshotError("authority_unavailable")
@@ -265,6 +279,7 @@ class ProjectInstructionResolver:
             target_directory=target.parent,
             expected_ancestors=expected_ancestors,
             max_bytes=max_bytes,
+            excluded_dirs=excluded_dirs,
         )
         target_after = _read_promotion_target_state(
             root=root,
@@ -315,6 +330,9 @@ class ProjectInstructionResolver:
             locator_fingerprint: Fingerprint captured when the binding was selected.
             max_bytes: Maximum raw bytes admitted for the startup source.
             dispatch_started_wall_ns: Dispatch wall-clock cutoff in nanoseconds.
+            excluded_dirs: Absolute resolved paths of user-excluded
+                files/directories; excluded instruction candidates are
+                treated as absent.
 
         Returns:
             A byte-admitted candidate containing at most one root source.
@@ -399,6 +417,9 @@ class ProjectInstructionResolver:
                 ``max_bytes`` for standalone resolver calls.
             expected_binding_identity: Dispatch-owned selected-root identity;
                 required when reusing any pinned source.
+            excluded_dirs: Absolute resolved paths of user-excluded
+                files/directories; excluded instruction candidates are
+                treated as absent.
 
         Returns:
             Sources in broad-to-specific order plus content-free outcomes.
@@ -474,6 +495,7 @@ class ProjectInstructionResolver:
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 pinned_by_canonical_path=pinned_by_canonical_path,
                 expected_binding_ancestors=expected_root,
+                excluded_dirs=excluded_dirs,
             )
             if result.source is not None:
                 found.append((result.source, was_pinned))
@@ -654,6 +676,7 @@ def _read_current_instruction_chain(
     target_directory: Path,
     expected_ancestors: tuple[tuple[int, int, int], ...],
     max_bytes: int,
+    excluded_dirs: frozenset[Path] = frozenset(),
 ) -> tuple[InstructionSource, ...]:
     """Read the effective broad-to-specific chain for one target directory."""
     if not target_directory.is_relative_to(root):
@@ -686,38 +709,28 @@ def _read_current_instruction_chain(
             raise InstructionPromotionSnapshotError("binding_changed") from None
         scope = "." if directory == root else directory.relative_to(root).as_posix()
         prefix = "" if scope == "." else f"{scope}/"
-        override = _read_candidate(
-            root=directory,
-            filename="AGENTS.override.md",
-            kind="override",
-            max_bytes=max_bytes,
-            dispatch_started_wall_ns=cutoff,
-            expected_ancestors=directory_ancestors,
-            relative_path=f"{prefix}AGENTS.override.md",
-            scope=scope,
-        )
+
+        def read(filename: str, kind: InstructionKind) -> _ReadResult:
+            # Workspace-excluded candidates are skipped exactly like missing
+            # files: never lstat'ed, opened, or added to the chain.
+            if path_is_excluded(directory / filename, excluded_dirs):
+                return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+            return _read_candidate(
+                root=directory,
+                filename=filename,
+                kind=kind,
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=cutoff,
+                expected_ancestors=directory_ancestors,
+                relative_path=f"{prefix}{filename}",
+                scope=scope,
+            )
+
+        override = read("AGENTS.override.md", "override")
         result = override
         if override.fallback_condition is not None:
-            result = _read_candidate(
-                root=directory,
-                filename="AGENTS.md",
-                kind="standard",
-                max_bytes=max_bytes,
-                dispatch_started_wall_ns=cutoff,
-                expected_ancestors=directory_ancestors,
-                relative_path=f"{prefix}AGENTS.md",
-                scope=scope,
-            )
-            rechecked = _read_candidate(
-                root=directory,
-                filename="AGENTS.override.md",
-                kind="override",
-                max_bytes=max_bytes,
-                dispatch_started_wall_ns=cutoff,
-                expected_ancestors=directory_ancestors,
-                relative_path=f"{prefix}AGENTS.override.md",
-                scope=scope,
-            )
+            result = read("AGENTS.md", "standard")
+            rechecked = read("AGENTS.override.md", "override")
             if rechecked.fallback_condition != override.fallback_condition:
                 raise InstructionPromotionSnapshotError("effective_chain_changed")
         if result.outcome is not None:
@@ -871,10 +884,16 @@ def _resolve_nested_directory(
     dispatch_started_wall_ns: int,
     pinned_by_canonical_path: Mapping[Path, InstructionSource],
     expected_binding_ancestors: tuple[tuple[int, int, int], ...],
+    excluded_dirs: frozenset[Path] = frozenset(),
 ) -> tuple[_ReadResult, bool]:
     scope = directory.relative_to(root).as_posix()
     override_path = directory / "AGENTS.override.md"
     standard_path = directory / "AGENTS.md"
+    # Workspace-excluded candidate files are skipped exactly like missing
+    # ones: never lstat'ed, opened, or admitted -- the sibling candidate in
+    # the same directory still resolves normally.
+    override_excluded = path_is_excluded(override_path, excluded_dirs)
+    standard_excluded = path_is_excluded(standard_path, excluded_dirs)
     try:
         expected_ancestors = _capture_ancestor_identities(directory)
         depth = len(directory.relative_to(root).parts)
@@ -890,10 +909,10 @@ def _resolve_nested_directory(
             False,
         )
     pinned_path = override_path
-    pinned = pinned_by_canonical_path.get(pinned_path)
+    pinned = None if override_excluded else pinned_by_canonical_path.get(pinned_path)
     if pinned is None:
         pinned_path = standard_path
-        pinned = pinned_by_canonical_path.get(pinned_path)
+        pinned = None if standard_excluded else pinned_by_canonical_path.get(pinned_path)
     if pinned is not None:
         try:
             valid = _valid_pinned_source(
@@ -918,37 +937,35 @@ def _resolve_nested_directory(
             )
         return _ReadResult(source=pinned), True
     override_relative = f"{scope}/AGENTS.override.md"
-    override = _read_candidate(
-        root=directory,
-        filename="AGENTS.override.md",
-        kind="override",
-        max_bytes=max_bytes,
-        dispatch_started_wall_ns=dispatch_started_wall_ns,
-        expected_ancestors=expected_ancestors,
-        relative_path=override_relative,
-        scope=scope,
+
+    def read(
+        filename: str, kind: InstructionKind, relative_path: str, excluded: bool
+    ) -> _ReadResult:
+        # Workspace-excluded candidates are skipped exactly like missing
+        # files: never lstat'ed, opened, or admitted.
+        if excluded:
+            return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+        return _read_candidate(
+            root=directory,
+            filename=filename,
+            kind=kind,
+            max_bytes=max_bytes,
+            dispatch_started_wall_ns=dispatch_started_wall_ns,
+            expected_ancestors=expected_ancestors,
+            relative_path=relative_path,
+            scope=scope,
+        )
+
+    override = read(
+        "AGENTS.override.md", "override", override_relative, override_excluded
     )
     result = override
     if override.fallback_condition is not None:
-        result = _read_candidate(
-            root=directory,
-            filename="AGENTS.md",
-            kind="standard",
-            max_bytes=max_bytes,
-            dispatch_started_wall_ns=dispatch_started_wall_ns,
-            expected_ancestors=expected_ancestors,
-            relative_path=f"{scope}/AGENTS.md",
-            scope=scope,
+        result = read(
+            "AGENTS.md", "standard", f"{scope}/AGENTS.md", standard_excluded
         )
-        rechecked_override = _read_candidate(
-            root=directory,
-            filename="AGENTS.override.md",
-            kind="override",
-            max_bytes=max_bytes,
-            dispatch_started_wall_ns=dispatch_started_wall_ns,
-            expected_ancestors=expected_ancestors,
-            relative_path=override_relative,
-            scope=scope,
+        rechecked_override = read(
+            "AGENTS.override.md", "override", override_relative, override_excluded
         )
         if rechecked_override.fallback_condition != override.fallback_condition:
             result = _fallback_changed_result(

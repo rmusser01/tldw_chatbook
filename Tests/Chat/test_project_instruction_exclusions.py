@@ -284,6 +284,120 @@ def test_resolver_skips_case_variant_excluded_directory(tmp_path: Path):
     assert batch.outcomes == ()
 
 
+def test_nested_excluded_file_treated_as_absent(tmp_path: Path):
+    """Finding 1: excluding exactly the FILE ``docs/AGENTS.md`` must hide it.
+
+    The ``resolve_targets`` walk only prunes excluded directories, so
+    ``docs/`` stays traversable; the excluded standard candidate must be
+    skipped exactly like a nonexistent file (no source, no outcome) while
+    an ``AGENTS.md`` in a non-excluded directory still activates.
+    """
+    root = tmp_path.resolve()
+    docs = root / "docs"
+    docs.mkdir()
+    (docs / "AGENTS.md").write_text(SENTINEL)
+    public = root / "public"
+    public.mkdir()
+    (public / "AGENTS.md").write_text("public guidance")
+    resolver = ProjectInstructionResolver()
+
+    batch = resolver.resolve_targets(
+        root,
+        (docs, public),
+        max_bytes=10_000,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        excluded_dirs=frozenset({docs / "AGENTS.md"}),
+    )
+
+    assert [source.relative_path for source in batch.sources] == ["public/AGENTS.md"]
+    assert all(SENTINEL not in source.body for source in batch.sources)
+    assert batch.outcomes == ()
+
+
+def test_nested_excluded_standard_sibling_override_still_activates(tmp_path: Path):
+    """The non-excluded sibling candidate in the same directory still reads."""
+    root = tmp_path.resolve()
+    docs = root / "docs"
+    docs.mkdir()
+    (docs / "AGENTS.md").write_text(SENTINEL)
+    (docs / "AGENTS.override.md").write_text("docs override guidance")
+    resolver = ProjectInstructionResolver()
+
+    batch = resolver.resolve_targets(
+        root,
+        (docs,),
+        max_bytes=10_000,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        excluded_dirs=frozenset({docs / "AGENTS.md"}),
+    )
+
+    assert [source.relative_path for source in batch.sources] == [
+        "docs/AGENTS.override.md"
+    ]
+    assert all(SENTINEL not in source.body for source in batch.sources)
+    assert batch.outcomes == ()
+
+
+def test_nested_excluded_override_falls_back_to_standard(tmp_path: Path):
+    """An excluded override behaves exactly like an absent one: fallback.
+
+    Before the fix the excluded ``AGENTS.override.md`` was read and won
+    over the standard file, leaking its body into the batch.
+    """
+    root = tmp_path.resolve()
+    docs = root / "docs"
+    docs.mkdir()
+    (docs / "AGENTS.override.md").write_text(SENTINEL)
+    (docs / "AGENTS.md").write_text("docs standard guidance")
+    resolver = ProjectInstructionResolver()
+
+    batch = resolver.resolve_targets(
+        root,
+        (docs,),
+        max_bytes=10_000,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        excluded_dirs=frozenset({docs / "AGENTS.override.md"}),
+    )
+
+    assert [source.relative_path for source in batch.sources] == ["docs/AGENTS.md"]
+    assert batch.sources[0].body == "docs standard guidance"
+    assert all(SENTINEL not in source.body for source in batch.sources)
+    assert batch.outcomes == ()
+
+
+def test_promotion_chain_skips_excluded_ancestor_instruction(tmp_path: Path):
+    """Finding 2: an excluded ancestor instruction stays out of the chain.
+
+    Excluding exactly the root ``AGENTS.md`` must not block promotion of
+    ``docs/AGENTS.md`` (the target gate only rejects the target itself),
+    but the excluded root file must not be read into ``effective_chain``.
+    """
+    root = tmp_path.resolve()
+    docs = root / "docs"
+    docs.mkdir()
+    (root / "AGENTS.md").write_text("root guidance")
+    (docs / "AGENTS.md").write_text("docs guidance")
+    resolver = ProjectInstructionResolver()
+
+    snapshot = resolver.snapshot_promotion_target(
+        binding_id="b1",
+        binding_root=root,
+        locator_fingerprint="fingerprint",
+        target_path=docs / "AGENTS.md",
+        activation_revision=0,
+        max_bytes=10_000,
+        excluded_dirs=frozenset({root / "AGENTS.md"}),
+    )
+
+    assert snapshot.target_relative_path == "docs/AGENTS.md"
+    chain_relative_paths = [entry[0] for entry in snapshot.effective_chain]
+    assert "AGENTS.md" not in chain_relative_paths
+    assert chain_relative_paths == ["docs/AGENTS.md"]
+
+
 def test_excluded_dirs_survive_one_unresolvable_entry(tmp_path: Path):
     """Finding 2b: one unresolvable exclusion entry must not zero the set.
 
