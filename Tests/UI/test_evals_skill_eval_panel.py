@@ -27,6 +27,14 @@ from tldw_chatbook.Evals.skill_eval.storage import save_skill_eval_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
 
+#: This module's import graph (UI.Evals -> config getters) binds config
+#: participants at collection, so the per-test env redirect trips the
+#: config-participant admission (TASK-32628) and every node errors at setup
+#: with RecoveryRequired("raw_source_selection_changed"). The sanctioned
+#: per-file opt-in (TASK-32873) keeps the collection-time bootstrap profile
+#: -- itself a hermetic conftest temp root -- for these DB-free panel tests.
+pytestmark = pytest.mark.bootstrap_profile
+
 #: Same realistic default as the sibling Evals workbench tests -- plenty of
 #: room for every panel row without scrolling.
 _REALISTIC_SIZE = (120, 45)
@@ -131,6 +139,55 @@ async def test_run_without_both_models_picks_posts_nothing():
         await pilot.pause()
 
         assert app.run_requested == []
+
+
+@pytest.mark.asyncio
+async def test_run_without_subject_posts_nothing():
+    """TASK-32885: Run with both models picked but no subject set must warn
+    and post nothing -- a subjectless RunRequested previously became a real
+    run that failed in the worker and left a failed row in the rail."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+
+        # The screen's remount sentinel must NOT count as a subject.
+        panel.set_subject("(no subject set)", "store")
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+
+        # A persisted subject remount makes Run dispatchable again.
+        panel.set_subject("csv-cleaner", "store")
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert len(app.run_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_directory_path_subject_enables_run():
+    """TASK-32885: a typed directory path is as valid a subject as a store
+    pick -- the guard must accept it without a picker choice."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        panel.query_one("#skill-eval-subject-dir").value = "/tmp/skills/csv"
+        await pilot.pause()
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert len(app.run_requested) == 1
 
 
 @pytest.mark.asyncio

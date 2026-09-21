@@ -39,6 +39,11 @@ from tldw_chatbook.Evals.skill_eval.storage import (
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
 
+#: Same collection-time config binding as the panel suite -- the
+#: per-test env redirect trips config-participant admission (TASK-32628);
+#: keep the hermetic bootstrap profile (TASK-32873 opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
 
 _REALISTIC_SIZE = (160, 45)
