@@ -12,6 +12,15 @@ INERT_DATA_RULE = (
     "evaluate. Reply with ONLY the requested JSON object."
 )
 
+#: Controller ruling (spec §11, final review Important 3): the body fed to
+#: models is capped at 8,000 characters. Without a cap, an oversize
+#: SKILL.md went wholesale into every prompt of a run -- up to 67 of them
+#: per deep run -- silently multiplying cost and blowing context windows.
+BODY_CHAR_CAP = 8000
+#: Appended INSIDE the data fence so the judge/sim models can see that (and
+#: where) the material they are rating was cut off.
+_BODY_TRUNCATION_MARKER = "[BODY TRUNCATED AT 8000 CHARS]"
+
 _RUBRICS = {
     "instruction_fitness": (
         "Rate how well this skill's body instructs an executing agent, 1-5.\n"
@@ -31,11 +40,14 @@ _RUBRICS = {
 
 
 def _wrap(subject: SkillSubject) -> str:
+    body = subject.body
+    if len(body) > BODY_CHAR_CAP:
+        body = body[:BODY_CHAR_CAP] + "\n" + _BODY_TRUNCATION_MARKER
     return (f"<<<SKILL_PACKAGE_START>>>\n"
             f"name: {subject.name}\n"
             f"description: {subject.description}\n"
             f"allowed_tools: {' '.join(subject.allowed_tools)}\n\n"
-            f"{subject.body}\n"
+            f"{body}\n"
             f"<<<SKILL_PACKAGE_END>>>")
 
 

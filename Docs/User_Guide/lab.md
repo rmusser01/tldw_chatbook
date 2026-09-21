@@ -25,7 +25,10 @@ mode strip, then:
 
 1. Press **"+ New skill eval"** in the library rail. This creates a draft
    skill-eval bench.
-2. Pick the subject skill, a **depth** (quick / standard / deep), and the
+2. Pick the **subject**: either a skill from the store picker (each entry
+   shows its trust tier) or, for a skill that lives outside the store, type
+   its directory path in the input below the picker — whichever you set
+   last wins. Then pick a **depth** (quick / standard / deep) and the
    **generator** and **judge** models. The panel shows the estimated LLM
    call count for the chosen depth before anything is spent (quick 0,
    standard 16, deep 67).
@@ -35,5 +38,8 @@ mode strip, then:
 When the run finishes it appears as a group in the library rail; selecting
 it opens the skill-eval report: the composite score with letter grade and
 confidence label (Estimated / Assessed / Certified by depth), per-dimension
-bars, and any anti-pattern findings with their remediation text. A preflight
-check blocks the run early if the chosen models aren't configured.
+bars, layer statistics (judge rubrics and trigger F1; simulation activation,
+consistency and failure rates with confidence intervals), and any
+anti-pattern findings with their remediation text. A preflight check blocks
+the run early if the chosen models aren't configured. Skill bodies longer
+than 8,000 characters are truncated in the prompts and the report says so.

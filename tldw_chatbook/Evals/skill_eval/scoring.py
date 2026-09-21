@@ -161,7 +161,9 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
     Blends all nine dimensions over the layers each depth produced, applies
     the anti-pattern penalty (multiplicative, floor ``PENALTY_FLOOR``) to the
     weight-renormalized composite, assigns grade and depth-based confidence,
-    and degrades the confidence label when a depth-required layer is unusable.
+    and degrades the confidence label when a depth-required layer is unusable
+    (the simulation layer additionally requires at least one parsed cell --
+    an all-error layer degrades with its own warning, never certifies).
 
     Args:
         subject_provenance: Provenance dict from ``SkillSubject.to_provenance``.
@@ -175,7 +177,18 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
         The immutable ``SkillEvalReport`` with layer summaries attached.
     """
     judge_usable = judge is not None and (judge.rubrics or judge.trigger_f1 is not None)
-    sim_usable = sim is not None and sim.activation is not None
+    # Final-review Important 5: ``activation is not None`` alone let a
+    # sustained all-error deep run (every cell a provider outage, activation
+    # 0.0 because the error cells stay in the denominator) count as a
+    # usable simulation -- the composite collapsed with "Certified"
+    # confidence and no warning. A usable sim layer additionally needs at
+    # least one PARSED cell (``activated is not None``); a genuine
+    # zero-activation run keeps every cell parsed and stays usable.
+    sim_usable = (
+        sim is not None
+        and sim.activation is not None
+        and any(cell.get("activated") is not None for cell in sim.cells)
+    )
     dims = []
     for name in DIMENSION_WEIGHTS:
         dims.append(blend_dimension(
@@ -201,7 +214,15 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
                      "intact layers only")
     if _DEPTH_RANK[depth] >= _DEPTH_RANK[SkillEvalDepth.DEEP] and not sim_usable:
         conf = _DEGRADED[depth]
-        warns.append("simulation layer unavailable; scores renormalized without it")
+        if sim is not None:
+            # The layer RAN but nothing it produced was parseable (the
+            # all-error outage shape) -- a distinct, louder message than
+            # the layer simply not being there.
+            warns.append("simulation layer produced no parseable responses; "
+                         "scores renormalized without it")
+        else:
+            warns.append("simulation layer unavailable; scores renormalized "
+                         "without it")
 
     return SkillEvalReport(
         provenance=dict(subject_provenance), depth=depth.value,

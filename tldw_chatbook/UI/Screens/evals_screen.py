@@ -101,6 +101,7 @@ from ..Evals.skill_eval_detail import SkillEvalDetail
 from ..Evals.skill_eval_launch import (
     builtin_tool_names,
     make_skill_eval_chat,
+    reserved_names_for,
     store_skill_names,
 )
 from ..Evals.skill_eval_panel import SkillEvalPanel
@@ -1077,10 +1078,12 @@ class EvalsScreen(LabScreen):
         empty when none exist -- unlike a character bench's never-editable
         ``target_ids``, these are only the Selects' initial options: the
         panel re-picks them at run time from the full target list, so an
-        empty-or-stale first row is recoverable, not a dead end. ``subject_
-        ref`` likewise starts empty (this task ships no subject picker; the
-        panel shows the bench's subject as-is, and a run of an unset subject
-        fails loudly in ``SubjectError`` handling rather than silently).
+        empty-or-stale first row is recoverable, not a dead end.
+        ``subject_ref`` likewise starts empty: the panel's subject picker
+        (final-review Critical 1) sets it via ``SubjectChanged`` -> this
+        screen's ``_on_skill_eval_subject_changed`` persistence round-trip,
+        and a run of a still-unset subject fails loudly in ``SubjectError``
+        handling rather than silently.
 
         ``_unique_name`` (not the brief's bare ``"skill eval"`` literal):
         ``eval_tasks.name`` is UNIQUE with no ``deleted_at`` exemption (see
@@ -1951,6 +1954,94 @@ class EvalsScreen(LabScreen):
         if self._skill_eval_cancel is not None:
             self._skill_eval_cancel.cancel()
 
+    @on(SkillEvalPanel.SubjectChanged)
+    def _on_skill_eval_subject_changed(
+        self, event: SkillEvalPanel.SubjectChanged
+    ) -> None:
+        """Persists the panel's subject pick onto the selected bench config.
+
+        Final-review Critical 1: without this seam every draft bench kept
+        its empty ``subject_ref`` forever (the panel's subject line was
+        display-only), so the user guide's "pick the subject" step could
+        not be performed and every draft run died in ``SubjectError``. The
+        pick is written through the same ``load``/``replace``/``save``
+        round-trip the worker later reads, and the panel's subject display
+        is refreshed from what the bench now says (a fresh
+        ``save_skill_eval_bench`` failure leaves the display untouched and
+        surfaces a toast instead).
+        """
+        event.stop()
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            # Defensive only: the panel that posts SubjectChanged is only
+            # ever mounted for a resolved skill_eval_bench selection.
+            return
+        try:
+            config = replace(
+                load_skill_eval_bench(db, selection.id),
+                subject_ref=event.subject_ref,
+                subject_kind=event.subject_kind,
+            )
+            save_skill_eval_bench(db, config)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                "Could not persist skill eval subject."
+            )
+            # markup=False: `exc` can carry free text (a storage error
+            # naming the bench) -- the same hazard every other handler
+            # here documents for interpolated exception strings.
+            self.app_instance.notify(
+                f"Could not set the skill eval subject: {exc}",
+                severity="error",
+                markup=False,
+            )
+            return
+        try:
+            panel = self.query_one("#evals-skill-eval-panel", SkillEvalPanel)
+        except QueryError:
+            return
+        panel.set_subject(event.subject_ref, event.subject_kind)
+
+    def _start_subject_feed(self, panel: SkillEvalPanel) -> None:
+        """Starts one mounted panel's picker-feed worker (post-mount only).
+
+        Scheduled through ``panel.call_after_refresh`` so the worker never
+        starts before the panel's children exist; the ``is_mounted`` check
+        covers the swap-out-during-scheduling corner (a callback landing on
+        a panel already torn down has nothing to feed -- the next mount
+        starts its own feed).
+        """
+        if not panel.is_mounted:
+            return
+        self.run_worker(
+            self._feed_skill_eval_subjects(panel),
+            exclusive=False,
+            group="evals-skill-eval-subjects",
+        )
+
+    async def _feed_skill_eval_subjects(self, panel: SkillEvalPanel) -> None:
+        """Populates one mounted panel's store-skill picker (spec §10).
+
+        Runs as a non-exclusive worker because the listing is async (the
+        shared Skills service protocol) and the pane mounts synchronously
+        from compose; every failure mode is a silent no-op by design -- an
+        unreadable store leaves the picker empty (the directory ``Input``
+        still works), and a panel swapped out mid-feed (the user moved to
+        another selection before the listing landed) has nothing left to
+        feed, so the next mount re-feeds its own panel.
+        """
+        try:
+            summaries, _names = await store_skill_names(
+                self._current_app_config()
+            )
+        except Exception:
+            return
+        try:
+            panel.set_subjects(summaries)
+        except Exception:
+            return
+
     def _on_skill_eval_progress(self, done: int, total: int) -> None:
         """``SkillEvalRunner``'s progress callback -- called synchronously
         from within the runner's own coroutine (this worker's, not a
@@ -2082,7 +2173,12 @@ class EvalsScreen(LabScreen):
                 judge=judge,
                 decoy_pool=skill_summaries,
                 builtin_tool_names=builtin,
-                reserved_names=frozenset(skill_names | builtin),
+                # Final-review Critical 2: the subject's own name must NOT
+                # be in the reserved set -- every store-sourced subject
+                # otherwise flags its own NAME_COLLISION (−5%).
+                reserved_names=reserved_names_for(
+                    subject.name, skill_names, builtin
+                ),
                 progress=self._on_skill_eval_progress,
             )
             if runner.judge_result is not None:
@@ -2662,6 +2758,13 @@ class EvalsScreen(LabScreen):
                     pass
 
             panel.call_after_refresh(_restore_depth)
+            # Spec §10: the subject picker lists the store's skills with
+            # their trust tiers. Started via ``call_after_refresh`` (the
+            # same post-mount scheduling ``set_subject``/``set_targets``
+            # directly below rely on) rather than inline in compose: a
+            # worker started mid-compose can outrun the panel's own
+            # ``compose`` and find no children to feed yet.
+            panel.call_after_refresh(self._start_subject_feed, panel)
             return
 
         if selection.kind == "classic":

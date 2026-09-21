@@ -40,13 +40,14 @@ _TARGETS = [
 class _PanelHarness(App):
     """Minimal app hosting one bare ``SkillEvalPanel`` and recording the
     messages it posts -- the panel's whole contract is "post RunRequested/
-    CancelRequested upward", so a plain list per message type is the entire
-    harness."""
+    CancelRequested/SubjectChanged upward", so a plain list per message
+    type is the entire harness."""
 
     def __init__(self) -> None:
         super().__init__()
         self.run_requested: list[SkillEvalPanel.RunRequested] = []
         self.cancel_requested: list[SkillEvalPanel.CancelRequested] = []
+        self.subject_changed: list[SkillEvalPanel.SubjectChanged] = []
 
     def compose(self) -> ComposeResult:
         yield SkillEvalPanel()
@@ -60,6 +61,11 @@ class _PanelHarness(App):
         self, event: SkillEvalPanel.CancelRequested
     ) -> None:
         self.cancel_requested.append(event)
+
+    def on_skill_eval_panel_subject_changed(
+        self, event: SkillEvalPanel.SubjectChanged
+    ) -> None:
+        self.subject_changed.append(event)
 
 
 async def _pick_via_overlay(pilot, select_id: str, downs: int) -> None:
@@ -134,6 +140,82 @@ async def test_cancel_button_posts_cancel_requested():
         await pilot.click("#skill-eval-cancel")
         await pilot.pause()
         assert len(app.cancel_requested) == 1
+
+
+_SUBJECTS = [
+    {"name": "csv-cleaner", "description": "Tidy CSV exports.",
+     "trust_status": "trusted"},
+    {"name": "pdf-writer", "description": "Write PDFs.",
+     "trust_status": "unverified"},
+]
+
+
+@pytest.mark.asyncio
+async def test_subject_picker_lists_store_skills_and_posts_store_change():
+    """``set_subjects`` feeds the picker (label ``name (trust)``); a pick
+    through the overlay posts ``SubjectChanged(kind="store")`` carrying the
+    bare skill name."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects(_SUBJECTS)
+        await pilot.pause()
+
+        from textual.widgets import Select
+
+        options = panel.query_one("#skill-eval-subject-picker", Select)._options
+        # _options leads with the allow-blank NULL padding entry.
+        values = [value for _label, value in options if value is not Select.NULL]
+        assert values == ["csv-cleaner", "pdf-writer"]
+        assert any("csv-cleaner (trusted)" in str(label)
+                   for label, value in options if value is not Select.NULL)
+
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        assert [msg.subject_ref for msg in app.subject_changed] == ["csv-cleaner"]
+        assert app.subject_changed[0].subject_kind == "store"
+
+
+@pytest.mark.asyncio
+async def test_last_touched_wins_between_picker_and_directory_input():
+    """A store pick clears the directory Input; typing a path afterwards
+    resets the Select to NULL and posts a ``directory`` change -- the
+    documented last-touched-wins rule (one effective choice at a time)."""
+    from textual.widgets import Input, Select
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects(_SUBJECTS)
+        await pilot.pause()
+
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        await pilot.pause()
+        assert panel.query_one("#skill-eval-subject-dir", Input).value == ""
+
+        panel.query_one("#skill-eval-subject-dir", Input).value = "/tmp/skill"
+        await pilot.pause()
+        assert panel.query_one("#skill-eval-subject-picker", Select).value is Select.NULL
+        assert [(m.subject_ref, m.subject_kind) for m in app.subject_changed] == [
+            ("csv-cleaner", "store"),
+            ("/tmp/skill", "directory"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_emptying_directory_input_posts_nothing():
+    """Emptying the Input is not a subject choice (and resurrects no cleared
+    store pick) -- the screen must never receive an empty-subject persist."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        directory = panel.query_one("#skill-eval-subject-dir")
+        directory.value = "/tmp/skill"
+        await pilot.pause()
+        assert len(app.subject_changed) == 1
+
+        directory.value = ""
+        await pilot.pause()
+        assert len(app.subject_changed) == 1
 
 
 # ---------------------------------------------------------------------------

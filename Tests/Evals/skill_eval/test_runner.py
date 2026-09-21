@@ -140,3 +140,47 @@ def test_progress_is_live_and_monotonic():
     assert all(t == 67 for _, t in seen)
     values = [d for d, _ in seen]
     assert all(a <= b for a, b in zip(values, values[1:]))  # monotonic
+
+
+# Final-review Important 3: an oversize body is capped inside the prompts
+# and the report carries a warning saying so.
+def test_oversize_body_warns_in_report():
+    from dataclasses import replace
+
+    gen, jud = _targets()
+    chat = _Chat()
+    report = asyncio.run(SkillEvalRunner(chat).run(
+        replace(_subject(), body="y" * 9001), _config(SkillEvalDepth.QUICK),
+        generator=gen, judge=jud, builtin_tool_names=frozenset({"fs_read"})))
+    assert any("body truncated to 8000 chars" in w for w in report.warnings)
+
+
+def test_small_body_adds_no_truncation_warning():
+    gen, jud = _targets()
+    chat = _Chat()
+    report = asyncio.run(SkillEvalRunner(chat).run(
+        _subject(), _config(SkillEvalDepth.QUICK),
+        generator=gen, judge=jud, builtin_tool_names=frozenset({"fs_read"})))
+    assert not any("truncated" in w for w in report.warnings)
+
+
+# Final-review Important 4: the sim-prompt generation call fences the
+# subject's name/description in inert-data markers, like every other
+# builder -- the system prompt asserts only marked text is untrusted.
+def test_sim_prompt_generation_marks_subject_as_inert_data():
+    captured: list[list[dict]] = []
+
+    def chat(*, messages, target, temperature, max_tokens, seed):
+        import json
+        captured.append(messages)
+        return json.dumps({"prompts": ["q0", "q1"]})
+
+    gen, _jud = _targets()
+    out = asyncio.run(SkillEvalRunner(chat)._generate_sim_prompts(
+        _subject(), gen, _config(SkillEvalDepth.DEEP), asyncio.Semaphore(1)))
+    assert out == ["q0", "q1"]
+    user = captured[0][1]["content"]
+    start = user.index("<<<SKILL_UNDER_TEST_START>>>")
+    end = user.index("<<<SKILL_UNDER_TEST_END>>>")
+    subject = _subject()
+    assert f"{subject.name}: {subject.description}" in user[start:end]

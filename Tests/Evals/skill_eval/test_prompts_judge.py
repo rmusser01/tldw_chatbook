@@ -6,8 +6,8 @@ from tldw_chatbook.Evals.skill_eval.models import (
     EvalTarget, JudgeLayerResult, SkillEvalConfig, SkillEvalDepth, SkillSubject,
 )
 from tldw_chatbook.Evals.skill_eval.prompts import (
-    INERT_DATA_RULE, selection_messages, synthesis_messages, task_messages,
-    rubric_messages,
+    BODY_CHAR_CAP, INERT_DATA_RULE, selection_messages, synthesis_messages,
+    task_messages, rubric_messages,
 )
 
 
@@ -42,6 +42,29 @@ def test_prompts_carry_inert_rule_and_verbatim_description():
         assert any(INERT_DATA_RULE in m["content"] for m in msgs if m["role"] == "system")
     assert "Use when tidying messy CSV exports." in \
         selection_messages("x", _subject(), [])[1]["content"]
+
+
+# Final-review Important 3: the body fed to models is capped at 8,000
+# characters, with the truncation marker INSIDE the data fence.
+def test_oversize_body_is_truncated_inside_the_fence():
+    from dataclasses import replace
+
+    oversize = replace(_subject(), body="x" * (BODY_CHAR_CAP + 500) + "SENTINEL-TAIL")
+    user = synthesis_messages(oversize)[1]["content"]
+    assert "[BODY TRUNCATED AT 8000 CHARS]" in user
+    # The marker sits inside the fence, ahead of its END marker...
+    assert user.index("[BODY TRUNCATED AT 8000 CHARS]") < \
+        user.index("<<<SKILL_PACKAGE_END>>>")
+    # ...and everything past the cap (the sentinel tail) never reached the
+    # prompt.
+    assert "SENTINEL-TAIL" not in user
+    assert "x" * (BODY_CHAR_CAP + 1) not in user
+
+
+def test_small_body_is_not_marked_or_truncated():
+    user = synthesis_messages(_subject())[1]["content"]
+    assert "[BODY TRUNCATED AT 8000 CHARS]" not in user
+    assert "Do the thing carefully." in user
 
 
 def test_parse_judge_json_strict():

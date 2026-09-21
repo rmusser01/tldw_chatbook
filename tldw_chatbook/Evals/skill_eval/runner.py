@@ -13,6 +13,7 @@ from .models import (
     SkillEvalConfig, SkillEvalDepth, SkillEvalReport, SimLayerResult,
     SkillSubject,
 )
+from .prompts import BODY_CHAR_CAP
 from .scoring import build_report
 from .simulation import run_simulation_layer, select_decoys
 from .static_analyzer import analyze_static
@@ -170,6 +171,12 @@ class SkillEvalRunner:
 
         if self._cancel is not None and self._cancel.is_cancelled:
             warnings.append("run cancelled; partial results")
+        # Final-review Important 3: the report must SAY the models only ever
+        # saw a truncated body -- a capped body otherwise silently shifts
+        # every instruction-fitness/quality score with no visible cause.
+        if len(subject.body) > BODY_CHAR_CAP:
+            warnings.append("body truncated to 8000 chars in prompts "
+                            "(oversize skill body)")
 
         self.judge_result = judge_result
         self.sim_result = sim_result
@@ -180,13 +187,18 @@ class SkillEvalRunner:
                                     semaphore) -> list:
         from .prompts import INERT_DATA_RULE
 
-        def _wrap(subject):
-            return f"{subject.name}: {subject.description}"
-
         system = f"{INERT_DATA_RULE}\nYou write varied test requests."
-        user = (f"Skill under test: {_wrap(subject)}\n\nInvent exactly 10 "
-                "varied, short user requests spanning this skill's intended "
-                "range plus near-miss neighbours. Reply ONLY: "
+        # Final-review Important 4: the subject's name/description is DATA
+        # here exactly like every other builder's -- fenced in its own
+        # marker pair so the system prompt's "only marked text is untrusted"
+        # rule actually covers it (a bare "name: description" line left the
+        # contract's assertion and its payload in contradiction).
+        user = (f"Skill under test:\n"
+                f"<<<SKILL_UNDER_TEST_START>>>\n"
+                f"{subject.name}: {subject.description}\n"
+                f"<<<SKILL_UNDER_TEST_END>>>\n\n"
+                "Invent exactly 10 varied, short user requests spanning this "
+                "skill's intended range plus near-miss neighbours. Reply ONLY: "
                 '{"prompts": ["...", ...]}')
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": user}]

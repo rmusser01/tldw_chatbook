@@ -77,6 +77,35 @@ layer), and `store_skill_names` limits NAME_COLLISION scope to
 builtin ∪ store-skill names (full composition-time exclusion set needs
 registry composition, deferred).
 
+Final review fix wave (whole-branch review, six cross-seam defects):
+
+- Subject picker (Critical): the panel's subject was display-only and
+  drafts started `subject_ref=""`, so the feature was unusable from its own
+  surface (every draft run died in `SubjectError`). The panel now carries a
+  store-skill `Select` (fed by `set_subjects`, labels `name (trust)`) plus a
+  directory-path `Input`, posts `SubjectChanged(subject_ref, subject_kind)`
+  on either change (last-touched-wins between the two controls), and the
+  screen persists the pick (`load_skill_eval_bench` → `replace` →
+  `save_skill_eval_bench`) and refreshes the subject display; the picker is
+  fed via a post-mount worker over `skill_eval_launch.store_skill_names`.
+- Name-collision self-exclusion (Critical): the worker's reserved-name set
+  included the subject's own store name, flagging every store-sourced
+  subject `NAME_COLLISION` (−5%). Extracted
+  `skill_eval_launch.reserved_names_for(subject_name, skill_names,
+  builtin_names)` excludes it at the one construction site.
+- Body-size cap (spec §11, controller ruling 8,000 chars): `prompts._wrap`
+  truncates oversize bodies with `[BODY TRUNCATED AT 8000 CHARS]` inside
+  the data fence, and `runner.run` appends a report warning.
+- Sim-prompt inert markers: `_generate_sim_prompts` now fences the subject
+  name/description in `<<<SKILL_UNDER_TEST_START/END>>>`, matching the
+  system prompt's only-marked-text-is-untrusted contract.
+- `sim_usable` gate: a usable simulation layer requires at least one parsed
+  cell; a ran-but-zero-parsed layer (sustained provider outage) degrades
+  confidence one level with a distinct warning instead of certifying.
+- Layer statistics rendering: `SkillEvalDetail` renders the persisted
+  `layer_summaries` (judge rubrics + trigger F1 line; sim activation/
+  consistency/failure lines with CIs; `None` blocks skipped).
+
 Files: `tldw_chatbook/Evals/skill_eval/` (models, subject, static_analyzer,
 scoring, simulation, judge, prompts, runner, storage),
 `tldw_chatbook/UI/Evals/skill_eval_{panel,detail,launch}.py`, wiring in

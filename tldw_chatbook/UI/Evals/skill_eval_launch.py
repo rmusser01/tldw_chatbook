@@ -120,6 +120,29 @@ def builtin_tool_names() -> FrozenSet[str]:
         return frozenset()
 
 
+def reserved_names_for(subject_name: str, skill_names: FrozenSet[str],
+                       builtin_names: FrozenSet[str]) -> FrozenSet[str]:
+    """The static analyzer's reserved-name set, minus the subject itself.
+
+    Final-review Critical 2: the store-sourced ``skill_names`` INCLUDES the
+    subject under test (it is, after all, an installed store skill), so
+    unioning it with the builtin names unreservedly made every store-sourced
+    subject collide with its own name -- a guaranteed ``NAME_COLLISION``
+    finding (−5%) on runs that had done nothing wrong. The subject's own
+    name is excluded HERE, at the one construction site (the worker), so
+    the exclusion is testable without spinning up a whole run.
+
+    Args:
+        subject_name: The subject skill's name (excluded from the result).
+        skill_names: Store skill names (may contain ``subject_name``).
+        builtin_names: Builtin tool names (never excluded).
+
+    Returns:
+        ``skill_names - {subject_name} | builtin_names`` as a frozenset.
+    """
+    return frozenset((skill_names - {subject_name}) | builtin_names)
+
+
 async def store_skill_names(app_config: Mapping) -> Tuple[List[dict], FrozenSet[str]]:
     """``(skill summaries, name set)`` from the local skills store.
 

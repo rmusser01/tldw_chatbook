@@ -93,8 +93,41 @@ def test_quick_depth_emits_no_layer_warnings():
 def test_deep_not_certified_when_judge_failed_even_with_sim():
     static = _static()
     failed = JudgeLayerResult(rubrics={}, artifacts=(), failed=("all",))
-    sim = SimLayerResult(activation=0.5)
+    # Cells carried so the sim layer counts as genuinely usable (final
+    # review Important 5: usability requires at least one parsed cell).
+    sim = SimLayerResult(activation=0.5, cells=({"activated": True},))
     report = build_report({"name": "s"}, SkillEvalDepth.DEEP, static, failed, sim)
     assert report.confidence == "Assessed"
     assert any("judge" in w for w in report.warnings)
     assert not any("simulation" in w for w in report.warnings)
+
+
+# Final-review Important 5: a sustained all-error provider outage mid-deep-
+# run yields activation=0.0 (error cells stay in the denominator) with zero
+# PARSED cells -- that must not certify.
+def test_deep_all_error_sim_cells_degrade_instead_of_certifying():
+    static = _static()
+    judge = JudgeLayerResult(rubrics={"instruction_fitness": 0.8})
+    sim = SimLayerResult(
+        activation=0.0,
+        cells=({"activated": None, "error": "provider down"},
+               {"activated": None, "error": "provider down"}),
+    )
+    report = build_report({"name": "s"}, SkillEvalDepth.DEEP, static, judge, sim)
+    assert report.confidence == "Assessed"  # degraded one level from Certified
+    assert any("no parseable responses" in w for w in report.warnings)
+    assert report.layer_summaries["simulation"] is None
+
+
+# The counterpart: genuine zero activation with every cell parsed is a real
+# (if dismal) measurement and stays Certified with no sim warning.
+def test_deep_parsed_zero_activation_sim_stays_certified():
+    static = _static()
+    judge = JudgeLayerResult(rubrics={"instruction_fitness": 0.8})
+    sim = SimLayerResult(activation=0.0, consistency=0.0, failure_rate=0.0,
+                         cells=({"activated": False},
+                                {"activated": False}))
+    report = build_report({"name": "s"}, SkillEvalDepth.DEEP, static, judge, sim)
+    assert report.confidence == "Certified"
+    assert not any("simulation" in w for w in report.warnings)
+    assert report.layer_summaries["simulation"] is not None

@@ -32,9 +32,25 @@ def _bar(value: float, width: int = 10) -> str:
     return "▓" * filled + "░" * (width - filled)
 
 
+def _ci_suffix(ci: Any) -> str:
+    """``" (CI lo–hi)"`` for a persisted confidence interval, else ``""``.
+
+    Tolerates the tuple→list shape change the JSON round-trip through
+    ``config_overrides`` imposes, and any missing/malformed entry (an
+    optional stat never reported should render nothing, not crash the
+    whole detail view).
+    """
+    try:
+        lo, hi = ci
+        return f" (CI {float(lo):.2f}–{float(hi):.2f})"
+    except (TypeError, ValueError):
+        return ""
+
+
 class SkillEvalDetail(Widget):
     """Header (composite/grade/confidence/methodology/provenance), one line
-    per dimension, findings with remediation, warnings, artifact count."""
+    per dimension, layer statistics, findings with remediation, warnings,
+    artifact count."""
 
     DEFAULT_CSS = """
     SkillEvalDetail { padding: 1; }
@@ -73,6 +89,9 @@ class SkillEvalDetail(Widget):
                     f"{dim['blended']:.2f}  ({'+'.join(dim['available_layers'])})",
                     markup=False,
                 )
+            yield from self._compose_layer_statistics(
+                report.get("layer_summaries") or {}
+            )
             for finding in report.get("findings", []):
                 yield Static(
                     f"finding: {finding['code']} — {finding['remediation']}",
@@ -86,3 +105,63 @@ class SkillEvalDetail(Widget):
                     len(list(iter_artifacts(db, r["id"]))) for r in run_rows
                 )
                 yield Static(f"artifacts: {count}", markup=False)
+
+    def _compose_layer_statistics(self, layer_summaries: dict) -> ComposeResult:
+        """The persisted per-layer stats the report snapshot carries.
+
+        Final-review Important 6: the snapshot has always stored judge
+        trigger F1/precision/recall and the simulation's activation/
+        consistency/failure rates with their CIs, but the detail view
+        rendered only an artifact count -- the numbers the confidence label
+        rests on were invisible. Each block renders only when the layer was
+        usable (``None`` blocks are skipped, matching how ``build_report``
+        nulls an unusable layer's summary); individual missing stats (a
+        ``None`` trigger F1 or CI) drop their own line rather than the
+        whole block.
+        """
+        judge = layer_summaries.get("judge")
+        sim = layer_summaries.get("simulation")
+        if not judge and not sim:
+            return
+        yield Static("Layer statistics", markup=False)
+        if judge:
+            rubrics = judge.get("rubrics") or {}
+            if rubrics:
+                yield Static(
+                    "  judge rubrics: "
+                    + ", ".join(f"{k}={float(v):.2f}"
+                                for k, v in sorted(rubrics.items())),
+                    markup=False,
+                )
+            f1 = judge.get("trigger_f1")
+            if f1 is not None:
+                line = f"  judge trigger: F1={float(f1):.2f}"
+                precision = judge.get("trigger_precision")
+                if precision is not None:
+                    line += f" · precision={float(precision):.2f}"
+                recall = judge.get("trigger_recall")
+                if recall is not None:
+                    line += f" · recall={float(recall):.2f}"
+                yield Static(line, markup=False)
+        if sim:
+            activation = sim.get("activation")
+            if activation is not None:
+                yield Static(
+                    f"  sim activation: {float(activation):.2f}"
+                    f"{_ci_suffix(sim.get('activation_ci'))}",
+                    markup=False,
+                )
+            consistency = sim.get("consistency")
+            if consistency is not None:
+                yield Static(
+                    f"  sim consistency: {float(consistency):.2f}"
+                    f"{_ci_suffix(sim.get('consistency_ci'))}",
+                    markup=False,
+                )
+            failure_rate = sim.get("failure_rate")
+            if failure_rate is not None:
+                yield Static(
+                    f"  sim failure rate: {float(failure_rate):.2f}"
+                    f"{_ci_suffix(sim.get('failure_ci'))}",
+                    markup=False,
+                )

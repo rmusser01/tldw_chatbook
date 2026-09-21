@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ...Evals.skill_eval.models import SkillEvalDepth
 from ...Evals.skill_eval.runner import estimate_calls
@@ -24,7 +24,20 @@ _DEPTH_OPTIONS = [
 
 
 class SkillEvalPanel(Widget):
-    """Subject summary, depth + model pickers, cost estimate, run/cancel."""
+    """Subject picker + summary, depth + model pickers, cost estimate, run/cancel.
+
+    The subject can be picked two ways (spec §10): a ``Select`` over the
+    store's skills (fed via ``set_subjects``; labels carry the trust tier)
+    or a free-text ``Input`` naming a skill directory path. The two controls
+    follow a deliberate last-touched-wins rule, implemented simply and
+    symmetrically: a store pick CLEARS the directory Input (and posts
+    ``SubjectChanged(kind="store")``), while typing a non-empty path RESETS
+    the store Select to its NULL sentinel (and posts ``SubjectChanged(
+    kind="directory")``) -- so at most one control ever holds an effective
+    choice, and emptying the Input resurrects nothing (re-pick explicitly).
+    The message carries ``(subject_ref, subject_kind)`` from either
+    control; the owning screen persists it onto the bench config.
+    """
 
     DEFAULT_CSS = """
     SkillEvalPanel { padding: 1; }
@@ -41,6 +54,14 @@ class SkillEvalPanel(Widget):
     class CancelRequested(Message, namespace="skill_eval_panel"):
         pass
 
+    class SubjectChanged(Message, namespace="skill_eval_panel"):
+        """The user set the bench's subject (store pick or directory path)."""
+
+        def __init__(self, subject_ref: str, subject_kind: str) -> None:
+            super().__init__()
+            self.subject_ref = subject_ref
+            self.subject_kind = subject_kind
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._depth: SkillEvalDepth = SkillEvalDepth.STANDARD
@@ -49,6 +70,10 @@ class SkillEvalPanel(Widget):
         with Vertical():
             yield Static("No subject selected.",
                          id="skill-eval-subject", markup=False)
+            yield Select([], id="skill-eval-subject-picker",
+                         prompt="subject skill (store)")
+            yield Input(id="skill-eval-subject-dir",
+                        placeholder="or: skill directory path")
             yield Select(_DEPTH_OPTIONS, id="skill-eval-depth",
                          value=self._depth)
             yield Select([], id="skill-eval-generator",
@@ -65,6 +90,26 @@ class SkillEvalPanel(Widget):
         widget = self.query_one("#skill-eval-subject", Static)
         widget.update(f"Subject: {name} ({source})")
 
+    def set_subjects(self, rows: List[dict]) -> None:
+        """Feed the store-skill picker (screen-side ``store_skill_names``).
+
+        Rows are store skill summaries (``name``, optional ``description``
+        and ``trust_status``); each becomes one option labelled
+        ``name (trust)`` keyed by the bare name, deduplicated so a store
+        glitch (two same-named summaries) cannot produce two options whose
+        values collide.
+        """
+        options: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            name = str(row.get("name") or "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            trust = str(row.get("trust_status") or "unknown")
+            options.append((f"{name} ({trust})", name))
+        self.query_one("#skill-eval-subject-picker", Select).set_options(options)
+
     def set_targets(self, rows: List[dict]) -> None:
         options = [
             (f"{r.get('name') or r['id']} "
@@ -78,6 +123,26 @@ class SkillEvalPanel(Widget):
         if event.select.id == "skill-eval-depth":
             self._depth = event.value
             self._refresh_estimate()
+        elif event.select.id == "skill-eval-subject-picker":
+            # Select.NULL is a truthy sentinel (Textual 8) -- identity check,
+            # the same discipline the Run guard below documents.
+            if event.value is Select.NULL or not event.value:
+                return
+            # Last-touched wins: a store pick clears the directory path.
+            self.query_one("#skill-eval-subject-dir", Input).value = ""
+            self.post_message(self.SubjectChanged(str(event.value), "store"))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "skill-eval-subject-dir":
+            return
+        ref = event.value.strip()
+        if not ref:
+            # Emptying the Input is not a subject choice (and must not
+            # resurrect a cleared store pick -- re-pick explicitly).
+            return
+        # Last-touched wins: a typed path resets the store pick.
+        self.query_one("#skill-eval-subject-picker", Select).value = Select.NULL
+        self.post_message(self.SubjectChanged(ref, "directory"))
 
     def _refresh_estimate(self) -> None:
         label = self.query_one("#skill-eval-estimate", Static)

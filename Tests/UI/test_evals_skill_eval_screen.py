@@ -176,6 +176,21 @@ def test_builtin_tool_names_is_a_name_frozenset():
     assert all(isinstance(n, str) for n in names)
 
 
+# Final-review Critical 2: the reserved-name set the worker hands the static
+# analyzer must exclude the subject's own name -- the store-sourced skill
+# list includes it, so a bare union flagged every store subject against
+# itself (NAME_COLLISION, −5%).
+def test_reserved_names_exclude_the_subject_itself():
+    from tldw_chatbook.UI.Evals.skill_eval_launch import reserved_names_for
+
+    names = reserved_names_for(
+        "csv-cleaner",
+        frozenset({"csv-cleaner", "pdf-writer"}),
+        frozenset({"fs_read"}),
+    )
+    assert names == frozenset({"pdf-writer", "fs_read"})
+
+
 @pytest.mark.asyncio
 async def test_store_skill_names_reads_the_local_store(monkeypatch, tmp_path):
     """``(summary_dicts, name_set)`` from the local store over the app.py:8635
@@ -330,12 +345,21 @@ async def test_a_skill_eval_bench_row_routes_to_the_skill_eval_kind(
 
 @pytest.mark.asyncio
 async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
-    evals_app, evals_db
+    evals_app, evals_db, monkeypatch
 ):
     """``+ New skill eval`` posts ``NewSkillEvalRequested``; the screen's
     handler creates the draft bench (first model target pre-bound when one
     exists) and selects it, which mounts the ``SkillEvalPanel`` detail branch
     with the panel fed by the view model's target rows."""
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+
+    # Hermeticity: mounting the panel now also feeds the subject picker via
+    # the screen's ``store_skill_names`` call site -- keep it empty rather
+    # than reading this machine's real local skills store.
+    async def _empty_store(_app_config):
+        return [], frozenset()
+
+    monkeypatch.setattr(screen_mod, "store_skill_names", _empty_store)
     gen_id = evals_db.create_model(
         name="gen", provider="llama_cpp", model_id="m"
     )
@@ -392,11 +416,19 @@ async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
 
 @pytest.mark.asyncio
 async def test_selecting_a_saved_bench_restores_its_saved_depth(
-    evals_app, evals_db
+    evals_app, evals_db, monkeypatch
 ):
     """A saved bench's depth round-trips through the detail branch: the depth
     Select's programmatic value assignment fires ``Select.Changed``, which
     updates the panel's internal depth AND re-syncs the call estimate."""
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+
+    # Hermeticity: same reason as the draft test above -- the mounted
+    # panel's subject-picker feed must not read the real local skills store.
+    async def _empty_store(_app_config):
+        return [], frozenset()
+
+    monkeypatch.setattr(screen_mod, "store_skill_names", _empty_store)
     bench_id = save_skill_eval_bench(
         evals_db,
         SkillEvalConfig(
@@ -530,3 +562,290 @@ async def test_preflight_problems_mark_the_created_run_failed(
         runs = evals_db.list_runs(run_group_id=run_groups[0]["id"])
         assert runs[0]["status"] == "failed"
         assert "llama_cpp is not configured" in (runs[0].get("error_message") or "")
+
+
+# ---------------------------------------------------------------------------
+# Case 5: final-review fix wave -- layer-stat rendering + the subject-picker
+# product path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_eval_detail_renders_layer_statistics(evals_db, tmp_path):
+    """Final-review Important 6: the report snapshot's persisted layer
+    statistics actually render -- the judge trigger F1 line and the
+    simulation's activation/consistency/failure lines (with their CIs);
+    ``None`` blocks (here: a STANDARD run with no simulation summary) are
+    skipped, not rendered as empty lines."""
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalReport,
+        SkillSubject,
+    )
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b", source_kind="directory",
+        source_path=str(tmp_path), trust_status="unknown", digest="d" * 64,
+        line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="gen-m"),
+        provider="llama_cpp", model_id="gen-m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="jud-m"),
+        provider="llama_cpp", model_id="jud-m",
+    )
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+        depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+        judge_target_id="j",
+    )
+    bench_id = save_skill_eval_bench(evals_db, config)
+    _group, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge, call_estimate=16,
+    )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth="standard",
+            dimensions=(
+                DimensionScore("triggering_accuracy", 0.25, 0.8,
+                               ("static", "judge")),
+            ),
+            composite=81.2, grade="B-", confidence="Assessed",
+            layer_summaries={
+                "static": {"sub_scores": {}},
+                "judge": {
+                    "rubrics": {"instruction_fitness": 1.0,
+                                "output_quality": 0.8,
+                                "scope_calibration": 0.6},
+                    "trigger_f1": 0.75, "trigger_precision": 0.7,
+                    "trigger_recall": 0.8, "failed": [],
+                },
+                "simulation": None,
+            },
+        ),
+    )
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), run_id)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        assert any("Layer statistics" in line for line in lines)
+        assert any("F1=0.75" in line for line in lines)
+        assert any(
+            "precision=0.70" in line and "recall=0.80" in line for line in lines
+        )
+        assert any("instruction_fitness=1.00" in line for line in lines)
+        # The None simulation block is skipped entirely.
+        assert not any("sim " in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_skill_eval_detail_renders_simulation_layer_statistics(
+    evals_db, tmp_path
+):
+    """The simulation block of the layer-statistics render: activation,
+    consistency and failure lines each carrying their persisted CI."""
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalReport,
+        SkillSubject,
+    )
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b", source_kind="store",
+        source_path="csv-cleaner", trust_status="trusted", digest="d" * 64,
+        line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="gen-m"),
+        provider="llama_cpp", model_id="gen-m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="jud-m"),
+        provider="llama_cpp", model_id="jud-m",
+    )
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+        depth=SkillEvalDepth.DEEP, generator_target_id="g", judge_target_id="j",
+    )
+    bench_id = save_skill_eval_bench(evals_db, config)
+    _group, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge, call_estimate=67,
+    )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth="deep",
+            dimensions=(
+                DimensionScore("triggering_accuracy", 0.25, 0.8,
+                               ("static", "sim")),
+            ),
+            composite=70.0, grade="C-", confidence="Certified",
+            layer_summaries={
+                "static": {"sub_scores": {}},
+                "judge": None,
+                "simulation": {
+                    "activation": 0.52, "activation_ci": [0.42, 0.62],
+                    "consistency": 0.71, "consistency_ci": [0.6, 0.8],
+                    "failure_rate": 0.1, "failure_ci": [0.05, 0.18],
+                },
+            },
+        ),
+    )
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), run_id)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        assert any("sim activation: 0.52 (CI 0.42–0.62)" in line
+                   for line in lines)
+        assert any("sim consistency: 0.71 (CI 0.60–0.80)" in line
+                   for line in lines)
+        assert any("sim failure rate: 0.10 (CI 0.05–0.18)" in line
+                   for line in lines)
+        # The None judge block is skipped entirely.
+        assert not any("judge" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_subject_picker_product_path_run_completes(
+    evals_app, evals_db, monkeypatch, tmp_path
+):
+    """Final-review Critical 1's product path, end to end: the rail's
+    ``+ New skill eval`` creates a draft bench; the mounted panel's subject
+    picker is fed through the screen's ``store_skill_names`` call site;
+    picking a subject persists it onto the bench config; and Run then
+    completes against the store-sourced subject (the flow the user guide
+    documents -- previously impossible from the UI alone, every draft dying
+    in ``SubjectError``).
+
+    Hermeticity: the store is a real seeded one under ``tmp_path``
+    (imported through ``LocalSkillsService.import_skill_directory``, the
+    service's own path), with ``get_user_data_dir`` patched at the screen's
+    call site for the worker's subject resolution; ``store_skill_names`` is
+    patched to a deterministic summary (the picker-feed seam) and the chat
+    factory to the engine tests' scripted ``_Chat``.
+    """
+    from pathlib import Path
+
+    from Tests.Evals.skill_eval.test_runner import _Chat
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        LocalSkillsService,
+        default_local_skills_store_dir,
+    )
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+    from .test_evals_skill_eval_panel import _pick_via_overlay
+
+    source = tmp_path / "src" / "csv-cleaner"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\n"
+        "name: csv-cleaner\n"
+        "description: Use when tidying messy CSV exports of product data.\n"
+        "---\n"
+        "# CSV cleaner\n"
+        "Trim stray whitespace, drop duplicate headers.\n",
+        encoding="utf-8",
+    )
+    service = LocalSkillsService(
+        store_dir=default_local_skills_store_dir(tmp_path)
+    )
+    await service.import_skill_directory(Path(source), name="csv-cleaner")
+    monkeypatch.setattr(screen_mod, "get_user_data_dir", lambda: tmp_path)
+
+    gen_id = evals_db.create_model(name="gen", provider="llama_cpp", model_id="m")
+    jud_id = evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2")
+
+    async def _deterministic_store(_app_config):
+        return (
+            [{"name": "csv-cleaner",
+              "description": "Use when tidying messy CSV exports of product data.",
+              "trust_status": "trusted"}],
+            frozenset({"csv-cleaner"}),
+        )
+
+    monkeypatch.setattr(screen_mod, "store_skill_names", _deterministic_store)
+    chat = _Chat()
+    monkeypatch.setattr(
+        screen_mod, "make_skill_eval_chat", lambda cfg, g, j: (chat, [])
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-new-skill-eval")
+        await _wait_until(
+            pilot, lambda: pilot.app.screen._selection.kind == "skill_eval_bench"
+        )
+        screen = pilot.app.screen
+        assert screen._selection.id is not None
+
+        # The picker is fed through the screen's store_skill_names call
+        # site (the feed worker), before anything is picked.
+        def _subjects_fed() -> bool:
+            options = screen.query_one(
+                "#skill-eval-subject-picker", Select
+            )._options
+            return any(
+                value == "csv-cleaner"
+                for _label, value in options
+                if value is not Select.NULL
+            )
+
+        await _wait_until(pilot, _subjects_fed)
+
+        # Pick the subject through the Select's own dropdown, the way a
+        # user does; the screen must persist the pick onto the bench.
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        await pilot.pause()
+        from tldw_chatbook.Evals.skill_eval.storage import load_skill_eval_bench
+
+        config = load_skill_eval_bench(evals_db, screen._selection.id)
+        assert config.subject_ref == "csv-cleaner"
+        assert config.subject_kind == "store"
+        # The panel's subject display refreshed from the persisted config.
+        display = str(screen.query_one("#skill-eval-subject").render())
+        assert "csv-cleaner" in display
+
+        # Models picked, Run pressed: the run must complete against the
+        # store-sourced subject -- not die in SubjectError.
+        screen.query_one("#skill-eval-generator", Select).value = gen_id
+        screen.query_one("#skill-eval-judge", Select).value = jud_id
+        await pilot.pause()
+        await pilot.click("#skill-eval-run")
+
+        def _run_completed() -> bool:
+            groups = screen._view_model.run_groups()
+            return bool(groups) and groups[0]["status"] == "completed"
+
+        await _wait_until(pilot, _run_completed)
+        assert chat.calls == 16  # STANDARD: judge layer only
+
+        run_groups = screen._view_model.run_groups()
+        assert len(run_groups) == 1
+        report = load_report(evals_db, run_groups[0]["id"])
+        assert report is not None
+        assert report["provenance"]["name"] == "csv-cleaner"
+        assert report["provenance"]["source_kind"] == "store"
+        assert not any(
+            "SubjectError" in message
+            for message, _severity in screen.app_instance.notifications
+        )
