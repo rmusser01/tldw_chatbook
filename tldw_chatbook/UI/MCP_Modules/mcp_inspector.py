@@ -1989,6 +1989,16 @@ class MCPInspector(Vertical):
             "#mcp-inspector-state", Static
         ).display = not self._any_detail_displayed()
 
+    async def clear_mode_view(self) -> None:
+        """Clear mode-dependent selections when the Workbench changes mode.
+
+        The Workbench schedules this as an exclusive async worker so a mode
+        departure clears tool, execution-log and finding panels in order.
+        """
+        await self.show_tool(None)
+        await self.show_audit_entry(None)
+        await self.show_finding(None)
+
     async def show_tool(
         self,
         tool: HubTool | None,
@@ -2615,7 +2625,7 @@ class MCPInspector(Vertical):
         folded into `show_tool()`'s single locked pass, since an audit-entry
         selection never touches `#mcp-inspector-tool`/`#mcp-inspector-
         permission`). `entry=None` (a stale/out-of-range selection, or a
-        mode switch via `MCPWorkbench._clear_tool_view()`) hides the
+        mode switch via `MCPInspector.clear_mode_view()`) hides the
         container instead of leaving a previous entry's facts on screen.
 
         The detail is a ``json.dumps(indent=2)`` view of the execution log's
@@ -2694,8 +2704,8 @@ class MCPInspector(Vertical):
         `_refresh_lock` discipline as `show_permission()`/`show_audit_
         entry()` (two selections back to back must not interleave their
         remove/mount cycles into `DuplicateIds`). `finding=None` (a
-        stale/out-of-range selection, or a mode switch via `MCPWorkbench.
-        _clear_tool_view()`) hides the container instead of leaving a
+        stale/out-of-range selection, or a mode switch via `MCPInspector.
+        clear_mode_view()`) hides the container instead of leaving a
         previous finding's facts on screen.
 
         Severity/type/message, plus a suggested-remediation line only when

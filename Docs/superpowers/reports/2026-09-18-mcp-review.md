@@ -1,5 +1,26 @@
 # MCP component review
 
+## PR2712 merged; bounded integration repair — 2026-09-21
+
+[PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712) merged into dev
+as `4b61a5ca8f` after fresh visual approval, successful final-head CI, resolved
+Qodo review with zero findings, and conflict-free integration checks. The 14
+captured native source hashes match the actual merge.
+[Receipt](../qa/2026-09-18-mcp-server-actions/current-dev/merge-closeout.json)
+records separate verification for the later dev changes.
+
+PR2744 landed at merge time and introduced a Workbench size limit: post-merge
+architecture verification found 66 passes and one ten-line overage. A bounded
+follow-up moves existing mode-dependent inspector clearing into MCPInspector,
+preserving worker ownership, cancellation group and await order; the ratchet
+is tightened to 6,760 lines. All 106 targeted checks pass and independent review
+is clear. TASK-32825 remains In Progress until this integration follow-up merges.
+
+Compact Test Tool inspector reachability at 80×24 is next on a fresh follow-up
+branch. Other MCP and destination reviews remain open; older checkpoints below
+are retained as history.
+
+
 ## PR2712 server actions ready for fresh visual review — 2026-09-21
 
 Existing draft [PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712)

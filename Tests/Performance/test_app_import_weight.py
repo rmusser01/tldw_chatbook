@@ -236,6 +236,13 @@ def _measure_app_import(tmp_path: Path) -> dict:
     return json.loads(last_line)
 
 
+def test_app_import_defers_advanced_tool_readiness(tmp_path: Path) -> None:
+    """Importing the app must not load Advanced-only readiness."""
+    modules = _measure_app_import(tmp_path)["tldw_modules"]
+    assert "tldw_chatbook.MCP.unified_control_plane_service" in modules
+    assert "tldw_chatbook.MCP.readiness" not in modules
+
+
 def test_app_import_does_not_load_torch_or_transformers(tmp_path: Path) -> None:
     """Plain `import tldw_chatbook.app` must never pull in torch/transformers.
 
