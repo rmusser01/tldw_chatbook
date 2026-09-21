@@ -4,25 +4,21 @@ import asyncio
 import hashlib
 import inspect
 import json
-import os
 import sys
-import threading
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-from tldw_chatbook.Backup_Recovery.activation import (
-    activation_permission,
-    execution_scope,
+from tldw_chatbook.Backup_Recovery.activation import activation_permission
+from tldw_chatbook.Backup_Recovery.admission_runtime import (
+    RecoveryAdmissionGuard,
+    execution_identity,
 )
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
-
-_active = ContextVar("rag_execution", default=None)
 
 
 class RAGActivationRequired(PermissionError):
@@ -138,62 +134,25 @@ def source_paths(service=None, *, config=None, sources=()):
     )
 
 
-def _identity():
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:
-        task = None
-    return os.getpid(), threading.get_ident(), task
+_guard = RecoveryAdmissionGuard(
+    "rag",
+    error=RAGActivationRequired,
+    sources=source_paths,
+    # Accepted scopes transfer into awaited vector workers and must
+    # verify their whole ancestor chain on reuse.
+    check_states=True,
+)
 
 
-@dataclass
-class _Execution:
-    identity: tuple
-    leases: dict
-    sources: tuple
-    parent: object = None
-    live: bool = True
-
-    def check(self):
-        if not self.live or self.identity[0] != os.getpid():
-            raise RAGActivationRequired()
-        if self.parent is not None:
-            self.parent.check()
-
-
-@contextmanager
 def execution(service=None, *, config=None, sources=(), _transfer=None):
     """Reuse accepted exact leases; a transferred worker cannot outlive them."""
-    active = _transfer or _active.get()
-    if active is not None:
-        active.check()
-        if _transfer is None and active.identity != _identity():
-            raise RAGActivationRequired()
-    leases = dict(active.leases) if active else {}
-    observed = tuple(
-        dict.fromkeys(
-            (active.sources if active else ())
-            + source_paths(service, config=config, sources=sources)
-        )
+    return _guard.execution(
+        service,
+        transfer=_transfer,
+        resolve=lambda service: source_paths(
+            service, config=config, sources=sources
+        ),
     )
-    with ExitStack() as stack:
-        try:
-            for owner, path in observed:
-                if path not in leases:
-                    leases[path] = stack.enter_context(acquire_storage(path))
-                if not stack.enter_context(
-                    execution_scope((owner,), path, retained=leases[path])
-                ):
-                    raise RAGActivationRequired()
-        except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
-            raise RAGActivationRequired() from None
-        scope = _Execution(_identity(), leases, observed, active)
-        token = _active.set(scope)
-        try:
-            yield
-        finally:
-            scope.live = False
-            _active.reset(token)
 
 
 def require_local_model_construction(config):
@@ -273,8 +232,8 @@ def async_guarded(function):
     @wraps(function)
     async def call(*args, **kwargs):
         arguments = signature.bind_partial(*args, **kwargs).arguments
-        active = _active.get()
-        if active is not None and active.identity == _identity():
+        active = _guard.context.get()
+        if active is not None and active.identity == execution_identity():
             with _call_scope(arguments):
                 return await function(*args, **kwargs)
 
@@ -291,10 +250,10 @@ def async_guarded(function):
 
 def native_worker(service, function):
     """Transfer an accepted scope to the installed awaited vector worker."""
-    active = _active.get()
+    active = _guard.context.get()
     if active is not None:
-        active.check()
-        if active.identity != _identity():
+        active.check(RAGActivationRequired)
+        if active.identity != execution_identity():
             raise RAGActivationRequired()
 
     @wraps(function)

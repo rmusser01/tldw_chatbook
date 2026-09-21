@@ -1,18 +1,13 @@
 """MCP execution admission from actual local settings, never imported grants."""
 
 import asyncio
-import os
 import sys
-import threading
 from collections.abc import Mapping
-from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-
-_active = ContextVar("mcp_execution", default=None)
+from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
 
 
 class MCPActivationRequired(PermissionError):
@@ -20,14 +15,6 @@ class MCPActivationRequired(PermissionError):
 
     def __init__(self):
         super().__init__("mcp_activation_required")
-
-
-def _identity():
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:
-        task = None
-    return os.getpid(), threading.get_ident(), task
 
 
 def _sources(service):
@@ -65,50 +52,39 @@ def _sources(service):
     return tuple((owner, profile_paths.lexical_path(path)) for owner, path in paths)
 
 
-@contextmanager
+def _admit_config_witness(stack, owner, path, lease):
+    """Witness generation state for plain config bytes instead of scoping."""
+    if owner != "config":
+        return False
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
+
+    _witnesses(path, lease)
+    return True
+
+
+def _final_review(observed, leases):
+    """Enforce MCP's finite current-generation review after source admission."""
+    from .recovery_activation import allowed
+
+    return allowed(observed, retained=leases)
+
+
+_guard = RecoveryAdmissionGuard(
+    "mcp",
+    error=MCPActivationRequired,
+    sources=_sources,
+    admit_source=_admit_config_witness,
+    finalize=_final_review,
+)
+
+
 def execution(service, *, sources=()):
     """Hold real leases in this task/thread/PID through the accepted effect.
 
     Sources are observations, not permissions. Worker threads reacquire them;
     copied contexts cannot borrow another execution's accepted leases.
     """
-    from tldw_chatbook.Backup_Recovery.activation import execution_scope
-    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
-    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-
-    identity = _identity()
-    active = _active.get()
-    if active is not None and active[0] != identity:
-        raise MCPActivationRequired()
-    leases = dict(active[1]) if active else {}
-    observed = tuple(
-        dict.fromkeys(
-            (active[2] if active else ()) + tuple(sources) + _sources(service)
-        )
-    )
-    with ExitStack() as stack:
-        try:
-            for owner, path in observed:
-                if path not in leases:
-                    leases[path] = acquire_storage(path)
-                    stack.callback(leases[path].close)
-                if owner == "config":
-                    _witnesses(path, leases[path])
-                elif not stack.enter_context(
-                    execution_scope((owner,), path, retained=leases[path])
-                ):
-                    raise MCPActivationRequired()
-            from .recovery_activation import allowed
-
-            if not allowed(observed, retained=leases):
-                raise MCPActivationRequired()
-        except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
-            raise MCPActivationRequired() from None
-        token = _active.set((identity, leases, observed))
-        try:
-            yield
-        finally:
-            _active.reset(token)
+    return _guard.execution(service, sources=sources)
 
 
 def guarded(function):
@@ -139,20 +115,12 @@ def server_branch_guard(function):
 
 async def in_worker(service, function, *args):
     """Worker admission survives cancellation of its asyncio waiter."""
-    active = _active.get()
-    sources = (
-        active[2]
-        if active is not None and active[0] == _identity()
-        else _sources(service)
-    )
+    sources = _guard.captured_sources(service)
 
     def run():
-        token = _active.set(None)
-        try:
+        with _guard.worker_isolation():
             with execution(service, sources=sources):
                 return function(*args)
-        finally:
-            _active.reset(token)
 
     return await asyncio.to_thread(run)
 
