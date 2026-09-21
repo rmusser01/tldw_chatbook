@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+from tldw_chatbook.Utils.input_validation import (
+    StrictJSONError,
+    strict_json_loads,
+)
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -219,20 +223,11 @@ class ThinkingEnvelopeRead:
 
 
 def _strict_json_loads(value: str) -> object:
-    def reject_constant(_value: str) -> None:
-        _fail("JSON number")
-
-    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, item in pairs:
-            if key in result:
-                _fail("duplicate JSON key")
-            result[key] = item
-        return result
-
-    return json.loads(
-        value, parse_constant=reject_constant, object_pairs_hook=unique_object
-    )
+    # task-32805.5: delegate to the one shared strict loader.
+    try:
+        return strict_json_loads(value)
+    except StrictJSONError:
+        _fail("strict JSON")
 
 
 def _exact_mapping(value: object, keys: frozenset[str]) -> Mapping[str, object]:

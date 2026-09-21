@@ -1506,3 +1506,51 @@ def test_add_tool_arg_rule_still_seeds_a_missing_named_profile(tmp_path) -> None
     rules = store.list_tool_arg_rules("srv", "search", profile_id="fresh")
     assert [r["profile_id"] for r in rules] == ["fresh"]
     assert "fresh" in store.load()["profiles"]
+
+
+def test_load_backs_up_duplicate_key_json_and_returns_fresh_default(tmp_path):
+    """task-32805.5: a duplicate key in an OTHERWISE-VALID policy file is an
+    ambiguous (possibly tampered) input on a security boundary. The enforcement
+    read must reject it and fall back to the fail-closed defaults, not silently
+    take last-wins. The file is valid apart from the duplicate, so a backup can
+    only mean the duplicate key itself was rejected.
+    """
+    valid = json.dumps(_fresh_payload_shape())
+    # Inject a duplicate "kill_switch" whose last-wins value (true) would be
+    # observable if the duplicate were accepted.
+    dup = valid.replace(
+        '"kill_switch": false', '"kill_switch": false, "kill_switch": true', 1
+    )
+    assert dup != valid  # sanity: the injection took
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(dup, encoding="utf-8")
+
+    store = MCPPermissionStore(path)
+    payload = store.load()
+
+    assert payload == _fresh_payload_shape()  # fail-closed defaults, kill_switch False
+    backup_path = tmp_path / "mcp_permissions.json.bak"
+    assert backup_path.exists()
+    assert backup_path.read_text(encoding="utf-8") == dup
+    assert not path.exists()
+
+
+def test_raw_getters_reject_duplicate_key_store_without_backup(tmp_path):
+    """The best-effort inspection view must not present the last-wins reading
+    of a duplicate-keyed policy file either; it returns defaults and, being
+    read-only, never backs up or rewrites the file (task-32805.5)."""
+    valid = json.dumps(_fresh_payload_shape())
+    dup = valid.replace(
+        '"global_default": "%s"' % DEFAULT_GLOBAL,
+        '"global_default": "%s", "global_default": "allow"' % DEFAULT_GLOBAL,
+        1,
+    )
+    assert dup != valid
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(dup, encoding="utf-8")
+    store = MCPPermissionStore(path)
+
+    # last-wins would have surfaced "allow"; the duplicate is rejected → default
+    assert store.get_global_default() == DEFAULT_GLOBAL
+    assert path.read_text(encoding="utf-8") == dup
+    assert not path.with_suffix(".json.bak").exists()

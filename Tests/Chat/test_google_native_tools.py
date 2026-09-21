@@ -1198,3 +1198,33 @@ def test_whitespace_padded_google_key_is_stripped_before_the_wire(mock_post):
         )
 
     assert mock_post.call_args[1]["headers"]["x-goog-api-key"] == "google-padded-key"
+
+
+@patch("requests.Session.post")
+def test_stream_forwards_token_usage_from_usage_metadata(mock_post):
+    """task-32805.2: Gemini reports usageMetadata on the stream; the translator
+    read `candidates` only and dropped it, so streamed turns recorded no
+    tokens. It must now reach the gateway as an OpenAI usage block."""
+    events = [
+        {"candidates": [{"content": {"parts": [{"text": "Hi"}], "role": "model"}, "index": 0}]},
+        {
+            "candidates": [{"finishReason": "STOP", "index": 0}],
+            "usageMetadata": {
+                "promptTokenCount": 12,
+                "candidatesTokenCount": 4,
+                "totalTokenCount": 16,
+            },
+        },
+    ]
+    sse_lines = _call_google_stream(
+        mock_post, _gemini_stream_lines(events), [{"role": "user", "content": "hi"}]
+    )
+    chunks = _decode_sse_chunks(sse_lines)
+
+    usage = [c["usage"] for c in chunks if isinstance(c.get("usage"), dict)]
+    assert usage, f"no usage forwarded on the stream: {chunks}"
+    assert usage[-1] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 4,
+        "total_tokens": 16,
+    }
