@@ -3,8 +3,10 @@
 Owner approved the gallery at `19ceab4dc3`. A subsequent
 [test/CI-only follow-up](ci-followup/README.md) repairs a splash-dependent watcher
 test and accommodates both required test steps within a bounded 30-minute job.
-The approved production and native source hashes are unchanged. The original
-75-case MCP inventory below remains valid; the follow-up separately verifies
+The approved native sources remain unchanged; a later
+[review follow-up](review-followup/README.md) adds only a client docstring and
+12 pure validator tests, with executable AST equality verified. The original
+75-case MCP inventory below remains valid (87 including the added unit cases); the follow-up separately verifies
 123 admission-sensitive cases (plus one existing expected failure), 26 CI
 contracts and all eight artifact checks. Current-head remote CI still gates merge.
 

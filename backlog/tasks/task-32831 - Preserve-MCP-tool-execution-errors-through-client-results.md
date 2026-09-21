@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:30'
-updated_date: '2026-09-21 00:18'
+updated_date: '2026-09-21 00:40'
 labels:
   - mcp
   - ui
@@ -58,4 +58,8 @@ Current-head CI run35545242345 passed1152 Fast Lane cases but failed the sync-co
 CI budget plan: current run measured885.51s main tests plus299.84s admission tests and roughly75s setup, exceeding20min; preceding run passed18m19s. Raise the existing serial job bound to30min and update its exact contract/spec timeout, preserving every target, per-test timeout, runner count, dependency boundary and required gate. ADR required:no new ADR; existingADR103 applies because only the operational timeout changes. Test startup correction uses a delegated getter override rather than persisted config because this module shares its bootstrap profile; await the actual startup task and Console selector before watcher assertions.
 
 CI follow-up verified: select real Home startup, scoped splash getter override (no shared-profile writes), await actual startup task and Home header, retain every unwarmed-Canvas/watch/disposal assertion.123 admission-sensitive passes plus1 existing expected failure;26CI contracts pass; isolated case passes. Job bound30min preserves all targets, per-test deadlines, serial runner and required gate. Seven artifact guards pass in sandbox; Mermaid succeeds separately with network-enabled pinned-input fetch. Zero introduced lint diagnostics; changed ranges format clean. Independent review clear after fixing profile isolation and all spec timeout literals. ExistingADR103 applies alongside111/161; no new ADR. Owner approved19ceab4dc3 gallery; all production/native hashes unchanged. Evidence: current-dev/ci-followup. Await new current-head CI/review, then merge without another visual prompt.
+
+Current accumulated Qodo review added two bounded follow-ups: document StdioSession.call_tool Args/Returns/Raises, and directly test MCPToolResultInput accepted/missing boolean flags, rejected non-booleans, opaque content and independent defaults. Plan: add the contract docstring and pure unit cases, run affected unit/stdio tests plus baseline-relative static checks, verify production AST equivalence excluding the docstring, then refresh review/CI. ADR required: no; documentation and coverage only under existing ADR-111/161. The approved visible behavior remains unchanged.
+
+Accumulated Qodo follow-up complete: public stdio call_tool contract now documents Args/Returns/Raises, including propagated request exceptions. Twelve direct validator cases cover missing/boolean flags, eight non-booleans, opaque content, ignored metadata and independent defaults. All31 affected unit/stdio cases pass; distinct MCP inventory87. Ruff lint/new-file and changed-range formatting pass with zero introduced production diagnostics. Independent review clear after documenting TypeError. Executable client AST is identical except its docstring; existing owner visual approval applies. Evidence: current-dev/review-followup. Current-head CI and final accumulated review still gate merge.
 <!-- SECTION:NOTES:END -->

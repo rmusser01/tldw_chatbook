@@ -29,6 +29,12 @@ pass. TASK-32831 remains In Progress pending current-head CI, accumulated review
 and merge. Full Audit navigation, raw-response expansion,
 complete permission flows and remaining screen reviews stay open.
 
+Qodo's accumulated follow-up added the public tool-call contract and twelve
+pure boundary tests. All 31 affected cases pass, bringing the distinct MCP
+inventory to 87. Independent review and baseline-relative static checks pass;
+executable client AST is unchanged apart from the docstring, so the recorded
+visual approval applies. [Evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/review-followup/README.md).
+
 ## PR2714 merged; PR2716 resumed — 2026-09-20
 
 PR2714 merged into dev at `e4096e2059` after owner visual approval, zero open Qodo

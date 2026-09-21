@@ -468,6 +468,24 @@ class _StdioJSONRPCConnection:
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> SimpleNamespace:
+        """Call a tool and validate its protocol error flag.
+
+        Args:
+            tool_name: Name of the server tool to invoke.
+            arguments: Tool arguments sent in the tools/call request.
+
+        Returns:
+            Namespace with opaque content and a boolean isError flag, defaulting
+            to False when absent. A True flag reports a tool execution failure.
+
+        Raises:
+            MCPClientError: The server result contains an invalid error flag.
+            TimeoutError: The server does not respond before the request deadline.
+            RuntimeError: The connection is closed or the server rejects the request.
+            OSError: The request cannot be written to the transport.
+            TypeError: The arguments contain a value that is not JSON serializable.
+            ValueError: The request cannot be serialized.
+        """
         from pydantic import ValidationError
 
         from tldw_chatbook.Utils.input_validation import MCPToolResultInput

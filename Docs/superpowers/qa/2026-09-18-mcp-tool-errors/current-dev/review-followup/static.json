@@ -1,0 +1,7 @@
+{
+  "baseline": 123,
+  "current": 123,
+  "introduced": [],
+  "runtime_ast_unchanged_except_docstring": true,
+  "approval_preserved": "19ceab4dc39da5aca46088b9a77b7c932861128b"
+}
