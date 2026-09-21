@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Never, cast
 import requests
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Utils.input_validation import (
+    StrictJSONError,
+    strict_json_loads,
+)
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecordDecoder
 
 if TYPE_CHECKING:
@@ -58,18 +62,15 @@ def _best_effort_close(resource: Any) -> None:
         pass
 
 
-def _reject_json_constant(_value: str) -> Never:
-    raise ValueError
-
-
 def _strict_json_loads(value: str) -> Any:
+    # task-32805.5: delegate to the shared strict loader (rejects duplicate
+    # keys, matching the storage family).
     try:
-        decoded = json.loads(value, parse_constant=_reject_json_constant)
-    except (RecursionError, TypeError, ValueError):
+        return strict_json_loads(
+            value, max_depth=_MAX_JSON_DEPTH, max_nodes=_MAX_JSON_NODES
+        )
+    except StrictJSONError:
         return _JSON_DECODE_FAILED
-    if not _json_shape_is_safe(decoded):
-        return _JSON_DECODE_FAILED
-    return decoded
 
 
 def _json_shape_is_safe(value: Any) -> bool:

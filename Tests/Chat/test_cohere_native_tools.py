@@ -1342,3 +1342,33 @@ def test_response_tool_call_with_non_dict_function_or_blank_name_skipped(mock_po
     message = result["choices"][0]["message"]
     assert "tool_calls" not in message
     assert message["content"] == "partial"
+
+
+@patch("requests.Session.post")
+def test_stream_forwards_token_usage_from_message_end(mock_post):
+    """task-32805.2: the Cohere v2 message-end event carries a usage block; it
+    must reach the gateway as an OpenAI usage block instead of being dropped
+    once the finish_reason is mapped."""
+    events = [
+        {"type": "message-start"},
+        {"type": "content-delta", "delta": {"message": {"content": {"text": "Hi"}}}},
+        {
+            "type": "message-end",
+            "delta": {
+                "finish_reason": "COMPLETE",
+                "usage": {"tokens": {"input_tokens": 11, "output_tokens": 5}},
+            },
+        },
+    ]
+    lines = _call_cohere_stream(
+        mock_post, _cohere_stream_lines(events), [{"role": "user", "content": "hi"}]
+    )
+    chunks = _decode_sse_chunks(lines)
+
+    usage = [c["usage"] for c in chunks if isinstance(c.get("usage"), dict)]
+    assert usage, f"no usage forwarded on the stream: {chunks}"
+    assert usage[-1] == {
+        "prompt_tokens": 11,
+        "completion_tokens": 5,
+        "total_tokens": 16,
+    }

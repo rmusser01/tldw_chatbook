@@ -558,6 +558,30 @@ class TestConversationsAndMessages:
         assert retrieved["version"] == 1
         assert retrieved["client_id"] == db_instance.client_id
 
+    def test_add_conversation_rejects_duplicate_metadata_keys(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """task-32805.5: conversation metadata is a storage boundary -- a
+        duplicate JSON key is ambiguous and must be refused, not persisted at
+        its last-wins reading. A well-formed metadata string still stores."""
+        ok = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "title": "GoodMeta",
+                "metadata": '{"tone": "warm"}',
+            }
+        )
+        assert ok is not None
+
+        with pytest.raises(InputError, match="valid JSON object string"):
+            db_instance.add_conversation(
+                {
+                    "character_id": char_id,
+                    "title": "DupMeta",
+                    "metadata": '{"tone": "warm", "tone": "cold"}',
+                }
+            )
+
     def test_add_message_and_get_for_conversation(
         self, db_instance: CharactersRAGDB, char_id
     ):

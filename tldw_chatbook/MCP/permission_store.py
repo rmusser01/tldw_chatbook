@@ -777,19 +777,18 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
+            # task-32805.5 + TASK-32806.3: reject a duplicate `global_default`
+            # or a non-finite constant (a tamper vector on a security file) so an
+            # ambiguous policy is treated as corrupt and reset below; an OSError,
+            # by contrast, is an UNCERTAIN persistence failure (permission bit,
+            # full disk, mount blip) that must NOT reset policy -- it propagates
+            # (the documented fail-closed path, rendered as gate_error/deny).
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
         except OSError as exc:
-            # TASK-32806.3: an OSError is an UNCERTAIN persistence failure
-            # -- a permission bit, a full disk, a network mount blinking --
-            # not evidence that the policy is corrupt. Backing the live
-            # file up and returning fresh defaults flipped the kill switch
-            # from ON to off and resolved a tool set to Off as Allow, and
-            # the next mutator wrote that reset back permanently. This
-            # method's own docstring already promised the opposite:
-            # "uncertain native persistence failures propagate without
-            # resetting policy". Raising is the documented fail-closed
-            # path -- per-tool resolution that raises is rendered as
-            # `gate_error` / "Unknown" with `state="deny"`.
             logger.warning(
                 f"MCP permission store at '{self.path}' could not be read "
                 f"({type(exc).__name__}); policy is left untouched."
@@ -936,7 +935,15 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
+            # task-32805.5: even the best-effort inspection view must not
+            # present the last-wins reading of a duplicate-keyed policy file;
+            # reject duplicates/non-finite constants (they fall to the corrupt
+            # branch below), while OSError still fail-closes per TASK-32806.3.
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
         except FileNotFoundError:
             # No file yet is a KNOWN state, not an uncertain one: nothing
             # has been configured, so the permissive first-run default is
