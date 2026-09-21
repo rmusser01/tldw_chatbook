@@ -1972,6 +1972,69 @@ class EvalsScreen(LabScreen):
         if self._skill_eval_cancel is not None:
             self._skill_eval_cancel.cancel()
 
+    @on(SkillEvalDetail.RunAgainRequested)
+    def _on_skill_eval_run_again_requested(
+        self, event: "SkillEvalDetail.RunAgainRequested"
+    ) -> None:
+        """TASK-32889: "Run again" from a completed report.
+
+        The report replaced the launch panel, so the rerun's depth and
+        targets come from the bench's persisted config (the same source
+        the worker loads) instead of live panel state; the press-time
+        snapshot discipline mirrors ``_on_skill_eval_run_requested`` --
+        the same four-way in-flight guard, the same running-flag-before-
+        dispatch rule (Qodo F9).
+        """
+        event.stop()
+        if (
+            self._skill_eval_run_running
+            or self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
+            return
+        db = self._view_model.db
+        if db is None:
+            return
+        try:
+            config = load_skill_eval_bench(db, event.bench_id)
+        except Exception:
+            self.app_instance.notify(
+                "Could not load that bench to run it again.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self._skill_eval_bench_id = event.bench_id
+        self._skill_eval_depth = config.depth
+        self._skill_eval_generator_target_id = config.generator_target_id
+        self._skill_eval_judge_target_id = config.judge_target_id
+        self._skill_eval_run_running = True
+        try:
+            self.run_worker(
+                self._run_skill_eval_worker,
+                exclusive=True,
+                group="evals-run-skill-eval",
+            )
+        except Exception:
+            self._skill_eval_run_running = False
+            raise
+
+    @on(SkillEvalPanel.CloseRequested)
+    def _on_skill_eval_close_requested(
+        self, event: SkillEvalPanel.CloseRequested
+    ) -> None:
+        """Escape on the launch panel: clear the selection (TASK-32889).
+
+        Selection-level only -- the detail pane returns to its empty
+        state; the Lab screen is never popped (that Escape stays
+        deliberately unbound Lab-wide). Unsaved model picks are lost by
+        design exactly as before; subject/depth persist via their own
+        round-trips.
+        """
+        event.stop()
+        self.select(kind="none")
+
     @on(SkillEvalPanel.SubjectChanged)
     def _on_skill_eval_subject_changed(
         self, event: SkillEvalPanel.SubjectChanged
@@ -2162,6 +2225,13 @@ class EvalsScreen(LabScreen):
             return
         button.disabled = True
         button.label = f"Running… ({done}/{total})" if total else "Running…"
+        # TASK-32889: "Stop run" is armed for exactly the in-flight window.
+        try:
+            stop = self.query_one("#skill-eval-cancel", Button)
+        except QueryError:
+            stop = None
+        if stop is not None:
+            stop.disabled = False
 
     def _reset_skill_eval_running_ui(self) -> None:
         """Restores the panel's Run button after a run ends -- only matters
@@ -2174,6 +2244,12 @@ class EvalsScreen(LabScreen):
             return
         button.disabled = False
         button.label = "Run"
+        try:
+            stop = self.query_one("#skill-eval-cancel", Button)
+        except QueryError:
+            stop = None
+        if stop is not None:
+            stop.disabled = True
 
     async def _run_skill_eval_worker(self) -> None:
         """Runs ``self._skill_eval_bench_id`` -- the skill-eval sibling of

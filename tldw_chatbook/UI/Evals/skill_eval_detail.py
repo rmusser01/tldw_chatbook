@@ -15,8 +15,9 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ...Evals.skill_eval.storage import iter_artifacts, load_report
 
@@ -56,10 +57,37 @@ class SkillEvalDetail(Widget):
     SkillEvalDetail { padding: 1; }
     """
 
+    class RunAgainRequested(Message, namespace="skill_eval_detail"):
+        """TASK-32889: "Run again" on a completed report -- the panel that
+        configured this run was swapped out for the report, so without
+        this affordance a rerun meant re-selecting the bench in the rail
+        to remount the launch panel. Carries the owning bench's id (the
+        run rows' task_id), resolved at press time from the same db the
+        report was read from."""
+
+        def __init__(self, bench_id: str) -> None:
+            super().__init__()
+            self.bench_id = bench_id
+
     def __init__(self, view_model: Any, run_group_id: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._view_model = view_model
         self._run_group_id = run_group_id
+
+    def _bench_id_for_group(self) -> str:
+        """The owning bench id: the first run row's task_id, or ''."""
+        db = getattr(self._view_model, "db", None)
+        if db is None:
+            return ""
+        try:
+            rows = db.list_runs(run_group_id=self._run_group_id)
+        except Exception:
+            return ""
+        for row in rows:
+            task_id = row.get("task_id")
+            if task_id:
+                return str(task_id)
+        return ""
 
     def compose(self) -> ComposeResult:
         db = getattr(self._view_model, "db", None)
@@ -105,6 +133,18 @@ class SkillEvalDetail(Widget):
                     len(list(iter_artifacts(db, r["id"]))) for r in run_rows
                 )
                 yield Static(f"artifacts: {count}", markup=False)
+            # TASK-32889: rerunning after a completed report used to
+            # require re-selecting the bench in the rail to remount the
+            # launch panel. Only offered when the owning bench resolves.
+            if self._bench_id_for_group():
+                yield Button("Run again", id="skill-eval-run-again",
+                             compact=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "skill-eval-run-again":
+            bench_id = self._bench_id_for_group()
+            if bench_id:
+                self.post_message(self.RunAgainRequested(bench_id))
 
     def _compose_layer_statistics(self, layer_summaries: dict) -> ComposeResult:
         """The persisted per-layer stats the report snapshot carries.

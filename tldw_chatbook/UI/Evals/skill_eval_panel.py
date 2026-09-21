@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, List
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
 from textual.validation import ValidationResult, Validator
@@ -73,6 +74,33 @@ class _SkillDirectoryValidator(Validator):
         return self.failure("No SKILL.md found at that path")
 
 
+class _SetSelect(Select):
+    """A Select whose Enter key no-ops once a value is held (TASK-32889).
+
+    Textual's stock Select binds Enter (with down/space/up) to opening
+    the overlay -- so a keyboard user pressing Enter to "confirm" a set
+    value silently re-opened the list with focus unchanged, the exact
+    trap the HCI review's keyboard-only walkthrough hit repeatedly (B8).
+    Space and the arrows keep opening; Enter opens only while nothing is
+    chosen yet (the picking flow). The base class's combined binding is
+    replaced wholesale because Textual matches whole key strings, not
+    per-key subtraction.
+    """
+
+    _OPEN_KEYS = "down,space,up"
+
+    BINDINGS = [
+        *(b for b in Select.BINDINGS if b.key != "enter,down,space,up"),
+        Binding(_OPEN_KEYS, "show_overlay", "Open", show=False),
+        Binding("enter", "enter_opens_only_when_unset", "Open", show=False),
+    ]
+
+    def action_enter_opens_only_when_unset(self) -> None:
+        if self.value is Select.NULL or not self.value:
+            self.action_show_overlay()
+        # Else: deliberate no-op -- the value stands.
+
+
 class SkillEvalPanel(Widget):
     """Subject picker + summary, depth + model pickers, cost estimate, run/cancel.
 
@@ -104,6 +132,14 @@ class SkillEvalPanel(Widget):
     class CancelRequested(Message, namespace="skill_eval_panel"):
         pass
 
+    class CloseRequested(Message, namespace="skill_eval_panel"):
+        """TASK-32889: the user asked to close the launch panel (Escape).
+
+        Selection-level only -- the owning screen clears its selection;
+        this never pops the Lab screen (that Escape remains deliberately
+        unbound Lab-wide, per lab_frame's own contract).
+        """
+
     class SubjectChanged(Message, namespace="skill_eval_panel"):
         """The user set the bench's subject (store pick or directory path)."""
 
@@ -111,6 +147,13 @@ class SkillEvalPanel(Widget):
             super().__init__()
             self.subject_ref = subject_ref
             self.subject_kind = subject_kind
+
+    #: TASK-32889: Escape closes the panel (widget-level binding -- the
+    #: Lab-wide "Escape is a deliberate no-op" contract binds nothing at
+    #: screen level, and widget bindings are the sanctioned finer grain).
+    BINDINGS = [
+        Binding("escape", "request_close", "Close panel", show=False),
+    ]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -128,21 +171,26 @@ class SkillEvalPanel(Widget):
         with Vertical():
             yield Static("No subject selected.",
                          id="skill-eval-subject", markup=False)
-            yield Select([], id="skill-eval-subject-picker",
-                         prompt=_STORE_PROMPT)
+            yield _SetSelect([], id="skill-eval-subject-picker",
+                             prompt=_STORE_PROMPT)
             yield Input(id="skill-eval-subject-dir",
                         placeholder="or: skill directory path",
                         validators=[_SkillDirectoryValidator()])
             yield Static(_DIR_HINT_DEFAULT, id="skill-eval-subject-dir-hint",
                          markup=False)
-            yield Select(_DEPTH_OPTIONS, id="skill-eval-depth",
-                         value=self._depth)
-            yield Select([], id="skill-eval-generator",
-                         prompt="generator model")
-            yield Select([], id="skill-eval-judge", prompt="judge model")
+            yield _SetSelect(_DEPTH_OPTIONS, id="skill-eval-depth",
+                             value=self._depth)
+            yield _SetSelect([], id="skill-eval-generator",
+                             prompt="generator model")
+            yield _SetSelect([], id="skill-eval-judge", prompt="judge model")
             yield Static("", id="skill-eval-estimate", markup=False)
             yield Button("Run", id="skill-eval-run")
-            yield Button("Cancel", id="skill-eval-cancel")
+            # TASK-32889: "Stop run", not "Cancel" -- the old label read as
+            # "close this form" while the action only cancels an in-flight
+            # run (a silent no-op when idle). It mounts DISABLED; the
+            # screen's running-UI setters enable it for exactly the
+            # in-flight window.
+            yield Button("Stop run", id="skill-eval-cancel", disabled=True)
 
     def on_mount(self) -> None:
         self._refresh_estimate()
@@ -310,3 +358,12 @@ class SkillEvalPanel(Widget):
             self.post_message(self.RunRequested(self._depth, str(gen), str(jud)))
         elif event.button.id == "skill-eval-cancel":
             self.post_message(self.CancelRequested())
+
+    def action_request_close(self) -> None:
+        """Escape: ask the owning screen to close this panel (TASK-32889).
+
+        Posts rather than acting -- the panel is DB-free and owns nothing
+        about selection; the screen clears its selection, which never
+        pops the Lab screen.
+        """
+        self.post_message(self.CloseRequested())

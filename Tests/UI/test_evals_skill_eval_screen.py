@@ -1172,3 +1172,113 @@ async def test_arrow_keys_move_mode_chip_focus(evals_app):
         assert focused is not None and focused.id == "lab-mode-evals", (
             f"left from Models should land on the Evals chip, got {focused and focused.id}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-32889: Escape closes the panel; Run again works from the report
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_escape_on_launch_panel_clears_the_selection(evals_app, evals_db):
+    """TASK-32889: Escape on the mounted launch panel closes it by
+    clearing the selection -- the Lab screen itself is never popped."""
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query(SkillEvalPanel)),
+        )
+        panel = screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-subject-dir").focus()
+        await pilot.press("escape")
+        await _wait_until(
+            pilot, lambda: screen._selection.kind == "none"
+        )
+        assert not screen.query(SkillEvalPanel)
+
+
+@pytest.mark.asyncio
+async def test_run_again_on_report_dispatches_with_persisted_config(
+    evals_app, evals_db, tmp_path, monkeypatch
+):
+    """TASK-32889: 'Run again' on a completed report reruns the owning
+    bench with its persisted depth/targets -- no rail re-selection to
+    remount the launch panel."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import (
+        create_skill_eval_run,
+        save_report,
+    )
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+        depth=SkillEvalDepth.STANDARD,
+        generator_target_id=generator.id, judge_target_id=judge.id,
+    )
+    bench_id = save_skill_eval_bench(evals_db, config)
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalReport,
+        StaticFinding,
+    )
+
+    group_id, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge,
+        call_estimate=16,
+    )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth="standard",
+            dimensions=(DimensionScore("triggering_accuracy", 0.25, 0.8,
+                                       ("static", "judge")),),
+            composite=81.2, grade="B-", confidence="Assessed",
+            findings=(StaticFinding("MISSING_TRIGGER", 0.05,
+                                    'Add "Use when ..." phrasing.'),),
+            warnings=(),
+        ),
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="run_group", id=group_id)
+        await _wait_until(
+            pilot, lambda: bool(screen.query(SkillEvalDetail))
+        )
+        button = screen.query_one("#skill-eval-run-again", Button)
+
+        dispatched: list = []
+        screen.run_worker = lambda *a, **kw: dispatched.append(a)
+        button.press()
+        await pilot.pause()
+        assert len(dispatched) == 1
+        assert screen._skill_eval_bench_id == bench_id
+        assert screen._skill_eval_depth is SkillEvalDepth.STANDARD
+        assert screen._skill_eval_generator_target_id == generator.id
+        assert screen._skill_eval_judge_target_id == judge.id
+        assert screen._skill_eval_run_running is True

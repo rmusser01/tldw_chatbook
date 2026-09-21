@@ -56,6 +56,7 @@ class _PanelHarness(App):
         self.run_requested: list[SkillEvalPanel.RunRequested] = []
         self.cancel_requested: list[SkillEvalPanel.CancelRequested] = []
         self.subject_changed: list[SkillEvalPanel.SubjectChanged] = []
+        self.close_requested: list[SkillEvalPanel.CloseRequested] = []
 
     def compose(self) -> ComposeResult:
         yield SkillEvalPanel()
@@ -74,6 +75,11 @@ class _PanelHarness(App):
         self, event: SkillEvalPanel.SubjectChanged
     ) -> None:
         self.subject_changed.append(event)
+
+    def on_skill_eval_panel_close_requested(
+        self, event: SkillEvalPanel.CloseRequested
+    ) -> None:
+        self.close_requested.append(event)
 
 
 async def _pick_via_overlay(pilot, select_id: str, downs: int) -> None:
@@ -191,12 +197,61 @@ async def test_directory_path_subject_enables_run():
 
 
 @pytest.mark.asyncio
-async def test_cancel_button_posts_cancel_requested():
+async def test_stop_run_button_posts_cancel_requested_only_when_enabled():
+    """TASK-32889: the panel's second action is 'Stop run', DISABLED while
+    idle -- the old always-enabled 'Cancel' read as 'close this form' and
+    silently no-opped when no run existed."""
+    from textual.widgets import Button
+
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        stop = app.screen.query_one("#skill-eval-cancel", Button)
+        assert stop.disabled
+        assert "Stop run" in str(stop.label)
+        await pilot.click("#skill-eval-cancel")
+        await pilot.pause()
+        assert app.cancel_requested == []
+
+        # Enabled by the screen while a run is in flight: press stops it.
+        stop.disabled = False
         await pilot.click("#skill-eval-cancel")
         await pilot.pause()
         assert len(app.cancel_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_escape_on_panel_posts_close_requested():
+    """TASK-32889: Escape on the launch panel asks the screen to close it
+    (selection-level, never popping the Lab screen) -- previously there
+    was no keyboard way to leave the panel at all."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-subject-dir").focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert len(app.close_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_enter_on_a_set_select_no_ops_instead_of_reopening():
+    """TASK-32889: Enter on a Select that already holds a value is a
+    no-op -- it used to silently re-open the overlay, stranding keyboard
+    users who pressed Enter to confirm/advance. Space still opens."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        from textual.widgets import Select
+
+        # The depth select mounts with STANDARD set.
+        depth = app.screen.query_one("#skill-eval-depth", Select)
+        depth.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not depth.expanded
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert depth.expanded
 
 
 _SUBJECTS = [
