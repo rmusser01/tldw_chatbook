@@ -593,21 +593,6 @@ class ConsoleMessageController:
         ]
         return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
 
-    @staticmethod
-    def _console_message_role_from_persisted(
-        message: dict[str, Any],
-    ) -> ConsoleMessageRole:
-        """Return a native Console role for a persisted Chat message row."""
-        raw_role = str(message.get("role") or "").strip().lower()
-        if raw_role:
-            try:
-                return ConsoleMessageRole(raw_role)
-            except ValueError:
-                pass
-        sender = str(message.get("sender") or "").strip().lower()
-        if sender in {"user", "system", "tool"}:
-            return ConsoleMessageRole(sender)
-        return ConsoleMessageRole.ASSISTANT
 
     def _console_messages_from_conversation_tree(
         self,

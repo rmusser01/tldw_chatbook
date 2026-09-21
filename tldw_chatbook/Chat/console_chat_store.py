@@ -21123,7 +21123,6 @@ class ConsoleChatStore:
             "provider_continuation_json": private_json,
             "role": ConsoleMessageRole.ASSISTANT.value,
         }
-        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
         durability = self.ensure_provider_continuation_durable(
             message_id=message.persisted_message_id,
