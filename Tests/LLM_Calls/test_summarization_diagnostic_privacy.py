@@ -2346,59 +2346,6 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
-<<<<<<< HEAD
-=======
-        # TASK-32853 groq migration: the non-200 status log site joined the
-        # deleted ledger (10 -> 11).
-=======
-=======
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
-        # TASK-32853 groq migration: the non-200 status log site joined
-        # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
-        # status logs verbatim (bound to the typed error) per the freeze.
-=======
-        # TASK-32853 groq migration: the non-200 status log site joined the
-        # deleted ledger (10 -> 11).
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-<<<<<<< HEAD
->>>>>>> 88aaedea4b (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
->>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-<<<<<<< HEAD
->>>>>>> fba5ef76a1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
->>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
->>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> adf9bb0617 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> 9f1f732a7a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
->>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> 7555b9044d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
->>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
-        # TASK-32853 groq + anthropic migrations: the non-200 status log
-        # site and the per-attempt network log site joined the deleted
-        # ledger (10 -> 12). deepseek/mistral keep their frozen status
-        # logs verbatim (bound to the typed error) per the freeze.
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
->>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
->>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
->>>>>>> d03b3ddb83 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
-=======
->>>>>>> bb1a14bf43 (chore(diagnostic): re-pin for the summarize-c tree)
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
