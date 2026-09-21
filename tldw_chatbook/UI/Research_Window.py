@@ -28,6 +28,7 @@ from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
     render_artifact,
     render_bundle_summary,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 def _parse_provider_tokens(text: str | None) -> list[str]:
@@ -800,10 +801,7 @@ class ResearchWindow(Vertical):
         self.status_message = message
         if not self.is_mounted:
             return
-        try:
-            self.query_one("#research-status", Static).update(message)
-        except Exception:
-            pass
+        set_status_line(self, "#research-status", message)
 
     def _selected_run_id(self) -> str:
         if self.selected_run is None:

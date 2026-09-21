@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     provider_config_key,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 
@@ -332,9 +333,7 @@ class ConsoleProviderPicker(Widget):
 
     def _set_status(self, copy: str) -> None:
         if self.is_mounted:
-            self.query_one("#console-settings-provider-picker-status", Static).update(
-                copy
-            )
+            set_status_line(self, "#console-settings-provider-picker-status", copy, missing_ok=False)
 
     def _commit_provider(self, provider: str) -> None:
         if provider not in self._known_provider_ids:

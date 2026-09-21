@@ -17,6 +17,7 @@ from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Text
 from ...Chat.character_expression_playback import expression_motion_enabled
 from ..Console.character_expression_avatar import CharacterExpressionAvatar
 from ..modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 @dataclass(frozen=True)
@@ -208,7 +209,7 @@ class BuddyCharacterReviewDialog(
 
     def _set_status(self, text: str) -> None:
         if self.is_mounted and not self._review_closed:
-            self.query_one("#buddy-status", Static).update(text)
+            set_status_line(self, "#buddy-status", text, missing_ok=False)
 
     def _sync_controls(self) -> None:
         if not self.is_mounted or self._review_closed:

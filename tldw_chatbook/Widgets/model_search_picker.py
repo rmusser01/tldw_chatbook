@@ -26,6 +26,7 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
     ConsoleModelProvenance,
     ResolvedProviderModelOption,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 _CLOUD_CATALOG_PROVIDER_KEYS = {
@@ -593,11 +594,7 @@ class ModelSearchPicker(Widget):
         self._set_status(f"{len(model_ids)} models available. Type to filter.")
 
     def _set_status(self, copy: str) -> None:
-        try:
-            status = self.query_one("#model-search-picker-status", Static)
-        except NoMatches:
-            return
-        status.update(copy)
+        set_status_line(self, "#model-search-picker-status", copy)
 
     def _set_input_value(self, value: str) -> None:
         if not self.is_mounted:

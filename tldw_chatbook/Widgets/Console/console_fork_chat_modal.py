@@ -19,6 +19,7 @@ from tldw_chatbook.Utils.input_validation import (
     ConsoleForkTitleInput,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 ConsoleForkModalState = Literal[
@@ -341,7 +342,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             self.run_worker(result, exclusive=False, exit_on_error=False)
 
     def _set_status(self, copy: str) -> None:
-        self.query_one("#console-fork-chat-status", Static).update(copy)
+        set_status_line(self, "#console-fork-chat-status", copy, missing_ok=False)
 
     def _request_submit(self) -> None:
         if self.state not in {"editing", "precommit_error"}:

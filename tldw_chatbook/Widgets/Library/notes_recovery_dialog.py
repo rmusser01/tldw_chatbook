@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 class NotesRecoveryDialog(ModalScreen[None]):
@@ -123,9 +124,7 @@ class NotesRecoveryDialog(ModalScreen[None]):
 
     def _set_status(self, message: str) -> None:
         """Update the status line if it is still mounted."""
-        found = self.query("#notes-recovery-status")
-        if found:
-            found.first(Static).update(message)
+        set_status_line(self, "#notes-recovery-status", message)
 
     def _check_current(self) -> bool:
         if self._finished:

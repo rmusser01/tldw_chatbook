@@ -37,6 +37,7 @@ from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
 )
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 __all__ = [
     "TRACE_EXPORT_PROFILE_COPY",
@@ -369,7 +370,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _set_status(self, message: str, *, error: bool = False) -> None:
         status = self.query_one("#trace-export-status", Static)
         status.set_class(error, "-error")
-        status.update(message)
+        set_status_line(self, "#trace-export-status", message, missing_ok=False)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source

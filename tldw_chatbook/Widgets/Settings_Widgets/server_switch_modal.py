@@ -25,6 +25,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
+from tldw_chatbook.Widgets.status_line import set_status_line
 
 
 class ServerSwitchModal(ModalScreen[Optional[dict]]):
@@ -155,10 +156,7 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                 )
 
     def _set_status(self, text: str) -> None:
-        try:
-            self.query_one("#server-switch-status", Static).update(text)
-        except QueryError:
-            pass
+        set_status_line(self, "#server-switch-status", text)
 
     def _entered_url(self) -> str:
         try:
