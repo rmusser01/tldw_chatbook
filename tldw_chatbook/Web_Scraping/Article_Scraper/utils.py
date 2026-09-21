@@ -3,8 +3,8 @@
 # Imports
 import hashlib
 import json
-from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 #
 # Third-Party Libraries
 #
@@ -30,7 +30,7 @@ class ContentMetadataHandler:
     ) -> str:
         metadata = {
             "url": url,
-            "ingestion_date": datetime.now().isoformat(),
+            "ingestion_date": utc_now_iso(),
             "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
             "scraping_pipeline": pipeline,
             **(additional_metadata or {}),

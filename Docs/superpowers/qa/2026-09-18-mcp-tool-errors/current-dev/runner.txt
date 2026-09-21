@@ -1,0 +1,6 @@
+...........................                                              [100%]
+-------------- generated xml file: /private/tmp/32831-runner.xml ---------------
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+27 passed, 94 deselected in 3.66s

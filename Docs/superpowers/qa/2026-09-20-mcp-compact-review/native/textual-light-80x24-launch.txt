@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  Review restored MCP roots               ││                  │
+│ Source       ││ Review creates fresh Ask/local         ▃ ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▎   ││ defaults. Historical rules and grants    ││  Pick a server,  │
+│ ▊Local  ▼▎   ││ remain inactive. Connecting and          ││  tool, or entry  │
+│ ▊▁▁▁▁▁▁▁▁▎   ││ granting tools are separate actions.     ││  to see what's   │
+│              ││  Block all tool calls in chat: Off ▸     ││  wrong and what  │
+│ Servers      ││  Also blocks the app's own built-in    ▂ ││  you can do.     │
+│  ○ setup     ││  tools (calculator, date/time, file      ││                  │
+│  · ◦ off     ││  and note tools).                        ││                  │
+│  · ⌂         ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││    Advanced…     │
+│  built-in    ││ ▊  Filter tool or server…             ▎  ││                  │
+│    All       ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                  │
+│  servers     ││  Tool                          State     ││                  │
+│  ◦ ⌂ t…     ▇▇ ││  Global default                Ask       ││                │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

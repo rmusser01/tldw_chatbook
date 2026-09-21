@@ -56,7 +56,6 @@ import asyncio
 from typing import Any
 
 from loguru import logger
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -611,7 +610,7 @@ class BriefingPresetModal(ModalScreen[bool]):
             ConfirmationDialog(
                 title="Delete preset",
                 message=(
-                    f'Delete the preset "{escape_markup(preset_name)}"? '
+                    f'Delete the preset "{preset_name}"? '
                     "This cannot be undone."
                 ),
                 confirm_label="Delete",

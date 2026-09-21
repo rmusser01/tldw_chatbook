@@ -1,0 +1,18 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+2.74s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.83s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.56s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.52s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.51s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.50s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.49s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.49s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.49s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.48s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.48s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.47s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.45s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+
+(12 durations < 1s hidden.)
+13 passed, 294 deselected in 22.17s

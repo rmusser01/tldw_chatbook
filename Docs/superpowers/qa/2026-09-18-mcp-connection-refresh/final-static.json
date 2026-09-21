@@ -1,0 +1,9 @@
+{
+  "file": "tldw_chatbook/MCP/local_control_service.py",
+  "baseline_diagnostics": 5,
+  "current_diagnostics": 5,
+  "introduced_diagnostics": [],
+  "new_file_lint": "passed",
+  "new_file_format": "passed",
+  "production_changed_ranges_format": "passed: 299-322 and 380-389"
+}

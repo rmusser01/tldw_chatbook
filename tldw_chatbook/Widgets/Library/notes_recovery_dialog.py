@@ -7,6 +7,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
@@ -39,6 +40,7 @@ class NotesRecoveryDialog(ModalScreen[None]):
         self._approve = approve
         self._busy = False
         self._finished = False
+        self._poll: Timer | None = None
 
     def compose(self) -> ComposeResult:
         label = (
@@ -98,16 +100,43 @@ class NotesRecoveryDialog(ModalScreen[None]):
                 )
 
     def on_mount(self) -> None:
-        self.set_interval(0.25, self._check_current)
+        # TASK-32800.5: keep the handle. `_check_current` returning False does
+        # not stop a Textual interval -- that return value is ignored -- so the
+        # poll used to run for the life of the mount, re-querying children it
+        # had already reported gone.
+        self._poll = self.set_interval(0.25, self._check_current)
+
+    def _stop_poll(self) -> None:
+        if self._poll is not None:
+            self._poll.stop()
+            self._poll = None
+
+    def _set_approve_disabled(self, disabled: bool) -> None:
+        """Disable the approve button if it is still mounted.
+
+        The dialog can be dismissed while a poll tick or an awaited confirm is
+        in flight; a missing child is a no-op, not an app exit (TASK-32800.5).
+        """
+        found = self.query("#notes-recovery-approve")
+        if found:
+            found.first(Button).disabled = disabled
+
+    def _set_status(self, message: str) -> None:
+        """Update the status line if it is still mounted."""
+        found = self.query("#notes-recovery-status")
+        if found:
+            found.first(Static).update(message)
 
     def _check_current(self) -> bool:
         if self._finished:
+            self._stop_poll()
             return False
         if not self._current():
-            self.query_one("#notes-recovery-approve", Button).disabled = True
-            self.query_one("#notes-recovery-status", Static).update(
+            self._set_approve_disabled(True)
+            self._set_status(
                 "Selection changed. Close this review and review the current folder again."
             )
+            self._stop_poll()
             return False
         return True
 
@@ -135,10 +164,12 @@ class NotesRecoveryDialog(ModalScreen[None]):
             )
             if not confirmed or not self._check_current():
                 return
-            self.query_one("#notes-recovery-approve", Button).disabled = True
+            # Every lookup below this point is reached after an await, in a
+            # worker body, so the dialog may already be dismissed (TASK-32800.5).
+            self._set_approve_disabled(True)
             await self._approve(self.review)
             self._finished = True
-            self.query_one("#notes-recovery-status", Static).update(
+            self._set_status(
                 "Pairing approved. Sync or Refresh can be requested separately."
             )
         except (
@@ -149,8 +180,8 @@ class NotesRecoveryDialog(ModalScreen[None]):
             CharactersRAGDBError,
         ) as error:
             self._finished = True
-            self.query_one("#notes-recovery-approve", Button).disabled = True
-            self.query_one("#notes-recovery-status", Static).update(
+            self._set_approve_disabled(True)
+            self._set_status(
                 f"Pairing was not approved: {error}. Close and review again."
             )
         finally:

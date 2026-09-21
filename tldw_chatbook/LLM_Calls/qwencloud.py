@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+from tldw_chatbook.LLM_Calls.hosted_chat import _MAX_RETRY_AFTER_SECONDS
 
 import json
 import math
@@ -159,7 +160,10 @@ def _advance_retry_policy(
             error=error,
         )
     delay = retry_after if retry_after is not None else next_policy.get_backoff_time()
-    delay = max(0.0, min(delay, _MAX_RETRY_AFTER_SECONDS))
+    # Bounded like the shared engine's (hosted_chat._MAX_RETRY_AFTER_SECONDS,
+    # TASK-32853): the user-configurable api_base_url must never be able to
+    # pin this worker thread with a hostile Retry-After value.
+    delay = min(delay, _MAX_RETRY_AFTER_SECONDS)
     return next_policy, delay
 
 

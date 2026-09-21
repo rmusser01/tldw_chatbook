@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from textual.css.query import NoMatches
 
 from tldw_chatbook.Terminal.contracts import (
@@ -138,7 +139,16 @@ class ConsoleTerminalController:
                 pass
         try:
             return runtime.detach_view(view) is True
-        except Exception:
+        except Exception as error:
+            # TASK-32801.3: this module had no logger at all, so every
+            # runtime failure here was reported only as a False return.
+            # Type and message only -- the file sink runs with
+            # diagnose=True, so a traceback would dump frame locals.
+            logger.warning(
+                "Terminal detach_view failed ({}): {}",
+                type(error).__name__,
+                error,
+            )
             return False
 
     async def request_arm(self) -> bool:
@@ -295,7 +305,16 @@ class ConsoleTerminalController:
             return False
         try:
             focused = self._terminal_runtime().focus_session(session_id, view=view)
-        except Exception:
+        except Exception as error:
+            # TASK-32801.3: this module had no logger at all, so every
+            # runtime failure here was reported only as a False return.
+            # Type and message only -- the file sink runs with
+            # diagnose=True, so a traceback would dump frame locals.
+            logger.warning(
+                "Terminal focus_session failed ({}): {}",
+                type(error).__name__,
+                error,
+            )
             return False
         if focused is True:
             workspace = self._workspace_accessor()
@@ -314,7 +333,16 @@ class ConsoleTerminalController:
                 self._terminal_runtime().retry_cleanup(session_id, view=view)
                 is not None
             )
-        except Exception:
+        except Exception as error:
+            # TASK-32801.3: this module had no logger at all, so every
+            # runtime failure here was reported only as a False return.
+            # Type and message only -- the file sink runs with
+            # diagnose=True, so a traceback would dump frame locals.
+            logger.warning(
+                "Terminal retry_cleanup failed ({}): {}",
+                type(error).__name__,
+                error,
+            )
             return False
 
     def send_key(self, data: bytes) -> bool:
@@ -325,7 +353,16 @@ class ConsoleTerminalController:
             return False
         try:
             result = self._terminal_runtime().send_key(selected, data, view=view)
-        except Exception:
+        except Exception as error:
+            # TASK-32801.3: this module had no logger at all, so every
+            # runtime failure here was reported only as a False return.
+            # Type and message only -- the file sink runs with
+            # diagnose=True, so a traceback would dump frame locals.
+            logger.warning(
+                "Terminal send_key failed ({}): {}",
+                type(error).__name__,
+                error,
+            )
             return False
         return getattr(result, "accepted", False) is True
 

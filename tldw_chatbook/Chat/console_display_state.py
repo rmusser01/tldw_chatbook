@@ -91,8 +91,31 @@ def _clean(value: Any, fallback: str) -> str:
 
 
 def _safe_display_text(value: Any, fallback: str = "") -> str:
-    """Normalize user/source text before exposing it in Console display rows."""
-    return html_escape(_clean(value, fallback), quote=False)
+    """Normalize user/source text before exposing it in Console display rows.
+
+    TASK-32802.4: this used to HTML-entity-escape. Every destination these
+    values reach is a terminal surface that renders them literally --
+    ``Static(..., markup=False)`` in the staged-context tray, the staged
+    evidence strip, the Run Inspector and the settings estimate, or a
+    ``rich.text.Text`` built directly -- and none of them decode entities.
+    So a Library source titled ``R&D Report`` reached the user as
+    ``R&amp;D Report``, and text that arrived already encoded was doubled.
+
+    The same bug was found in live UAT on the Library side and fixed there
+    (``library_rag_state.py``, RAG-30/31). That module's comment warns that
+    deleting the escape is unsafe *if* you also unescape, because an
+    entity-encoded ``<script>`` payload would then slip past a scrubber
+    that already ran. That hazard is specific to its ordering: nothing here
+    ever calls ``html.unescape``, and the scrubbing that applies to this
+    data (``validate_text_input(allow_html=False)`` in the search handoff,
+    ``sanitize_string`` on the launch path) runs upstream on raw text and
+    does not depend on the result staying encoded.
+
+    The markup failure mode this never protected against -- a ``[/]`` in a
+    title raising ``MarkupError`` -- is fixed at the sinks, which is where
+    the surrounding comments already say it belongs.
+    """
+    return _clean(value, fallback)
 
 
 def resolve_assistant_identity_label(

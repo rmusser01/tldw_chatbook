@@ -1,0 +1,38 @@
+{
+  "recorded_at": "2026-09-20T18:53:56.448724+00:00",
+  "approved_head": "518143252eb43934f56c527f178d28cae2cda797",
+  "reviewed_head": "987724c43d0c9678a648aa0ea517e5cb4e34e24a",
+  "product_changes_since_approved_gallery": [
+    "tldw_chatbook/UI/MCP_Modules/mcp_recovery_review.py"
+  ],
+  "docstring_only_product_change": true,
+  "product_ast_without_docstrings_equal": true,
+  "styles_byte_identical": true,
+  "native_source_hash_preserved_as_original_evidence": true,
+  "source_sha256_before": "78ad6c82ca120d8cbfcbdb3b86c317656688802e5423e53ca39e4c74ca57cb30",
+  "source_sha256_after": "f433e86ff08e68af89577da9b7654eec382df295230325d063c9b4255e2ac2bc",
+  "qodo_dispositions": [
+    {
+      "thread": "PRRT_kwDOOcyyl86kLL_j",
+      "change": "Document ComposeResult return contract."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kLL_m",
+      "change": "Track VerticalScroll.scroll_y directly and assert overflow, home position and bottom completion; retain full rendered text comparison.",
+      "assessment": "Textual 8.2.8 Widget.region is screen-relative, so the previous comparison did follow scrolling. The new direct state assertion clarifies intent and strengthens diagnostics; prior full-text assertion already rejected incomplete traversal."
+    }
+  ],
+  "verification": {
+    "targeted_cases": 4,
+    "result": "passed",
+    "seconds": 33.99,
+    "ruff_check": "passed",
+    "ruff_format": "passed"
+  },
+  "visual_approval_remains_applicable": true,
+  "independent_review": {
+    "reviewer": "mcp_compact_review",
+    "blockers": [],
+    "assessment": "Direct scroll-position checks require overflow, Home zero and bottom completion while retaining full compositor-text reconstruction. Prior screen-relative region check was meaningful. Docstring is accurate; no behavior or styling changes."
+  }
+}

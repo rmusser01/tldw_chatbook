@@ -80,6 +80,7 @@ from loguru import logger  # noqa: E402
 from tldw_chatbook.Library.library_tool_contract import (  # noqa: E402
     LIBRARY_TOOL_DESCRIPTORS,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 #: Matches ``Tools/note_management_tools.py``'s ``_DEFAULT_USER_ID`` /
@@ -728,7 +729,7 @@ class TldwMCPServer:
                 return {
                     "id": note_id,
                     "title": title,
-                    "created": datetime.now().isoformat(),
+                    "created": utc_now_iso(),
                 }
             except Exception as e:
                 logger.error(f"Error in create_note: {e}")

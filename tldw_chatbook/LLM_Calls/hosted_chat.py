@@ -45,6 +45,11 @@ _MAX_METADATA_CHARS = 4 * 1024
 _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# Upper bound on a provider-named Retry-After sleep (seconds). The engine's
+# workers run on threads Stop cannot interrupt, and every hosted provider's
+# api_base_url is user-configurable -- a hostile endpoint naming
+# "Retry-After: 99999999" must never pin the worker for that long.
+_MAX_RETRY_AFTER_SECONDS = 60.0
 
 ReasoningDisposition = Literal["displayable", "proprietary", "ignored"]
 
@@ -99,6 +104,10 @@ class HostedHTTPTransportConfig:
     timeout: float
     retries: int
     retry_delay: float
+    # Provider-requested additional request headers (TASK-32851). The
+    # engine's Authorization/Content-Type pair is not overridable; any other
+    # header a provider's wire contract requires rides through here.
+    extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True)
@@ -537,11 +546,25 @@ def owned_json_post(
         or not math.isfinite(float(config.retry_delay))
         or config.retry_delay < 0
         or not isinstance(payload, Mapping)
+        or not isinstance(config.extra_headers, Mapping)
+        or any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(value, str)
+            or not value
+            or name.lower() in {"authorization", "content-type"}
+            for name, value in config.extra_headers.items()
+        )
     ):
         raise _transport_error(config.provider, "transport configuration is invalid")
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+        **config.extra_headers,
+    }
     session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
@@ -564,10 +587,7 @@ def owned_json_post(
             try:
                 response = session.post(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {config.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                     json=deepcopy(dict(payload)),
                     timeout=float(config.timeout),
                     stream=True,
@@ -887,13 +907,22 @@ def _retry_delay(
     if raw_value is not None:
         try:
             if raw_value.strip().isdigit():
-                delay = float(int(raw_value.strip()))
-            else:
-                from email.utils import parsedate_to_datetime
+                # Bounded (TASK-32853): api_base_url is user-configurable for
+                # every hosted provider, so a misbehaving endpoint can name
+                # any delay -- and Stop cancels the task but cannot interrupt
+                # this worker thread's sleep. Honour the header only up to
+                # the cap; a longer demand still retries, after the cap.
+                return min(
+                    max(0.0, float(int(raw_value.strip()))),
+                    _MAX_RETRY_AFTER_SECONDS,
+                )
+            from email.utils import parsedate_to_datetime
 
-                parsed = parsedate_to_datetime(raw_value)
-                delay = parsed.timestamp() - time.time()
-            return max(0.0, min(delay, _MAX_RETRY_AFTER_SECONDS))
+            parsed = parsedate_to_datetime(raw_value)
+            return min(
+                max(0.0, parsed.timestamp() - time.time()),
+                _MAX_RETRY_AFTER_SECONDS,
+            )
         except (OverflowError, TypeError, ValueError):
             pass
     return min(retry_delay * (2**attempt), _MAX_RETRY_AFTER_SECONDS)

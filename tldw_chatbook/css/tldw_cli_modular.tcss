@@ -2287,6 +2287,39 @@ FileSave.-compact InputBar Input {
 }
 
 
+MCPRecoveryReviewDialog #confirmation-dialog {
+    width: $ds-size-80;
+    max-width: $ds-percent-96;
+    height: $ds-percent-90;
+    max-height: $ds-size-40;
+    overflow: hidden hidden;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+MCPRecoveryReviewDialog #mcp-recovery-review-body {
+    height: $ds-height-fill;
+    min-height: $ds-space-0;
+    overflow-x: hidden;
+    border: tall $ds-control-edge;
+    margin-bottom: $ds-space-stack;
+}
+
+MCPRecoveryReviewDialog #mcp-recovery-review-body:focus {
+    border: tall $ds-focus-accent;
+}
+
+MCPRecoveryReviewDialog .dialog-message {
+    text-align: left;
+    color: $ds-text-primary;
+    margin: $ds-space-0;
+}
+
+MCPRecoveryReviewDialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+
 RoleplayDraftRecoveryDialog {
     align: center middle;
 }

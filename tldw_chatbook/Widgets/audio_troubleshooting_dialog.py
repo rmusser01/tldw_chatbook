@@ -247,12 +247,14 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
             await asyncio.sleep(0.5)  # Brief delay for UI
 
             try:
-                # _get_devices_safe is a blocking, synchronous enumeration
-                # (sounddevice query) -- it must run as a THREAD worker:
-                # without thread=True the async worker raises
-                # WorkerError('Request to run a non-async function as an
-                # async worker') and the device scan never completes
-                # (TASK-32830).
+                # thread=True is required, not optional: `_get_devices_safe`
+                # is a plain `def` (a blocking sounddevice enumeration), and
+                # Textual's async worker raises WorkerError for a non-coroutine
+                # target, so the device scan never completes. `exit_on_error`
+                # also defaults to True, so without thread=True the dialog takes
+                # the whole app down when it opens. The enumeration blocks and
+                # belongs off the loop anyway. group= dedups concurrent opens
+                # (TASK-32800.3 / TASK-32830).
                 devices_worker = self.run_worker(
                     self._get_devices_safe,
                     thread=True,

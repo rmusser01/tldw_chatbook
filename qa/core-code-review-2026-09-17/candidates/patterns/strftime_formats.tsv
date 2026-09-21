@@ -1,0 +1,17 @@
+9	%Y%m%d_%H%M%S
+7	%Y-%m-%d %H:%M:%S
+5	%Y-%m-%dT%H:%M:%S.%fZ
+4	%Y-%m-%d %H:%M
+3	%H:%M:%S
+2	%Y-%m-%d %H:%M UTC
+2	%Y-%m-%d
+2	%Y-%m-%dT%H:%M:%fZ
+2	%Y-%m-%dT%H:%M:%S.%f
+2	%Y%m%d-%H%M%S
+1	%Y-%m-%d %H:%M %Z
+1	%Y-%m-%dT%H:%M:%SZ
+1	%A
+1	%H:%M:%S UTC
+1	%Y%m%d-%H%M%S-%f
+1	%b %d, %Y
+1	%Y%m%dT%H%M%S

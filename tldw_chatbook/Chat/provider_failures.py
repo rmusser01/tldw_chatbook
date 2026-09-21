@@ -49,9 +49,10 @@ def _provider_error_body_detail(response: object) -> str:
     except (ValueError, TypeError):
         pass
     detail = " ".join(str(detail).split())
-    if len(detail) > 240:
-        detail = detail[:237] + "..."
-    return detail
+    # TASK-32808.3: shared truncator, single-char ellipsis (Console renders it).
+    from tldw_chatbook.Utils.Utils import truncate
+
+    return truncate(detail, 240)
 
 
 def describe_stream_failure(exc: BaseException) -> str:

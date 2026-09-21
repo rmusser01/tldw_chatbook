@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from tldw_chatbook.Utils.Utils import coerce_bool_flag
+
 CONSOLE_BACKGROUND_EFFECTS = frozenset({"none", "snow", "rain", "matrix"})
 CONSOLE_BACKGROUND_SCOPES = frozenset({"transcript", "workbench"})
 CONSOLE_BACKGROUND_INTENSITIES = frozenset({"low", "medium", "high"})
@@ -39,18 +41,6 @@ class ConsoleBackgroundEffectSettings:
         }
 
 
-def _coerce_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "off"}:
-            return False
-    return default
-
-
 def _coerce_choice(value: object, allowed: frozenset[str], default: str) -> str:
     candidate = str(value or "").strip().lower()
     return candidate if candidate in allowed else default
@@ -72,7 +62,7 @@ def normalize_console_background_effects(
     """Normalize raw config values to safe Console background effect settings."""
     raw = values if isinstance(values, Mapping) else {}
     return ConsoleBackgroundEffectSettings(
-        enabled=_coerce_bool(raw.get("enabled"), False),
+        enabled=coerce_bool_flag(raw.get("enabled"), False),
         effect=_coerce_choice(raw.get("effect"), CONSOLE_BACKGROUND_EFFECTS, "none"),
         scope=_coerce_choice(raw.get("scope"), CONSOLE_BACKGROUND_SCOPES, "transcript"),
         intensity=_coerce_choice(

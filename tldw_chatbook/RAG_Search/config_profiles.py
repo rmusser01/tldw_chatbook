@@ -15,7 +15,6 @@ from weakref import WeakSet
 from typing import Dict, Any, Optional, List, Literal, Tuple
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from datetime import datetime
 import hashlib
 from loguru import logger
 
@@ -23,6 +22,7 @@ from .simplified.config import RAGConfig
 from .reranker import RerankingConfig
 from .parallel_processor import ProcessingConfig
 from ..Backup_Recovery.storage_admission import acquire_storage
+from ..Utils.atomic_file_ops import atomic_write_text
 from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..Backup_Recovery.rag_definition_participant import (
     definition_experiment_operation,
@@ -31,6 +31,7 @@ from ..Backup_Recovery.rag_definition_participant import (
 )
 from ..config import get_user_data_dir
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 _definition_writes = threading.local()
@@ -649,8 +650,16 @@ class ConfigProfileManager:
         """Write a single user profile to its own file (never builtins)."""
         if profile.read_only:
             return
-        with self._definition_write(), open(self._profile_path(profile.id), "w") as f:
-            json.dump(profile.to_dict(), f, indent=2, default=str)
+        # task-32808.5: a bare truncate-then-write leaves a half-written or
+        # empty profile JSON if the process dies mid-write. Route through the
+        # shared temp-file + fsync + os.replace helper so a crash leaves the
+        # previous profile intact rather than a corrupt one. `default=str` and
+        # the ASCII-escaping default match the previous `json.dump` byte-for-byte.
+        with self._definition_write():
+            atomic_write_text(
+                self._profile_path(profile.id),
+                json.dumps(profile.to_dict(), indent=2, default=str),
+            )
 
     def _load_custom_profiles(self):
         """Load user profiles from per-file JSON; migrate a legacy blob once.
@@ -1236,7 +1245,7 @@ class ConfigProfileManager:
                         {
                             "summary": summary,
                             "detailed_results": results,
-                            "completed_at": datetime.now().isoformat(),
+                            "completed_at": utc_now_iso(),
                         },
                         f,
                         indent=2,

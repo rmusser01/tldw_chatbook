@@ -33,6 +33,14 @@ CHECKERS = (
     # TASK-21593. Every shipped database index must have an explicit query-plan
     # decision instead of being assumed useful because it exists.
     "scripts/check_index_plan_pins.py",
+    # TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime review
+    # were one defect class with no guard: a synchronous callable handed to
+    # run_worker, and a query_one resuming into a removed subtree.
+    "scripts/check_textual_worker_contract.py",
+    # TASK-32803.1 / ADR-173. Timestamp writers must go through the shared UTC
+    # helper: datetime.utcnow() is forbidden and naive datetime.now().isoformat()
+    # is ratcheted.
+    "scripts/check_timestamp_writers.py",
 )
 
 

@@ -191,10 +191,14 @@ class HookOutcome:
 
 
 def _truncate(text: str) -> str:
-    """Cap hook-produced text at HOOK_IO_BUDGET_CHARS *total* (marker included)."""
-    if len(text) <= HOOK_IO_BUDGET_CHARS:
-        return text
-    return text[: HOOK_IO_BUDGET_CHARS - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    """Cap hook-produced text at HOOK_IO_BUDGET_CHARS *total* (marker included).
+
+    TASK-32808.3: delegates to the shared `truncate` with this module's own
+    `"…[truncated]"` marker — byte-identical to the previous local body.
+    """
+    from tldw_chatbook.Utils.Utils import truncate
+
+    return truncate(text, HOOK_IO_BUDGET_CHARS, marker=_TRUNCATION_MARKER)
 
 
 # Public alias (ruling R4): downstream tasks use this name, never the private helper.

@@ -1,11 +1,11 @@
 ---
 id: TASK-32823
 title: Keep selected MCP tool details current during catalog refresh
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 21:46'
-updated_date: '2026-09-20 17:39'
+updated_date: '2026-09-20 18:03'
 labels:
   - mcp
   - ui
@@ -42,5 +42,7 @@ Selected MCP tool detail now reconciles catalog refresh without replacing unchan
 
 Qodo closeout plan: verify the alleged mount race against synchronous Textual registration; add focused permission-input refresh regressions and isolated reconciliation coverage; document the public refresh/token contract. Fix only reproduced ownership/currentness defects under existing ADR-161/170 and ADR-032, then rerun targeted tests and review.
 
-Qodo follow-up: reproduced and fixed policy-only refresh equality; current effective state, exact-input rules and displayed profile-wide session grants participate. Added public API docs, 3 isolated reconciliation cases, 3 policy component cases and 2 real mount-boundary cases. Mount orphan allegation is unsupported by actual Textual8.2.8 registration and both real-boundary probes; no speculative mount change. 316 current-source targeted passes and native006 lifecycle pass. Six gallery captures are pixel-identical; two differ only by blinking input caret. Independent review: no blockers. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/qodo/README.md. Current-head CI/review and merge receipt remain.
+Qodo follow-up: reproduced and fixed policy-only refresh equality; current effective state, exact-input rules and displayed profile-wide session grants participate. Added public API docs, 3 isolated reconciliation cases, 3 policy component cases and 2 real mount-boundary cases. Mount orphan allegation is unsupported by actual Textual 8.2.8 registration and both real-boundary probes; no speculative mount change. 316 current-source targeted passes and native006 lifecycle pass. Six gallery captures are pixel-identical; two differ only by blinking input caret. Independent review: no blockers. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/qodo/README.md. Current-head CI/review and merge receipt remain.
+
+Closed through PR2757, merged into dev at 62d43190ce3ca21bda0f0ff03e5148971eedc7ca on 2026-09-20. Actual merge tree equals verified d93498014f. Current-head Fast Lane 1,152 tests and all applicable CI checks pass; 316 local targeted cases and final native evidence qualify review fixes. All Qodo threads resolved: documentation/coverage fixed, orphan-mount allegation declined with real Textual boundary tests and independent review. Owner visual approval preserved; no rebase conflicts. Merge receipt: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/pr2757-closeout.json. Existing ADR-161/170 and ADR-032 apply.
 <!-- SECTION:NOTES:END -->

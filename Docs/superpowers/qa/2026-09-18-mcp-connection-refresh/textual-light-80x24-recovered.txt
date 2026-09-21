@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││   ← All servers  ◌ Stale  wire-review    ││                  │
+│ Source       ││        Edit          Connect          D  ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▎   ││  1 tools discovered; not currently       ││  ◌ Stale         │
+│ ▊Local  ▼▎   ││  connected.                              ││  wire-review     │
+│ ▊▁▁▁▁▁▁▁▁▎   ││                                          ││  Why · Not       │
+│              ││  Command ·                               ││  connected       │
+│ Servers      ││  /Users/macbook-dev/Documents/GitHub/t   ││  Connect         │
+│  ◌ stale     ││  ldw_chatbook/.worktrees/component-pat   ││  View details    │
+│  · ◦ off     ││  tern-library/.venv/b╭─────────────────────────────────────╮ │
+│  · ⌂         ││  /Users/macbook-dev/D│                                     │ │
+│  built-in    ││  ldw_chatbook/.worktr│ wire-review: refreshed — 1 tool.    │ │
+│    All       ││  tern-library/Tests/M│                                     │ │
+│  servers  ▆▆ ││  _catalog_server.py  ╰─────────────────────────────────────╯ │
+│  ◦ ⌂ t…        │ /private/tmp/tldw-32830-native-002/fi     ││                │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

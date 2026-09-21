@@ -1,0 +1,60 @@
+---
+id: TASK-32830
+title: Refresh connected MCP catalogs through actual discovery
+status: Done
+assignee:
+  - '@codex'
+created_date: '2026-09-19 02:02'
+updated_date: '2026-09-20 23:04'
+labels:
+  - mcp
+  - ui
+  - lifecycle
+dependencies: []
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Refresh tools must discover the current server catalog instead of reporting success with cached tools. Connection state and existing permissions must remain truthful before and after refresh.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Refreshing a connected local profile replaces cached discovery with the current tools, resources and prompts while keeping it connected.
+- [x] #2 Refreshing an initially disconnected profile discovers fresh capabilities and restores its disconnected state.
+- [x] #3 Observe and launch denials leave an existing session and its persisted catalog intact; failed refresh remains recoverable through the UI.
+- [x] #4 Targeted regressions and a real local stdio journey verify catalog changes, failure recovery and process cleanup with documented visual bounds.
+- [x] #5 A refresh rejected by launch permission or an existing connection attempt leaves that other pending connection running.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR path: N/A; existing ADR-111 and ADR-161 apply. Reason: restore existing catalog-refresh semantics within current service, transport and permission boundaries. Resume existing PR2714 from merged PR2713 dev 5e0f9f82c3. 1. Re-run saved real-stdio regressions before integrating the service patch. 2. Integrate the minimal service repair while preserving current boundaries. 3. Modernize and validate the native evidence runner; run focused neighbors and fresh four-cell native qualification. 4. Complete independent review and update the existing PR with a current visual gallery. Owner visual approval and current-head CI/review remain merge gates.
+
+Qodo follow-up: verify the reported cleanup interleaving against real client scheduling, pin any ownership issue with a focused regression, validate fixture state/trace paths beneath an explicit trusted root with malicious-path coverage, document both public methods, and add isolated service branch tests alongside existing wire tests. Re-run affected checks and native evidence for changes, preserve the approved UI, then answer all review threads and complete current-head CI/latest-dev merge gates. Existing ADR-111/161 apply; no new architecture or ADR.
+
+Qodo second pass: pin canonical profile-ID handling and failed temporary cleanup with targeted regressions, then normalize ownership keys and surface incomplete cleanup through the existing failure path. Add bounded malformed-input handling to the test fixture and document the shared policy helper. Re-run affected checks and fresh native qualification before updating the same PR. No new public API/ADR; existing connection-state and cleanup acceptance criteria apply.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Refresh now uses the existing connect/discover path, preserving the original connected state and observe/launch gates. Post-connect failures clean up only the established session identity; rejected refresh leaves another pending connection untouched.
+
+Validation: 15 distinct targeted cases pass, including nine isolated real-stdio regressions. Four native dark/light 80x24/170x48 journeys and sixteen rendered/inspected captures verify catalog changes, failure, retry and final disconnect. All twenty fixture processes and the app exited; defaults unchanged, lock released and ten private databases healthy. All seven preflight guards pass; no introduced Ruff diagnostics, new files and changed ranges formatted. Independent review findings on pending connection ownership and atomic fixture release are resolved.
+
+Evidence: Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/README.md. Scope is local stdio catalog lifecycle; compact toolbar clipping belongs to PR2712, connected execution and further screen reviews remain open. No full test sweep.
+
+ADR required: no. Existing ADR-161 and ADR-111 apply; service/transport/policy/storage boundaries unchanged. Files: local_control_service.py, real stdio fixture/tests, QA evidence and review ledgers. Owner visual approval and current-head remote checks remain merge gates.
+
+Integrated PR2714 on merged PR2713 dev 5e0f9f82c3 without conflicts. Four real-stdio regressions failed on unchanged dev; all 15 service cases pass after repair. Current qualification totals 49 distinct focused cases, seven artifact guards, no introduced lint diagnostics and independent review clear. Fixed reviewer finding in the native harness by moving fixture files into its exclusive evidence directory; live sentinel symlinks remain unchanged. Four real native cells and 32 inspected SVGs verify fresh catalog, failure/retry, original connection state and final disconnect. All twenty fixture processes and app exited, private databases healthy, lock released, defaults unchanged, zero network attempts. Immediate compact toasts overlap inspector actions; recorded with feedback captures as remaining UI follow-up, alongside separate PR2712 toolbar clipping and compact catalog scrolling. Current QA: Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/README.md. Existing ADR-111 and ADR-161, no new ADR. Keep In Progress pending current-head CI/review and fresh owner visual approval.
+
+Owner approved gallery at f8d1731abc. Rebased without conflicts onto dev 7bfd330046; no MCP/UI/CSS overlap. Qodo follow-up validates fixture paths (six red escapes, eight green cases), documents APIs and adds ten isolated service cases plus a real concurrent replacement regression. Independent review finds the reported race unreachable with the current non-yielding descriptor/owned teardown. 139 focused cases and seven preflight guards pass, no introduced lint. Native run 003 passes four cells/32 inspected captures, twenty children and app reaped, unchanged defaults, healthy DBs, lock released and zero network. UI/CSS and executable service code unchanged by follow-up; approved gallery retained. Final docstring-only change has explicit AST equivalence receipt. Keep In Progress pending updated-head remote CI/Qodo and merge.
+
+Second Qodo pass fixed accepted padded-ID ownership and successful refresh despite retained temporary session. Four focused boundary failures plus six malformed/real-cleanup cases reproduced before repair. 41 affected cases and six neighbors pass (47 distinct); updated real control-plane test verifies persisted ok=False and successful later disconnect. Strict test-local Pydantic models plus shared size validation reject malformed fixture requests and continue serving; policy helper documented. Independent review and seven preflight guards clear, no introduced lint. Final native004 passes four cells and 32 captures with exact source hashes, twenty children/app absent, unchanged defaults/sentinels, healthy databases, released lock and zero network. Thirty captures match native003 after fixture-directory normalization; two notification timing differences inspected, approved controls/styles unchanged. Current-head CI/Qodo/final dev review remain merge gates.
+
+Merged as PR2714 into dev at e4096e205906e34dcc7482a225594a83ab6c4b01 on 2026-09-20 after owner visual approval. Final head f810b64a371 rebased conflict-free onto 8dc7d38974; all six patches unchanged. 41 affected cases pass again, all eight current artifact guards pass (network-enabled Mermaid retry), and native004 source/runner hashes match. CI run35542566467 passes 1152 Fast Lane cases and required artifact gate on the exact merged tree. Qodo reports zero open bugs/rules; all nine threads resolved or dismissed. Existing ADR-111/161 apply. Closeout receipt in current-dev/merge-closeout.json. Separate PR2716 resumes tool-result failure handling.
+<!-- SECTION:NOTES:END -->

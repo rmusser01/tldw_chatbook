@@ -1,0 +1,271 @@
+{
+  "pid": 68932,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": {
+        "summary": "Failed \u00b7 0ms\nFixture tool failed; use a different message.",
+        "audit": {
+          "ts": "2026-09-20T23:32:28.201652+00:00",
+          "server_key": "local:execution-review",
+          "tool_name": "review_echo",
+          "initiator": "test",
+          "decision": "approved",
+          "ok": false,
+          "status": "error",
+          "duration_ms": 39,
+          "error_category": "execution_failed",
+          "exception_type": "RuntimeError",
+          "status_code": null,
+          "argument_names": [
+            "message"
+          ],
+          "unknown_argument_count": 0,
+          "result_type": "none",
+          "result_size": 0
+        },
+        "retry_enabled": true
+      },
+      "recovery": {
+        "summary": "OK \u00b7 0ms \u00b7 1 result",
+        "audit": {
+          "ts": "2026-09-20T23:32:29.733369+00:00",
+          "server_key": "local:execution-review",
+          "tool_name": "review_echo",
+          "initiator": "test",
+          "decision": "approved",
+          "ok": true,
+          "status": "success",
+          "duration_ms": 31,
+          "error_category": null,
+          "exception_type": null,
+          "status_code": null,
+          "argument_names": [
+            "message"
+          ],
+          "unknown_argument_count": 0,
+          "result_type": "dict",
+          "result_size": 1
+        },
+        "retry_enabled": true
+      },
+      "same_connection": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "failure": {
+        "summary": "Failed \u00b7 0ms\nFixture tool failed; use a different message.",
+        "audit": {
+          "ts": "2026-09-20T23:32:31.872530+00:00",
+          "server_key": "local:execution-review",
+          "tool_name": "review_echo",
+          "initiator": "test",
+          "decision": "approved",
+          "ok": false,
+          "status": "error",
+          "duration_ms": 57,
+          "error_category": "execution_failed",
+          "exception_type": "RuntimeError",
+          "status_code": null,
+          "argument_names": [
+            "message"
+          ],
+          "unknown_argument_count": 0,
+          "result_type": "none",
+          "result_size": 0
+        },
+        "retry_enabled": true
+      },
+      "recovery": {
+        "summary": "OK \u00b7 0ms \u00b7 1 result",
+        "audit": {
+          "ts": "2026-09-20T23:32:33.590830+00:00",
+          "server_key": "local:execution-review",
+          "tool_name": "review_echo",
+          "initiator": "test",
+          "decision": "approved",
+          "ok": true,
+          "status": "success",
+          "duration_ms": 38,
+          "error_category": null,
+          "exception_type": null,
+          "status_code": null,
+          "argument_names": [
+            "message"
+          ],
+          "unknown_argument_count": 0,
+          "result_type": "dict",
+          "result_size": 1
+        },
+        "retry_enabled": true
+      },
+      "same_connection": true
+    }
+  ],
+  "requested_size": [
+    170,
+    48
+  ],
+  "module_origins": {
+    "tldw_chatbook.MCP.client": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/client.py",
+    "tldw_chatbook.MCP.local_control_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/local_control_service.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/unified_control_plane_service.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_tools_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "b9074142052cce2d258f25bc96398f280d43435c401571a1d3746c6d6303b94d",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "f62f4f0afb60af704a4a395505b2ab3ddcad2173448b2428ccffaafcf725c253",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "671f887d71a3f96ecacfd2df5e1b6b62ca5b584dd49b3683f720f67d939dd0df",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "tldw_chatbook/MCP/client.py": "725fcd87ac8468c310d9fd89bb71e1fd60051fa72992eaa078fcf2d752f845bb",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Utils/input_validation.py": "38abf83896986846cc8c673b2ef2e15995c00f4720b26cb435cb12407669f74b",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "cd7a4ae19bc1bfcde77d136623e1fcf861c7c26547e9910162f55fb28a3bfcca",
+    "Tests/MCP/fixtures/stdio_tool_result_server.py": "00a85b39db22a3578562bc4103d223b76467bf034935eb2a6a7f010253f353d6"
+  },
+  "runner_sha256": "037eded57ab74332e6640e6dc2e80425b309f0068fc64c5885a0e8397671ec49",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "fixture_pid": 69067,
+  "audit": [
+    {
+      "ts": "2026-09-20T23:32:33.590830+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 38,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-20T23:32:31.872530+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": false,
+      "status": "error",
+      "duration_ms": 57,
+      "error_category": "execution_failed",
+      "exception_type": "RuntimeError",
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-20T23:32:29.733369+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 31,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-20T23:32:28.201652+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": false,
+      "status": "error",
+      "duration_ms": 39,
+      "error_category": "execution_failed",
+      "exception_type": "RuntimeError",
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    }
+  ],
+  "wire_requests": [
+    {
+      "pid": 69067,
+      "method": "initialize"
+    },
+    {
+      "pid": 69067,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 69067,
+      "method": "tools/list"
+    },
+    {
+      "pid": 69067,
+      "method": "resources/list"
+    },
+    {
+      "pid": 69067,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 69067,
+      "method": "tools/call"
+    },
+    {
+      "pid": 69067,
+      "method": "tools/call"
+    },
+    {
+      "pid": 69067,
+      "method": "tools/call"
+    },
+    {
+      "pid": 69067,
+      "method": "tools/call"
+    }
+  ],
+  "fixture_returncode": -15,
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

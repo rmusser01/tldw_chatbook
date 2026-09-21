@@ -396,58 +396,63 @@ def summarize_with_llama(
             "stream": streaming,
         }
 
-        # Create a session
-        session = create_default_session()
+        # TASK-32854: shared transport (session reuse, bounded Retry-After,
+        # per-attempt closure) with the adapter's real retry set preserved.
+        # Lazy import: Summarization_General_Lib imports this module for its
+        # dispatch table, so a module-level import would be circular.
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-        # Load config values
         retry_count = int(llama_config.get("api_retries", 3))
         retry_delay = int(llama_config.get("api_retry_delay", 5))
-
-        # Configure the retry strategy
-        retry_strategy = Retry(
-            total=retry_count,  # Total number of retries
-            backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-            status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-        )
-
-        # Create the adapter
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-
-        # Mount adapters for both HTTP and HTTPS
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
         logging.debug("Llama: Submitting request to API endpoint")
-        response = session.post(api_url, headers=headers, json=data, stream=streaming)
+        response = _post_with_retry(
+            url=api_url,
+            headers=headers,
+            payload=data,
+            streaming=streaming,
+            max_attempts=retry_count + 1,
+            retry_delay=float(retry_delay),
+            timeout=120.0,
+            retry_status_codes=frozenset({429, 502, 503, 504}),
+        )
 
         if response.status_code == 200:
             if streaming:
                 logging.debug("Llama: Processing streaming response")
 
                 def stream_generator():
-                    for line in response.iter_lines():
-                        if line:
-                            decoded_line = line.decode("utf-8").strip()
-                            if decoded_line.startswith("data:"):
-                                data_str = decoded_line[len("data:") :].strip()
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data_json = json.loads(data_str)
-                                    if (
-                                        "choices" in data_json
-                                        and len(data_json["choices"]) > 0
-                                    ):
-                                        delta = data_json["choices"][0].get("delta", {})
-                                        if "content" in delta:
-                                            content = delta["content"]
-                                            yield content
-                                except json.JSONDecodeError:
-                                    logging.error(
-                                        "Llama: Failed to decode streamed JSON; "
-                                        "line_length=%s",
-                                        len(decoded_line),
-                                    )
-                                    continue
+                    try:
+                        for line in response.iter_lines():
+                            if line:
+                                decoded_line = line.decode("utf-8").strip()
+                                if decoded_line.startswith("data:"):
+                                    data_str = decoded_line[len("data:") :].strip()
+                                    if data_str == "[DONE]":
+                                        break
+                                    try:
+                                        data_json = json.loads(data_str)
+                                        if (
+                                            "choices" in data_json
+                                            and len(data_json["choices"]) > 0
+                                        ):
+                                            delta = data_json["choices"][0].get(
+                                                "delta", {}
+                                            )
+                                            if "content" in delta:
+                                                content = delta["content"]
+                                                yield content
+                                    except json.JSONDecodeError:
+                                        logging.error(
+                                            "Llama: Failed to decode streamed JSON; "
+                                            "line_length=%s",
+                                            len(decoded_line),
+                                        )
+                                        continue
+                    finally:
+                        # TASK-32854: clean exhaustion AND consumer
+                        # abandonment both release the response (the old
+                        # generator never closed it on any path).
+                        response.close()
 
                 return stream_generator()
             else:
@@ -516,7 +521,10 @@ def summarize_with_llama(
                 "Llama: API request failed; status_code=%s",
                 response.status_code,
             )
-            return f"Llama: API request failed: {response.text}"
+            # TASK-32854: the response BODY no longer reaches the returned
+            # error string (the old branch interpolated response.text).
+            response.close()
+            return f"Llama: API request failed: {response.status_code}"
 
     except Exception as e:
         logging.error(
@@ -1309,9 +1317,10 @@ def summarize_with_vllm(
     streaming=False,
 ):
     try:
-        # task-32805.4: bind config unconditionally. It was previously assigned
-        # only on the no-key branch, so an explicit api_key raised
-        # UnboundLocalError at the retry-count reads below.
+        # TASK-32854 (the 2026-09-17 P2): loaded_config_data was bound only on
+        # the no-key branch while the transport reads it unconditionally, so
+        # every call that PASSED an api_key crashed with UnboundLocalError.
+        # Load once, before the branch.
         loaded_config_data = load_settings()
         # API key validation
         if not api_key or api_key.strip() == "":
@@ -1415,84 +1424,82 @@ def summarize_with_vllm(
             "stream": streaming,
         }
 
-        # Setup URL
-        url = load_settings()["vllm_api"]["api_ip"]
+        # Setup URL (the hoisted load; the old second load_settings() call
+        # here cost another full config read per request)
+        url = loaded_config_data["vllm_api"]["api_ip"]
 
         # Handle streaming
         if streaming:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded
+            # Retry-After, per-attempt closure); the adapter's real retry
+            # set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
             retry_delay = loaded_config_data["vllm_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=url,
+                headers=headers,
+                payload=data,
+                streaming=True,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(url, headers=headers, json=data, stream=True)
             response.raise_for_status()
 
             def stream_generator():
-                collected_messages = ""
-                for line in response.iter_lines():
-                    line = line.decode("utf-8").strip()
+                try:
+                    collected_messages = ""
+                    for line in response.iter_lines():
+                        line = line.decode("utf-8").strip()
 
-                    if line == "":
-                        continue
-
-                    if line.startswith("data: "):
-                        data_str = line[len("data: ") :]
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data_json = json.loads(data_str)
-                            chunk = data_json["choices"][0]["delta"].get("content", "")
-                            collected_messages += chunk
-                            yield chunk
-                        except json.JSONDecodeError:
-                            logging.error(
-                                "vLLM Summarize: Failed to decode streamed JSON; "
-                                "line_length=%s",
-                                len(line),
-                            )
+                        if line == "":
                             continue
+
+                        if line.startswith("data: "):
+                            data_str = line[len("data: ") :]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data_json = json.loads(data_str)
+                                chunk = data_json["choices"][0]["delta"].get(
+                                    "content", ""
+                                )
+                                collected_messages += chunk
+                                yield chunk
+                            except json.JSONDecodeError:
+                                logging.error(
+                                    "vLLM Summarize: Failed to decode streamed JSON; "
+                                    "line_length=%s",
+                                    len(line),
+                                )
+                                continue
+                finally:
+                    # TASK-32854: clean exhaustion AND consumer abandonment
+                    # both release the response (the old generator never
+                    # closed it on any path).
+                    response.close()
 
             return stream_generator()
         # Handle non-streaming
         else:
-            # Create a session
-            session = create_default_session()
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
             retry_delay = loaded_config_data["vllm_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=url,
+                headers=headers,
+                payload=data,
+                streaming=False,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("vLLM Summarization: Posting request")
-            response = session.post(url, headers=headers, json=data)
 
             if response.status_code == 200:
                 response_data = response.json()

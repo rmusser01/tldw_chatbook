@@ -6,13 +6,13 @@ import json
 import logging
 import sqlite3
 import uuid as uuid_module
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 # Local Imports
 from ..DB.Client_Media_DB_v2 import InputError, MediaDatabase
 from ..Metrics.metrics_logger import log_counter
 from .auto_selection import AUTO_SENTINEL
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
 #
@@ -674,7 +674,7 @@ class ChunkingInteropService:
             "name": template["name"],
             "description": template["description"],
             "template_json": template_data,
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": utc_now_iso(),
             "version": "1.0",
             "source": "tldw_chatbook",
         }

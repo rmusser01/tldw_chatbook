@@ -23,6 +23,22 @@ from loguru import logger as loguru_logger
 
 from Tests.ast_shape import stable_dump
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
+
+import tldw_chatbook.LLM_Calls.recovery_review as recovery_review
+
+
+def _is_lazy_provider_stream(value: object) -> bool:
+    """Lazy-stream predicate for summarize_with_* streaming returns.
+
+    TASK-32628's recovery admission retains every Iterator a provider call
+    returns behind recovery_review._OpenAIStream, so the laziness contracts
+    these tests pin must accept both the raw generator and the wrapper --
+    the wrapper defers all iteration and close() to the wrapped stream.
+    """
+    return inspect.isgenerator(value) or isinstance(
+        value, recovery_review._OpenAIStream
+    )
+
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 from tldw_chatbook.LLM_Calls import (
     Summarization_General_Lib as general_summarization,
@@ -119,6 +135,7 @@ class _FakeResponse:
         self._lines = lines
         self.text = text
         self.iter_lines_started = False
+        self.iter_content_started = False
         self.closed = False
 
     def json(self) -> object:
@@ -129,6 +146,15 @@ class _FakeResponse:
     def iter_lines(self) -> Iterator[bytes]:
         self.iter_lines_started = True
         yield from self._lines
+
+    def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        # TASK-32853: the hosted_chat engine owns the response and decodes
+        # SSE from iter_content chunks; the migrated summarize paths read
+        # this seam instead of iter_lines.
+        del chunk_size
+        self.iter_content_started = True
+        if self._lines:
+            yield b"\n\n".join(self._lines) + b"\n\n"
 
     def raise_for_status(self) -> None:
         return None
@@ -492,6 +518,19 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
         local_summarization,
         "create_default_session",
         lambda: _FakeSession(response),
+    )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
+    # TASK-32854: llama posts through the shared _post_with_retry transport
+    # in Summarization_General_Lib, so the session seam moves there too
+    # (both modules patched while the remaining local handlers migrate).
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
     )
     return local_summarization.summarize_with_llama(
         "fixed input",
@@ -2302,7 +2341,11 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     )
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 10,
+        # TASK-32853 groq + anthropic migrations: the non-200 status log
+        # site and the per-attempt network log site joined the deleted
+        # ledger (10 -> 12). deepseek/mistral keep their frozen status
+        # logs verbatim (bound to the typed error) per the freeze.
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
@@ -2691,6 +2734,11 @@ def test_local_core_llama_malformed_stream_logs_only_safe_length(
         "create_default_session",
         lambda: _FakeSession(response),
     )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         generator = local_summarization.summarize_with_llama(
@@ -2733,6 +2781,11 @@ def test_local_core_llama_success_hides_prompt_and_endpoint_canaries(
         "create_default_session",
         lambda: _FakeSession(response),
     )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         result = local_summarization.summarize_with_llama(
@@ -2756,6 +2809,11 @@ def test_local_core_llama_accepts_non_string_system_message_as_before(
         local_summarization,
         "create_default_session",
         lambda: _FakeSession(response),
+    )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
     )
 
     result = local_summarization.summarize_with_llama(
@@ -2812,6 +2870,11 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
         local_summarization,
         "create_default_session",
         lambda: _FakeSession(response),
+    )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
@@ -4264,8 +4327,8 @@ def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
             "fixed prompt",
             streaming=GENERAL_OPENAI_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
-        assert response.iter_lines_started is False
+        assert _is_lazy_provider_stream(stream)
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
@@ -4273,9 +4336,12 @@ def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
     assert post_args == ("http://openai.invalid/v1/chat/completions",)
-    assert post_kwargs["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
+    # TASK-32853 re-key: the engine always posts a real boolean for the
+    # transport stream flag (identical wire behavior for any truthy value);
+    # the payload still carries the provider-observed raw value below.
+    assert post_kwargs["stream"] is True
     assert post_kwargs["json"]["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_PRIVATE_STREAMING_VALUE not in captured.text
     assert "OpenAI: Request options prepared" in captured.text
@@ -4311,7 +4377,7 @@ def test_general_openai_malformed_stream_is_fully_consumed_without_private_diagn
         chunks = list(stream)
 
     assert chunks == []
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_STREAM_CANARY not in captured.text
     assert "OpenAI Stream: Response event rejected" in captured.text
@@ -4322,8 +4388,11 @@ def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class IteratorFailingResponse(_FakeResponse):
-        def iter_lines(self) -> Iterator[bytes]:
-            self.iter_lines_started = True
+        # TASK-32853 re-key: the engine owns the response and reads the
+        # iter_content seam, so the read failure is injected there.
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            del chunk_size
+            self.iter_content_started = True
             raise RuntimeError(GENERAL_OPENAI_STREAM_EXCEPTION_CANARY)
             yield b"unreachable"
 
@@ -4344,29 +4413,32 @@ def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
             "fixed prompt",
             streaming=True,
         )
-        assert inspect.isgenerator(stream)
-        assert response.iter_lines_started is False
+        assert _is_lazy_provider_stream(stream)
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
-    assert chunks == [
-        f"Error during streaming: {GENERAL_OPENAI_STREAM_EXCEPTION_CANARY}"
-    ]
+    # TASK-32853 re-key: the engine converts read failures to typed,
+    # redacted HostedSSEReadError before the handler sees them, so neither
+    # the yielded error chunk nor the logs carry the raw exception text.
+    assert len(chunks) == 1
+    assert chunks[0].startswith("Error during streaming:")
+    assert GENERAL_OPENAI_STREAM_EXCEPTION_CANARY not in chunks[0]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
     assert post_args == ("http://openai.invalid/v1/chat/completions",)
     assert post_kwargs["stream"] is True
-    assert post_kwargs["timeout"] == 5
+    assert post_kwargs["timeout"] == 5.0
     assert post_kwargs["json"]["stream"] is True
     assert post_kwargs["json"]["messages"] == [
         {"role": "system", "content": "You are a helpful AI assistant."},
         {"role": "user", "content": "fixed input \n\n\n\nfixed prompt"},
     ]
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_STREAM_EXCEPTION_CANARY not in captured.text
     assert (
-        "OpenAI Stream: Streaming failed; exception_type=RuntimeError" in captured.text
+        "OpenAI Stream: Streaming failed; exception_type=" in captured.text
     )
     assert not [record for record in captured.caplog.records if record.exc_info]
 
@@ -4418,13 +4490,13 @@ def test_general_openai_request_exception_hides_message_and_traceback(
             "fixed prompt",
         )
 
-    assert result == (
-        f"Error: OpenAI API request failed: {GENERAL_OPENAI_EXCEPTION_CANARY}"
-    )
+    # TASK-32853 re-key: the engine converts transport failures to typed,
+    # redacted Chat errors before the handler sees them, so the raw
+    # exception text reaches neither the return nor the logs.
+    assert result.startswith("Error: OpenAI unexpected error:")
+    assert GENERAL_OPENAI_EXCEPTION_CANARY not in result
     assert GENERAL_OPENAI_EXCEPTION_CANARY not in captured.text
-    assert "OpenAI: API request failed; exception_type=RequestException" in (
-        captured.text
-    )
+    assert "OpenAI: Unexpected error; exception_type=" in captured.text
     assert not [record for record in captured.caplog.records if record.exc_info]
 
 
@@ -4436,7 +4508,7 @@ def test_anthropic_success_hides_prompt_credential_and_response(
         monkeypatch,
         _general_provider_settings(),
     )
-    post_calls = _install_signature_bound_general_requests_post(
+    post_calls = _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(
             json_data={
@@ -4477,7 +4549,7 @@ def test_anthropic_malformed_stream_is_fully_consumed_without_private_diagnostic
             f"data: {{{GENERAL_ANTHROPIC_STREAM_CANARY}".encode(),
         )
     )
-    _install_signature_bound_general_requests_post(monkeypatch, response)
+    _install_signature_bound_general_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         stream = general_summarization.summarize_with_anthropic(
@@ -4494,6 +4566,9 @@ def test_anthropic_malformed_stream_is_fully_consumed_without_private_diagnostic
     assert response.iter_lines_started is True
     assert GENERAL_ANTHROPIC_STREAM_CANARY not in captured.text
     assert "Anthropic: Stream JSON decode failed" in captured.text
+    # TASK-32853: clean exhaustion releases the response (the old
+    # generator never closed it on any path).
+    assert response.closed is True
 
 
 def test_anthropic_unexpected_response_shape_hides_response_text(
@@ -4504,7 +4579,7 @@ def test_anthropic_unexpected_response_shape_hides_response_text(
         monkeypatch,
         _general_provider_settings(),
     )
-    _install_signature_bound_general_requests_post(
+    _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(json_data=[], text=GENERAL_ANTHROPIC_RESPONSE_CANARY),
     )
@@ -4531,7 +4606,7 @@ def test_anthropic_non_success_hides_response_body_and_preserves_status_contract
         monkeypatch,
         _general_provider_settings(),
     )
-    _install_signature_bound_general_requests_post(
+    _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(
             status_code=429,
@@ -4561,7 +4636,7 @@ def test_anthropic_request_exception_hides_message_and_preserves_retry_contract(
         monkeypatch,
         _general_provider_settings(),
     )
-    post_calls = _install_signature_bound_general_requests_post(
+    post_calls = _install_signature_bound_general_session_post(
         monkeypatch,
         general_summarization.requests.RequestException(
             GENERAL_ANTHROPIC_EXCEPTION_CANARY
@@ -4580,10 +4655,11 @@ def test_anthropic_request_exception_hides_message_and_preserves_retry_contract(
     assert result == (f"Anthropic: Network error: {GENERAL_ANTHROPIC_EXCEPTION_CANARY}")
     assert len(post_calls) == 1
     assert GENERAL_ANTHROPIC_EXCEPTION_CANARY not in captured.text
-    assert (
-        "Anthropic: Network error during attempt; attempt=1 retry_count=1 "
-        "exception_type=RequestException"
-    ) in captured.text
+    # TASK-32853 Phase C re-key: the per-attempt provider-labelled network
+    # log was superseded by the shared transport's generic retry handling
+    # (site deleted in the ledger with reason); the caller-visible
+    # exhaustion error string above is the preserved contract.
+    assert "Anthropic: Network error during attempt" not in captured.text
 
 
 def test_anthropic_file_error_hides_path_and_preserves_in_band_error(
@@ -4739,7 +4815,7 @@ def test_cohere_stream_is_lazy_and_hides_rejected_lines(
             "fixed prompt",
             streaming=COHERE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4786,7 +4862,7 @@ def test_cohere_unknown_stream_event_hides_provider_controlled_type(
             "fixed prompt",
             streaming=True,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4822,7 +4898,11 @@ def test_cohere_status_failure_hides_response_body_and_preserves_return(
             streaming=streaming,
         )
 
-    assert result == f"Cohere: API request failed: {COHERE_RESPONSE_CANARY}"
+    # TASK-32853 Phase C re-key: the response BODY no longer reaches the
+    # returned error string (the old branch interpolated response.text);
+    # only the status code does, matching the engine precedent.
+    assert result == "Cohere: API request failed: 429"
+    assert COHERE_RESPONSE_CANARY not in result
     assert response.iter_lines_started is False
     assert COHERE_RESPONSE_CANARY not in captured.text
     assert "Cohere: API request failed; status_code=429" in captured.text
@@ -4960,12 +5040,15 @@ def test_groq_stream_preserves_raw_flag_and_hides_malformed_line(
             "fixed prompt",
             streaming=GROQ_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
-        assert response.iter_lines_started is False
+        assert _is_lazy_provider_stream(stream)
+        assert response.iter_content_started is False
         chunks = list(stream)
 
     assert chunks == ["fixed groq chunk"]
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
+    # TASK-32853: clean exhaustion closes the owned response exactly once
+    # (the old relay never closed it on any path).
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == GROQ_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True
@@ -4996,9 +5079,14 @@ def test_groq_status_failure_hides_response_body_and_preserves_return(
             "fixed prompt",
         )
 
-    assert result == f"Groq: API request failed: {GROQ_RESPONSE_CANARY}"
+    # TASK-32853 re-key: the hosted engine maps the 503 to a typed, redacted
+    # Chat error, so the outer handler's string return now carries the
+    # redacted message -- the response BODY no longer reaches the return
+    # (the old code interpolated response.text) or any log line.
+    assert result.startswith("Groq: Error occurred while processing summary with Groq:")
+    assert GROQ_RESPONSE_CANARY not in result
     assert GROQ_RESPONSE_CANARY not in captured.text
-    assert "Groq: API request failed; status_code=503" in captured.text
+    assert "Groq: Processing failed; exception_type=" in captured.text
 
 
 def test_groq_transport_exception_hides_message_and_traceback(
@@ -5099,12 +5187,14 @@ def test_openrouter_success_hides_credential_input_prompt_and_response(
     ]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
-    assert post_args == ()
-    assert post_kwargs["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    # TASK-32853 re-key: the engine posts the url positionally and sends the
+    # payload as the json= dict (the old handler passed url= and a
+    # data=json.dumps string).
+    assert post_args == ("https://openrouter.ai/api/v1/chat/completions",)
     assert post_kwargs["headers"]["Authorization"] == (
         f"Bearer {OPENROUTER_CREDENTIAL_CANARY}"
     )
-    payload = json.loads(post_kwargs["data"])
+    payload = post_kwargs["json"]
     assert payload["messages"] == [
         {"role": "system", "content": "fixed system"},
         {
@@ -5149,9 +5239,10 @@ def test_openrouter_stream_hides_returned_content_and_consumes_lines(
         )
 
     assert result == OPENROUTER_STREAM_CANARY
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
-    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert post_calls[0][1]["json"]["stream"] is True
     assert post_calls[0][1]["stream"] is True
     assert OPENROUTER_STREAM_CANARY not in captured.text
     assert OPENROUTER_PRIVATE_STREAMING_VALUE not in captured.text
@@ -5186,13 +5277,14 @@ def test_openrouter_stream_non_string_content_preserves_historical_error_contrac
         "openrouter: Error occurred while processing stream: can only concatenate str "
         '(not "int") to str'
     )
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
-    assert post_calls[0][0] == ()
-    assert post_calls[0][1]["url"] == ("https://openrouter.ai/api/v1/chat/completions")
+    assert post_calls[0][0] == (
+        "https://openrouter.ai/api/v1/chat/completions",
+    )
     assert post_calls[0][1]["stream"] is True
-    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert post_calls[0][1]["json"]["stream"] is True
     assert "OpenRouter Stream: Content received" in captured.text
     assert "OpenRouter Stream: Processing failed; exception_type=TypeError" in (
         captured.text
@@ -5219,10 +5311,11 @@ def test_openrouter_stream_status_failure_hides_body_and_preserves_return(
             streaming=True,
         )
 
-    assert result == (
-        "openrouter: Streaming API request failed with status code 429: "
-        f"{OPENROUTER_RESPONSE_CANARY}"
-    )
+    # TASK-32853 re-key: the engine maps the 429 to a typed, redacted Chat
+    # error, so the response BODY no longer reaches the return (the old
+    # branch interpolated response.text) or any log line.
+    assert result == "openrouter: Streaming API request failed with status code 429"
+    assert OPENROUTER_RESPONSE_CANARY not in result
     assert OPENROUTER_RESPONSE_CANARY not in captured.text
     assert "OpenRouter Stream: API request failed; status_code=429" in captured.text
 
@@ -5282,7 +5375,9 @@ def test_openrouter_nonstream_status_failure_hides_body_and_preserves_return(
             "fixed prompt",
         )
 
-    assert result == f"openrouter: API request failed: {OPENROUTER_RESPONSE_CANARY}"
+    # TASK-32853 re-key: same redaction as the streaming branch.
+    assert result == "openrouter: API request failed: 503"
+    assert OPENROUTER_RESPONSE_CANARY not in result
     assert OPENROUTER_RESPONSE_CANARY not in captured.text
     assert "OpenRouter: API request failed; status_code=503" in captured.text
 
@@ -5541,14 +5636,16 @@ def test_huggingface_stream_is_lazy_and_hides_rejected_events(
             "fixed prompt",
             streaming=HUGGINGFACE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
 
     assert chunks == ["fixed huggingface token", "fixed huggingface generated"]
     assert response.iter_lines_started is True
-    assert response.closed is False
+    # TASK-32853: clean exhaustion releases the response (the old
+    # generator never closed it on any path).
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == (HUGGINGFACE_PRIVATE_STREAMING_VALUE)
     assert post_calls[0][1]["stream"] is True
@@ -5583,14 +5680,18 @@ def test_deepseek_stream_preserves_yields_and_hides_decode_and_key_failures(
             "fixed prompt",
             streaming=DEEPSEEK_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
-        assert response.iter_lines_started is False
+        assert _is_lazy_provider_stream(stream)
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
-    assert chunks == ["fixed deepseek chunk", "fixed deepseek chunk"]
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    # TASK-32853 re-key (defect fix): the old relay re-yielded the collected
+    # whole text after the deltas (every chunk-joining consumer got the
+    # summary twice) and never closed the response; the engine path yields
+    # each delta exactly once and closes exactly once.
+    assert chunks == ["fixed deepseek chunk"]
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == DEEPSEEK_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True
@@ -5631,14 +5732,15 @@ def test_mistral_stream_preserves_yields_and_hides_rejected_events(
             "fixed prompt",
             streaming=MISTRAL_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
-        assert response.iter_lines_started is False
+        assert _is_lazy_provider_stream(stream)
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
     assert chunks == ["fixed mistral chunk"]
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    assert response.iter_content_started is True
+    # TASK-32853: clean exhaustion closes the owned response exactly once.
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == MISTRAL_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True
@@ -5880,7 +5982,12 @@ def test_google_success_hides_credential_input_prompt_and_response(
     ]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
-    assert post_args == ("https://generativelanguage.googleapis.com/v1beta/openai/",)
+    # TASK-32853 Phase C re-key (the 2026-09-17 review's AC): the old
+    # hardcoded base path had NO /chat/completions route (the suspected
+    # live 404); the endpoint now matches the chat path.
+    assert post_args == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    )
     assert post_kwargs["headers"]["Authorization"] == (
         f"Bearer {GOOGLE_CREDENTIAL_CANARY}"
     )
@@ -5998,7 +6105,7 @@ def test_google_stream_preserves_yields_and_hides_rejected_lines(
             "fixed prompt",
             streaming=GOOGLE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         chunks = list(stream)
 
@@ -6047,7 +6154,8 @@ def test_google_input_json_error_hides_detail_and_preserves_return(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    real_loads = general_summarization.json.loads
+    real_json = general_summarization.json
+    real_loads = real_json.loads
     signature = inspect.signature(real_loads)
     error = json.JSONDecodeError(GOOGLE_EXCEPTION_CANARY, "x", 0)
 
@@ -6055,8 +6163,27 @@ def test_google_input_json_error_hides_detail_and_preserves_return(
         signature.bind(*args, **kwargs)
         raise error
 
+    class _FailingJsonNamespace:
+        """TASK-32853 admission-scope repair: this test was the file's one
+        pre-existing red (recovery_scope_uncertain since TASK-32628) --
+        patching ``loads`` ON THE SHARED json module also broke the storage
+        admission's own JSON reads, which fail closed. Rebinding only the
+        summarization module's ``json`` reference to this proxy keeps the
+        failure inside the handler under test."""
+
+        loads = staticmethod(failing_loads)
+
+        def __getattr__(self, name):
+            return getattr(real_json, name)
+
     _install_signature_bound_general_config_loader(monkeypatch)
-    monkeypatch.setattr(general_summarization.json, "loads", failing_loads)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    monkeypatch.setattr(
+        general_summarization, "json", _FailingJsonNamespace()
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         result = general_summarization.summarize_with_google(
@@ -6184,7 +6311,7 @@ def test_mock_llm_hides_prompt_system_and_arbitrary_streaming_value(
             streaming=streaming,
         )
         if streaming:
-            assert inspect.isgenerator(result)
+            assert _is_lazy_provider_stream(result)
             result = list(result)
 
     if streaming:

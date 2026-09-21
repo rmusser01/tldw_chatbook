@@ -6711,12 +6711,22 @@ class LibraryFileNotesWorkspace(Vertical):
             if current():
                 async def approve(expected):
                     return await call(service.approve_recovery, expected)
-                await self.app.push_screen(NotesRecoveryDialog(
+                # TASK-32800.5: wait for the dialog, not just its mount.
+                # `push_screen` returns once the screen is mounted, so this
+                # coroutine fell straight out of the `try` while the review was
+                # still open -- and with the only `resume()` in the file living
+                # in the manual Refresh handler, the folder poll stayed paused
+                # for the rest of the mount.
+                await self.app.push_screen_wait(NotesRecoveryDialog(
                     review, current=current, approve=approve
                 ))
         except (OSError, ValueError, RuntimeError, SQLiteError) as error:
             if current():
                 self._set_action_status(f"Pairing review unavailable: {error}")
+        finally:
+            # The pause is scoped to the review, error path included.
+            if self._poll_timer is not None:
+                self._poll_timer.resume()
 
     @on(Button.Pressed, "#file-notes-choose-root")
     async def _choose_root(self, event: Button.Pressed) -> None:

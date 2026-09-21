@@ -33,7 +33,7 @@ async def test_file_preview_item_initialization():
         patch.object(Path, "stat") as mock_stat,
     ):
         mock_stat.return_value = MagicMock()
-        mock_stat.return_value.st_size = 1024000  # 1MB
+        mock_stat.return_value.st_size = 1024 * 1024  # 1 MiB (was 1024000, mislabeled)
         mock_stat.return_value.st_mtime = 1234567890
 
         item = FilePreviewItem(test_file)
@@ -52,7 +52,7 @@ async def test_file_preview_item_file_analysis():
         patch.object(Path, "stat") as mock_stat,
     ):
         mock_stat.return_value = MagicMock()
-        mock_stat.return_value.st_size = 1024000  # 1MB
+        mock_stat.return_value.st_size = 1024 * 1024  # 1 MiB (was 1024000, mislabeled)
         mock_stat.return_value.st_mtime = 1234567890
 
         item = FilePreviewItem(test_file)
@@ -447,6 +447,35 @@ async def test_file_removed_message():
     message = FileRemoved(test_file)
 
     assert message.file_path == test_file
+
+
+def test_format_file_size_binary_thresholds_no_decimal_jump():
+    """TASK-32808.1 regression: the decimal thresholds (1_000_000) with binary
+    divisors (1024**2) made 999,999 B read as KB but 1,000,000 B jump straight
+    to '1.0 MB'. Binary thresholds keep the scale monotonic — 1,000,000 B is
+    still under 1 MiB and stays in KB."""
+    fmt = FilePreviewItem._format_file_size  # staticmethod; no construction
+    assert fmt(999_999).endswith(" KB")
+    assert fmt(1_000_000).endswith(" KB")  # was "1.0 MB"
+    assert fmt(1024 * 1024).endswith(" MB")
+    assert fmt(1024 * 1024 * 1024).endswith(" GB")
+
+
+def test_canonical_public_byte_formatter_exists():
+    """TASK-32808.1 AC#1: one public byte-size formatter lives in Utils."""
+    from tldw_chatbook.Utils.Utils import format_size_bytes
+
+    assert format_size_bytes(512) == "512 B"
+    assert format_size_bytes(1024) == "1.0 KB"
+    assert format_size_bytes(1024 * 1024) == "1.0 MB"
+    assert format_size_bytes(1024 ** 3) == "1.0 GB"
+    # TASK-32808.1: scales past GB so it can serve file/repo-size displays.
+    assert format_size_bytes(2 * 1024 ** 4) == "2.0 TB"
+    assert format_size_bytes(int(1.5 * 1024 ** 5)) == "1.5 PB"
+    # ≤GB is unchanged from the original GB-capped helper.
+    assert format_size_bytes(1023 * 1024 ** 3) == "1023.0 GB"
+    # Qodo #3: a negative byte count is clamped to 0, never "-5 B".
+    assert format_size_bytes(-5) == "0 B"
 
 
 if __name__ == "__main__":

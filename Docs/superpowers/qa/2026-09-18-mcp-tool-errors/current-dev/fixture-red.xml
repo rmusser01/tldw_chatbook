@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="11" skipped="0" tests="13" time="1.101" timestamp="2026-09-20T16:06:47.006253-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-parent-state]" time="0.722"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out0')
+target = 'state', escape = 'parent'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-parent-trace]" time="0.023"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out1')
+target = 'trace', escape = 'parent'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-absolute-state]" time="0.022"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out2')
+target = 'state', escape = 'absolute'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-absolute-trace]" time="0.022"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out3')
+target = 'trace', escape = 'absolute'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-symlink-state]" time="0.022"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out4')
+target = 'state', escape = 'symlink'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_paths_outside_owned_root[tool_result-symlink-trace]" time="0.023"><failure message="AssertionError: {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;result&quot;: {&quot;tools&quot;: [{&quot;name&quot;: &quot;review_echo&quot;, &quot;description&quot;: &quot;A local tool result fixture.&quot;, &quot;inputSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}&#10;  &#10;assert 0 != 0&#10; +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;message&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;message&quot;]}}]}}\n', stderr='').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_paths_out5')
+target = 'trace', escape = 'symlink'
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize("target", ["state", "trace"])
+    @pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+    def test_fixture_rejects_paths_outside_owned_root(
+        tmp_path: Path, target: str, escape: str, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Reject both read and write escapes before processing any wire request."""
+        fixture, state_json, _tool_name = stdio_fixture
+        root = tmp_path / "owned"
+        root.mkdir()
+        state = root / "state.json"
+        trace = root / "trace.jsonl"
+        state.write_text(state_json)
+        outside = tmp_path / "outside.json"
+        sentinel = '{"version": "outside"}\n'
+        outside.write_text(sentinel)
+        if escape == "parent":
+            bad = "../outside.json"
+        elif escape == "absolute":
+            bad = str(outside)
+        else:
+            alias = root / "alias.json"
+            alias.symlink_to(outside)
+            bad = str(alias)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                bad if target == "state" else str(state),
+                bad if target == "trace" else str(trace),
+                str(root.resolve()),
+            ],
+            cwd=root,
+            input=REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode != 0, result.stdout
+E       AssertionError: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "review_echo", "description": "A local tool result fixture.", "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}
+E
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...tSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}}]}}\n', stderr='').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:74: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_serves_valid_paths_beneath_owned_root[tool_result-True]" time="0.022" /><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_serves_valid_paths_beneath_owned_root[tool_result-False]" time="0.021" /><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_malformed_request_and_serves_next_request[tool_result-{--32700]" time="0.025"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 53, in &lt;module&gt;&#10;      main()&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 12, in main&#10;      request = json.loads(line)&#10;                ^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py&quot;, line 346, in loads&#10;      return _default_decoder.decode(s)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py&quot;, line 338, in decode&#10;      obj, end = self.raw_decode(s, idx=_w(s, 0).end())&#10;                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py&quot;, line 354, in raw_decode&#10;      obj, end = self.scan_once(s, idx)&#10;                 ^^^^^^^^^^^^^^^^^^^^^^&#10;  json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...^^^^^^^^\njson.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)\n').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_malformed0')
+invalid = '{', code = -32700
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize(
+        ("invalid", "code"),
+        [
+            ("{", -32700),
+            ("[]", -32600),
+            ('{"jsonrpc":"2.0","id":1}', -32600),
+            ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+            (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+                -32602,
+            ),
+        ],
+    )
+    def test_fixture_rejects_malformed_request_and_serves_next_request(
+        tmp_path: Path, invalid: str, code: int, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Malformed wire data gets a bounded protocol error without killing the fixture."""
+        fixture, state_json, tool_name = stdio_fixture
+        state = tmp_path / "state.json"
+        trace = tmp_path / "trace.jsonl"
+        state.write_text(state_json)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                str(state),
+                str(trace),
+                str(tmp_path.resolve()),
+            ],
+            input=invalid + "\n" + REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 53, in &lt;module&gt;
+E             main()
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 12, in main
+E             request = json.loads(line)
+E                       ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py", line 346, in loads
+E             return _default_decoder.decode(s)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py", line 338, in decode
+E             obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py", line 354, in raw_decode
+E             obj, end = self.scan_once(s, idx)
+E                        ^^^^^^^^^^^^^^^^^^^^^^
+E         json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...^^^^^^^^\njson.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)\n').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:144: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_malformed_request_and_serves_next_request[tool_result-[]--32600]" time="0.024"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 53, in &lt;module&gt;&#10;      main()&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 13, in main&#10;      method = request.get(&quot;method&quot;)&#10;               ^^^^^^^^^^^&#10;  AttributeError: 'list' object has no attribute 'get'&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven... method = request.get(&quot;method&quot;)\n             ^^^^^^^^^^^\nAttributeError: \'list\' object has no attribute \'get\'\n').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_malformed1')
+invalid = '[]', code = -32600
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize(
+        ("invalid", "code"),
+        [
+            ("{", -32700),
+            ("[]", -32600),
+            ('{"jsonrpc":"2.0","id":1}', -32600),
+            ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+            (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+                -32602,
+            ),
+        ],
+    )
+    def test_fixture_rejects_malformed_request_and_serves_next_request(
+        tmp_path: Path, invalid: str, code: int, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Malformed wire data gets a bounded protocol error without killing the fixture."""
+        fixture, state_json, tool_name = stdio_fixture
+        state = tmp_path / "state.json"
+        trace = tmp_path / "trace.jsonl"
+        state.write_text(state_json)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                str(state),
+                str(trace),
+                str(tmp_path.resolve()),
+            ],
+            input=invalid + "\n" + REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 53, in &lt;module&gt;
+E             main()
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 13, in main
+E             method = request.get("method")
+E                      ^^^^^^^^^^^
+E         AttributeError: 'list' object has no attribute 'get'
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven... method = request.get("method")\n             ^^^^^^^^^^^\nAttributeError: \'list\' object has no attribute \'get\'\n').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:144: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_malformed_request_and_serves_next_request[tool_result-{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1}--32600]" time="0.024"><failure message="KeyError: 'error'">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_malformed2')
+invalid = '{"jsonrpc":"2.0","id":1}', code = -32600
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize(
+        ("invalid", "code"),
+        [
+            ("{", -32700),
+            ("[]", -32600),
+            ('{"jsonrpc":"2.0","id":1}', -32600),
+            ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+            (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+                -32602,
+            ),
+        ],
+    )
+    def test_fixture_rejects_malformed_request_and_serves_next_request(
+        tmp_path: Path, invalid: str, code: int, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Malformed wire data gets a bounded protocol error without killing the fixture."""
+        fixture, state_json, tool_name = stdio_fixture
+        state = tmp_path / "state.json"
+        trace = tmp_path / "trace.jsonl"
+        state.write_text(state_json)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                str(state),
+                str(trace),
+                str(tmp_path.resolve()),
+            ],
+            input=invalid + "\n" + REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        errors, discovery = map(json.loads, result.stdout.splitlines())
+&gt;       assert errors["error"]["code"] == code
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'error'
+
+Tests/MCP/test_catalog_fixture_paths.py:146: KeyError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_malformed_request_and_serves_next_request[tool_result-{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;initialize&quot;}--32602]" time="0.024"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 53, in &lt;module&gt;&#10;      main()&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py&quot;, line 20, in main&#10;      &quot;protocolVersion&quot;: request[&quot;params&quot;][&quot;protocolVersion&quot;],&#10;                         ~~~~~~~^^^^^^^^^^&#10;  KeyError: 'params'&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...ocolVersion&quot;: request[&quot;params&quot;][&quot;protocolVersion&quot;],\n                       ~~~~~~~^^^^^^^^^^\nKeyError: \'params\'\n').returncode">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_malformed3')
+invalid = '{"jsonrpc":"2.0","id":1,"method":"initialize"}', code = -32602
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize(
+        ("invalid", "code"),
+        [
+            ("{", -32700),
+            ("[]", -32600),
+            ('{"jsonrpc":"2.0","id":1}', -32600),
+            ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+            (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+                -32602,
+            ),
+        ],
+    )
+    def test_fixture_rejects_malformed_request_and_serves_next_request(
+        tmp_path: Path, invalid: str, code: int, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Malformed wire data gets a bounded protocol error without killing the fixture."""
+        fixture, state_json, tool_name = stdio_fixture
+        state = tmp_path / "state.json"
+        trace = tmp_path / "trace.jsonl"
+        state.write_text(state_json)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                str(state),
+                str(trace),
+                str(tmp_path.resolve()),
+            ],
+            input=invalid + "\n" + REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 53, in &lt;module&gt;
+E             main()
+E           File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py", line 20, in main
+E             "protocolVersion": request["params"]["protocolVersion"],
+E                                ~~~~~~~^^^^^^^^^^
+E         KeyError: 'params'
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...ocolVersion": request["params"]["protocolVersion"],\n                       ~~~~~~~^^^^^^^^^^\nKeyError: \'params\'\n').returncode
+
+Tests/MCP/test_catalog_fixture_paths.py:144: AssertionError</failure></testcase><testcase classname="Tests.MCP.test_catalog_fixture_paths" name="test_fixture_rejects_malformed_request_and_serves_next_request[tool_result-{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;initialize&quot;,&quot;params&quot;:{&quot;protocolVersion&quot;:7}}--32602]" time="0.022"><failure message="KeyError: 'error'">tmp_path = PosixPath('/private/tmp/32831-fixture-red-001/test_fixture_rejects_malformed4')
+invalid = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}'
+code = -32602
+stdio_fixture = (PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixtures/stdio_tool_result_server.py'), '{"content": []}', 'review_echo')
+
+    @pytest.mark.parametrize(
+        ("invalid", "code"),
+        [
+            ("{", -32700),
+            ("[]", -32600),
+            ('{"jsonrpc":"2.0","id":1}', -32600),
+            ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+            (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+                -32602,
+            ),
+        ],
+    )
+    def test_fixture_rejects_malformed_request_and_serves_next_request(
+        tmp_path: Path, invalid: str, code: int, stdio_fixture: tuple[Path, str, str]
+    ) -&gt; None:
+        """Malformed wire data gets a bounded protocol error without killing the fixture."""
+        fixture, state_json, tool_name = stdio_fixture
+        state = tmp_path / "state.json"
+        trace = tmp_path / "trace.jsonl"
+        state.write_text(state_json)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(fixture.resolve()),
+                str(state),
+                str(trace),
+                str(tmp_path.resolve()),
+            ],
+            input=invalid + "\n" + REQUEST,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        errors, discovery = map(json.loads, result.stdout.splitlines())
+&gt;       assert errors["error"]["code"] == code
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'error'
+
+Tests/MCP/test_catalog_fixture_paths.py:146: KeyError</failure></testcase></testsuite></testsuites>

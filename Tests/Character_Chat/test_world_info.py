@@ -69,6 +69,21 @@ class TestWorldInfoProcessor:
         """Create a WorldInfoProcessor instance."""
         return WorldInfoProcessor(sample_character_data)
 
+    def test_entry_token_estimate_weights_cjk_over_len_over_four(self, processor):
+        """task-32808.10: the entry token estimate must go through the shared
+        CJK-aware estimator, not a plain len//4. A run of CJK characters costs
+        far more than one token per four characters; the old heuristic
+        under-counted it and could overflow _apply_token_budget."""
+        cjk_entry = {"content": "\u4e2d\u6587" * 100}  # 200 CJK characters
+        ascii_entry = {"content": "a" * 200}
+        cjk_tokens = processor._estimate_entry_tokens(cjk_entry)
+        ascii_tokens = processor._estimate_entry_tokens(ascii_entry)
+        # plain len//4 would give 50 for both; CJK must now exceed that floor
+        assert cjk_tokens > 200 // 4
+        assert cjk_tokens > ascii_tokens
+        # empty content still floors at 1 (a non-empty entry never costs zero)
+        assert processor._estimate_entry_tokens({"content": ""}) == 1
+
     def test_initialization(self, processor):
         """Test processor initialization."""
         assert processor is not None
