@@ -15496,10 +15496,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             record = await service.get_persona_profile(persona_id, mode="local")
             version = record.get("version") if isinstance(record, dict) else None
-            from ...tldw_api.character_persona_schemas import (
-                LocalPersonaProfileUpdate,
-                PersonaPolicyRule,
-            )
+            from ...tldw_api.character_persona_schemas import PersonaPolicyRule
 
             request = LocalPersonaProfileUpdate(
                 policy_rules=[PersonaPolicyRule(**rule) for rule in rules]
