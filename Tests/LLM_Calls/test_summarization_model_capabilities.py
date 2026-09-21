@@ -98,12 +98,15 @@ def _capture_anthropic_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> d
     _install_model_setting(monkeypatch, "anthropic_api", model)
     captured: dict = {}
 
-    def fake_post(url, headers=None, json=None, stream=False, **kwargs):
+    def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return _FakeAnthropicResponse()
 
-    monkeypatch.setattr(sgl.requests, "post", fake_post)
+    # TASK-32853 Phase C re-key: anthropic posts through the shared
+    # _post_with_retry transport's session, so the fake moves to the
+    # Session.post seam like the other providers.
+    monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
     result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
     assert result == "anthropic summary", result
     assert "json" in captured, "summarize_with_anthropic never posted a request"
@@ -209,11 +212,14 @@ def test_anthropic_fallback_default_model_is_currently_served(monkeypatch):
     monkeypatch.setattr(sgl, "get_cli_setting", fake_get_cli_setting)
     captured: dict = {}
 
-    def fake_post(url, headers=None, json=None, stream=False, **kwargs):
+    def fake_post(self, url, headers=None, json=None, stream=False, **kwargs):
         captured["json"] = json
         return _FakeAnthropicResponse()
 
-    monkeypatch.setattr(sgl.requests, "post", fake_post)
+    # TASK-32853 Phase C re-key: anthropic posts through the shared
+    # _post_with_retry transport's session, so the fake moves to the
+    # Session.post seam like the other providers.
+    monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
     result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
     assert result == "anthropic summary", result
     payload = captured["json"]
