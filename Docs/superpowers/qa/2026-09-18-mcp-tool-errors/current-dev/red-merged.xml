@@ -1,0 +1,946 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="8" time="12.410" timestamp="2026-09-20T16:06:01.072243-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.MCP.test_tool_error_results" name="test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]" time="1.833"><failure message="Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;_ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.] _&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')&#10;content = [{'text': 'Fixture tool failed.', 'type': 'text'}]&#10;expected = 'Fixture tool failed.'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        (&quot;content&quot;, &quot;expected&quot;),&#10;        [&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Fixture tool failed.&quot;}], &quot;Fixture tool failed.&quot;),&#10;            (&#10;                [&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;First error.&quot;},&#10;                    {&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;},&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Second error.&quot;},&#10;                ],&#10;                &quot;First error.\nSecond error.&quot;,&#10;            ),&#10;            ([], &quot;MCP tool reported an error.&quot;),&#10;            (&#10;                [{&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;}],&#10;                &quot;MCP tool reported an error.&quot;,&#10;            ),&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;   &quot;}], &quot;MCP tool reported an error.&quot;),&#10;        ],&#10;    )&#10;    @private_profile_test&#10;    async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(&#10;        request, tmp_path, content, expected&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, _service, state):&#10;            session = client.sessions[&quot;result-review&quot;]&#10;            state.write_text(json.dumps({&quot;isError&quot;: True, &quot;content&quot;: content}))&#10;&gt;           assert await client.call_tool(&#10;                &quot;result-review&quot;, &quot;review_echo&quot;, {&quot;message&quot;: &quot;fail&quot;}&#10;            ) == {&quot;error&quot;: expected}&#10;E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'Fi...tool failed.'}&#10;E             &#10;E             Left contains 1 more item:&#10;E             {'result': [{'text': 'Fixture tool failed.', 'type': 'text'}]}&#10;E             Right contains 1 more item:&#10;E             {'error': 'Fixture tool failed.'}&#10;E             Use -v to get more diff&#10;&#10;Tests/MCP/test_tool_error_results.py:79: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:02.751 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:02.841 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:02.919 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:02.927 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:02.929 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:02.954 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:03.009 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:03.009 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:03.040 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:03.040 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]&#10;1 failed in 0.80s">self = &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'content': [{'text': 'Fixture tool failed.', 'type': 'text'}], 'expected': 'Fixture tool failed.', 'request': &lt;Fixtur...t0-Fixture tool failed.]&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0')}
+request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.] _
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')
+E           content = [{'text': 'Fixture tool failed.', 'type': 'text'}]
+E           expected = 'Fixture tool failed.'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("content", "expected"),
+E                   [
+E                       ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
+E                       (
+E                           [
+E                               {"type": "text", "text": "First error."},
+E                               {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+E                               {"type": "text", "text": "Second error."},
+E                           ],
+E                           "First error.\nSecond error.",
+E                       ),
+E                       ([], "MCP tool reported an error."),
+E                       (
+E                           [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+E                           "MCP tool reported an error.",
+E                       ),
+E                       ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+E                   ],
+E               )
+E               @private_profile_test
+E               async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
+E                   request, tmp_path, content, expected
+E               ):
+E                   async with connected_tool(tmp_path) as (client, _service, state):
+E                       session = client.sessions["result-review"]
+E                       state.write_text(json.dumps({"isError": True, "content": content}))
+E           &gt;           assert await client.call_tool(
+E                           "result-review", "review_echo", {"message": "fail"}
+E                       ) == {"error": expected}
+E           E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'Fi...tool failed.'}
+E           E
+E           E             Left contains 1 more item:
+E           E             {'result': [{'text': 'Fixture tool failed.', 'type': 'text'}]}
+E           E             Right contains 1 more item:
+E           E             {'error': 'Fixture tool failed.'}
+E           E             Use -v to get more diff
+E
+E           Tests/MCP/test_tool_error_results.py:79: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:02.751 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:02.841 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:02.919 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:02.927 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:02.929 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:02.954 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:03.009 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:03.009 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:03.040 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:03.040 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]
+E           1 failed in 0.80s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.MCP.test_tool_error_results" name="test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]" time="1.251"><failure message="Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;_ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.] _&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')&#10;content = [{'text': 'First error.', 'type': 'text'}, {'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}, {'text': 'Second error.', 'type': 'text'}]&#10;expected = 'First error.\nSecond error.'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        (&quot;content&quot;, &quot;expected&quot;),&#10;        [&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Fixture tool failed.&quot;}], &quot;Fixture tool failed.&quot;),&#10;            (&#10;                [&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;First error.&quot;},&#10;                    {&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;},&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Second error.&quot;},&#10;                ],&#10;                &quot;First error.\nSecond error.&quot;,&#10;            ),&#10;            ([], &quot;MCP tool reported an error.&quot;),&#10;            (&#10;                [{&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;}],&#10;                &quot;MCP tool reported an error.&quot;,&#10;            ),&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;   &quot;}], &quot;MCP tool reported an error.&quot;),&#10;        ],&#10;    )&#10;    @private_profile_test&#10;    async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(&#10;        request, tmp_path, content, expected&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, _service, state):&#10;            session = client.sessions[&quot;result-review&quot;]&#10;            state.write_text(json.dumps({&quot;isError&quot;: True, &quot;content&quot;: content}))&#10;&gt;           assert await client.call_tool(&#10;                &quot;result-review&quot;, &quot;review_echo&quot;, {&quot;message&quot;: &quot;fail&quot;}&#10;            ) == {&quot;error&quot;: expected}&#10;E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'Fi...econd error.'}&#10;E             &#10;E             Left contains 1 more item:&#10;E             {'result': [{'text': 'First error.', 'type': 'text'},&#10;E                         {'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'},&#10;E                         {'text': 'Second error.', 'type': 'text'}]}&#10;E             Right contains 1 more item:&#10;E             {'error': 'First error.\nSecond error.'}&#10;E             Use -v to get more diff&#10;&#10;Tests/MCP/test_tool_error_results.py:79: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:04.105 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:04.196 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:04.272 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:04.280 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:04.281 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:04.305 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:04.358 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:04.359 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:04.389 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:04.390 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]&#10;1 failed in 0.82s">self = &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'content': [{'text': 'First error.', 'type': 'text'}, {'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image...t error.\nSecond error.]&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1')}
+request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.] _
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')
+E           content = [{'text': 'First error.', 'type': 'text'}, {'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}, {'text': 'Second error.', 'type': 'text'}]
+E           expected = 'First error.\nSecond error.'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("content", "expected"),
+E                   [
+E                       ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
+E                       (
+E                           [
+E                               {"type": "text", "text": "First error."},
+E                               {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+E                               {"type": "text", "text": "Second error."},
+E                           ],
+E                           "First error.\nSecond error.",
+E                       ),
+E                       ([], "MCP tool reported an error."),
+E                       (
+E                           [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+E                           "MCP tool reported an error.",
+E                       ),
+E                       ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+E                   ],
+E               )
+E               @private_profile_test
+E               async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
+E                   request, tmp_path, content, expected
+E               ):
+E                   async with connected_tool(tmp_path) as (client, _service, state):
+E                       session = client.sessions["result-review"]
+E                       state.write_text(json.dumps({"isError": True, "content": content}))
+E           &gt;           assert await client.call_tool(
+E                           "result-review", "review_echo", {"message": "fail"}
+E                       ) == {"error": expected}
+E           E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'Fi...econd error.'}
+E           E
+E           E             Left contains 1 more item:
+E           E             {'result': [{'text': 'First error.', 'type': 'text'},
+E           E                         {'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'},
+E           E                         {'text': 'Second error.', 'type': 'text'}]}
+E           E             Right contains 1 more item:
+E           E             {'error': 'First error.\nSecond error.'}
+E           E             Use -v to get more diff
+E
+E           Tests/MCP/test_tool_error_results.py:79: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:04.105 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:04.196 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:04.272 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:04.280 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:04.281 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:04.305 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:04.358 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:04.359 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:04.389 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:04.390 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]
+E           1 failed in 0.82s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.MCP.test_tool_error_results" name="test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]" time="1.206"><failure message="Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;_ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.] _&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')&#10;content = [], expected = 'MCP tool reported an error.'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        (&quot;content&quot;, &quot;expected&quot;),&#10;        [&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Fixture tool failed.&quot;}], &quot;Fixture tool failed.&quot;),&#10;            (&#10;                [&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;First error.&quot;},&#10;                    {&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;},&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Second error.&quot;},&#10;                ],&#10;                &quot;First error.\nSecond error.&quot;,&#10;            ),&#10;            ([], &quot;MCP tool reported an error.&quot;),&#10;            (&#10;                [{&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;}],&#10;                &quot;MCP tool reported an error.&quot;,&#10;            ),&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;   &quot;}], &quot;MCP tool reported an error.&quot;),&#10;        ],&#10;    )&#10;    @private_profile_test&#10;    async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(&#10;        request, tmp_path, content, expected&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, _service, state):&#10;            session = client.sessions[&quot;result-review&quot;]&#10;            state.write_text(json.dumps({&quot;isError&quot;: True, &quot;content&quot;: content}))&#10;&gt;           assert await client.call_tool(&#10;                &quot;result-review&quot;, &quot;review_echo&quot;, {&quot;message&quot;: &quot;fail&quot;}&#10;            ) == {&quot;error&quot;: expected}&#10;E           AssertionError: assert {'result': []} == {'error': 'MC...ed an error.'}&#10;E             &#10;E             Left contains 1 more item:&#10;E             {'result': []}&#10;E             Right contains 1 more item:&#10;E             {'error': 'MCP tool reported an error.'}&#10;E             Use -v to get more diff&#10;&#10;Tests/MCP/test_tool_error_results.py:79: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:05.319 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:05.410 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:05.499 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:05.507 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:05.508 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:05.532 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:05.584 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:05.585 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:05.614 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:05.614 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]&#10;1 failed in 0.80s">self = &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'content': [], 'expected': 'MCP tool reported an error.', 'request': &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_e...tool reported an error.]&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2')}
+request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.] _
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')
+E           content = [], expected = 'MCP tool reported an error.'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("content", "expected"),
+E                   [
+E                       ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
+E                       (
+E                           [
+E                               {"type": "text", "text": "First error."},
+E                               {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+E                               {"type": "text", "text": "Second error."},
+E                           ],
+E                           "First error.\nSecond error.",
+E                       ),
+E                       ([], "MCP tool reported an error."),
+E                       (
+E                           [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+E                           "MCP tool reported an error.",
+E                       ),
+E                       ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+E                   ],
+E               )
+E               @private_profile_test
+E               async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
+E                   request, tmp_path, content, expected
+E               ):
+E                   async with connected_tool(tmp_path) as (client, _service, state):
+E                       session = client.sessions["result-review"]
+E                       state.write_text(json.dumps({"isError": True, "content": content}))
+E           &gt;           assert await client.call_tool(
+E                           "result-review", "review_echo", {"message": "fail"}
+E                       ) == {"error": expected}
+E           E           AssertionError: assert {'result': []} == {'error': 'MC...ed an error.'}
+E           E
+E           E             Left contains 1 more item:
+E           E             {'result': []}
+E           E             Right contains 1 more item:
+E           E             {'error': 'MCP tool reported an error.'}
+E           E             Use -v to get more diff
+E
+E           Tests/MCP/test_tool_error_results.py:79: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:05.319 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:05.410 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:05.499 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:05.507 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:05.508 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:05.532 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:05.584 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:05.585 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:05.614 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:05.614 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex2/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]
+E           1 failed in 0.80s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.MCP.test_tool_error_results" name="test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]" time="1.442"><failure message="Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;_ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.] _&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')&#10;content = [{'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}]&#10;expected = 'MCP tool reported an error.'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        (&quot;content&quot;, &quot;expected&quot;),&#10;        [&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Fixture tool failed.&quot;}], &quot;Fixture tool failed.&quot;),&#10;            (&#10;                [&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;First error.&quot;},&#10;                    {&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;},&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Second error.&quot;},&#10;                ],&#10;                &quot;First error.\nSecond error.&quot;,&#10;            ),&#10;            ([], &quot;MCP tool reported an error.&quot;),&#10;            (&#10;                [{&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;}],&#10;                &quot;MCP tool reported an error.&quot;,&#10;            ),&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;   &quot;}], &quot;MCP tool reported an error.&quot;),&#10;        ],&#10;    )&#10;    @private_profile_test&#10;    async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(&#10;        request, tmp_path, content, expected&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, _service, state):&#10;            session = client.sessions[&quot;result-review&quot;]&#10;            state.write_text(json.dumps({&quot;isError&quot;: True, &quot;content&quot;: content}))&#10;&gt;           assert await client.call_tool(&#10;                &quot;result-review&quot;, &quot;review_echo&quot;, {&quot;message&quot;: &quot;fail&quot;}&#10;            ) == {&quot;error&quot;: expected}&#10;E           AssertionError: assert {'result': [{...e': 'image'}]} == {'error': 'MC...ed an error.'}&#10;E             &#10;E             Left contains 1 more item:&#10;E             {'result': [{'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}]}&#10;E             Right contains 1 more item:&#10;E             {'error': 'MCP tool reported an error.'}&#10;E             Use -v to get more diff&#10;&#10;Tests/MCP/test_tool_error_results.py:79: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:06.698 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:06.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:06.891 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:06.900 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:06.902 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:06.930 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:06.988 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:06.988 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:07.023 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:07.024 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]&#10;1 failed in 0.98s">self = &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'content': [{'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}], 'expected': 'MCP tool reported an err...tool reported an error.]&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3')}
+request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.] _
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')
+E           content = [{'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}]
+E           expected = 'MCP tool reported an error.'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("content", "expected"),
+E                   [
+E                       ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
+E                       (
+E                           [
+E                               {"type": "text", "text": "First error."},
+E                               {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+E                               {"type": "text", "text": "Second error."},
+E                           ],
+E                           "First error.\nSecond error.",
+E                       ),
+E                       ([], "MCP tool reported an error."),
+E                       (
+E                           [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+E                           "MCP tool reported an error.",
+E                       ),
+E                       ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+E                   ],
+E               )
+E               @private_profile_test
+E               async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
+E                   request, tmp_path, content, expected
+E               ):
+E                   async with connected_tool(tmp_path) as (client, _service, state):
+E                       session = client.sessions["result-review"]
+E                       state.write_text(json.dumps({"isError": True, "content": content}))
+E           &gt;           assert await client.call_tool(
+E                           "result-review", "review_echo", {"message": "fail"}
+E                       ) == {"error": expected}
+E           E           AssertionError: assert {'result': [{...e': 'image'}]} == {'error': 'MC...ed an error.'}
+E           E
+E           E             Left contains 1 more item:
+E           E             {'result': [{'data': 'not-exposed', 'mimeType': 'image/png', 'type': 'image'}]}
+E           E             Right contains 1 more item:
+E           E             {'error': 'MCP tool reported an error.'}
+E           E             Use -v to get more diff
+E
+E           Tests/MCP/test_tool_error_results.py:79: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:06.698 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:06.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:06.891 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:06.900 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:06.902 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:06.930 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:06.988 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:06.988 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:07.023 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:07.024 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex3/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]
+E           1 failed in 0.98s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.MCP.test_tool_error_results" name="test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]" time="1.706"><failure message="Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;_ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.] _&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')&#10;content = [{'text': '   ', 'type': 'text'}]&#10;expected = 'MCP tool reported an error.'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        (&quot;content&quot;, &quot;expected&quot;),&#10;        [&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Fixture tool failed.&quot;}], &quot;Fixture tool failed.&quot;),&#10;            (&#10;                [&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;First error.&quot;},&#10;                    {&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;},&#10;                    {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;Second error.&quot;},&#10;                ],&#10;                &quot;First error.\nSecond error.&quot;,&#10;            ),&#10;            ([], &quot;MCP tool reported an error.&quot;),&#10;            (&#10;                [{&quot;type&quot;: &quot;image&quot;, &quot;data&quot;: &quot;not-exposed&quot;, &quot;mimeType&quot;: &quot;image/png&quot;}],&#10;                &quot;MCP tool reported an error.&quot;,&#10;            ),&#10;            ([{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;   &quot;}], &quot;MCP tool reported an error.&quot;),&#10;        ],&#10;    )&#10;    @private_profile_test&#10;    async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(&#10;        request, tmp_path, content, expected&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, _service, state):&#10;            session = client.sessions[&quot;result-review&quot;]&#10;            state.write_text(json.dumps({&quot;isError&quot;: True, &quot;content&quot;: content}))&#10;&gt;           assert await client.call_tool(&#10;                &quot;result-review&quot;, &quot;review_echo&quot;, {&quot;message&quot;: &quot;fail&quot;}&#10;            ) == {&quot;error&quot;: expected}&#10;E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'MC...ed an error.'}&#10;E             &#10;E             Left contains 1 more item:&#10;E             {'result': [{'text': '   ', 'type': 'text'}]}&#10;E             Right contains 1 more item:&#10;E             {'error': 'MCP tool reported an error.'}&#10;E             Use -v to get more diff&#10;&#10;Tests/MCP/test_tool_error_results.py:79: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:08.233 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:08.373 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:08.492 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:08.505 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:08.507 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:08.546 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:08.624 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:08.625 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:08.670 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:08.670 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]&#10;1 failed in 1.12s">self = &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'content': [{'text': '   ', 'type': 'text'}], 'expected': 'MCP tool reported an error.', 'request': &lt;FixtureRequest f...tool reported an error.]&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4')}
+request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.] _
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest/test_stdio_tool_error_uses_tex0')
+E           content = [{'text': '   ', 'type': 'text'}]
+E           expected = 'MCP tool reported an error.'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("content", "expected"),
+E                   [
+E                       ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
+E                       (
+E                           [
+E                               {"type": "text", "text": "First error."},
+E                               {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+E                               {"type": "text", "text": "Second error."},
+E                           ],
+E                           "First error.\nSecond error.",
+E                       ),
+E                       ([], "MCP tool reported an error."),
+E                       (
+E                           [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+E                           "MCP tool reported an error.",
+E                       ),
+E                       ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+E                   ],
+E               )
+E               @private_profile_test
+E               async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
+E                   request, tmp_path, content, expected
+E               ):
+E                   async with connected_tool(tmp_path) as (client, _service, state):
+E                       session = client.sessions["result-review"]
+E                       state.write_text(json.dumps({"isError": True, "content": content}))
+E           &gt;           assert await client.call_tool(
+E                           "result-review", "review_echo", {"message": "fail"}
+E                       ) == {"error": expected}
+E           E           AssertionError: assert {'result': [{...pe': 'text'}]} == {'error': 'MC...ed an error.'}
+E           E
+E           E             Left contains 1 more item:
+E           E             {'result': [{'text': '   ', 'type': 'text'}]}
+E           E             Right contains 1 more item:
+E           E             {'error': 'MCP tool reported an error.'}
+E           E             Use -v to get more diff
+E
+E           Tests/MCP/test_tool_error_results.py:79: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:08.233 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:08.373 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:08.492 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:08.505 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:08.507 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:08.546 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:08.624 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:08.625 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:08.670 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:08.670 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_stdio_tool_error_uses_tex4/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]
+E           1 failed in 1.12s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.MCP.test_tool_error_results" name="test_success_with_absent_or_false_error_flag_keeps_existing_shape[None]" time="1.426" /><testcase classname="Tests.MCP.test_tool_error_results" name="test_success_with_absent_or_false_error_flag_keeps_existing_shape[False]" time="1.393" /><testcase classname="Tests.MCP.test_tool_error_results" name="test_control_plane_audits_tool_failure_without_error_body_and_recovers" time="1.497"><failure message="Failed: /private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;____ test_control_plane_audits_tool_failure_without_error_body_and_recovers ____&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_control_plane_audits_tool_failure_without_error_body_and_recovers&gt;&gt;&#10;tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest/test_control_plane_audits_tool0')&#10;&#10;    @pytest.mark.asyncio&#10;    @private_profile_test&#10;    async def test_control_plane_audits_tool_failure_without_error_body_and_recovers(&#10;        request, tmp_path&#10;    ):&#10;        async with connected_tool(tmp_path) as (client, service, state):&#10;            error_body = &quot;Fixture failure api_key=private-test-sentinel&quot;&#10;            state.write_text(&#10;                json.dumps(&#10;                    {&quot;isError&quot;: True, &quot;content&quot;: [{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: error_body}]}&#10;                )&#10;            )&#10;            logs = []&#10;            sink = logger.add(lambda message: logs.append(str(message)))&#10;            try:&#10;&gt;               with pytest.raises(RuntimeError, match=&quot;Fixture failure&quot;):&#10;                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;E               Failed: DID NOT RAISE &lt;class 'RuntimeError'&gt;&#10;&#10;Tests/MCP/test_tool_error_results.py:124: Failed&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-20 16:06:12.696 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment&#10;2026-09-20 16:06:12.795 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.&#10;2026-09-20 16:06:12.888 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-20 16:06:12.898 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available&#10;2026-09-20 16:06:12.900 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection&#10;----------------------------- Captured stderr call -----------------------------&#10;2026-09-20 16:06:12.933 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized&#10;2026-09-20 16:06:13.001 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts&#10;2026-09-20 16:06:13.001 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review&#10;2026-09-20 16:06:13.117 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable&#10;2026-09-20 16:06:13.118 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review&#10;- generated xml file: /private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;&#10;(3 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/MCP/test_tool_error_results.py::test_control_plane_audits_tool_failure_without_error_body_and_recovers&#10;1 failed in 1.06s">self = &lt;Coroutine test_control_plane_audits_tool_failure_without_error_body_and_recovers&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': &lt;FixtureRequest for &lt;Coroutine test_control_plane_audits_tool_failure_without_error_body_and_recovers&gt;&gt;, 'tmp_path': PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0')}
+request = &lt;FixtureRequest for &lt;Coroutine test_control_plane_audits_tool_failure_without_error_body_and_recovers&gt;&gt;
+work = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process')
+profile = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_control_plane_audits_tool_failure_without_error_body_and_recovers ____
+E
+E           request = &lt;FixtureRequest for &lt;Coroutine test_control_plane_audits_tool_failure_without_error_body_and_recovers&gt;&gt;
+E           tmp_path = PosixPath('/private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest/test_control_plane_audits_tool0')
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_control_plane_audits_tool_failure_without_error_body_and_recovers(
+E                   request, tmp_path
+E               ):
+E                   async with connected_tool(tmp_path) as (client, service, state):
+E                       error_body = "Fixture failure api_key=private-test-sentinel"
+E                       state.write_text(
+E                           json.dumps(
+E                               {"isError": True, "content": [{"type": "text", "text": error_body}]}
+E                           )
+E                       )
+E                       logs = []
+E                       sink = logger.add(lambda message: logs.append(str(message)))
+E                       try:
+E           &gt;               with pytest.raises(RuntimeError, match="Fixture failure"):
+E                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           E               Failed: DID NOT RAISE &lt;class 'RuntimeError'&gt;
+E
+E           Tests/MCP/test_tool_error_results.py:124: Failed
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-20 16:06:12.696 | DEBUG    | tldw_chatbook.Utils.optional_deps:&lt;module&gt;:1537 - Skipping auto-initialization in test environment
+E           2026-09-20 16:06:12.795 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-20 16:06:12.888 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-20 16:06:12.898 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:58 - Sounddevice backend available
+E           2026-09-20 16:06:12.900 | INFO     | tldw_chatbook.Audio.recording_service:&lt;module&gt;:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-20 16:06:12.933 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-20 16:06:13.001 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 0 resources, 0 prompts
+E           2026-09-20 16:06:13.001 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: result-review
+E           2026-09-20 16:06:13.117 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-20 16:06:13.118 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: result-review
+E           - generated xml file: /private/tmp/32831-red-merged-001/test_control_plane_audits_tool0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_tool_error_results.py::test_control_plane_audits_tool_failure_without_error_body_and_recovers
+E           1 failed in 1.06s
+
+Tests/private_profile.py:84: Failed</failure></testcase></testsuite></testsuites>

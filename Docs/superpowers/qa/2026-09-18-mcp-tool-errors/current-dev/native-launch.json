@@ -1,0 +1,11 @@
+{
+  "pid": 68932,
+  "started_at": "2026-09-20T23:32:15.919323+00:00",
+  "repo": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+  "head": "8b7be87978af167e0be08887d74157aeace6e28c",
+  "dirty_status": " M Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/independent-review.json\n M Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py\n M Tests/MCP/test_tool_error_results.py\n M \"backlog/tasks/task-32831 - Preserve-MCP-tool-execution-errors-through-client-results.md\"\n M tldw_chatbook/MCP/client.py\n M tldw_chatbook/Utils/input_validation.py\n",
+  "requested_size": [
+    170,
+    48
+  ]
+}

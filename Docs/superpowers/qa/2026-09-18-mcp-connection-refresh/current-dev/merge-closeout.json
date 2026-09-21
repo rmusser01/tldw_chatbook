@@ -1,0 +1,54 @@
+{
+  "old_head": "90b90ccc591a91de9bff79d5656b2028803c8c34",
+  "head": "f810b64a37181a7fb00112ea8f62a1ac94562f6d",
+  "base": "8dc7d389749d609d0efa715124043f748aaac9c4",
+  "conflicts": false,
+  "range_diff": "all six commits patch-equivalent",
+  "product_mcp_tests_qa_diff": "empty",
+  "base_change": "PR2750 unused legacy Chat_Functions removal, diagnostic inventory and tests; chat_screen docstring only",
+  "targeted_tests": 41,
+  "test_report": "/private/tmp/32830-final-rebase-tests.xml",
+  "pytest_cleanup_warning": "shared pytest garbage cleanup OSError; test session exit 0, unrelated existing temp paths untouched",
+  "artifact_guards": {
+    "seven_non_network_checks": "passed",
+    "mermaid": "sandbox input-download failure; network-enabled retry passed",
+    "logs": [
+      "/private/tmp/32830-final-rebase-preflight.txt",
+      "/private/tmp/32830-final-rebase-mermaid.txt"
+    ]
+  },
+  "review": "Qodo 0 bugs / 0 rule violations at 90b90; all 9 threads resolved or dismissed; rebase patch equivalent",
+  "visual": "approved gallery unchanged; native004 source files unchanged by rebase",
+  "ci_run": 35542566467,
+  "ci": "passed",
+  "native004_current_file_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": true,
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": true,
+    "tldw_chatbook/css/tldw_cli_modular.tcss": true,
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
+    "tldw_chatbook/css/widget_defaults_self.tcss": true,
+    "tldw_chatbook/css/core/_variables.tcss": true,
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": true,
+    "tldw_chatbook/MCP/local_control_service.py": true,
+    "tldw_chatbook/MCP/client.py": true,
+    "Tests/MCP/fixtures/stdio_catalog_server.py": true,
+    "runner": true
+  },
+  "headRefOid": "f810b64a37181a7fb00112ea8f62a1ac94562f6d",
+  "mergeCommit": {
+    "oid": "e4096e205906e34dcc7482a225594a83ab6c4b01"
+  },
+  "mergedAt": "2026-09-20T23:03:43Z",
+  "state": "MERGED",
+  "ci_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35542566467",
+  "ci_checkout": "5e3044872b62137cbdbeb4595e47dd425c1b8ede",
+  "merge_tree": "b10efaf4a23d376ab9e3e92dac5827166e238c75",
+  "fast_lane_passed": 1152,
+  "qodo_open_bugs": 0,
+  "qodo_open_rules": 0,
+  "resolved_review_threads": 9,
+  "naming_reply": "https://github.com/rmusser01/tldw_chatbook/pull/2714#discussion_r4058316298",
+  "next_pr": 2716
+}

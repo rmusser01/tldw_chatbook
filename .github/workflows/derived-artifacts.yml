@@ -65,7 +65,9 @@ jobs:
     name: PR Fast Lane
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # TASK-32831: the main and admission-sensitive invocations measured 14m45s
+    # and 4m59s, plus setup; keep both required steps within one bounded job.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4

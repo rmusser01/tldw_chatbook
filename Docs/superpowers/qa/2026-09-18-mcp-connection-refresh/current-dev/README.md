@@ -1,5 +1,18 @@
 # PR2714 current-dev catalog refresh qualification
 
+## Approved merge closeout — 2026-09-20
+
+PR2714 merged into `dev` as `e4096e2059` after the owner-approved visual review.
+The final conflict-free rebase retained all six patches; 41 affected local cases,
+all eight current artifact checks, and all thirteen native source/runner hashes
+pass. GitHub run35542566467 passes 1,152 Fast Lane cases and the required artifact
+gate on the exact merged tree. Qodo reports zero open bugs/rules; all nine review
+threads are resolved or dismissed. TASK-32830 is Done.
+
+PR2716 tool-result errors now resumes on a fresh branch from merged dev. Compact
+notification placement, catalog reachability and the other pending screen reviews
+remain separate scope. [Merge receipt](merge-closeout.json).
+
 Current evidence is native run 004 after the second Qodo pass; see that section
 below. Earlier qualification paragraphs retain their historical context.
 

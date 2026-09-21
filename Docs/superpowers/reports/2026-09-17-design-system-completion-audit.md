@@ -1,5 +1,51 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2716 tool-error qualification — 2026-09-20
+
+PR2714 merged into dev as `e4096e2059` after owner approval and all CI/review gates;
+TASK-32830 is Done. The fresh follow-up branch integrates existing PR2716 without
+conflicts. Server-reported tool errors now reach the existing failed result and
+Audit path; successful retry uses the same connection. Production changes cover client result handling
+and strict flag validation in the existing shared input-validation module, with
+existing ADR-111/161 and no new architecture.
+
+75 distinct targeted cases, eight artifact guards and independent reviews pass.
+Qodo's malformed-flag finding is repaired: eight real-stdio cases reproduce the
+false success before repair, then reject malformed values without body leakage
+and successfully retry on the same session.
+Fresh native dark/light 170×48 passes with eight inspected SVGs, real error/success
+audit records, clean app/child shutdown, healthy private databases, unchanged
+defaults/sentinels and matching source hashes. The separate 80×24 attempt fails
+before execution because Test Tool is offscreen even after focus/scroll; it exits
+1 with verified clean shutdown. Compact execution remains unqualified, and its
+layout repair stays separate from this client-only PR.
+
+[Current evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/README.md).
+Owner approved the PR2716 gallery at `19ceab4dc3`. A test/CI-only follow-up
+repairs the splash-dependent watcher fixture and extends the bounded serial job
+to 30 minutes; production/native hashes are unchanged. Its 123 admission cases
+(plus one existing expected failure), 26 CI contracts and eight artifact checks
+pass. TASK-32831 remains In Progress pending current-head CI, accumulated review
+and merge. Full Audit navigation, raw-response expansion,
+complete permission flows and remaining screen reviews stay open.
+
+Qodo's accumulated follow-up added the public tool-call contract and twelve
+pure boundary tests. All 31 affected cases pass, bringing the distinct MCP
+inventory to 87. Independent review and baseline-relative static checks pass;
+executable client AST is unchanged apart from the docstring, so the recorded
+visual approval applies. [Evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/review-followup/README.md).
+
+## PR2714 merged; PR2716 resumed — 2026-09-20
+
+PR2714 merged into dev at `e4096e2059` after owner visual approval, zero open Qodo
+findings, all nine review threads resolved, and current-head CI (1,152 Fast Lane
+cases plus artifact gate). The conflict-free final rebase preserves the approved
+MCP implementation and native source hashes. TASK-32830 is Done; its current QA
+merge receipt records the exact tree, tests and review evidence.
+
+PR2716 tool-result errors resumes separately from this merged state. Further
+compact inspector/notification work and remaining screen reviews stay open.
+
 ## Current checkpoint — PR2714 owner approval and review follow-ups
 
 Owner approved the catalog-refresh gallery at `f8d1731abc`. PR2714 is rebased

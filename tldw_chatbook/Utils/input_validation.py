@@ -352,6 +352,19 @@ class WorktreeRecoveryConfirmationInput(BaseModel):
     allow: bool
 
 
+class MCPToolResultInput(BaseModel):
+    """Validate the MCP error flag without changing existing content payloads.
+
+    Missing flags mean success; present flags must be actual JSON booleans.
+    Content remains opaque for the client's existing result/error presentation.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    is_error: bool = Field(default=False, alias="isError")
+    content: Any = Field(default_factory=list)
+
+
 class ToolArgumentsInput(BaseModel):
     """Strict shared boundary for an externally supplied tool argument object."""
 

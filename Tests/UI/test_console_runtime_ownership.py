@@ -2344,6 +2344,7 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
     monkeypatch,
 ):
     """The real app loop observes disable even when no preview was opened."""
+    from tldw_chatbook import app as app_module
     from tldw_chatbook import config as config_module
 
     canvas_policy = {"enabled": True}
@@ -2352,15 +2353,30 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
         "get_canvas_execution_enabled",
         lambda: canvas_policy["enabled"],
     )
+    # The factory's constructor patches expire before compose reads config.
+    # Scope the splash override to this test; this module shares its profile.
+    get_cli_setting = app_module.get_cli_setting
+
+    def no_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", no_splash)
     # Shipping CLI construction happens before Textual creates its loop.
-    app = _build_test_app()
+    # Home keeps Canvas unwarmed; Console mount itself creates its controller.
+    app = _build_test_app(configured_default="home")
     runtime = app.console_runtime
     assert isinstance(runtime, ConsoleRuntime)
     assert runtime._canvas_policy_watch_task is None
 
     async def exercise_app_lifecycle() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
+            await asyncio.wait_for(
+                asyncio.shield(app._initial_screen_setup_task), timeout=10.0
+            )
+            assert app.current_tab == "home"
+            await _wait_for_selector(app.screen, pilot, "#home-header-line")
             watcher = runtime._canvas_policy_watch_task
             assert watcher is not None
             assert not watcher.done()

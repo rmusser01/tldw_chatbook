@@ -1,0 +1,22 @@
+{
+  "wide_svg_count": 8,
+  "inspected_unique_renders": 4,
+  "feedback_pairs": "Every feedback PNG is pixel-identical to its settled counterpart. All four distinct wide frames were inspected.",
+  "observations": [
+    "Dark and light failure labels and full text are visible, with Approve & run once available.",
+    "Both retries show OK and preserve the same live fixture connection.",
+    "Audit status assertions use real persisted execution records; full Audit navigation is outside this slice.",
+    "The raw-response control stays collapsed; its expansion is unqualified."
+  ],
+  "compact": {
+    "size": [
+      80,
+      24
+    ],
+    "theme": "textual-dark",
+    "passed": false,
+    "observation": "Test Tool is outside the visible compositor even after focus and scroll_visible. Attempt ends before invoking tools, with exit 1 and clean app/child shutdown.",
+    "capture": "compact-unreachable.svg"
+  },
+  "render_note": "Cairo glyph/font fallbacks are not terminal defects; original SVG and paired terminal text are preserved."
+}

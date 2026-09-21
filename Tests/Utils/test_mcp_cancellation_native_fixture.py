@@ -18,7 +18,7 @@ RUNNER = (
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["cancellation", "refresh"])
+@pytest.mark.parametrize("kind", ["cancellation", "refresh", "tool-errors"])
 @pytest.mark.parametrize("existing", ["cleanup-demo", "other", None])
 async def test_fixture_preserves_existing_profile_and_runtime(
     tmp_path: Path, existing: str | None, kind: str
@@ -30,17 +30,20 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         existing: Existing profile ID, or None for an empty store.
         kind: Native journey whose fixture admission is being checked.
     """
-    fixture_id = "cleanup-demo" if kind == "cancellation" else "wire-review"
+    fixture_id = {
+        "cancellation": "cleanup-demo",
+        "refresh": "wire-review",
+        "tool-errors": "execution-review",
+    }[kind]
     if existing == "cleanup-demo":
         existing = fixture_id
-    runner = (
-        RUNNER
-        if kind == "cancellation"
-        else (
+    runner = RUNNER
+    if kind != "cancellation":
+        directory = "mcp-connection-refresh" if kind == "refresh" else "mcp-tool-errors"
+        runner = (
             Path(__file__).resolve().parents[2]
-            / "Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/native_check.py"
+            / f"Docs/superpowers/qa/2026-09-18-{directory}/current-dev/native_check.py"
         )
-    )
     arguments = () if kind == "cancellation" else (runner.parents[5], tmp_path)
     store_path = tmp_path / "mcp.json"
     store = LocalMCPStore(store_path)
