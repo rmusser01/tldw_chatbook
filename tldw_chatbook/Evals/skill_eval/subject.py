@@ -22,6 +22,16 @@ class SubjectError(Exception):
 
 
 def parse_front_matter(content: str) -> tuple[dict, str]:
+    """Split SKILL.md content into its front matter and body.
+
+    Args:
+        content: Full SKILL.md text.
+
+    Returns:
+        ``(meta, body)`` where ``meta`` is the parsed YAML mapping and ``body``
+        is everything after the closing ``---``. Missing, malformed, or
+        non-mapping front matter yields ``({}, content)`` — never raises.
+    """
     match = _FRONT_MATTER.match(content)
     if not match:
         return {}, content
@@ -77,6 +87,17 @@ def _build(name, description, content, body, allowed_tools, referenced,
 
 
 def subject_from_directory(path: str | Path) -> SkillSubject:
+    """Snapshot a skill package directory by path (structure reads only).
+
+    Args:
+        path: Directory containing a ``SKILL.md`` plus optional bundle files.
+
+    Returns:
+        An immutable ``SkillSubject`` with trust status ``"unknown"``.
+
+    Raises:
+        SubjectError: If the directory has no readable ``SKILL.md``.
+    """
     root = Path(path)
     skill_md = root / "SKILL.md"
     if not skill_md.is_file():
@@ -100,6 +121,21 @@ def subject_from_directory(path: str | Path) -> SkillSubject:
 
 
 async def subject_from_store(service: Any, skill_name: str) -> SkillSubject:
+    """Snapshot a skill from its local-store row via ``LocalSkillsService``.
+
+    Args:
+        service: Object exposing ``await get_skill(name)`` returning a mapping
+            with ``content``, optional ``bundle_files`` manifest, and trust
+            fields.
+        skill_name: Store skill name to snapshot.
+
+    Returns:
+        An immutable ``SkillSubject`` carrying the store trust tier.
+
+    Raises:
+        SubjectError: If the skill cannot be read (missing or any service
+            error, normalized).
+    """
     try:
         resp = await service.get_skill(skill_name)
     except Exception as exc:  # missing skill surfaces as many shapes; normalize

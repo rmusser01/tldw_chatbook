@@ -44,7 +44,6 @@ class SkillEvalPanel(Widget):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._depth: SkillEvalDepth = SkillEvalDepth.STANDARD
-        self._targets: List[dict] = []
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -67,7 +66,6 @@ class SkillEvalPanel(Widget):
         widget.update(f"Subject: {name} ({source})")
 
     def set_targets(self, rows: List[dict]) -> None:
-        self._targets = list(rows)
         options = [
             (f"{r.get('name') or r['id']} "
              f"({r.get('provider')}/{r.get('model_id')})", r["id"])

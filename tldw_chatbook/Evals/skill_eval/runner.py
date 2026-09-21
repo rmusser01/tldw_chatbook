@@ -19,6 +19,16 @@ from .static_analyzer import analyze_static
 
 
 def estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
+    """Estimated LLM calls a depth will spend (shown pre-launch in the UI).
+
+    Args:
+        depth: Quick costs nothing; standard is the 16-call judge battery;
+            deep adds the sim-prompt generation call plus the simulations.
+        deep_sim_total: Configured simulation count for deep runs.
+
+    Returns:
+        The estimated call count: 0 / 16 / ``17 + deep_sim_total``.
+    """
     if depth is SkillEvalDepth.QUICK:
         return 0
     if depth is SkillEvalDepth.STANDARD:
@@ -28,6 +38,17 @@ def estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
 
 def run_preflight(subject: SkillSubject, generator: EvalTarget,
                   judge: EvalTarget, app_config: Mapping) -> list:
+    """Check provider readiness before any call is spent.
+
+    Args:
+        subject: Skill snapshot (readability was proven by its construction).
+        generator: Resolved generator target.
+        judge: Resolved judge target.
+        app_config: App configuration mapping for key resolution.
+
+    Returns:
+        User-facing problem strings; empty means the run may launch.
+    """
     problems: list = []
     for provider in dict.fromkeys([generator.provider, judge.provider]):
         readiness = get_provider_readiness(provider, app_config)
@@ -37,7 +58,22 @@ def run_preflight(subject: SkillSubject, generator: EvalTarget,
 
 
 class SkillEvalRunner:
+    """Depth-orchestrating runner for one skill-eval run.
+
+    Holds the injected chat callable and cancellation token; ``run`` executes
+    the layers the configured depth calls for, forwards live per-call progress,
+    and blends the layer results into the final report.
+    """
+
     def __init__(self, chat: Any, cancel_token: Optional[CancelToken] = None):
+        """Store the chat callable and optional cancellation token.
+
+        Args:
+            chat: Chat callable with the shared keyword contract
+                (``messages, target, temperature, max_tokens, seed``).
+            cancel_token: Cooperative cancellation flag checked between cells.
+        """
+        self._chat = chat
         self._chat = chat
         self._cancel = cancel_token
         #: The last ``run()``'s raw layer results, stashed for the caller
@@ -55,6 +91,29 @@ class SkillEvalRunner:
                   local_tool_names: FrozenSet[str] = frozenset(),
                   reserved_names: FrozenSet[str] = frozenset(),
                   progress: Optional[ProgressCallback] = None) -> SkillEvalReport:
+        """Execute the run at the configured depth and score it.
+
+        Quick runs static analysis only; standard adds the judge battery; deep
+        also generates sim prompts and runs the Monte Carlo layer. Progress is
+        live and monotonic: every completed call advances ``(done, total)``
+        exactly once. Cancellation keeps partial layer results, which persist
+        with a warning. Raw layer results are stashed on ``judge_result`` /
+        ``sim_result`` for the caller's artifact persistence.
+
+        Args:
+            subject: Immutable skill snapshot under test.
+            config: Run configuration (depth, temperatures, seed, ...).
+            generator: Resolved generator target.
+            judge: Resolved judge target.
+            decoy_pool: Installed-skill summaries for the sim decoy set.
+            builtin_tool_names: Bare builtin tool names for static checks.
+            local_tool_names: Bare local tool names for static checks.
+            reserved_names: Names a skill must not collide with.
+            progress: Optional ``(done, total)`` callback per completed call.
+
+        Returns:
+            The blended ``SkillEvalReport``.
+        """
         total = estimate_calls(config.depth, config.deep_sim_total)
         done = 0
 

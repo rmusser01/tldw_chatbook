@@ -1,6 +1,4 @@
 """Tests for skill_eval models: dataclasses, digest, config round-trip."""
-import pytest
-
 from tldw_chatbook.Evals.skill_eval.models import (
     CancelToken, SkillEvalConfig, SkillEvalDepth, SkillSubject, digest_skill,
 )

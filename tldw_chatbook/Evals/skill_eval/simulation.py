@@ -19,6 +19,16 @@ from .prompts import selection_messages as _selection_messages
 # ---------- statistics (pure Python; no numpy/scipy) -------------------------
 
 def wilson_interval(successes: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+    """Wilson score interval for a binomial proportion.
+
+    Args:
+        successes: Number of successes.
+        n: Number of trials.
+        z: Z-score (default 1.96 ≈ 95%).
+
+    Returns:
+        ``(lo, hi)`` in [0, 1]; ``(0.0, 0.0)`` when ``n`` is 0.
+    """
     if n == 0:
         return (0.0, 0.0)
     p = successes / n
@@ -97,6 +107,19 @@ def _beta_ppf(q: float, a: float, b: float) -> float:
 
 
 def clopper_pearson(successes: int, n: int, alpha: float = 0.05) -> Tuple[float, float]:
+    """Exact Clopper–Pearson confidence interval for a binomial proportion.
+
+    Conservative interval inverted from the beta distribution; used for the
+    failure-rate CI where undercoverage is unacceptable.
+
+    Args:
+        successes: Number of successes.
+        n: Number of trials.
+        alpha: Significance level (default 0.05 → 95% interval).
+
+    Returns:
+        ``(lo, hi)`` in [0, 1]; ``(0.0, 1.0)`` when ``n`` is 0.
+    """
     if n == 0:
         return (0.0, 1.0)
     x = successes
@@ -107,6 +130,17 @@ def clopper_pearson(successes: int, n: int, alpha: float = 0.05) -> Tuple[float,
 
 def bootstrap_ci(values: List[float], n_resamples: int = 1000,
                  alpha: float = 0.05, seed: int = 0) -> Tuple[float, float]:
+    """Percentile bootstrap CI over resampled means, seeded and deterministic.
+
+    Args:
+        values: Observed per-prompt stability scores.
+        n_resamples: Number of resamples.
+        alpha: Significance level (default 0.05 → 95% interval).
+        seed: RNG seed for reproducibility.
+
+    Returns:
+        ``(lo, hi)``; ``(0.0, 0.0)`` when ``values`` is empty.
+    """
     if not values:
         return (0.0, 0.0)
     rng = random.Random(seed)
@@ -128,6 +162,17 @@ def bootstrap_ci(values: List[float], n_resamples: int = 1000,
 
 def select_decoys(skills: Sequence[Mapping[str, Any]], subject_name: str,
                   k: int = 8, seed: int = 0) -> List[dict]:
+    """Deterministically choose the stable decoy set for selection calls.
+
+    Args:
+        skills: Candidate installed-skill summaries (name/description).
+        subject_name: The subject under test, always excluded.
+        k: Maximum decoys to return.
+        seed: RNG seed so the decoy set is reproducible per run.
+
+    Returns:
+        Up to ``k`` shuffled copies, never containing the subject.
+    """
     pool = [dict(s) for s in skills if s.get("name") != subject_name]
     rng = random.Random(seed)
     rng.shuffle(pool)
@@ -138,7 +183,16 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def parse_selection_reply(text: str, subject_name: str) -> Optional[bool]:
-    """True = selected the subject, False = chose another/null, None = unparseable."""
+    """Interpret a selection reply against the subject under test.
+
+    Args:
+        text: Raw model reply; the first JSON object in it is used.
+        subject_name: The subject under test.
+
+    Returns:
+        ``True`` if the subject was selected, ``False`` for another skill or
+        an explicit null, ``None`` when no parseable verdict exists.
+    """
     match = _JSON_OBJECT_RE.search(text)
     if not match:
         return None
@@ -166,6 +220,28 @@ async def run_simulation_layer(
     progress: Optional[ProgressCallback] = None,
     cancel: Optional[CancelToken] = None,
 ) -> SimLayerResult:
+    """Layer 3: description-only Monte Carlo selection simulation (deep only).
+
+    Fans out seeded one-shot selection calls (subject vs. a stable decoy set)
+    across prompts and repeats, bounded by ``semaphore``. Chat exceptions are
+    recorded as failure cells and kept in the activation denominator — never
+    dropped. Metrics: activation rate (Wilson CI), per-prompt consistency
+    (bootstrap CI), failure rate (Clopper–Pearson CI).
+
+    Args:
+        subject: The skill snapshot under test.
+        sim_prompts: Seeded prompts spanning the skill's intended range.
+        decoys: Stable decoy skill summaries (``select_decoys`` output).
+        chat: Chat callable with the shared keyword contract.
+        target: Resolved generator target for the calls.
+        config: Run config (temperatures, ``deep_sim_total``, seed).
+        semaphore: Concurrency bound.
+        progress: Optional cumulative ``(recorded, total)`` callback per cell.
+        cancel: Optional cooperative cancellation token.
+
+    Returns:
+        ``SimLayerResult`` with metrics, CIs, and every recorded cell.
+    """
     total = max(1, config.deep_sim_total)
     per_prompt = max(1, total // max(1, len(sim_prompts)))
     cells: List[dict] = []

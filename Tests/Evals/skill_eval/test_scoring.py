@@ -2,8 +2,7 @@
 import pytest
 
 from tldw_chatbook.Evals.skill_eval.models import (
-    DimensionScore, JudgeLayerResult, SimLayerResult, SkillEvalDepth,
-    StaticLayerResult,
+    JudgeLayerResult, SimLayerResult, SkillEvalDepth, StaticLayerResult,
 )
 from tldw_chatbook.Evals.skill_eval.scoring import (
     CONFIDENCE_BY_DEPTH, DIMENSION_WEIGHTS, LAYER_BLENDS, blend_dimension,

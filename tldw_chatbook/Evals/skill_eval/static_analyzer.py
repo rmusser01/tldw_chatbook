@@ -31,6 +31,21 @@ _REMEDIATION = {
 def analyze_static(subject: SkillSubject, *, builtin_tool_names: frozenset[str],
                    local_tool_names: frozenset[str],
                    reserved_names: frozenset[str]) -> StaticLayerResult:
+    """Layer 1: deterministic checks over a frozen skill snapshot.
+
+    Runs the seven anti-pattern detectors (each a multiplicative penalty
+    applied later by scoring) and computes per-dimension sub-scores.
+    Dimensions a static-only view cannot measure get ``None``.
+
+    Args:
+        subject: Immutable skill snapshot.
+        builtin_tool_names: Bare names of builtin tools (exact-match surface).
+        local_tool_names: Bare names of local tools.
+        reserved_names: Names the skill must not collide with.
+
+    Returns:
+        ``StaticLayerResult`` with sub-scores, per-dimension scores, findings.
+    """
     findings: list[StaticFinding] = []
 
     desc = subject.description.strip()

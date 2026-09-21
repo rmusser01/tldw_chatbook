@@ -11,6 +11,13 @@ METHODOLOGY_VERSION = "skill-eval/1"
 
 
 class SkillEvalDepth(str, Enum):
+    """Evaluation depth: which layers run.
+
+    QUICK = static only, STANDARD = static + judge, DEEP = all three layers.
+    Str-mixin Enum: comparisons must use explicit ranks (see scoring), since
+    ``>=`` compares the string values lexicographically.
+    """
+
     QUICK = "quick"
     STANDARD = "standard"
     DEEP = "deep"
@@ -20,20 +27,36 @@ ProgressCallback = Callable[[int, int], None]
 
 
 class CancelToken:
-    """Cooperative cancellation flag (character_probe runner precedent)."""
+    """Cooperative cancellation flag (character_probe runner precedent).
+
+    Layers poll ``is_cancelled`` between cells; a cancelled run keeps whatever
+    partial results were already recorded.
+    """
 
     def __init__(self) -> None:
         self._cancelled = False
 
     def cancel(self) -> None:
+        """Request cancellation; idempotent."""
         self._cancelled = True
 
     @property
     def is_cancelled(self) -> bool:
+        """Whether cancellation has been requested."""
         return self._cancelled
 
 
 def digest_skill(name: str, description: str, body: str) -> str:
+    """Compute the sha256 provenance digest of a skill definition.
+
+    Args:
+        name: Skill name.
+        description: Front-matter description.
+        body: Full SKILL.md content the digest is taken over.
+
+    Returns:
+        Hex-encoded sha256 of the NUL-joined fields.
+    """
     joined = "\x00".join((name, description, body))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
@@ -62,6 +85,7 @@ class SkillSubject:
     line_count: int = 0
 
     def to_provenance(self) -> dict[str, Any]:
+        """Return the provenance dict embedded in reports and run snapshots."""
         return {
             "name": self.name, "digest": self.digest,
             "trust_status": self.trust_status, "source_kind": self.source_kind,
@@ -87,6 +111,11 @@ class SkillEvalConfig:
     max_tokens: int = 1024
 
     def to_config_data(self) -> dict[str, Any]:
+        """Serialize to the JSON-friendly dict persisted in ``config_data``.
+
+        ``bench_id`` is intentionally excluded: it is the DB row identity and
+        is re-attached by the loader.
+        """
         return {
             "name": self.name, "subject_ref": self.subject_ref,
             "subject_kind": self.subject_kind, "depth": self.depth.value,
@@ -100,6 +129,19 @@ class SkillEvalConfig:
 
     @classmethod
     def from_config_data(cls, data: Mapping[str, Any]) -> "SkillEvalConfig":
+        """Rebuild a config from persisted ``config_data``.
+
+        Args:
+            data: Mapping as produced by ``to_config_data`` (plus optional
+                ``bench_id``).
+
+        Returns:
+            The reconstructed ``SkillEvalConfig``.
+
+        Raises:
+            KeyError: If a required key is missing.
+            ValueError: If ``depth`` is not a known ``SkillEvalDepth`` value.
+        """
         return cls(
             name=data["name"], subject_ref=data["subject_ref"],
             subject_kind=data["subject_kind"],

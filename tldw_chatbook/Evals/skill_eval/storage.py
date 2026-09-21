@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ...DB.Evals_DB import EvalsDB
 from .models import (
-    EvalTarget, SkillEvalConfig, SkillEvalDepth, SkillEvalReport, SkillSubject,
+    EvalTarget, SkillEvalConfig, SkillEvalReport, SkillSubject,
 )
 
 BENCH_TYPE = "skill_eval"
@@ -17,6 +17,15 @@ class SkillEvalStorageError(Exception):
 
 
 def is_skill_eval_bench(row: Optional[Mapping[str, Any]]) -> bool:
+    """Whether an ``eval_tasks`` row is a skill-eval bench (discriminator check).
+
+    Args:
+        row: Task row (or ``None``).
+
+    Returns:
+        ``True`` iff the row's ``config_data`` carries the skill-eval
+        ``bench_type``.
+    """
     if not row:
         return False
     config = row.get("config_data")
@@ -26,6 +35,18 @@ def is_skill_eval_bench(row: Optional[Mapping[str, Any]]) -> bool:
 
 
 def save_skill_eval_bench(db: EvalsDB, config: SkillEvalConfig) -> str:
+    """Create or update the bench task row for a skill-eval config.
+
+    Args:
+        db: EvalsDB handle.
+        config: Config to persist.
+
+    Returns:
+        The bench (task) id.
+
+    Raises:
+        SkillEvalStorageError: If updating a bench whose row is gone.
+    """
     payload = {"bench_type": BENCH_TYPE, "skill_eval": config.to_config_data()}
     if config.bench_id:
         ok = db.update_task(config.bench_id, name=config.name,
@@ -38,6 +59,18 @@ def save_skill_eval_bench(db: EvalsDB, config: SkillEvalConfig) -> str:
 
 
 def load_skill_eval_bench(db: EvalsDB, bench_id: str) -> SkillEvalConfig:
+    """Load a bench config back from its ``eval_tasks`` row.
+
+    Args:
+        db: EvalsDB handle.
+        bench_id: Bench (task) id.
+
+    Returns:
+        The reconstructed ``SkillEvalConfig`` with ``bench_id`` attached.
+
+    Raises:
+        SkillEvalStorageError: If the row is missing or not a skill-eval bench.
+    """
     row = db.get_task(bench_id)
     if not row:
         raise SkillEvalStorageError(f"bench {bench_id} not found")
@@ -49,6 +82,7 @@ def load_skill_eval_bench(db: EvalsDB, bench_id: str) -> SkillEvalConfig:
 
 
 def list_skill_eval_benches(db: EvalsDB) -> List[dict]:
+    """List all skill-eval bench task rows (discriminator-filtered)."""
     return [row for row in db.list_tasks(limit=1000)
             if is_skill_eval_bench(row)]
 
@@ -57,6 +91,23 @@ def create_skill_eval_run(db: EvalsDB, bench_id: str, config: SkillEvalConfig,
                           subject: SkillSubject, generator: EvalTarget,
                           judge: EvalTarget,
                           call_estimate: int) -> Tuple[str, str]:
+    """Open the run: one ``eval_runs`` row snapshotting config and provenance.
+
+    The row shares its ``run_group_id`` with its own id (single-run group) so
+    it auto-appears in the library rail.
+
+    Args:
+        db: EvalsDB handle.
+        bench_id: Bench (task) id.
+        config: Run configuration.
+        subject: Subject snapshot (provenance embedded in the snapshot).
+        generator: Resolved generator target.
+        judge: Resolved judge target.
+        call_estimate: Estimated call count from ``estimate_calls``.
+
+    Returns:
+        ``(run_id, run_group_id)``.
+    """
     run_id = db.create_run(
         name=config.name, task_id=bench_id, model_id=judge.id,
         config_overrides={
@@ -76,6 +127,17 @@ def create_skill_eval_run(db: EvalsDB, bench_id: str, config: SkillEvalConfig,
 
 
 def save_artifact(db: EvalsDB, run_id: str, artifact: Mapping[str, Any]) -> str:
+    """Persist one judge rating or simulation cell as an ``eval_results`` row.
+
+    Args:
+        db: EvalsDB handle.
+        run_id: Run to attach the artifact to.
+        artifact: Mapping with ``sample_id`` plus optional ``kind``, ``raw``,
+            ``parsed``, and ``input`` entries.
+
+    Returns:
+        The stored result id.
+    """
     return db.store_result(
         run_id=run_id, sample_id=str(artifact["sample_id"]),
         input_data=dict(artifact.get("input") or {}),
@@ -88,6 +150,21 @@ def save_artifact(db: EvalsDB, run_id: str, artifact: Mapping[str, Any]) -> str:
 
 def save_report(db: EvalsDB, run_id: str, report: SkillEvalReport,
                 status: str = "completed") -> None:
+    """Finalize the run: snapshot the report and store dimension metrics.
+
+    The full report JSON lands in ``config_overrides["skill_eval_report"]``;
+    per-dimension and composite values are also written as run metrics for
+    comparison surfaces.
+
+    Args:
+        db: EvalsDB handle.
+        run_id: Run to finalize.
+        report: The scored report to persist.
+        status: Terminal run status (e.g. ``"completed"``, ``"cancelled"``).
+
+    Raises:
+        SkillEvalStorageError: If the run row is missing.
+    """
     run = db.get_run(run_id)
     if not run:
         raise SkillEvalStorageError(f"run {run_id} missing")
@@ -116,6 +193,15 @@ def save_report(db: EvalsDB, run_id: str, report: SkillEvalReport,
 
 
 def load_report(db: EvalsDB, run_group_id: str) -> Optional[dict]:
+    """Load the report snapshot for a run group, if one was saved.
+
+    Args:
+        db: EvalsDB handle.
+        run_group_id: Group id (for this sub-harness: the run id itself).
+
+    Returns:
+        The persisted report dict, or ``None`` if no run in the group has one.
+    """
     runs = db.list_runs(run_group_id=run_group_id)
     for run in runs:
         overrides = run.get("config_overrides") or {}
@@ -126,6 +212,13 @@ def load_report(db: EvalsDB, run_group_id: str) -> Optional[dict]:
 
 
 def iter_artifacts(db: EvalsDB, run_id: str, page: int = 100) -> Iterator[dict]:
+    """Drain a run's ``eval_results`` rows page by page.
+
+    Args:
+        db: EvalsDB handle.
+        run_id: Run whose artifacts to iterate.
+        page: Page size for the paginated ``get_run_results``.
+    """
     offset = 0
     while True:
         rows = db.get_run_results(run_id, limit=page, offset=offset)

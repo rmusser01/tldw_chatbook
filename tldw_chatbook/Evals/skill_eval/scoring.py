@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 from .models import (
     DimensionScore, JudgeLayerResult, SimLayerResult, SkillEvalDepth,
-    SkillEvalReport, StaticFinding, StaticLayerResult,
+    SkillEvalReport, StaticLayerResult,
 )
 
 DIMENSION_WEIGHTS = {
@@ -72,6 +72,14 @@ PENALTY_FLOOR = 0.5
 
 
 def grade_for(score: float) -> str:
+    """Map a 0–100 composite to a letter grade on the PluginEval bands.
+
+    Args:
+        score: Composite score in [0, 100].
+
+    Returns:
+        Letter grade (``"A+"`` … ``"D-"``), or ``"F"`` below 60.
+    """
     for cut, grade in _GRADE_BANDS:
         if score >= cut:
             return grade
@@ -106,6 +114,25 @@ def _sim_value(sim: Optional[SimLayerResult], dimension: str) -> Optional[float]
 
 def blend_dimension(name: str, *, static: Optional[float],
                     judge: Optional[float], sim: Optional[float]) -> DimensionScore:
+    """Blend per-layer scores into one dimension, renormalized over layers present.
+
+    Layer scores are clamped to [0, 1]; unavailable layers (``None`` or zero
+    blend weight) drop out and their weight is redistributed. When no layer can
+    produce the dimension, the result is ``blended=0.0`` with no available
+    layers (excluded from the composite by ``build_report``).
+
+    Args:
+        name: Dimension name; must exist in ``LAYER_BLENDS``.
+        static: Static-layer score or ``None``.
+        judge: Judge-layer score or ``None``.
+        sim: Simulation-layer score or ``None``.
+
+    Returns:
+        The blended ``DimensionScore``.
+
+    Raises:
+        KeyError: If ``name`` is not a known dimension.
+    """
     ws, wj, wm = LAYER_BLENDS[name]
     pairs: list[tuple[str, float, float]] = []
     if static is not None and ws > 0:
@@ -129,6 +156,24 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
                  judge: Optional[JudgeLayerResult],
                  sim: Optional[SimLayerResult],
                  warnings: Tuple[str, ...] = ()) -> SkillEvalReport:
+    """Assemble layer results into the final scored report.
+
+    Blends all nine dimensions over the layers each depth produced, applies
+    the anti-pattern penalty (multiplicative, floor ``PENALTY_FLOOR``) to the
+    weight-renormalized composite, assigns grade and depth-based confidence,
+    and degrades the confidence label when a depth-required layer is unusable.
+
+    Args:
+        subject_provenance: Provenance dict from ``SkillSubject.to_provenance``.
+        depth: The depth the run executed at.
+        static: Static layer result (always present).
+        judge: Judge layer result, or ``None`` at quick depth / on total failure.
+        sim: Simulation layer result, or ``None`` outside deep depth.
+        warnings: Execution warnings to carry through (e.g. cancellation).
+
+    Returns:
+        The immutable ``SkillEvalReport`` with layer summaries attached.
+    """
     judge_usable = judge is not None and (judge.rubrics or judge.trigger_f1 is not None)
     sim_usable = sim is not None and sim.activation is not None
     dims = []

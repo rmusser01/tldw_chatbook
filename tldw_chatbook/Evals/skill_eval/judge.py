@@ -20,6 +20,15 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def parse_judge_json(text: str) -> Optional[dict]:
+    """Extract the first JSON object from an LLM reply.
+
+    Args:
+        text: Raw model reply.
+
+    Returns:
+        The parsed dict, or ``None`` when no JSON object is present or the
+        payload is not an object.
+    """
     match = _JSON_OBJECT_RE.search(text)
     if not match:
         return None
@@ -88,6 +97,30 @@ async def run_judge_layer(subject: SkillSubject, chat: Any, *,
                           semaphore: asyncio.Semaphore,
                           progress: Optional[ProgressCallback] = None,
                           cancel: Optional[CancelToken] = None) -> JudgeLayerResult:
+    """Layer 2: the 16-call LLM-as-judge battery (standard and deep depths).
+
+    Runs prompt synthesis, per-prompt triggering selections (precision /
+    recall / F1), three task simulations, and the instruction-fitness and
+    scope-calibration rubrics. Every call parses against a strict JSON
+    validator with one retry; the subject's body is inert delimited data in
+    every prompt. Failed samples land in ``failed`` by sample_id, and a
+    parseable-but-indeterminate selection counts as failed, never dropped.
+
+    Args:
+        subject: The skill snapshot under test.
+        chat: Chat callable with the shared keyword contract.
+        generator: Resolved target used for synthesis/selection calls.
+        judge: Resolved target used for rubric/task ratings.
+        config: Run config (seed, temperatures, max_tokens).
+        semaphore: Concurrency bound shared with the sim layer.
+        progress: Optional cumulative ``(completed, 16)`` callback per
+            successful call.
+        cancel: Optional cooperative cancellation token.
+
+    Returns:
+        ``JudgeLayerResult`` with rubrics (0..1), trigger metrics, artifacts,
+        and failed sample ids.
+    """
     caller = _Caller(chat, semaphore, cancel)
     artifacts: List[dict] = []
     failed: List[str] = []
