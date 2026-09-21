@@ -81,6 +81,17 @@ from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 
+
+class _AllGatesOn(dict):
+    """A [tools]/[console] section fake whose every key reads True, so
+    all_tool_gates() (which reads the loaded snapshot, task-32804.7) sees
+    every gate enabled without enumerating the exact key set."""
+
+    def get(self, key, default=None):  # noqa: D102
+        return True
+
+
+
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
 )
@@ -1163,6 +1174,18 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         fake_save_setting_to_cli_config,
     )
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+    # task-32804.7: all_tool_gates() reads its section snapshot through
+    # config.load_cli_config_and_ensure_existence(), so the reload must see the
+    # same live `flags` dict there (built into [tools]/[console] sections) or it
+    # reads real disk config instead of this test's writes.
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {
+            "tools": {gk: gv for (gs, gk), gv in flags.items() if gs == "tools"},
+            "console": {gk: gv for (gs, gk), gv in flags.items() if gs == "console"},
+        },
+    )
 
     def fake_mutate(payload, **kwargs):
         for section, settings in payload.items():
@@ -1261,6 +1284,18 @@ def _fake_tool_gate_config_seam(monkeypatch):
         fake_save_setting_to_cli_config,
     )
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+    # task-32804.7: all_tool_gates() reads its section snapshot through
+    # config.load_cli_config_and_ensure_existence(), so the reload must see the
+    # same live `flags` dict there (built into [tools]/[console] sections) or it
+    # reads real disk config instead of this test's writes.
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {
+            "tools": {gk: gv for (gs, gk), gv in flags.items() if gs == "tools"},
+            "console": {gk: gv for (gs, gk), gv in flags.items() if gs == "console"},
+        },
+    )
 
     def fake_mutate(payload, **kwargs):
         for section, settings in payload.items():
@@ -3455,6 +3490,14 @@ async def test_empty_diagnosis_omits_gate_breadcrumb_when_all_gates_are_on(monke
         return real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    # task-32804.7: the gate enumerator reads its [tools]/[console] keys from
+    # one load_cli_config_and_ensure_existence() snapshot, not per-key
+    # get_cli_setting, so force every gate ON through that seam too.
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: {"tools": _AllGatesOn(), "console": _AllGatesOn()},
+    )
 
     app = NoServersApp()
     async with app.run_test(size=(120, 40)) as pilot:
