@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-20T19:39:46.083621+00:00",
+  "all_refs_object_entries": 46619,
+  "worktrees_checked": 41,
+  "max_id": 32879,
+  "max_claims": [
+    "e24b5f2f95746c9228f994f8c6e71366ffc6975a backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "763d6d2d9cafbd5506d080a901186ac4237ac9e0 backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "eac744700c9ef1b445713bb2903c8b2a10ca089b backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "4a001dbbab2ffc29a57d1324c33566897524be1c backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "56173bb6b5205a2b279e449cec55ea675a230634 backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "/Users/macbook-dev/Documents/GitHub/tldw-dead/backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "/Users/macbook-dev/Documents/GitHub/tldw-tasks/backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/agent-chat-fork-spawn/backlog/tasks/task-32879 - Keep-restored-MCP-root-review-readable-by-keyboard.md"
+  ],
+  "replacement_id": 32880,
+  "collision": "Saved MCP TASK-32829 conflicts with an unrelated task already landed on dev; landed task retains its ID."
+}

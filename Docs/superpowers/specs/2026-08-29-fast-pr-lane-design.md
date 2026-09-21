@@ -86,8 +86,11 @@ workflow skipped before jobs are created can remain permanently expected.
 
 ## Fast-Lane Test Contract
 
-The lane uses Ubuntu, Python 3.11, and the project's exact Textual 8.2.8 pin. It
-runs serially with a twenty-minute job timeout.
+The lane uses Ubuntu, Python 3.12, and the project's exact Textual 8.2.8 pin. It
+runs serially with a thirty-minute job timeout. TASK-32831 raised the original
+twenty-minute bound after the separate admission-sensitive invocation brought
+measured test time to 19m44s before checkout, installation and cleanup; target
+selection, runner count and per-test deadlines remain unchanged.
 
 The pytest selection is:
 
@@ -226,7 +229,7 @@ update will reliably backfill the lane.
   are visible as `PR Fast Lane` failures instead of masquerading as artifact
   drift.
 - The required aggregator fails closed for every non-success fast-lane result.
-- A twenty-minute timeout prevents dependency resolution or a hung focused test
+- A thirty-minute timeout prevents dependency resolution or a hung focused test
   from occupying a runner indefinitely.
 
 ## Verification
@@ -239,7 +242,7 @@ Workflow-contract tests are written before workflow edits and must prove:
   one resolved `dev` SHA in every leg, records it, and retains the existing
   five-environment full-tree matrix;
 - main and manual coverage ownership remains intact;
-- the fast lane uses one non-matrix Ubuntu/Python 3.11 job with a twenty-minute
+- the fast lane uses one non-matrix Ubuntu/Python 3.12 job with a thirty-minute
   timeout;
 - the exact target list is present once and contains no directory/file overlap;
 - the fast lane does not install `requirements-test.txt` or optional extras;

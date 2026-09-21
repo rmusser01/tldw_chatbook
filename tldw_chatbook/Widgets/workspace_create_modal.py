@@ -567,7 +567,12 @@ class WorkspaceCreateModal(
         self._committed = False
         if not self.is_attached or self.app.screen is not self:
             return
-        retry = self.query_one("#workspace-create-confirm", Button)
+        # TASK-32800.4's guard: the attachment checks above say this modal is
+        # still up, not that the recompose produced this particular button.
+        confirms = self.query("#workspace-create-confirm")
+        if not confirms:
+            return
+        retry = confirms.first(Button)
         retry.focus()
         self._error_origin = retry
         self.call_after_refresh(self._reveal_error)

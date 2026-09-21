@@ -1,11 +1,11 @@
 ---
 id: TASK-32879
 title: Keep restored MCP root review readable by keyboard
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-20 18:22'
-updated_date: '2026-09-20 18:54'
+updated_date: '2026-09-20 19:16'
 labels: []
 dependencies: []
 ---
@@ -40,4 +40,6 @@ Saved as draft PR2759 against dev: https://github.com/rmusser01/tldw_chatbook/pu
 Owner visual approval received for head 518143252e and the sixteen-capture gallery. Current native source/style hashes match. origin/dev is unchanged at 62d43190ce, with no rebase or conflict choices needed. Advancing PR2759 to review and current-head CI before the authorized merge.
 
 Addressed both Qodo findings: documented the ComposeResult contract and made keyboard scroll progress/overflow/bottom assertions explicit without weakening complete text checks. Four affected tests pass; Ruff check/format and independent review pass. Product AST excluding docstrings and all styles remain identical to the owner-approved gallery; see qodo-followup.json. Current-head CI/review and merge remain.
+
+PR2759 merged into dev at 8d110a06e384add07a72e4d96f7e1e0aa4b7a144 after owner visual approval, resolved Qodo findings, 1,152 final-head Fast Lane passes and all required guards. Current dev was unchanged, so no rebase/conflict decisions were needed. Actual merge parents and tree match the verified head 8c034f7de7. All four AC remain checked. Closeout: Docs/superpowers/qa/2026-09-20-mcp-compact-review/pr2759-closeout.json. New follow-up branch starts from merged dev; connected-runtime review remains separate. No new ADR or generalized lesson.
 <!-- SECTION:NOTES:END -->

@@ -678,7 +678,15 @@ class PromptsDatabase:
             if not in_outer:
                 conn.commit()
                 logging.debug("Committed transaction.")
-        except Exception as e:
+        # TASK-32801.5: BaseException, not Exception. A CancelledError or
+        # KeyboardInterrupt raised inside the block is not an Exception, so
+        # the rollback used to be skipped and the transaction stayed open --
+        # and because `transaction()` treats an already-open transaction as
+        # nested, every later write on that thread then rode it uncommitted
+        # and was lost at close. Proven on Prompts_DB: a write after an
+        # escaped KeyboardInterrupt did not survive close+reopen.
+        # Library_Collections_DB and Workflows_DB already do this.
+        except BaseException as e:
             if not in_outer:
                 logging.error(
                     "PromptsDatabase.transaction: rolling back category={}",
@@ -1761,105 +1769,113 @@ class PromptsDatabase:
         normalized_new_keywords = self._canonicalize_prompt_keywords(keywords_list)
 
         try:
-            # This method is called within an existing transaction (e.g. from add_prompt)
-            # So, use self.get_connection() but don't start a new transaction here.
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            # TASK-32801.2: same shape as the Media P0 (TASK-32801.1). This
+            # said it is 'called within an existing transaction' and took the
+            # raw connection, but the connection keeps the legacy isolation
+            # level, so a caller that opened none left an implicit transaction
+            # that nothing committed -- and `transaction()` then borrows it and
+            # skips its own commit, so every later write on that thread is
+            # rolled back at close. `Prompts_Interop.update_keywords_for_prompt`
+            # is exactly such a wrapper; it has no caller today, which made this
+            # a trap rather than a live loss. `transaction()` joins an open
+            # outer transaction, so `add_prompt` and friends are unaffected.
+            with self.transaction() as conn:
+                cursor = conn.cursor()
 
-            # Get prompt_uuid for logging
-            cursor.execute(
-                "SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,)
-            )
-            prompt_info = cursor.fetchone()
-            if not prompt_info:
-                raise InputError(
-                    f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted."
+                # Get prompt_uuid for logging
+                cursor.execute(
+                    "SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,)
                 )
-            prompt_uuid = prompt_info["uuid"]
+                prompt_info = cursor.fetchone()
+                if not prompt_info:
+                    raise InputError(
+                        f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted."
+                    )
+                prompt_uuid = prompt_info["uuid"]
 
-            # Get current keywords for the prompt
-            cursor.execute(
-                """
-                           SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid
-                           FROM PromptKeywordLinks pkl
-                                    JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                           WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                           """,
-                (prompt_id,),
-            )
-            current_keyword_links = {
-                row["keyword_id"]: {"text": row["keyword"], "uuid": row["keyword_uuid"]}
-                for row in cursor.fetchall()
-            }
-            current_keyword_ids = set(current_keyword_links.keys())
+                # Get current keywords for the prompt
+                cursor.execute(
+                    """
+                               SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid
+                               FROM PromptKeywordLinks pkl
+                                        JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
+                               WHERE pkl.prompt_id = ? AND pkw.deleted = 0
+                               """,
+                    (prompt_id,),
+                )
+                current_keyword_links = {
+                    row["keyword_id"]: {"text": row["keyword"], "uuid": row["keyword_uuid"]}
+                    for row in cursor.fetchall()
+                }
+                current_keyword_ids = set(current_keyword_links.keys())
 
-            target_keyword_data: Dict[
-                int, Dict[str, str]
-            ] = {}  # {keyword_id: {'text': text, 'uuid': uuid}}
-            if normalized_new_keywords:
-                for kw_text in normalized_new_keywords:
-                    # _add_keyword_full is an instance method, it will use the existing transaction
-                    kw_id, kw_uuid = self._add_keyword_full(kw_text)
-                    if kw_id and kw_uuid:
-                        target_keyword_data[kw_id] = {"text": kw_text, "uuid": kw_uuid}
-                    else:
-                        # This should not happen if add_keyword is robust
-                        raise DatabaseError(
-                            f"Failed to get/add keyword '{kw_text}' during prompt keyword update."
+                target_keyword_data: Dict[
+                    int, Dict[str, str]
+                ] = {}  # {keyword_id: {'text': text, 'uuid': uuid}}
+                if normalized_new_keywords:
+                    for kw_text in normalized_new_keywords:
+                        # _add_keyword_full is an instance method, it will use the existing transaction
+                        kw_id, kw_uuid = self._add_keyword_full(kw_text)
+                        if kw_id and kw_uuid:
+                            target_keyword_data[kw_id] = {"text": kw_text, "uuid": kw_uuid}
+                        else:
+                            # This should not happen if add_keyword is robust
+                            raise DatabaseError(
+                                f"Failed to get/add keyword '{kw_text}' during prompt keyword update."
+                            )
+
+                target_keyword_ids = set(target_keyword_data.keys())
+
+                ids_to_add = target_keyword_ids - current_keyword_ids
+                ids_to_remove = current_keyword_ids - target_keyword_ids
+                link_sync_version = 1  # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
+
+                if ids_to_remove:
+                    remove_placeholders = ",".join("?" * len(ids_to_remove))
+                    cursor.execute(
+                        f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})",
+                        (prompt_id, *list(ids_to_remove)),
+                    )
+                    for removed_id in ids_to_remove:
+                        keyword_uuid = current_keyword_links[removed_id]["uuid"]
+                        link_composite_uuid = (
+                            f"{prompt_uuid}_{keyword_uuid}"  # Composite UUID for the link
+                        )
+                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
+                        self._log_sync_event(
+                            conn,
+                            "PromptKeywordLinks",
+                            link_composite_uuid,
+                            "unlink",
+                            link_sync_version,
+                            payload,
                         )
 
-            target_keyword_ids = set(target_keyword_data.keys())
-
-            ids_to_add = target_keyword_ids - current_keyword_ids
-            ids_to_remove = current_keyword_ids - target_keyword_ids
-            link_sync_version = 1  # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
-
-            if ids_to_remove:
-                remove_placeholders = ",".join("?" * len(ids_to_remove))
-                cursor.execute(
-                    f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})",
-                    (prompt_id, *list(ids_to_remove)),
-                )
-                for removed_id in ids_to_remove:
-                    keyword_uuid = current_keyword_links[removed_id]["uuid"]
-                    link_composite_uuid = (
-                        f"{prompt_uuid}_{keyword_uuid}"  # Composite UUID for the link
+                if ids_to_add:
+                    insert_params = [(prompt_id, kid) for kid in ids_to_add]
+                    cursor.executemany(
+                        "INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
+                        insert_params,
                     )
-                    payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                    self._log_sync_event(
-                        conn,
-                        "PromptKeywordLinks",
-                        link_composite_uuid,
-                        "unlink",
-                        link_sync_version,
-                        payload,
-                    )
+                    for added_id in ids_to_add:
+                        keyword_uuid = target_keyword_data[added_id]["uuid"]
+                        link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}"
+                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
+                        self._log_sync_event(
+                            conn,
+                            "PromptKeywordLinks",
+                            link_composite_uuid,
+                            "link",
+                            link_sync_version,
+                            payload,
+                        )
 
-            if ids_to_add:
-                insert_params = [(prompt_id, kid) for kid in ids_to_add]
-                cursor.executemany(
-                    "INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
-                    insert_params,
-                )
-                for added_id in ids_to_add:
-                    keyword_uuid = target_keyword_data[added_id]["uuid"]
-                    link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}"
-                    payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                    self._log_sync_event(
-                        conn,
-                        "PromptKeywordLinks",
-                        link_composite_uuid,
-                        "link",
-                        link_sync_version,
-                        payload,
+                if ids_to_add or ids_to_remove:
+                    logger.debug(
+                        "Prompt keyword membership updated added={} removed={}",
+                        len(ids_to_add),
+                        len(ids_to_remove),
                     )
-
-            if ids_to_add or ids_to_remove:
-                logger.debug(
-                    "Prompt keyword membership updated added={} removed={}",
-                    len(ids_to_add),
-                    len(ids_to_remove),
-                )
         except (InputError, DatabaseError, sqlite3.Error) as exc:
             logger.error(
                 "Prompt keyword membership update failed category={}",

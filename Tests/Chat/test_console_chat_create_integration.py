@@ -80,13 +80,20 @@ def test_denial_guard_terminals_after_two():
     assert len(confirm.payloads) == 2  # no third card
 
 
-def test_remember_skips_confirm_for_that_tool_only():
-    confirm, executor = _FakeConfirm([{"allow": True, "remember": True}]), _FakeExecutor()
-    fork_tool, new_tool = build_chat_create_tool_closures(confirm=confirm, execute=executor,
-                                                          session_id="s1", run_id="r1")
-    assert fork_tool({}).ok                      # card shown, remembered
-    assert fork_tool({}).ok                      # no card (per-run memo)
-    assert not new_tool({}).ok                   # confirm has no decisions left -> deny fail-closed
+def test_remember_decision_is_not_cached_in_the_closure():
+    """Qodo 2761 finding 1: there is deliberately NO run-local remember
+    memo -- every call goes through the confirm callback, whose
+    session-grant short-circuit is the single remember authority (and
+    refuses to ride for sub-agent requesters)."""
+    confirm, executor = _FakeConfirm([
+        {"allow": True, "remember": True},
+        {"allow": True, "remember": False},
+    ]), _FakeExecutor()
+    fork_tool, _ = build_chat_create_tool_closures(confirm=confirm, execute=executor,
+                                                   session_id="s1", run_id="r1")
+    assert fork_tool({}).ok                      # card 1: allow + remember
+    assert fork_tool({}).ok                      # card 2 STILL armed (no memo)
+    assert len(confirm.payloads) == 2
 
 
 def test_raising_executor_maps_to_execution_failed():
@@ -672,3 +679,31 @@ def test_execute_routing_rejects_non_string_inputs(real_db_controller):
         {"tool": "new_chat", "session_id": session.id, "title": "N",
          "opening_prompt": "", "instructions": "", "provider": ["x"]})
     assert not outcome["ok"] and outcome["kind"] == "invalid_args"
+
+
+def test_fork_from_child_run_context_copies_parent_conversation(real_db_controller):
+    """TASK-32531 end to end: a sub-agent's fork_chat call (child run
+    context) forks the PARENT conversation's active path with lineage."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="P")
+    conv = controller.store.persistence.create_conversation(conversation_title="P")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "root"})
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+
+    # The executor keys off the SESSION (shared by parent and child runs),
+    # so a child-run context lands on the same conversation.
+    with use_run_id("child-run-1"):
+        outcome = controller.execute_agent_chat_create(
+            {"tool": "fork_chat", "session_id": session.id, "title": "C",
+             "opening_prompt": "go", "instructions": "", "run_id": "child-run-1"})
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    assert row["parent_conversation_id"] == conv
+    copied = db.get_messages_for_conversation(outcome["conversation_id"])
+    assert [m["content"] for m in copied] == ["root"]
+    handoff = completed[0]
+    assert handoff["conversation_id"] == outcome["conversation_id"]

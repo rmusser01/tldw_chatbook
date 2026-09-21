@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││   ← All servers  ! Needs attention  cleanup-demo                          ││                                             │
+│ Source                                     ││        Edit          Connect          Delete                              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Fixture connection failed; retry is available.                           ││  ! Needs attention  cleanup-demo            │
+│ ▊  Local                              ▼  ▎ ││                                                                           ││  Why · Tool discovery failed                │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Command · /usr/bin/false                                                 ││                                             │
+│                                            ││  Tools · none                                                             ││  Refresh tools                              │
+│ Servers                                    ││                                                                           ││  View details                               │
+│  ! needs attention · ◦ off (opt-in) · ⌂    ││  Resources · none                                                         ││    Advanced…                                │
+│  built-in                                  ││  Prompts · none                                                           ││                                             │
+│    All servers                             ││                                                                           ││                                             │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││                                                                           ││                                             │
+│  ! cleanup-demo                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                             ╭──────────────────────────────────────────────────────────╮ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             │ Cancelled.                                               │ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             ╰──────────────────────────────────────────────────────────╯ │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                             ╭──────────────────────────────────────────────────────────╮ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             │ cleanup-demo: refresh failed — Fixture connection        │ │
+│                                            ││                                                             │ failed; retry is available.                              │ │
+│                                            ││                                                             │                                                          │ │
+│                                            ││                                                             ╰──────────────────────────────────────────────────────────╯ │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

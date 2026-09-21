@@ -250,7 +250,7 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
         assert await _settle(lambda: gateway.payloads), "the wake never started"
-        assert wake.delivering_conversation_id() == session.id, (
+        assert session.id in wake.delivering_conversation_ids(), (
             "harness precondition: the turn must still be delivering"
         )
         assert stale == [], (
@@ -271,7 +271,7 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
         )
     finally:
         gateway.stream_gate.set()
-        await _settle(lambda: wake.delivering_conversation_id() is None)
+        await _settle(lambda: not wake.delivering_conversation_ids())
         chacha.close()
 
 
@@ -287,7 +287,7 @@ async def test_attaching_with_no_delivery_in_flight_arms_nothing(tmp_path):
     try:
         runtime = _runtime_for(rig)
         armed: list[str] = []
-        assert controller.fleet_wake.delivering_conversation_id() is None
+        assert not controller.fleet_wake.delivering_conversation_ids()
         runtime.attach_view(_mounted_view(delivery_ui_hook=armed.append))
         assert armed == []
     finally:

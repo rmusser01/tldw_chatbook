@@ -1,0 +1,29 @@
+{
+  "approved_head": "a3fd318d94d3a3070a741206853b18efe3384557",
+  "rebased_implementation_head": "f52ca3a65366d7ab4f16179dbc19fadb11c82b81",
+  "old_base": "ab57681864bc2f5c6d8b255203e011a95321c02c",
+  "new_base": "45d67a6704a7d2dc676e829924264067aecd8b53",
+  "incoming_change": "PR2746 Groq/OpenRouter provider migration, diagnostic/boot census and related test admission updates.",
+  "conflicts": [],
+  "mcp_production_styles_tests_runner_unchanged": true,
+  "approved_svg_matches": {
+    "textual-dark-80x24-cancelling.svg": true,
+    "textual-light-170x48-working.svg": true,
+    "textual-dark-170x48-cancelling.svg": true,
+    "textual-light-80x24-cancelling.svg": true,
+    "textual-light-80x24-retry-available.svg": true,
+    "textual-dark-80x24-retry-available.svg": true,
+    "textual-dark-80x24-working.svg": true,
+    "textual-dark-170x48-working.svg": true,
+    "textual-light-170x48-cancelling.svg": true,
+    "textual-light-80x24-working.svg": true,
+    "textual-dark-170x48-retry-available.svg": true,
+    "textual-light-170x48-retry-available.svg": true
+  },
+  "targeted_rerun_passed": 35,
+  "all_seven_preflight_guards_passed": true,
+  "native_root": "/private/tmp/tldw-32880-native-003",
+  "native_lifecycle_passed": true,
+  "visual_approval": "User approved the gallery; carried forward because MCP source and all twelve normalized SVGs are unchanged.",
+  "ci": "Prior approved head passed 1152 Fast Lane tests and all required guards. New-head CI required before merge."
+}

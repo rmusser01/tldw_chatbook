@@ -1,0 +1,7 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+1.03s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+1.03s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]
+
+(23 durations < 1s hidden.)
+15 passed, 69 deselected in 9.91s

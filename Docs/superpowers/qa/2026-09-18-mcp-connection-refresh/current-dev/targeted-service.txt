@@ -1,0 +1,14 @@
+...............                                                          [100%]
+----------- generated xml file: /private/tmp/32830-current-green.xml -----------
+============================= slowest 25 durations =============================
+1.20s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+1.20s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+1.18s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[False]
+1.16s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+1.13s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]
+1.10s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+1.07s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[observe]
+1.06s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+
+(17 durations < 1s hidden.)
+15 passed, 69 deselected in 11.81s

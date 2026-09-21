@@ -1,0 +1,34 @@
+[
+  {
+    "name": "textual-dark-170x48-failed-feedback.svg",
+    "png_sha256": "153cac6bf4d13ded1bcf6d76d7fd480b56e0d98381a25af17fbbf09208dd16de"
+  },
+  {
+    "name": "textual-dark-170x48-failed.svg",
+    "png_sha256": "153cac6bf4d13ded1bcf6d76d7fd480b56e0d98381a25af17fbbf09208dd16de"
+  },
+  {
+    "name": "textual-dark-170x48-recovered-feedback.svg",
+    "png_sha256": "1cf4919114588c96b21a6d28e0c5f44b78d5e4f5d254007461c1b2cdf99c8ed6"
+  },
+  {
+    "name": "textual-dark-170x48-recovered.svg",
+    "png_sha256": "1cf4919114588c96b21a6d28e0c5f44b78d5e4f5d254007461c1b2cdf99c8ed6"
+  },
+  {
+    "name": "textual-light-170x48-failed-feedback.svg",
+    "png_sha256": "e513bf27fa93d0e1dd03505b4340ca89285257b0cc1d9a77d07cb33a2539d74f"
+  },
+  {
+    "name": "textual-light-170x48-failed.svg",
+    "png_sha256": "e513bf27fa93d0e1dd03505b4340ca89285257b0cc1d9a77d07cb33a2539d74f"
+  },
+  {
+    "name": "textual-light-170x48-recovered-feedback.svg",
+    "png_sha256": "ab1bee35b16ca893eff87682f35080ec7cd58705b3e4a05b95acf8b756574412"
+  },
+  {
+    "name": "textual-light-170x48-recovered.svg",
+    "png_sha256": "ab1bee35b16ca893eff87682f35080ec7cd58705b3e4a05b95acf8b756574412"
+  }
+]

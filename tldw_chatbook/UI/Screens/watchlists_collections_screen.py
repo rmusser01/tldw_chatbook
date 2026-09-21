@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
@@ -4589,7 +4589,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ConfirmationDialog(
                 title="Delete watchlist",
                 message=(
-                    f'Delete the watchlist "{escape_markup(name)}"?\n\n'
+                    f'Delete the watchlist "{name}"?\n\n'
                     + watchlist_delete_consequence(source_count)
                 ),
                 confirm_label="Delete watchlist",

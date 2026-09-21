@@ -1,0 +1,18 @@
+{
+  "mergeCommit": {
+    "oid": "5e0f9f82c3dc5673ddba47415b490e61a0e192cb"
+  },
+  "mergedAt": "2026-09-20T21:07:36Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/2713",
+  "approved_head": "4a88e65762aa8fd6f7911d2cdab5dab4333878d6",
+  "ci_run": 35536712650,
+  "ci_checkout": "b3403a1e4537ccbdecc34b9f429ded4f85291a11",
+  "ci_tree": "221b9f1eb38e790b9028f72d972b002bda6aed55",
+  "merged_tree": "221b9f1eb38e790b9028f72d972b002bda6aed55",
+  "fast_lane_passed": 1152,
+  "qodo_findings": 0,
+  "unresolved_threads": 0,
+  "all_relevant_checks_passed": true,
+  "owner_visual_approval": "approved, continue; twelve approved captures unchanged"
+}

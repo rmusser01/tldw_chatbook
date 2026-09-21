@@ -68,7 +68,12 @@ async def run():
   confirm=dialog.query_one('#confirm-button',Button);confirm.scroll_visible(animate=False);await pilot.pause()
   assert confirm.region.bottom <= app.size.height,'confirmation is unreachable'
   assert 'workspace' in dialog.message.lower()
-  assert '\\[bold]review' in dialog.message
+  # TASK-32802.2: the owner must see a restored root named `[bold]review`
+  # verbatim. That used to be the caller's job (it escaped, and this
+  # asserted the escaped form); ConfirmationDialog now renders literally,
+  # so the caller passes raw text and the rendered line is what matters.
+  assert '[bold]review' in dialog.message
+  assert '[bold]review' in dialog.query_one('.dialog-message').render().plain
   assert 'old-approved' not in dialog.message and 'disposable-sentinel' not in dialog.message
   assert not activation.allowed(witness['generation'],'mcp.local')
   token=bench._mcp_recovery_token

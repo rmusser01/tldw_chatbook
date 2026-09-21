@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1022 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1026 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -348,9 +348,14 @@ tldw_chatbook.Kanban_Interop.server_kanban_service
 tldw_chatbook.LLM_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls_Local
+tldw_chatbook.LLM_Calls.deepseek
+tldw_chatbook.LLM_Calls.groq
 tldw_chatbook.LLM_Calls.hosted_chat
 tldw_chatbook.LLM_Calls.hosted_chat_streaming
+tldw_chatbook.LLM_Calls.legacy_line_stream
+tldw_chatbook.LLM_Calls.mistral
 tldw_chatbook.LLM_Calls.moonshot
+tldw_chatbook.LLM_Calls.openrouter
 tldw_chatbook.LLM_Calls.pricing_catalog
 tldw_chatbook.LLM_Calls.qwencloud
 tldw_chatbook.LLM_Calls.qwencloud_url
@@ -733,7 +738,6 @@ tldw_chatbook.Translation_Interop.translation_scope_service
 tldw_chatbook.UI
 tldw_chatbook.UI.Console_Modules
 tldw_chatbook.UI.Console_Modules.agent
-tldw_chatbook.UI.Console_Modules.capture_policy_bindings
 tldw_chatbook.UI.Console_Modules.character
 tldw_chatbook.UI.Console_Modules.character_avatar_layout
 tldw_chatbook.UI.Console_Modules.character_context
@@ -887,7 +891,6 @@ tldw_chatbook.Widgets.Console.console_auto_speak_consent
 tldw_chatbook.Widgets.Console.console_background_effect
 tldw_chatbook.Widgets.Console.console_bounded_section
 tldw_chatbook.Widgets.Console.console_canvas_card
-tldw_chatbook.Widgets.Console.console_capture_policy_dialog
 tldw_chatbook.Widgets.Console.console_character_context
 tldw_chatbook.Widgets.Console.console_character_picker_modal
 tldw_chatbook.Widgets.Console.console_citation_sources_modal
@@ -896,7 +899,6 @@ tldw_chatbook.Widgets.Console.console_composer_bar
 tldw_chatbook.Widgets.Console.console_composer_menu_modal
 tldw_chatbook.Widgets.Console.console_context_controls
 tldw_chatbook.Widgets.Console.console_control_bar
-tldw_chatbook.Widgets.Console.console_conversation_inspector
 tldw_chatbook.Widgets.Console.console_edit_message_modal
 tldw_chatbook.Widgets.Console.console_feedback_comment_modal
 tldw_chatbook.Widgets.Console.console_fork_chat_modal
@@ -948,6 +950,7 @@ tldw_chatbook.Widgets.Console.console_workspace_context
 tldw_chatbook.Widgets.Console.console_workspace_details
 tldw_chatbook.Widgets.Console.console_workspace_switcher_modal
 tldw_chatbook.Widgets.Console.console_workspace_tree
+tldw_chatbook.Widgets.Console.conversation_row_presentation
 tldw_chatbook.Widgets.Console.prompt_variables_dialog
 tldw_chatbook.Widgets.Persona_Widgets
 tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker
@@ -977,6 +980,7 @@ tldw_chatbook.Workspaces.change_review_consent
 tldw_chatbook.Workspaces.change_review_finalization
 tldw_chatbook.Workspaces.change_tracking
 tldw_chatbook.Workspaces.change_turn_tracker
+tldw_chatbook.Workspaces.conversation_attention
 tldw_chatbook.Workspaces.conversation_browser_state
 tldw_chatbook.Workspaces.display_state
 tldw_chatbook.Workspaces.eligibility

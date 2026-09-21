@@ -1,0 +1,7 @@
+{
+  "path": "tldw_chatbook/MCP/local_control_service.py",
+  "native_start_sha256": "a35c6f70332f4dd3f851b217d4b6bcab32968bff2f92a2391901b9eee3db6424",
+  "final_sha256": "d69965261a5198eae9f09a7e209716d90d421dbbf7e8ee764da2349552ce8a91",
+  "executable_ast_unchanged": true,
+  "reason": "Independent review clarified transport failure conversion to RuntimeError. Only the public docstring changed during native qualification."
+}

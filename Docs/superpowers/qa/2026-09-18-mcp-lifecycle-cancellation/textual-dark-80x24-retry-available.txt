@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────╭─────────────────────────────────────╮─╮
+│              ││   ← All servers  ! Ne│                                     │ │
+│ Source       ││        Edit          │ Cancelled.                          │ │
+│ ▊▔▔▔▔▔▔▔▔▎   ││  Fixture connection f│                                     │ │
+│ ▊Local  ▼▎   ││  available.          ╰─────────────────────────────────────╯ │
+│ ▊▁▁▁▁▁▁▁▁▎   ││                                          ││  cleanup-demo    │
+│              ││  Command · /usr/bin/false                ││  Why · Tool      │
+│ Servers      ││  Tools · none        ╭─────────────────────────────────────╮ │
+│  !           ││                      │                                     │ │
+│  attentio    ││  Resources · none    │ cleanup-demo: refresh failed —      │ │
+│  n · ◦       ││  Prompts · none      │ Fixture connection failed; retry is │ │
+│  off · ⌂     ││                      │ available.                          │ │
+│  built-in    ││                      │                                     │ │
+│    All    ▆▆ ││                      ╰─────────────────────────────────────╯ │
+│  servers     ││                                          ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

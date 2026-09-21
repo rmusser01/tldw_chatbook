@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...Backup_Recovery.runtime_producer_lifetime import ProducerLifetime, producer_call
 from ...Chat.console_command_grammar import CommandParse
@@ -841,7 +841,7 @@ class ConsoleVideoController:
                             title="Destination changed",
                             message=(
                                 "The file previously confirmed at "
-                                f"{escape_markup(str(target))} no longer exists. "
+                                f"{str(target)} no longer exists. "
                                 "Save the generated video to this path?"
                             ),
                             confirm_label="Save",
@@ -860,7 +860,7 @@ class ConsoleVideoController:
                             title="Replace existing file?",
                             message=(
                                 "A file already exists at "
-                                f"{escape_markup(str(target))}. Replace it?"
+                                f"{str(target)}. Replace it?"
                             ),
                             confirm_label="Replace",
                             cancel_label="Choose another",
@@ -1328,7 +1328,7 @@ class ConsoleVideoController:
         """
         import shutil
 
-        from rich.markup import escape as escape_markup
+        from tldw_chatbook.Utils.input_validation import escape_markup
 
         store = self._ensure_console_chat_store()
         try:
