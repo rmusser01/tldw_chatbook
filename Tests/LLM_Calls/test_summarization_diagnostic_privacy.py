@@ -48,8 +48,14 @@ from tldw_chatbook.LLM_Calls import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = REPO_ROOT / "Tests/fixtures/summarization_diagnostic_review.json"
 INVENTORY_PATH = REPO_ROOT / "Docs/security/production-diagnostic-inventory.json"
+# Ledger correction (task-3796 precedent) for dev's task-32805.3: the
+# kobold/tabby streaming statements moved into the nested
+# _kobold_stream/_tabby_stream generators; the nine affected sites'
+# qualnames and starting occurrences follow the source (each move documented
+# in the correction PR), so the canonical starting-projection digest changes
+# from the task-3796-corrected 85a5c6b74f0c... value to the one below.
 STARTING_PROJECTION_SHA256 = (
-    "85a5c6b74f0cd4eb15f8ca0f8abfa5e18ca7f26f749d97fc7b781090cabd7733"
+    "3957a994f055294903cfb80bdf08eadfd00891fee6c518b876d73a2c1094d785"
 )
 MODULE_COUNTS = {
     "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 242,
@@ -542,12 +548,13 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
 
 def _invoke_local_credential(monkeypatch: pytest.MonkeyPatch) -> object:
     monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
-    generator = local_summarization.summarize_with_kobold(
+    # task-32805.3: kobold returns strings directly now; the
+    # existing-summary passthrough is the caller-visible contract.
+    return local_summarization.summarize_with_kobold(
         {"summary": "existing summary"},
         f"{LOCAL_CREDENTIAL_CANARY}-middle-{LOCAL_CREDENTIAL_CANARY}",
         "fixed prompt",
     )
-    return _consume_generator(generator)
 
 
 def _invoke_local_path(monkeypatch: pytest.MonkeyPatch) -> object:
@@ -608,7 +615,7 @@ def _assert_fixed_llama_summary(result: object) -> None:
 
 
 def _assert_existing_kobold_summary(result: object) -> None:
-    assert result == ([], "existing summary")
+    assert result == "existing summary"
 
 
 def _assert_existing_llama_summary(result: object) -> None:
@@ -2844,17 +2851,15 @@ def test_local_core_kobold_missing_key_error_contract_is_unchanged(
         transport_must_not_run,
     )
 
-    generator = local_summarization.summarize_with_kobold(
+    result = local_summarization.summarize_with_kobold(
         "fixed input",
         None,
         "fixed prompt",
     )
-    result = _consume_generator(generator)
 
     assert result == (
-        [],
         "Kobold: Error occurred while processing summary with Kobold: "
-        "'NoneType' object is not subscriptable",
+        "'NoneType' object is not subscriptable"
     )
 
 
@@ -3026,15 +3031,16 @@ def test_tabby_malformed_stream_contract_hides_input_credential_and_lines(
     monkeypatch.setattr(local_summarization, "load_settings", _local_adapter_settings)
     calls = _install_signature_bound_session_post(monkeypatch, response)
 
-    generator = local_summarization.summarize_with_tabbyapi(
-        TABBY_INPUT_CANARY,
-        "fixed prompt",
-        api_key=TABBY_CREDENTIAL_CANARY,
-        streaming=True,
-    )
-    assert calls == []
-
+    # task-32805.3: config logs happen at CALL time now, so the capture
+    # wraps both the call and the consumption.
     with _capture_stdlib_and_loguru(caplog) as captured:
+        generator = local_summarization.summarize_with_tabbyapi(
+            TABBY_INPUT_CANARY,
+            "fixed prompt",
+            api_key=TABBY_CREDENTIAL_CANARY,
+            streaming=True,
+        )
+        assert calls == []
         result = _consume_generator(generator)
 
     assert result == ([], None)
@@ -3093,16 +3099,16 @@ def test_tabby_missing_credential_error_contract_is_unchanged(
         transport_must_not_run,
     )
 
-    generator = local_summarization.summarize_with_tabbyapi(
+    # task-32805.3: tabby is no longer a generator function -- the
+    # non-streaming call returns the error string directly.
+    result = local_summarization.summarize_with_tabbyapi(
         "fixed input",
         "fixed prompt",
     )
-    result = _consume_generator(generator)
 
     assert result == (
-        [],
         "TabbyAPI: Unexpected error in summarization process: "
-        "'NoneType' object is not subscriptable",
+        "'NoneType' object is not subscriptable"
     )
 
 
@@ -3127,16 +3133,16 @@ def test_tabby_empty_configured_credential_reports_resolved_state_truthfully(
     )
     calls = _install_signature_bound_session_post(monkeypatch, response)
 
-    generator = local_summarization.summarize_with_tabbyapi(
-        "fixed input",
-        "fixed prompt",
-    )
-    assert calls == []
-
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = _consume_generator(generator)
+        # task-32805.3: direct string return; non-streaming calls are
+        # eager now, so the transport has run by this point.
+        result = local_summarization.summarize_with_tabbyapi(
+            "fixed input",
+            "fixed prompt",
+        )
+    assert len(calls) == 1
 
-    assert result == ([], "fixed tabby summary")
+    assert result == "fixed tabby summary"
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert args == ("http://tabby.invalid/v1/chat/completions",)
@@ -3686,7 +3692,9 @@ def test_local_custom_openai_malformed_stream_is_lazy_consumed_and_hides_line(
         assert response.iter_lines_started is False
         result = _consume_generator(generator)
 
-    assert result == (["fixed chunk", "fixed chunk"], None)
+    # task-32805.4: the trailing whole-text re-yield is gone from the
+    # code; each delta is yielded exactly once.
+    assert result == (["fixed chunk"], None)
     assert response.iter_lines_started is True
     assert CUSTOM_OPENAI_STREAM_CANARY not in captured.text
     assert (
