@@ -33,7 +33,8 @@ from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
-from .activation import RAGActivationRequired, _identity
+from .activation import RAGActivationRequired
+from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
 
 
 def _digest(value):
@@ -358,13 +359,13 @@ class LocalEmbeddingLifetime:
             previous = _parent or self._accepted.get()
             if previous is not None and (
                 previous not in self._tokens
-                or (_parent is None and self._tokens[previous] != _identity())
+                or (_parent is None and self._tokens[previous] != execution_identity())
             ):
                 raise RAGActivationRequired("local_model_operation_context_changed")
             if self._closed and previous is None:
                 raise RAGActivationRequired("local_model_operations_paused")
             token = object()
-            self._tokens[token] = _identity()
+            self._tokens[token] = execution_identity()
         context = self._accepted.set(token)
         try:
             yield
@@ -377,7 +378,7 @@ class LocalEmbeddingLifetime:
         """Transfer only the installed wrapper's explicitly retained native call."""
         parent = self._accepted.get()
         with self._lock:
-            if parent not in self._tokens or self._tokens[parent] != _identity():
+            if parent not in self._tokens or self._tokens[parent] != execution_identity():
                 raise RAGActivationRequired("local_model_operation_missing")
 
         @wraps(function)

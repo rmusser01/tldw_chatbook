@@ -1,17 +1,11 @@
 """Recovery admission for installed agent runs and their native workers."""
 
-import asyncio
-import os
 import sys
-import threading
-from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-
-_active = ContextVar("agent_execution", default=None)
+from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
 
 
 class AgentActivationRequired(PermissionError):
@@ -19,14 +13,6 @@ class AgentActivationRequired(PermissionError):
 
     def __init__(self):
         super().__init__("agent_activation_required")
-
-
-def _identity():
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:
-        task = None
-    return os.getpid(), threading.get_ident(), task
 
 
 def _sources(service):
@@ -89,39 +75,18 @@ def _permission_sources(consumer):
     )
 
 
-@contextmanager
+_guard = RecoveryAdmissionGuard(
+    "agent",
+    error=AgentActivationRequired,
+    sources=_sources,
+    # Agent runs admit both the selected profile and each source owner.
+    owners=lambda owner: ("config", owner),
+)
+
+
 def execution(service=None, *, sources=()):
     """Retain admission through final persistence in this native task/thread."""
-    from tldw_chatbook.Backup_Recovery.activation import execution_scope
-    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-
-    identity = _identity()
-    active = _active.get()
-    if active is not None and active[0] != identity:
-        raise AgentActivationRequired()
-    leases = dict(active[1]) if active else {}
-    observed = tuple(
-        dict.fromkeys(
-            (active[2] if active else ()) + tuple(sources) + _sources(service)
-        )
-    )
-    with ExitStack() as stack:
-        try:
-            for owner, path in observed:
-                if path not in leases:
-                    leases[path] = acquire_storage(path)
-                    stack.callback(leases[path].close)
-                if not stack.enter_context(
-                    execution_scope(("config", owner), path, retained=leases[path])
-                ):
-                    raise AgentActivationRequired()
-        except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
-            raise AgentActivationRequired() from None
-        token = _active.set((identity, leases, observed))
-        try:
-            yield
-        finally:
-            _active.reset(token)
+    return _guard.execution(service, sources=sources)
 
 
 def guarded(function):
@@ -172,18 +137,12 @@ def _worker_databases(service):
 
 def worker_guard(service=None):
     """Capture sources, then acquire independently inside the actual worker."""
-    active = _active.get()
-    sources = (
-        active[2]
-        if active is not None and active[0] == _identity()
-        else _sources(service)
-    )
+    sources = _guard.captured_sources(service)
 
     def decorate(function):
         @wraps(function)
         def call(*args, **kwargs):
-            token = _active.set(None)
-            try:
+            with _guard.worker_isolation():
                 with execution(service, sources=sources):
                     existing = {
                         db
@@ -199,8 +158,6 @@ def worker_guard(service=None):
                         for db in _worker_databases(service):
                             if db not in existing:
                                 db.close()
-            finally:
-                _active.reset(token)
 
         return call
 
@@ -209,22 +166,14 @@ def worker_guard(service=None):
 
 def async_worker_guard(service=None):
     """Admit the Console provider coroutine on its actual model-call loop."""
-    active = _active.get()
-    sources = (
-        active[2]
-        if active is not None and active[0] == _identity()
-        else _sources(service)
-    )
+    sources = _guard.captured_sources(service)
 
     def decorate(function):
         @wraps(function)
         async def call(*args, **kwargs):
-            token = _active.set(None)
-            try:
+            with _guard.worker_isolation():
                 with execution(service, sources=sources):
                     return await function(*args, **kwargs)
-            finally:
-                _active.reset(token)
 
         return call
 

@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1027 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1028 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -52,6 +52,7 @@ tldw_chatbook.Auth_Account_Interop.server_auth_account_service
 tldw_chatbook.Backup_Recovery
 tldw_chatbook.Backup_Recovery.activation
 tldw_chatbook.Backup_Recovery.admission
+tldw_chatbook.Backup_Recovery.admission_runtime
 tldw_chatbook.Backup_Recovery.archive_models
 tldw_chatbook.Backup_Recovery.async_file_participants
 tldw_chatbook.Backup_Recovery.bootstrap
@@ -418,7 +419,6 @@ tldw_chatbook.MCP.local_runtime_delegate
 tldw_chatbook.MCP.local_store
 tldw_chatbook.MCP.permission_prompt_reducer
 tldw_chatbook.MCP.permission_store
-tldw_chatbook.MCP.readiness
 tldw_chatbook.MCP.recovery_activation
 tldw_chatbook.MCP.redaction
 tldw_chatbook.MCP.server
@@ -808,7 +808,6 @@ tldw_chatbook.UI.console_command_provider
 tldw_chatbook.UI.destination_recovery
 tldw_chatbook.UI.image_gen_command_provider
 tldw_chatbook.UI.stable_command_palette
-tldw_chatbook.UI.tools_settings_messages
 tldw_chatbook.User_Governance_Interop
 tldw_chatbook.User_Governance_Interop.server_user_governance_service
 tldw_chatbook.User_Governance_Interop.user_governance_scope_service
@@ -827,6 +826,7 @@ tldw_chatbook.Utils.atomic_file_ops
 tldw_chatbook.Utils.boot_worker_policy
 tldw_chatbook.Utils.console_background_effects
 tldw_chatbook.Utils.custom_tokenizers
+tldw_chatbook.Utils.datetime_codec
 tldw_chatbook.Utils.db_status_manager
 tldw_chatbook.Utils.egress
 tldw_chatbook.Utils.fd_protection
@@ -975,6 +975,7 @@ tldw_chatbook.Widgets.pausable_progress
 tldw_chatbook.Widgets.project_skills_import_modal
 tldw_chatbook.Widgets.recompose_capture_guard
 tldw_chatbook.Widgets.splash_screen
+tldw_chatbook.Widgets.status_line
 tldw_chatbook.Workspaces
 tldw_chatbook.Workspaces.change_bounds
 tldw_chatbook.Workspaces.change_review_consent
