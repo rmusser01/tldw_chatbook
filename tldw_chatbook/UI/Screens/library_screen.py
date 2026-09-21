@@ -32,7 +32,7 @@ from weakref import ref
 
 from loguru import logger
 from loguru import logger as loguru_logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
@@ -104,6 +104,7 @@ from ...Library.library_browse_location import (
     remember_browse_directory,
 )
 from ...Library.library_content_evidence import (
+    LIBRARY_CONTENT_SOURCES,
     LibraryContentEvidence,
     LibraryEvidenceStatus,
 )
@@ -2475,6 +2476,16 @@ class LibraryScreen(BaseAppScreen):
                 else None
             ),
         )
+        from ..Library_Modules.library_artifacts_navigation import (
+            LibraryArtifactsNavigation,
+        )
+        from ..Library_Modules.library_artifacts_share_controller import (
+            LibraryArtifactsShareController,
+        )
+
+        self._artifacts_controller = None
+        self._artifacts_navigation = LibraryArtifactsNavigation(self)
+        self._artifacts_share_controller = LibraryArtifactsShareController(self)
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
@@ -4692,6 +4703,13 @@ class LibraryScreen(BaseAppScreen):
         self,
     ) -> tuple[tuple[str, str], ...]:
         """Hide rail-search hints while the compact rail has no search box."""
+        if self._library_selected_row_id.startswith("artifacts-"):
+            focused_id = getattr(self.focused, "id", "")
+            if focused_id == "library-artifacts-list":
+                return (("↑↓", "select"), ("enter", "read"), ("/", "find"))
+            if focused_id == "library-artifacts-search":
+                return (("esc", "clear / items"),)
+            return (("esc", "items"), ("/", "find"))
         shortcuts = self._library_route_shortcuts_for_current_state()
         # task-32053 AC#3: on Search/RAG the "enter" chip names whatever the
         # FOCUSED control's Enter genuinely does. The static set said
@@ -5581,7 +5599,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_ordinary_route_active(self) -> bool:
         """Return whether the retained two-pane ordinary shell owns the route."""
-        return self._library_selected_row_id not in {
+        return not self._library_selected_row_id.startswith("artifacts-") and self._library_selected_row_id not in {
             LIBRARY_ROW_BROWSE_MEDIA,
             LIBRARY_ROW_BROWSE_CONVERSATIONS,
             LIBRARY_ROW_BROWSE_NOTES,
@@ -9143,6 +9161,10 @@ class LibraryScreen(BaseAppScreen):
         self,
     ) -> tuple[WorkbenchPaneTarget, ...]:
         """Return the active destination's stable global focus regions."""
+        if self._library_selected_row_id.startswith("artifacts-"):
+            controller = self._artifacts_controller
+            if controller is not None and controller.shell is not None:
+                return controller.shell.workbench_focus_targets()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             return self._MEDIA_WORKBENCH_FOCUS_TARGETS
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
@@ -9200,6 +9222,10 @@ class LibraryScreen(BaseAppScreen):
         along the MRO separately for this event (the on_mount contract).
         """
         self._library_screen_suspended = True
+        self._artifacts_navigation.invalidate()
+        self._artifacts_share_controller.suspend()
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.suspend()
         self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
@@ -9241,6 +9267,10 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        self._artifacts_share_controller.resume()
+        self.call_after_refresh(self._artifacts_navigation.resume)
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.resume()
         # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
         # same scope; the fault episode must not read that as a consecutive
         # Retry and prepend the reopen recovery step on a first failure.
@@ -9708,6 +9738,10 @@ class LibraryScreen(BaseAppScreen):
         self._clear_library_prompt_selection(announce=False)
         self._prompts_state.mutation_disabled_states.clear()
         self._invalidate_library_external_submission()
+        self._artifacts_navigation.invalidate()
+        self._artifacts_share_controller.dispose()
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.dispose()
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         registry = self._library_ingest_registry()
@@ -11110,7 +11144,9 @@ class LibraryScreen(BaseAppScreen):
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
-        self._navigation_controller.apply_navigation_context(context)
+        self._navigation_controller.apply_navigation_context(
+            self._artifacts_navigation.prepare_context(context)
+        )
 
     async def prepare_character_inspection(
         self, context: Mapping[str, Any], *, is_current: Callable[[], bool]
@@ -14990,6 +15026,7 @@ class LibraryScreen(BaseAppScreen):
         )
         lifecycle_status.display = bool(lifecycle_status_copy)
         yield lifecycle_status
+        yield self._artifacts_share_controller.build_strip()
         # TASK-23025: the install label+bar pair (a ModelInstallProgress with
         # its PausableProgressBar machinery) was mounted display=False on
         # every visit for a state most users never enter. Grow on demand
@@ -15125,6 +15162,21 @@ class LibraryScreen(BaseAppScreen):
                 self._restore_library_notes_authority_focus,
                 "files",
             )
+            return
+        if shell.canvas_kind in {
+            "artifacts-all", "artifacts-reports", "artifacts-chatbooks"
+        }:
+            if self._artifacts_controller is None:
+                from ..Library_Modules.library_artifacts_controller import (
+                    LibraryArtifactsController,
+                )
+                self._artifacts_controller = LibraryArtifactsController(self)
+            self._artifacts_controller.enter_view(
+                shell.canvas_kind.removeprefix("artifacts-")
+            )
+            with shell_grid:
+                yield self._artifacts_controller.build_shell(shell, preferences)
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
             return
         if shell.canvas_kind == "collections":
             presentation = self._library_collections_capture_presentation()
@@ -21191,7 +21243,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_status_copy = ""
 
     def _refresh_library_onboarding_evidence(self) -> Worker | None:
-        """Start one fresh, generation-fenced six-owner evidence read."""
+        """Start one fresh, generation-fenced content evidence read."""
         self._library_onboarding_generation += 1
         generation = self._library_onboarding_generation
         back_was_admitted = (
@@ -21293,6 +21345,17 @@ class LibraryScreen(BaseAppScreen):
         source_authority: str,
     ) -> LibraryContentEvidence:
         """Call one source-owned evidence seam with its active authority."""
+        if owner == "artifacts":
+            from ...Library.library_content_evidence import (
+                get_library_artifact_content_evidence,
+            )
+            return await self._run_library_service_call(
+                get_library_artifact_content_evidence,
+                subscriptions_db=getattr(self.app_instance, "subscriptions_db", None),
+                chachanotes_db=getattr(self.app_instance, "chachanotes_db", None),
+                local_chatbook_service=getattr(self.app_instance, "local_chatbook_service", None),
+                isolate_in_worker=True,
+            )
         service_attributes = {
             "notes": "notes_scope_service",
             "media": "media_reading_scope_service",
@@ -21346,18 +21409,12 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Progressively settle evidence under one overall bounded deadline."""
         source_authority = str(admission_key[2])
+
         tasks = {
             asyncio.create_task(
                 self._call_library_onboarding_owner(owner, source_authority)
             )
-            for owner in (
-                "notes",
-                "media",
-                "conversations",
-                "prompts",
-                "skills",
-                "collections",
-            )
+            for owner in LIBRARY_CONTENT_SOURCES
         }
         pending = set(tasks)
         evidence: list[LibraryContentEvidence] = []
@@ -21429,7 +21486,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
             self._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        elif len(evidence) == 6 and all(
+        elif len(evidence) == len(LIBRARY_CONTENT_SOURCES) and all(
             item is LibraryContentEvidence.EMPTY for item in evidence
         ):
             self._library_onboarding_all_empty = True
@@ -21872,7 +21929,7 @@ class LibraryScreen(BaseAppScreen):
             return
         lifecycle = return_library_lifecycle_to_starter(
             self._library_lifecycle,
-            (LibraryContentEvidence.EMPTY,) * 6,
+            (LibraryContentEvidence.EMPTY,) * len(LIBRARY_CONTENT_SOURCES),
         )
         if lifecycle is not LibraryLifecycle.STARTER:
             return
@@ -22218,6 +22275,11 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        self._artifacts_share_controller.invalidate_pending_presentation()
+        if row_id != "artifacts-chatbooks":
+            self._artifacts_navigation.invalidate()
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.leave()
         self._advance_library_stage_interaction()
         if self._try_switch_retained_library_notes_route(row_id):
             return
@@ -31621,7 +31683,7 @@ class LibraryScreen(BaseAppScreen):
             # the fallback when it cannot (no active set to describe).
             self._notify_review_set(f"Reviewing {len(items)} items.")
         if displaced is not None and displaced.completed_at is None:
-            from rich.markup import escape
+            from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
             from tldw_chatbook.Library.review_set_state import (
                 format_review_progress,

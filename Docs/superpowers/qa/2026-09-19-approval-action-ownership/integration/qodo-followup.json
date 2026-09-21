@@ -1,0 +1,26 @@
+{
+  "reviewed_head": "f1af5ee17c0866c87f8e15dda0f1c000eed907de",
+  "review_url": "https://github.com/rmusser01/tldw_chatbook/pull/2730#issuecomment-5748527934",
+  "bugs": 0,
+  "findings_addressed": [
+    {
+      "thread": "PRRT_kwDOOcyyl86kH2zo",
+      "change": "Renamed the helper to ApprovalActionButton and updated all product/test references."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kH2zs",
+      "change": "Defined WORKER_TIMEOUT_SECONDS = 8 and used it at both native worker waits."
+    }
+  ],
+  "production_ast_identical_after_normalizing_helper_rename": true,
+  "affected_tests_passed": 109,
+  "guards_passed": 7,
+  "new_ruff_diagnostics": 0,
+  "final_native_run": "integrated-native-006",
+  "captures_pixel_identical_to_inspected_run_003": 8,
+  "early_launches": {
+    "004": "Exit 2 before application imports; required private home/config/data directories missing.",
+    "005": "Exit 2 before application imports; private database parent directory missing."
+  },
+  "next_gate": "Current-head CI and Qodo recheck, then owner visual approval."
+}

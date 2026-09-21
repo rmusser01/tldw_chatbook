@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[current]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[failure]",
+      "status": "failure"
+    }
+  ]
+}

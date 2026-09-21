@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││   ← All servers  ◐ Checking              ││                  │
+│ Source       ││        Edit          Connect          D  ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  Working — connect (up to 45s)…          ││  ◐ Checking      │
+│ ▊Local    ▼▎ ││                                          ││  cleanup-demo    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  Command · /usr/bin/false                ││  Working —       │
+│              ││  Tools · none                            ││  connect (up to  │
+│ Servers      ││                                          ││  45s)…           │
+│  ◐ checking  ││  Resources · none                        ││  Cancel          │
+│  · ◦ off ·   ││  Prompts · none                          ││    Advanced…     │
+│  ⌂ built-in  ││                                          ││                  │
+│    All       ││                                          ││                  │
+│  servers     ││                                          ││                  │
+│  ◦ ⌂ t…      ││                                          ││                  │
+│  ◐ cle…      ││                                          ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

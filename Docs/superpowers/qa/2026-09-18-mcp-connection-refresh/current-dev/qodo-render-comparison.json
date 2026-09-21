@@ -1,0 +1,162 @@
+{
+  "textual-dark-170x48-connected-feedback.svg": {
+    "before_png_sha256": "82abe92b7ca69621b273d96151ed5d0cb051e18629ec5aac7a4dde8b5e9f85e8",
+    "after_png_sha256": "2a1fd544b6aa275ba1577d85628a90cfed51c1d6e8a708559589bb508dce0213",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-connected.svg": {
+    "before_png_sha256": "7e0a488a6bcd5ab95c9916f70857e47b737c2cddd07a4f092538a5e8e44fbd53",
+    "after_png_sha256": "09cd703dc3133c03322fe64e90ff2cf4bc8f1a99c973bb2f817abb10bbe9f1ab",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "cfdf3c9cd9b561f9ddd20532b3b7759a78311df7206c397b0c486892501c2d25",
+    "after_png_sha256": "44d8610538f0afcb642e764ae27e64f6effb54d77d69ccec0e6fba963fe14421",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-failed-retry-available.svg": {
+    "before_png_sha256": "6b58955362478b7765a6d6cdf65e7629360fd10d56474c339e4f50c09bcf4911",
+    "after_png_sha256": "77fe6834484e4bf35b3f0d9b79d8074f7f713572e571048d5f3e8b67c6592923",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-recovered-feedback.svg": {
+    "before_png_sha256": "c84eca73baf034de4a79799ed17d70ace960d361de485bfdf2df459dab3048ed",
+    "after_png_sha256": "88d16454df62ca5f20e363bdb53fc012fbce0c9c8570659592db6aa7e18e7bf5",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-recovered.svg": {
+    "before_png_sha256": "aa88e1ce95f5695bf6adfe89908eaec87ebed57eb5d8130b8c79563dac08a855",
+    "after_png_sha256": "0468a2bc1e090fc1682cd5b48b36b376e27a2867d7293cdbded40a03962228eb",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-refreshed-feedback.svg": {
+    "before_png_sha256": "b472de8dcbf3ea9d95d3fb01543b849b34b69bf950b1c4849c03b83a89312f07",
+    "after_png_sha256": "169eeae7f1620cbaecec9f232f684c36c5a477eb70e4b1791704f008bc85bbd6",
+    "identical_pixels": false
+  },
+  "textual-dark-170x48-refreshed.svg": {
+    "before_png_sha256": "2c7ee666277ba8e28edb7f548b3fff1f56dd790913a0a5d31b34676ed9040adc",
+    "after_png_sha256": "a13e52ecb4ed5a0e703c9798fde9cfc67b2b0c240894e4860690460cb9e1ee2b",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-connected-feedback.svg": {
+    "before_png_sha256": "1ad38f7ae3fb778a9bbb06d4b2efa69860bd7be069056668962155b5b5becca7",
+    "after_png_sha256": "c3878a7bac385e1ca25c4c526076a65d9f70b76bba1ab13aec544f71b87d005f",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-connected.svg": {
+    "before_png_sha256": "82d5602f64aaee8e5eda9e1824301991f9c5bdd48803a3c5e56d8eb670f7573d",
+    "after_png_sha256": "4d6e26178adc8e2f4b3733e9702c769d01985a9335dd5131ac1606b41ad33dd3",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "7701c013c1761db343a2ec793b02637d90c6ff52fc5d84d57685e6ba7eb8e44f",
+    "after_png_sha256": "7701c013c1761db343a2ec793b02637d90c6ff52fc5d84d57685e6ba7eb8e44f",
+    "identical_pixels": true
+  },
+  "textual-dark-80x24-failed-retry-available.svg": {
+    "before_png_sha256": "6a464db23fc4627f57af832cd526a56c709ca2b25e261440dcef0ca1e61e35ba",
+    "after_png_sha256": "3101589912bb2adfd7df2cf7f8a88623802965aa773464e9b2df2b6a50690979",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-recovered-feedback.svg": {
+    "before_png_sha256": "bfe3b151404e01836d93ee5f75000782f5836b0b653b74da86204a8f95f7277a",
+    "after_png_sha256": "bfe3b151404e01836d93ee5f75000782f5836b0b653b74da86204a8f95f7277a",
+    "identical_pixels": true
+  },
+  "textual-dark-80x24-recovered.svg": {
+    "before_png_sha256": "ca72dcc7467cb743c0b4f037206cd32498bed73e28eee6d8533b116f4769f04a",
+    "after_png_sha256": "49403cf798c5f55b3451831aa3d93c3c43e3dea1a73628517613c861cda75297",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-refreshed-feedback.svg": {
+    "before_png_sha256": "9155da0effa165bd1c5d85674037cc02abf902cef97b491a55c82e1d197d953b",
+    "after_png_sha256": "9af144b918e5427979820dcd9491082c1105459bf23590ea11cce7afc9326796",
+    "identical_pixels": false
+  },
+  "textual-dark-80x24-refreshed.svg": {
+    "before_png_sha256": "82d5602f64aaee8e5eda9e1824301991f9c5bdd48803a3c5e56d8eb670f7573d",
+    "after_png_sha256": "4d6e26178adc8e2f4b3733e9702c769d01985a9335dd5131ac1606b41ad33dd3",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-connected-feedback.svg": {
+    "before_png_sha256": "6e050cae083bb82df9657d0515d63756fa9e509c3636c00abb56fd7ca0895a89",
+    "after_png_sha256": "ad5df635628433ec782bf7e1c064258fa0d57132878a72f25fb8937bd7c3cb12",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-connected.svg": {
+    "before_png_sha256": "360fe5c83055da486f3d206c423426359fe6c9bd0e378bfe6e23e66c6ecfeb8b",
+    "after_png_sha256": "b0259eaaccc14e9a1f5fea0c6a001d2c2b7b995912c708d43cd9859fc55c742d",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "e40c97f6ed09e406daeebecf7480d224cfa38cf54c02ae144058d865aaac9df7",
+    "after_png_sha256": "6ae2515f759a858fca0b1ee71f50c10bc735a0b7fcf69a9556f9e29dd1ad6d13",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-failed-retry-available.svg": {
+    "before_png_sha256": "1a4b0086399017071c3e38f4ae683ff00eaf517d64b858d2485f9101b053f1a1",
+    "after_png_sha256": "d130dd112be04095dce2bbc826b9fde2ef4151bdd453fbda97f8536d5a473e86",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-recovered-feedback.svg": {
+    "before_png_sha256": "fd95e50fbf4fbf5d5a25266e3899c0e96e6ff59aa0e48d4d631740a9a1c5dad5",
+    "after_png_sha256": "8b635f545038caf4f26e1a70ef87c6726ed0bebd882b9f71f5a0cc27c569990c",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-recovered.svg": {
+    "before_png_sha256": "09b076f88e6737cfe69838c8f38b4c350844ca7b749763286c4587d5fcd7e5e2",
+    "after_png_sha256": "10c5c25c40ae432b30b7c55a60c345f96d04499bd769e5a4757d7c0bc9a959ce",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-refreshed-feedback.svg": {
+    "before_png_sha256": "9b4aa0d950df4172a860748fc5abe7108a36e1cc86cb19b2663ffc7435b2efcc",
+    "after_png_sha256": "0c169c335678f3d71099cd18d0c42fab0dd4549544eab79bec68c5181153aea5",
+    "identical_pixels": false
+  },
+  "textual-light-170x48-refreshed.svg": {
+    "before_png_sha256": "980aeb50c97d945ef0acb021b616e3022fa1256d7f476f551dfd2e989c3e236c",
+    "after_png_sha256": "e46fd3c76df78e78520673b655eb662079a57dc0f4ea6589c5ba75000c7a87f6",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-connected-feedback.svg": {
+    "before_png_sha256": "cf1151272a39fd0cae77b48e10a9256855dbac7aa59b53b9ec4fc725b0c684ed",
+    "after_png_sha256": "d0c71f72c7974335d48569bb931b121076a1119cf873cf8c70c928dc2df80588",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-connected.svg": {
+    "before_png_sha256": "501d4768dc82fd278d286588502b948ad8f4de0a4534250a93b677992eab4f3d",
+    "after_png_sha256": "ecbd6a08a46e044bd87a44338de40272ed138ea7aaf5bbb96680803bb39a1343",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "7e39f1459b85a99bd581ce25353ba4ec43bf53a395a253a6c9692c7d63ca8d0f",
+    "after_png_sha256": "7e39f1459b85a99bd581ce25353ba4ec43bf53a395a253a6c9692c7d63ca8d0f",
+    "identical_pixels": true
+  },
+  "textual-light-80x24-failed-retry-available.svg": {
+    "before_png_sha256": "9249b2f956e4c7505d591f7efe25bf70d71b88f650d686d0c032988a620dd72b",
+    "after_png_sha256": "42c7cded7bf10b88391546b69f10d50237b560a19d734b535ee797eb87659690",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-recovered-feedback.svg": {
+    "before_png_sha256": "7702b2837a22e03a83149969960963947ee387d8702c62e1691ff6b0b463fdd1",
+    "after_png_sha256": "7702b2837a22e03a83149969960963947ee387d8702c62e1691ff6b0b463fdd1",
+    "identical_pixels": true
+  },
+  "textual-light-80x24-recovered.svg": {
+    "before_png_sha256": "857aab58a94b3ebe16a7be3f69cea3f78e829650265bbb6f93838915d4ca11bf",
+    "after_png_sha256": "02db47b5d560e3a9d67685a99bf08bdf25c09a65579034fdb270fd4be8eaed79",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-refreshed-feedback.svg": {
+    "before_png_sha256": "a683c88567c947bb0b9c807aec9d07365dc713d9bd7da9df751d1864b0842b64",
+    "after_png_sha256": "b5f85a19360a2cdacaf35b80a78384bf55333513053dc0f65c6b9e2bd8acd51b",
+    "identical_pixels": false
+  },
+  "textual-light-80x24-refreshed.svg": {
+    "before_png_sha256": "501d4768dc82fd278d286588502b948ad8f4de0a4534250a93b677992eab4f3d",
+    "after_png_sha256": "ecbd6a08a46e044bd87a44338de40272ed138ea7aaf5bbb96680803bb39a1343",
+    "identical_pixels": false
+  }
+}

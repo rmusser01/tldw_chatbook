@@ -80,13 +80,20 @@ def test_denial_guard_terminals_after_two():
     assert len(confirm.payloads) == 2  # no third card
 
 
-def test_remember_skips_confirm_for_that_tool_only():
-    confirm, executor = _FakeConfirm([{"allow": True, "remember": True}]), _FakeExecutor()
-    fork_tool, new_tool = build_chat_create_tool_closures(confirm=confirm, execute=executor,
-                                                          session_id="s1", run_id="r1")
-    assert fork_tool({}).ok                      # card shown, remembered
-    assert fork_tool({}).ok                      # no card (per-run memo)
-    assert not new_tool({}).ok                   # confirm has no decisions left -> deny fail-closed
+def test_remember_decision_is_not_cached_in_the_closure():
+    """Qodo 2761 finding 1: there is deliberately NO run-local remember
+    memo -- every call goes through the confirm callback, whose
+    session-grant short-circuit is the single remember authority (and
+    refuses to ride for sub-agent requesters)."""
+    confirm, executor = _FakeConfirm([
+        {"allow": True, "remember": True},
+        {"allow": True, "remember": False},
+    ]), _FakeExecutor()
+    fork_tool, _ = build_chat_create_tool_closures(confirm=confirm, execute=executor,
+                                                   session_id="s1", run_id="r1")
+    assert fork_tool({}).ok                      # card 1: allow + remember
+    assert fork_tool({}).ok                      # card 2 STILL armed (no memo)
+    assert len(confirm.payloads) == 2
 
 
 def test_raising_executor_maps_to_execution_failed():
@@ -331,6 +338,7 @@ def test_execute_new_chat_creates_conversation_and_completion(real_db_controller
         "workspace_id": session.workspace_id or "global",
         "nodes": [],
         "active_leaf_persisted_id": None,
+        "settings": None,
         "assistant_kind": session.assistant_kind,
         "assistant_id": session.assistant_id,
         "assistant_authority_id": session.assistant_authority_id,
@@ -498,3 +506,204 @@ def test_closure_rejects_non_string_args():
     result = fork_tool({"title": {"nested": "mapping"}})
     assert not result.ok and "invalid_args" in result.error
     assert executor.calls == []
+
+
+# ---------------------------------------------------------------------------
+# TASK-32874: routing for the CREATED chat (ADR-147 gates + vocabulary).
+# ---------------------------------------------------------------------------
+
+_FAKE_APP_CONFIG = {
+    "chat_defaults": {},
+    "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
+}
+
+
+def _routing(monkeypatch, *, enabled, allowlist):
+    from tldw_chatbook.Agents import agent_routing
+
+    cfg = agent_routing.AgentsRoutingConfig(
+        spawn_override_enabled=enabled,
+        spawn_override_allowlist=tuple(allowlist),
+    )
+    monkeypatch.setattr(agent_routing, "load_agents_routing_config", lambda: cfg)
+
+
+def _app_config(monkeypatch):
+    import tldw_chatbook.config as config_mod
+
+    monkeypatch.setattr(config_mod, "load_settings", lambda: _FAKE_APP_CONFIG)
+
+
+def _routed_session(controller):
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    return controller.store.create_session(
+        title="R",
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+    )
+
+
+def test_execute_routing_override_disabled(real_db_controller, monkeypatch):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=False, allowlist=())
+    _app_config(monkeypatch)
+    session = controller.store.create_session(title="S")
+    conv = controller.store.persistence.create_conversation(conversation_title="S")
+    session.persisted_conversation_id = conv
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    assert not outcome["ok"] and outcome["kind"] == "override_disabled"
+
+
+def test_execute_routing_not_allowlisted(real_db_controller, monkeypatch):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("openai",))
+    _app_config(monkeypatch)
+    session = controller.store.create_session(title="S")
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
+
+
+def test_execute_routing_final_guard_on_model_only(real_db_controller, monkeypatch):
+    """A model-only override must still match the allowlist glob
+    (ADR-147's final-provider guard)."""
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp/m1",))
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "model": "m2"})
+    assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
+
+
+def test_execute_routing_override_builds_settings(real_db_controller, monkeypatch):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "model": "m2"})
+    assert outcome["ok"], outcome
+    settings = completed[0]["settings"]
+    assert settings is not None
+    assert settings.provider == "llama_cpp"
+    assert settings.model == "m2"
+
+
+def test_execute_routing_unknown_and_unrouted_preset(real_db_controller, monkeypatch):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=False, allowlist=())
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+
+    class _Bridge:
+        class agent_runs_db:
+            @staticmethod
+            def list_agent_definitions(enabled_only=True):
+                return [
+                    {"name": "cloudy", "description": "d", "instructions": "", "tool_allowlist": [], "model": "", "enabled": 1},
+                    {"name": "localy", "description": "d", "instructions": "", "tool_allowlist": [], "provider": "llama_cpp", "model": "m1", "enabled": 1},
+                ]
+
+    controller._agent_bridge = _Bridge()
+    out1 = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "preset": "ghost"})
+    assert not out1["ok"] and out1["kind"] == "unknown_preset"
+    out2 = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "preset": "cloudy"})
+    assert not out2["ok"] and out2["kind"] == "preset_unrouted"
+
+
+def test_execute_routing_preset_rides_definition(real_db_controller, monkeypatch):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=False, allowlist=())
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+
+    class _Bridge:
+        class agent_runs_db:
+            @staticmethod
+            def list_agent_definitions(enabled_only=True):
+                return [{"name": "localy", "description": "d", "instructions": "", "tool_allowlist": [], "provider": "llama_cpp", "model": "m1", "enabled": 1}]
+
+    controller._agent_bridge = _Bridge()
+    conv = controller.store.persistence.create_conversation(conversation_title="R")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": "", "preset": "localy"})
+    assert outcome["ok"], outcome
+    settings = completed[0]["settings"]
+    assert settings.provider == "llama_cpp" and settings.model == "m1"
+
+
+def test_execute_routing_snapshot_is_durable(real_db_controller, monkeypatch):
+    """Qodo round finding 3: the routed generation snapshot is merged into
+    the conversation's metadata -- the routing survives reopen/crash."""
+    import json as _json
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    session = _routed_session(controller)
+    conv = controller.store.persistence.create_conversation(conversation_title="R")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": "", "model": "m2"})
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    meta = _json.loads(row["metadata"])
+    assert any("m2" in str(v) for v in meta.values()), meta
+
+
+def test_execute_routing_rejects_non_string_inputs(real_db_controller):
+    """Qodo round finding 4: executor-side strict types (callable is
+    reachable from callers other than the closures)."""
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="S")
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": session.id, "title": "N",
+         "opening_prompt": "", "instructions": "", "provider": ["x"]})
+    assert not outcome["ok"] and outcome["kind"] == "invalid_args"
+
+
+def test_fork_from_child_run_context_copies_parent_conversation(real_db_controller):
+    """TASK-32531 end to end: a sub-agent's fork_chat call (child run
+    context) forks the PARENT conversation's active path with lineage."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="P")
+    conv = controller.store.persistence.create_conversation(conversation_title="P")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "root"})
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+
+    # The executor keys off the SESSION (shared by parent and child runs),
+    # so a child-run context lands on the same conversation.
+    with use_run_id("child-run-1"):
+        outcome = controller.execute_agent_chat_create(
+            {"tool": "fork_chat", "session_id": session.id, "title": "C",
+             "opening_prompt": "go", "instructions": "", "run_id": "child-run-1"})
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    assert row["parent_conversation_id"] == conv
+    copied = db.get_messages_for_conversation(outcome["conversation_id"])
+    assert [m["content"] for m in copied] == ["root"]
+    handoff = completed[0]
+    assert handoff["conversation_id"] == outcome["conversation_id"]

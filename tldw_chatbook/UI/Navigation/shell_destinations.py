@@ -68,6 +68,8 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
             "prompts",
             "skills",
             "writing",
+            "artifacts",
+            "chatbooks",
         ),
         navigation_priority=30,
     ),
@@ -94,14 +96,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         ("subscriptions", "subscription"),
         full_label="Watchlists",
         navigation_priority=40,
-    ),
-    ShellDestination(
-        "artifacts",
-        "Artifacts",
-        "artifacts",
-        "Generated outputs, bundles, reports, datasets, and Chatbooks.",
-        "Browse generated and portable outputs.",
-        ("chatbooks",),
     ),
     ShellDestination(
         "schedules",
@@ -198,7 +192,8 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # app-globals (ADR-031). Higher F-keys read as an arbitrary jump: the old
 # f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
 # mid-strip. Any change here must update the strip ORDER in lockstep so
-# position and shortcut stay aligned.
+# position and shortcut stay aligned. ADR-172 retires the permanent Artifacts
+# entry while preserving its Ctrl+6 compatibility binding and every other slot.
 SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
     {
         "home": "ctrl+1",
@@ -206,7 +201,6 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "library": "ctrl+3",
         "personas": "ctrl+4",
         "watchlists_collections": "ctrl+5",
-        "artifacts": "ctrl+6",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
         "mcp": "ctrl+9",
@@ -218,6 +212,9 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "meetings": "f7",
     }
 )
+
+# ADR-172: a retained hotkey for the retired route, outside permanent navigation.
+ARTIFACTS_COMPATIBILITY_SHORTCUT = "ctrl+6"
 
 _ROUTABLE_LEGACY_ROUTES = {
     "chunking_lab",
@@ -281,6 +278,11 @@ for destination in SHELL_DESTINATION_ORDER:
             canonical_route,
             legacy_route,
         )
+
+
+# ADR-172: preserve both public routes while Library owns browse navigation.
+_ROUTE_MAP["artifacts"] = ResolvedShellRoute("library", "library", "artifacts")
+_ROUTE_MAP["chatbooks"] = ResolvedShellRoute("library", "chatbooks", "chatbooks")
 
 
 def get_shell_destination(destination_id: str) -> ShellDestination:

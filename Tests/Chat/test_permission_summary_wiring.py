@@ -237,3 +237,65 @@ def test_remount_head_helper_skips_non_mcp_payloads(monkeypatch):
     ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
     assert mounted == [skill_payload]
     assert _ThreadStub.started == []
+
+
+def test_the_store_read_happens_on_the_spawning_thread_not_the_worker(monkeypatch):
+    """TASK-32801.4: the summary tail is store-derived, so it is read here.
+
+    ``ConsoleChatStore`` is owned by one thread ("store mutation always runs
+    on the thread that owns the store") and ``messages_for_session`` is not a
+    pure read -- it folds buffered stream chunks and can persist a pending
+    row. Reading it from the raw summary thread raced the loop's own store
+    calls and, on a persist, leaked a registered connection as well. Every
+    other test in this file stubs the thread away, so nothing else can see
+    this.
+    """
+    ctrl = _bare_controller()
+    ctrl._pending_approval_rounds["r1"] = {
+        "event": threading.Event(), "summary_fired": False,
+    }
+    spawning_thread = threading.get_ident()
+    store_reads: list[int] = []
+    summarizer_threads: list[int] = []
+    finished = threading.Event()
+
+    def record_store_read(session_id):
+        store_reads.append(threading.get_ident())
+        return [{"role": "user", "content": "hello"}]
+
+    def record_summarize(resolution, tail, info):
+        summarizer_threads.append(threading.get_ident())
+        finished.set()
+        return None  # no delivery; ctrl.app is None anyway
+
+    monkeypatch.setattr(
+        ctrl, "_provider_messages_for_session", record_store_read, raising=False
+    )
+    monkeypatch.setattr(
+        summary_service,
+        "resolve_permission_summary",
+        lambda cfg: _resolution("always", True),
+    )
+    monkeypatch.setattr(summary_service, "summarize_pending_round", record_summarize)
+    # The config snapshot is behind the ADR-126 storage admission gate and
+    # raises ``RecoveryRequired`` in a bare test process -- which the trigger
+    # swallows into "no resolution, never fire". The sibling tests above
+    # inherit that as a pre-existing red; this one stubs it so the thread
+    # ownership under test is what decides the result.
+    monkeypatch.setattr(
+        ccc,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+        raising=False,
+    )
+
+    ctrl._maybe_fire_permission_summary(_payload())
+
+    assert finished.wait(5), "the summary worker never ran"
+    assert store_reads == [spawning_thread], (
+        "the store was read off its owner thread: "
+        f"{store_reads} vs owner {spawning_thread}"
+    )
+    # ...and the actual work is still off-thread, which is the point of the
+    # worker in the first place.
+    assert summarizer_threads and spawning_thread not in summarizer_threads

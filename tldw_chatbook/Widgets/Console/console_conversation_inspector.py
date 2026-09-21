@@ -678,9 +678,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             or not self._target_authority_is_current()
         ):
             return
-        pane = self.query_one(
-            "#console-inspector-context-detail", ConsoleInspectorDetailPane
-        )
+        # TASK-32800.4's guard: this resumes after the await above, so the
+        # detail pane may have been recomposed away. NoMatches out of a
+        # worker exits the app; a missing pane just means nothing to fill.
+        panes = self.query("#console-inspector-context-detail")
+        if not panes:
+            return
+        pane = panes.first(ConsoleInspectorDetailPane)
         section = next((item for item in pane.sections if item.key == key), None)
         if section is not None:
             pane.set_detail(
@@ -715,7 +719,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 return
             pane.set_detail(key, self._exchange_call_title(capture, abandoned), text)
             self._selected_export_key = key[5:]
-            self.query_one("#console-inspector-export-call", Button).disabled = False
+            # TASK-32800.4's guard: post-await, the button may be gone.
+            export_buttons = self.query("#console-inspector-export-call")
+            if export_buttons:
+                export_buttons.first(Button).disabled = False
             return
         usage_item = (
             self._usage_items[int(key[6:])] if key.startswith("usage:") else None

@@ -1,0 +1,194 @@
+{
+  "textual-dark-170x48-connected-feedback.svg": {
+    "before_png_sha256": "2a1fd544b6aa275ba1577d85628a90cfed51c1d6e8a708559589bb508dce0213",
+    "after_png_sha256": "67af73bbc5edb65c38dffe8b4441ed2cfe39d0bf1411d361f8d09c01fb1b7f12",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": false
+  },
+  "textual-dark-170x48-connected.svg": {
+    "before_png_sha256": "09cd703dc3133c03322fe64e90ff2cf4bc8f1a99c973bb2f817abb10bbe9f1ab",
+    "after_png_sha256": "3f193b24bed8c9639e4d8713fdce970dc1a399265d2d493b37360c278841c32e",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "44d8610538f0afcb642e764ae27e64f6effb54d77d69ccec0e6fba963fe14421",
+    "after_png_sha256": "0a86b406d6e671443f6cac110b8b030f18e201b6104dad72e689594e0fca6812",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-failed-retry-available.svg": {
+    "before_png_sha256": "77fe6834484e4bf35b3f0d9b79d8074f7f713572e571048d5f3e8b67c6592923",
+    "after_png_sha256": "c2d736c4a80795b50c15fb88b23eca6d627cd10dc843b9403e52bd2ba6bc4fd5",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-recovered-feedback.svg": {
+    "before_png_sha256": "88d16454df62ca5f20e363bdb53fc012fbce0c9c8570659592db6aa7e18e7bf5",
+    "after_png_sha256": "1b46e79682b88f93f17f83b1f0707648b3e2f56fdf53016465bc51c0419f1f74",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-recovered.svg": {
+    "before_png_sha256": "0468a2bc1e090fc1682cd5b48b36b376e27a2867d7293cdbded40a03962228eb",
+    "after_png_sha256": "f41ceb930f11743dbfc3049976890680e51febe31953b31b94364a2e0d87a625",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-refreshed-feedback.svg": {
+    "before_png_sha256": "169eeae7f1620cbaecec9f232f684c36c5a477eb70e4b1791704f008bc85bbd6",
+    "after_png_sha256": "f8688c037ebabdc72b18a624a8456eb835b8d8b066a92a8142152d9fb839acee",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-170x48-refreshed.svg": {
+    "before_png_sha256": "a13e52ecb4ed5a0e703c9798fde9cfc67b2b0c240894e4860690460cb9e1ee2b",
+    "after_png_sha256": "9d4f18177975a33eb0c027b98c1fd099e5bbbb65ffd830d54e962566cef1f366",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-connected-feedback.svg": {
+    "before_png_sha256": "c3878a7bac385e1ca25c4c526076a65d9f70b76bba1ab13aec544f71b87d005f",
+    "after_png_sha256": "905b5aef6b2f65a8ac0bfba113a6a5ce2b89d1b45ad28e0c610a1b256f491a5d",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-connected.svg": {
+    "before_png_sha256": "4d6e26178adc8e2f4b3733e9702c769d01985a9335dd5131ac1606b41ad33dd3",
+    "after_png_sha256": "cb32b937beb2f71898789af9f986ce0034954c7e20f9829a2f5017a9a369a1a2",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "7701c013c1761db343a2ec793b02637d90c6ff52fc5d84d57685e6ba7eb8e44f",
+    "after_png_sha256": "7701c013c1761db343a2ec793b02637d90c6ff52fc5d84d57685e6ba7eb8e44f",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-failed-retry-available.svg": {
+    "before_png_sha256": "3101589912bb2adfd7df2cf7f8a88623802965aa773464e9b2df2b6a50690979",
+    "after_png_sha256": "3101589912bb2adfd7df2cf7f8a88623802965aa773464e9b2df2b6a50690979",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-recovered-feedback.svg": {
+    "before_png_sha256": "bfe3b151404e01836d93ee5f75000782f5836b0b653b74da86204a8f95f7277a",
+    "after_png_sha256": "bfe3b151404e01836d93ee5f75000782f5836b0b653b74da86204a8f95f7277a",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-recovered.svg": {
+    "before_png_sha256": "49403cf798c5f55b3451831aa3d93c3c43e3dea1a73628517613c861cda75297",
+    "after_png_sha256": "49403cf798c5f55b3451831aa3d93c3c43e3dea1a73628517613c861cda75297",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-refreshed-feedback.svg": {
+    "before_png_sha256": "9af144b918e5427979820dcd9491082c1105459bf23590ea11cce7afc9326796",
+    "after_png_sha256": "c2b89ccc5eb35c91d11cfdb4430bb29c883ee9de6fe431def0b598d2d1c715cc",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-dark-80x24-refreshed.svg": {
+    "before_png_sha256": "4d6e26178adc8e2f4b3733e9702c769d01985a9335dd5131ac1606b41ad33dd3",
+    "after_png_sha256": "cb32b937beb2f71898789af9f986ce0034954c7e20f9829a2f5017a9a369a1a2",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-connected-feedback.svg": {
+    "before_png_sha256": "ad5df635628433ec782bf7e1c064258fa0d57132878a72f25fb8937bd7c3cb12",
+    "after_png_sha256": "3b9a37d4e4147554aab032fc5e89004dea535930abc5aa7952a789a1fa714319",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-connected.svg": {
+    "before_png_sha256": "b0259eaaccc14e9a1f5fea0c6a001d2c2b7b995912c708d43cd9859fc55c742d",
+    "after_png_sha256": "416f867477dfddcc946c9b7c23d31054addc64e37f8c439cb9b20d45a3d6150b",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "6ae2515f759a858fca0b1ee71f50c10bc735a0b7fcf69a9556f9e29dd1ad6d13",
+    "after_png_sha256": "df4546b1c3a5b06b0b08cc81f8f369452dc041f498679b7b083d5078cf3586bf",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-failed-retry-available.svg": {
+    "before_png_sha256": "d130dd112be04095dce2bbc826b9fde2ef4151bdd453fbda97f8536d5a473e86",
+    "after_png_sha256": "1d7c33dd51c6207072e013817e239585aec3090a383bf266579332c0d42fdef4",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-recovered-feedback.svg": {
+    "before_png_sha256": "8b635f545038caf4f26e1a70ef87c6726ed0bebd882b9f71f5a0cc27c569990c",
+    "after_png_sha256": "64ca802d419446d844bc5311f086b7c8e852f90eae48dce5465ef0d440fe08e8",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-recovered.svg": {
+    "before_png_sha256": "10c5c25c40ae432b30b7c55a60c345f96d04499bd769e5a4757d7c0bc9a959ce",
+    "after_png_sha256": "11f50affdbb19e800e6f131721809dcfff8c55ce60b287461f148380678ea830",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-refreshed-feedback.svg": {
+    "before_png_sha256": "0c169c335678f3d71099cd18d0c42fab0dd4549544eab79bec68c5181153aea5",
+    "after_png_sha256": "f677940a9f33bcf09391d706125c418a5af35a3fa89d8e802ebf3979af2785c5",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-170x48-refreshed.svg": {
+    "before_png_sha256": "e46fd3c76df78e78520673b655eb662079a57dc0f4ea6589c5ba75000c7a87f6",
+    "after_png_sha256": "23ad1dee14637ce5feaedda30d3eef8c3aaab4b2ff8a5ee7cc7037c37442f2b4",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-connected-feedback.svg": {
+    "before_png_sha256": "d0c71f72c7974335d48569bb931b121076a1119cf873cf8c70c928dc2df80588",
+    "after_png_sha256": "def2927ecef536d89979905452e243273ea75fee0fb3f463c0a0b9bc4cc4d469",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": false
+  },
+  "textual-light-80x24-connected.svg": {
+    "before_png_sha256": "ecbd6a08a46e044bd87a44338de40272ed138ea7aaf5bbb96680803bb39a1343",
+    "after_png_sha256": "6a9a91772dc75cdce95ff5ecc88447b5c0cb44c50917703379c0a4e1013c88a1",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-failed-retry-available-feedback.svg": {
+    "before_png_sha256": "7e39f1459b85a99bd581ce25353ba4ec43bf53a395a253a6c9692c7d63ca8d0f",
+    "after_png_sha256": "7e39f1459b85a99bd581ce25353ba4ec43bf53a395a253a6c9692c7d63ca8d0f",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-failed-retry-available.svg": {
+    "before_png_sha256": "42c7cded7bf10b88391546b69f10d50237b560a19d734b535ee797eb87659690",
+    "after_png_sha256": "42c7cded7bf10b88391546b69f10d50237b560a19d734b535ee797eb87659690",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-recovered-feedback.svg": {
+    "before_png_sha256": "7702b2837a22e03a83149969960963947ee387d8702c62e1691ff6b0b463fdd1",
+    "after_png_sha256": "7702b2837a22e03a83149969960963947ee387d8702c62e1691ff6b0b463fdd1",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-recovered.svg": {
+    "before_png_sha256": "02db47b5d560e3a9d67685a99bf08bdf25c09a65579034fdb270fd4be8eaed79",
+    "after_png_sha256": "02db47b5d560e3a9d67685a99bf08bdf25c09a65579034fdb270fd4be8eaed79",
+    "identical_pixels": true,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-refreshed-feedback.svg": {
+    "before_png_sha256": "b5f85a19360a2cdacaf35b80a78384bf55333513053dc0f65c6b9e2bd8acd51b",
+    "after_png_sha256": "38a35f5b838bac737dd9b7d45b1ceaacb7f95e2538312d0eddd0781f6c6fe769",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  },
+  "textual-light-80x24-refreshed.svg": {
+    "before_png_sha256": "ecbd6a08a46e044bd87a44338de40272ed138ea7aaf5bbb96680803bb39a1343",
+    "after_png_sha256": "6a9a91772dc75cdce95ff5ecc88447b5c0cb44c50917703379c0a4e1013c88a1",
+    "identical_pixels": false,
+    "identical_after_fixture_directory_normalization": true
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names0]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[None]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records2]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records3]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records4]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_catalog_reader_failure_keeps_successful_approval_private",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[False]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[True]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[bad]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[malformed1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[7]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[None]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[failure]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[service]",
+      "status": "passed"
+    }
+  ]
+}

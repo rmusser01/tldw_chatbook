@@ -641,7 +641,15 @@ def test_confirm_payload_carries_timeout_and_request_id(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
+    # TASK-32873 (load-order flake): the round id registers before the
+    # card payload marshals; wait for BOTH or [0] IndexErrors/None under
+    # combined-run load.
+    _wait_until(
+        lambda: bool(
+            controller.pending_skill_script_ids()
+            and controller.pending_skill_script_payloads
+        )
+    )
     shown = controller.pending_skill_script_payloads[0]
     assert shown is not None
     assert shown["skill_name"] == "demo"

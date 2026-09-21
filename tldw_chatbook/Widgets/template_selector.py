@@ -47,6 +47,59 @@ TEMPLATE_EXPORT_ENABLED_TOOLTIP = "Export this evaluation template."
 TEMPLATE_SELECT_DISABLED_TOOLTIP = "Select an evaluation template before continuing."
 TEMPLATE_SELECT_ENABLED_TOOLTIP = "Use the selected evaluation template."
 
+#: Categories the built-in EvalTemplateManager lists (mirrors
+#: EvalTemplateManager.list_templates; the research category is not listed
+#: by the manager itself).
+_EVAL_TEMPLATE_CATEGORIES = (
+    "reasoning",
+    "language",
+    "coding",
+    "safety",
+    "creative",
+    "multimodal",
+)
+
+
+def _builtin_eval_template_records() -> list[dict[str, Any]]:
+    """Build the dict records this widget family renders for the built-ins.
+
+    ``get_eval_templates()`` lives in ``tldw_chatbook.Evals.eval_templates``
+    (NOT the dependency-light ``tldw_chatbook.Evals`` package root, which
+    stopped exporting it -- TASK-32831). Its manager maps snake_case
+    template ids to spec dicts.
+
+    Each record carries the FULL source specification (metric, dataset,
+    generation arguments, prompts, filters, ...) with the display fields
+    overlaid on top: ``name`` stays the snake_case id (widget ids and
+    selection matching depend on it) while ``display_name`` holds the
+    spec's human-readable name. Preview/create/export/select paths
+    therefore receive the complete evaluation definition, not just the
+    display metadata (Qodo PR-2751 finding 3).
+    """
+    from tldw_chatbook.Evals.eval_templates import get_eval_templates
+
+    manager = get_eval_templates()
+    records: list[dict[str, Any]] = []
+    for category in _EVAL_TEMPLATE_CATEGORIES:
+        for template_id, spec in manager.get_templates_by_category(
+            category
+        ).items():
+            record = dict(spec)
+            metadata = record.get("metadata") or {}
+            display_name = record.get("name", template_id)
+            record.update(
+                {
+                    "name": template_id,
+                    "display_name": display_name,
+                    "description": record.get("description", ""),
+                    "category": metadata.get("category", category),
+                    "task_type": record.get("task_type", ""),
+                    "difficulty": record.get("difficulty", "Unknown"),
+                }
+            )
+            records.append(record)
+    return records
+
 
 class TemplatePreviewWidget(Container):
     """Widget for displaying template preview information."""
@@ -283,31 +336,15 @@ class TemplateSelectorDialog(ModalScreen):
         self.callback = callback
         self.selected_template = None
         self.templates = []
-
-    def on_mount(self):
-        """Load templates when dialog is mounted."""
+        # Load before the first compose so the categorized ListViews render
+        # the templates (the old on_mount load mutated data the already-
+        # composed list could never display -- TASK-32831).
         self._load_templates()
 
     def _load_templates(self):
         """Load available templates."""
         try:
-            from tldw_chatbook.Evals import get_eval_templates
-
-            template_manager = get_eval_templates()
-            self.templates = template_manager.list_templates()
-
-            # Update the template list widget
-            try:
-                template_list = self.query_one("#template-list")
-                template_list.templates = self.templates
-                template_list.templates_by_category = (
-                    template_list._organize_by_category()
-                )
-                # Refresh the display
-                self.refresh()
-            except Exception:
-                pass
-
+            self.templates = _builtin_eval_template_records()
         except Exception as e:
             logger.error(f"Error loading templates: {e}")
             self.templates = []
@@ -405,18 +442,14 @@ class QuickTemplateSelector(Container):
         self.category_filter = category_filter
         self.callback = callback
         self.templates = []
-
-    def on_mount(self):
-        """Load templates when widget is mounted."""
+        # Load before the first compose so the quick buttons render (same
+        # reason as TemplateSelectorDialog -- TASK-32831).
         self._load_templates()
 
     def _load_templates(self):
         """Load and filter templates."""
         try:
-            from tldw_chatbook.Evals import get_eval_templates
-
-            template_manager = get_eval_templates()
-            all_templates = template_manager.list_templates()
+            all_templates = _builtin_eval_template_records()
 
             if self.category_filter:
                 self.templates = [

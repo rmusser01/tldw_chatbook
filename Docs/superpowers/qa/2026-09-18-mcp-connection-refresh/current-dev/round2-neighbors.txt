@@ -1,0 +1,6 @@
+......                                                                   [100%]
+--------- generated xml file: /private/tmp/32830-round2-neighbors.xml ----------
+============================= slowest 25 durations =============================
+
+(18 durations < 1s hidden.)
+6 passed in 1.39s

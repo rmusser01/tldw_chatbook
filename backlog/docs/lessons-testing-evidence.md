@@ -1,5 +1,30 @@
 # Lessons: what counts as evidence a change works
 
+## DOM presence outlives an inspector form's ownership
+
+**TASK-32823, 2026-09-20.** The saved MCP refresh prototype cleared a preview
+and then awaited child removal. A controlled mint completed in that interval:
+the old form was still queryable and the replacement tool had the same identity,
+so a stale preview was published. A completed-close test missed this boundary.
+The regression now holds removal open and releases the mint inside that window.
+Synchronous form-owner invalidation closes publication before teardown begins.
+A second reproduction showed that a new form failing profile validation must
+still retire the previous worker before returning Unavailable. See the thirteen
+cases in `Tests/UI/test_mcp_inspector_catalog_refresh.py`.
+
+## A completed catalog read can still block backup maintenance
+
+**PR #2754 / TASK-32870, 2026-09-20.** Artifact snapshot and mounted-reader tests
+passed, but independent review found a completed Kept browse left one native
+ChaChaNotes connection in the live pool thread; participant drain returned false.
+Closing the read transaction was insufficient. Routing the controller through
+Library’s existing finite worker boundary retired its newly owned file-backed
+cache while preserving borrowed and UI-thread handles. Controller-driven tests
+check actual native closure on the owning pool thread and maintenance drain for
+success, failure and cancellation. Join the cancelled worker before checking:
+cancelling its UI waiter does not stop the underlying SQLite work.
+
+
 ## Large SVG failure diagnostics can hide a quick assertion result
 
 **TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.
@@ -16017,6 +16042,20 @@ original fingerprint until a fresh selection and checks completion ownership
 under the inspector lock. A direct stale-click test alone did not establish this
 contract: cached refresh and retry need the same drift test.
 
+## An RLock probe built on `acquire` reports a re-entrant hold as free
+
+**TASK-32801.4, 2026-09-18.** Removing a lock that was held across a database
+transaction needed a test that fails immediately when the lock is held, because
+the alternative -- a two-thread deadlock test -- can only fail by timing out
+(16 s here) and reads as flake. The first probe asked
+`lock.acquire(blocking=False)` and treated success as "not held". It passed
+against the unfixed code. `threading.RLock` grants a non-blocking acquire to
+the thread that already owns it, which is exactly the thread under test, so the
+probe reported every genuine re-entrant hold as free. `_is_owned()` for an
+RLock and `locked()` for a plain `Lock` are the honest questions; the rewritten
+probe went red against the old shape and green against the new one. A
+concurrency probe that never fails against the defect is worse than no probe:
+it launders the defect as tested.
 ## Retaining final HTTP cleanup does not retain interrupted internal close (TASK-32691, 2026-09-16)
 
 The first bounded llama.cpp request passed 440 targeted tests, including a held
@@ -16096,3 +16135,47 @@ older callback, verifies unchanged focus/scroll, and types invalid input through
 the pilot before hit-testing again. It never re-scrolls after the failure point.
 Guard stale deferred restoration at its existing callback; adding a corrective
 scroll to the test would have hidden the interaction bug.
+
+## Fresh table rendering can disagree with the composed screen (TASK-32868)
+
+The first native Tools-header regression called `table.render_line()` and
+reported compact headers aligned. Both saved terminal text and SVG still showed
+the stale header; only the fresh method result was correct. Reading
+`screen._compositor.render_strips()` at the table's content region reproduced
+all four native cases and made all four automated cases fail on merged dev.
+The same product repair passed them, with every before/after capture differing
+only in the header row. For cache/rendering defects, assert the composed screen,
+then compare it with terminal capture; a new render can skip the stale layer
+that the user still sees. The receipts and initial fixture correction are in
+`Docs/superpowers/qa/2026-09-19-mcp-tools-header/README.md`.
+
+### TASK-32880 (originally TASK-32829): hold cancellation cleanup before asserting admission is released
+
+The MCP lifecycle review found that clicking Cancel popped the per-server busy
+marker before the cancelled operation finished cleanup. A retry could start, and
+the old wrapper could later clear the newer attempt's marker. A fixture that
+immediately raised `CancelledError` missed the interval. Holding an explicit gate
+inside cancellation cleanup exposed the lost marker, premature “Cancelled” toast,
+and duplicate same-server launch. Also hold awaited detail rendering: a CHECKING
+snapshot and its operation must be captured together before yielding, or a stale
+Cancel view can bind to a replacement operation. Cancel-before-start coverage
+must force coroutine collection; both service and redraw workers need lazy
+callbacks when their body may never execute. In Textual tests, a cancelled
+worker's `wait()` raises `WorkerCancelled`; settle that expected outcome without
+masking the behavior assertions or swallowing other worker failures.
+
+
+## App-loop readiness can still leave splash startup pending (TASK-32831)
+
+PR2716 CI passed 1,152 main cases but its synchronous-construction Canvas watcher
+test failed when a seven-second splash closed during teardown: runtime disposal
+preceded a late Console mount, leaving its store absent. The same test passed
+quickly in isolation because it exercised only the app loop while splash stayed
+up. Requiring a mounted Console exposed another premise: Console creates the
+Canvas controller that this test explicitly expects to remain uncreated.
+
+The repair selects Home, disables splash through a scoped delegated getter,
+joins the real startup task and verifies the Home header before keeping all
+original watcher and disposal assertions. A persisted splash override was rejected
+in review because this module shares its bootstrap profile. Qualify the intended
+startup state; app-loop readiness alone does not establish it.

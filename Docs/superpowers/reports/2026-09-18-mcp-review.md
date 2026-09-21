@@ -1,5 +1,281 @@
 # MCP component review
 
+## PR2716 tool-error qualification — 2026-09-20
+
+PR2714 merged into dev as `e4096e2059` after owner approval and all CI/review gates;
+TASK-32830 is Done. The fresh follow-up branch integrates existing PR2716 without
+conflicts. Server-reported tool errors now reach the existing failed result and
+Audit path; successful retry uses the same connection. Production changes cover client result handling
+and strict flag validation in the existing shared input-validation module, with
+existing ADR-111/161 and no new architecture.
+
+75 distinct targeted cases, eight artifact guards and independent reviews pass.
+Qodo's malformed-flag finding is repaired: eight real-stdio cases reproduce the
+false success before repair, then reject malformed values without body leakage
+and successfully retry on the same session.
+Fresh native dark/light 170×48 passes with eight inspected SVGs, real error/success
+audit records, clean app/child shutdown, healthy private databases, unchanged
+defaults/sentinels and matching source hashes. The separate 80×24 attempt fails
+before execution because Test Tool is offscreen even after focus/scroll; it exits
+1 with verified clean shutdown. Compact execution remains unqualified, and its
+layout repair stays separate from this client-only PR.
+
+[Current evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/README.md).
+Owner approved the PR2716 gallery at `19ceab4dc3`. A test/CI-only follow-up
+repairs the splash-dependent watcher fixture and extends the bounded serial job
+to 30 minutes; production/native hashes are unchanged. Its 123 admission cases
+(plus one existing expected failure), 26 CI contracts and eight artifact checks
+pass. TASK-32831 remains In Progress pending current-head CI, accumulated review
+and merge. Full Audit navigation, raw-response expansion,
+complete permission flows and remaining screen reviews stay open.
+
+Qodo's accumulated follow-up added the public tool-call contract and twelve
+pure boundary tests. All 31 affected cases pass, bringing the distinct MCP
+inventory to 87. Independent review and baseline-relative static checks pass;
+executable client AST is unchanged apart from the docstring, so the recorded
+visual approval applies. [Evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/review-followup/README.md).
+
+## PR2714 merged; PR2716 resumed — 2026-09-20
+
+PR2714 merged into dev at `e4096e2059` after owner visual approval, zero open Qodo
+findings, all nine review threads resolved, and current-head CI (1,152 Fast Lane
+cases plus artifact gate). The conflict-free final rebase preserves the approved
+MCP implementation and native source hashes. TASK-32830 is Done; its current QA
+merge receipt records the exact tree, tests and review evidence.
+
+PR2716 tool-result errors resumes separately from this merged state. Further
+compact inspector/notification work and remaining screen reviews stay open.
+
+## Current checkpoint — PR2714 owner approval and review follow-ups
+
+Owner approved the catalog-refresh gallery at `f8d1731abc`. PR2714 is rebased
+without conflicts onto dev `7bfd330046`. Qodo follow-ups validate fixture paths
+and malformed requests, document the API, add isolated tests, use canonical IDs
+for cleanup and report failed temporary-session teardown honestly. The real
+control plane records `ok=False` while an owned process remains alive; retry
+reaps it. The original race claim was independently disproved and Qodo dismissed it.
+
+[Current evidence](../qa/2026-09-18-mcp-connection-refresh/current-dev/README.md)
+includes 47 distinct affected cases, seven artifact guards, independent review,
+and final native004's four cells/32 captures with exact source hashes and clean
+shutdown/defaults/database/lock checks. The approved controls/styles are unchanged;
+compact toast overlap, toolbar clipping and catalog scrolling remain disclosed.
+Current-head CI/Qodo and final dev review still gate merge. PR2716 tool execution
+is the next saved bounded slice; it has not been integrated. PR2707 heartbeat
+remains paused. Older checkpoints below are historical.
+
+## Current checkpoint — PR2713 merged; catalog refresh resumes
+
+[PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) merged as
+`5e0f9f82c3` on 2026-09-20 after owner approval of twelve native captures,
+zero remaining Qodo findings, all five review threads resolved, and current-head
+CI: 1,152 Fast Lane cases plus artifact, performance, CSS and backlog checks.
+The final merge tree exactly matches CI's merge with current dev `c768376092`.
+[TASK-32880 closeout receipt](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/merge-closeout.json).
+
+Existing draft [PR2714](https://github.com/rmusser01/tldw_chatbook/pull/2714)
+resumes from this merged dev on a fresh branch. TASK-32830 covers actual local
+catalog discovery during refresh, original connection state, permission denials,
+failure/retry and owned-process cleanup. Current integration has 49 distinct focused passes, seven artifact guards,
+independent review, and four real native cells with 32 inspected captures.
+[Current QA](../qa/2026-09-18-mcp-connection-refresh/current-dev/README.md).
+Immediate compact notifications temporarily cover inspector actions; feedback
+captures preserve this UI follow-up alongside PR2712 toolbar clipping and
+below-fold catalog scrolling. Current-head review/CI and owner visual approval
+remain before its merge. Connected
+execution (PR2716), compact actions (PR2712) and wider screen reviews remain
+separate. Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2713 cancellation integration ready for review
+
+Saved [PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) resumes on
+current dev `45d67a6704`. Its old TASK-32829 number collided with an unrelated
+landed task; this work is now TASK-32880. Cancellation retains per-server
+ownership until cleanup and final readiness collection finish, rejects retired
+Cancel controls, and supports immediate native worker completion.
+
+[96 targeted passes, seven guards, independent review and twelve inspected
+native captures](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md)
+qualify the bounded integration. The one conflict retains both the current
+recovery-token checks and the saved displayed-operation identity. No CSS changes.
+Owner visual approval is recorded. The conflict-free latest-dev rebase leaves
+MCP source and all twelve captures unchanged; 35 targeted reruns and native
+verification pass. Current-head CI/review remain before merge.
+Connected catalog refresh (PR2714), execution (PR2716), compact server actions
+(PR2712), and the other saved MCP slices remain separate. Earlier checkpoints
+below are historical; PR2707's heartbeat stays paused.
+
+## Current checkpoint — PR2759 merged; connected runtime next
+
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) merged into dev at
+`8d110a06e384add07a72e4d96f7e1e0aa4b7a144`. Its actual tree equals the verified
+head. Owner visual approval, 116 distinct local targeted passes, 16 inspected
+native captures, current-head CI (1,152 Fast Lane passes and all required guards),
+resolved Qodo findings and unchanged dev/conflict review qualify this bounded
+compact root-review repair. The two reproduced baseline test failures remain
+recorded; no full suite ran. [Merge receipt](../qa/2026-09-20-mcp-compact-review/pr2759-closeout.json).
+TASK-32879 is closed.
+
+The fresh `codex/mcp-connected-runtime-review-20260920` branch begins at the
+merged dev state. Next bounded scope is the MCP connection lifecycle and
+connected inspector journey. Other unqualified controls/screens remain open;
+no additional screen is declared qualified. PR2707’s heartbeat stays paused.
+Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2759 visual approval received
+
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
+repairs the restored MCP root review at 80×24: keyboard-scrollable,
+left-aligned complete paths and persistent Cancel/Use fresh MCP defaults actions.
+[116 targeted passes, two reproduced dev failures, seven preflight guards and
+16 inspected native captures](../qa/2026-09-20-mcp-compact-review/README.md)
+qualify this bounded slice. The catalog test now waits for actual review completion.
+Existing approval ownership and native recovery writes remain unchanged.
+The owner approved the [visual gallery](../qa/2026-09-20-mcp-compact-review/GALLERY.md).
+The Qodo follow-up adds a return docstring and clearer scroll-progress assertions;
+product behavior and styles remain identical to the approved native capture.
+All four affected tests pass again. Current-head CI, accumulated review and
+current dev/conflict review remain before merge. Connected-runtime journeys and
+other unqualified MCP controls remain separate; PR2707’s heartbeat stays paused.
+
+## Current checkpoint — PR2757 merged; compact review next
+
+[PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) merged into dev at
+`62d43190ce3ca21bda0f0ff03e5148971eedc7ca`. Its actual tree equals the verified
+head. Current-head CI passed, including 1,152 Fast Lane tests; 316 local targeted
+checks, native lifecycle, owner visual approval and accumulated review qualify
+the change. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2757-closeout.json).
+TASK-32823 and the matching legacy TASK-235 are closed.
+
+A fresh follow-up branch starts from that merge. Next bounded scope is compact
+MCP action reachability and long-path readability; connected-runtime journeys
+remain separate. No additional screen is declared qualified. PR2707’s heartbeat
+remains paused. Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2757 approved closeout
+
+The owner approved [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757)
+and its eight-capture gallery. Conflict-free rebases include current dev
+`6e9e94c794`; MCP product code, styles and native source hashes remain unchanged.
+[All 13 catalog-refresh regressions pass again](../qa/2026-09-20-mcp-inspector-refresh/approved-integration.json).
+Qodo review, current-head CI and final live-dev/merge-tree verification remain
+before the authorized merge. [Qodo follow-up](../qa/2026-09-20-mcp-inspector-refresh/qodo/README.md)
+now includes changed permission facts in refresh equality, completes API docs
+and verifies the real mount boundary. All 316 current-source targeted cases
+and the fresh native journey pass; approved visuals differ only by caret blink.
+Remaining component scope is unchanged.
+Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2730 merged; inspector refresh resumed
+
+[PR2730](https://github.com/rmusser01/tldw_chatbook/pull/2730) merged at
+`802809947b0161f9d589d73412fb497516a87f27` after owner visual approval,
+current-head CI and resolved Qodo review. Its actual tree matches the verified
+head. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2730-closeout.json).
+
+[Draft PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) resumes
+saved TASK-32823 on a fresh branch from that merge. Selected MCP
+inspector details now follow catalog changes while equal definitions retain
+argument drafts, cursor, focus and previews. Synchronous form ownership rejects
+late previews during teardown; newer selection and focus win. [475 targeted
+passes, one reproduced Workflows baseline failure, seven guards, independent
+review and eight inspected native captures](../qa/2026-09-20-mcp-inspector-refresh/README.md)
+qualify this bounded follow-up. Its own current-head CI/Qodo and final visual
+approval remain before merge. Compact/long-path presentation, connected-runtime
+journeys and remaining screens stay open. PR2707's heartbeat remains paused.
+Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2730 approved closeout
+
+The owner approved PR2730’s Console gallery and merge. Its rebase onto current
+dev `d1a0649cd2` (PR2754 Library/Artifacts integration) had no conflicts and keeps
+the approved approval logic and Console controls unchanged. [211 targeted passes,
+18 reproduced baseline failures, seven guards and fresh native comparison](../qa/2026-09-19-approval-action-ownership/CLOSEOUT.md)
+qualify the combined state. Only upstream main-navigation pixels changed.
+Current-head CI/review and actual merge-tree verification remain before the
+authorized closeout. Saved MCP inspector work resumes after confirmed merge.
+PR2707’s heartbeat stays paused; earlier checkpoints are historical.
+
+## Current checkpoint — PR2728 merged; PR2730 integrated
+
+[PR2728](https://github.com/rmusser01/tldw_chatbook/pull/2728) merged at
+`de10a62e67124a2b21b78edf1a4887cea03ff139` after owner visual approval,
+current-head CI and accumulated review; its actual tree equals the approved tree.
+[Merge receipt](../qa/2026-09-19-approval-action-ownership/integration/pr2728-closeout.json).
+
+Saved PR2730 / TASK-32841 is integrated onto that merged dev. Both report histories
+are retained; there were no product conflicts. [210 distinct targeted passes,
+19 reproduced baseline failures, seven guards and eight inspected current-source
+native captures](../qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md)
+qualify the bounded Console approval ownership repair. Current-head CI/review and
+this PR's own final visual approval remain before merge. MCP inspector refresh,
+long-path/compact presentation and connected-runtime journeys remain follow-ups.
+PR2707's heartbeat stays paused. Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2727 merged; PR2728 integrated
+
+[PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at
+`ebee42fab8a7f55def6a03fc7b3301935940eebf` after owner visual approval,
+current-head CI and accumulated review. Concurrent PR2751 changed unrelated
+Chatbook/audio/Evals components during merge. The actual merged app passed all
+85 affected checks and the 16-capture native journey; MCP sources/styles match
+the approved head. [Actual merge receipt](../qa/2026-09-19-mcp-recovery-catalog/integration/pr2727-closeout.json).
+
+Saved PR2728 / TASK-32840 is integrated onto that verified merged state.
+The report conflict retains both histories; the diagnostic inventory was rebuilt
+after reviewing its sole added redacted warning. No product conflict occurred.
+[182 targeted passes, seven guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md)
+qualify passive catalog repopulation and accurate retained-history guidance.
+This PR's own current-head CI/review and final visual approval remain before merge.
+Long-path presentation, inspector refresh, connected-runtime journeys and saved
+Console approval draft PR2730 remain follow-ups. PR2707's heartbeat stays paused.
+Earlier checkpoints below are historical.
+
+## Current checkpoint — PR2749 merged; PR2727 integrated
+
+[PR2749](https://github.com/rmusser01/tldw_chatbook/pull/2749) merged at
+`65d79cc2b7bd8b7b1d86ee87cc31f1823475ab3a` after owner approval, current-head
+CI and accumulated review. The actual merge tree equals the verified head.
+[Merge receipt](../qa/2026-09-18-mcp-restored-roots/integration/pr2749-closeout.json).
+
+Existing PR2727 / TASK-32839 is rebased onto that merged state. Both report
+histories are retained; no product conflict occurred. Four new real-owner
+keyboard regressions reproduce and fix late completion overwriting a newer
+Permissions row/profile selection, including round trips, while the native
+write still completes. [85 targeted passes, seven guards, conflict choices and
+16 fresh native captures](../qa/2026-09-18-mcp-restored-roots/CURRENT-DEV-REVIEW.md)
+qualify the integrated repair. Current-head CI/review and this PR's own final
+visual approval remain before merge. Catalog repopulation/status guidance,
+long-path presentation, inspector refresh and connected-runtime journeys remain
+follow-ups. PR2707's heartbeat stays paused. Earlier checkpoints are historical.
+
+## Current checkpoint — PR2749 approved closeout
+
+The owner approved the Tools header gallery. The final dev rebase onto
+`b91340a5db` preserves both sides of a documentation-only conflict; Tools sources
+are unchanged. [Fresh 152-case validation, seven guards, native lifecycle and
+four pixel-identical approved views](../qa/2026-09-19-mcp-tools-header/CLOSEOUT.md)
+qualify the integration. Current-head CI/review and live-dev inspection remain
+before the authorized merge. Existing PR2727 is next; PR2707's heartbeat stays
+paused. Earlier pending-approval checkpoints below are historical.
+
+## Current checkpoint — PR2726 merged; Tools header follow-up
+
+[PR2726](https://github.com/rmusser01/tldw_chatbook/pull/2726) merged at
+`ad0f76e23b8737904f24eb34760bbee9ac01a04c`. Its final-head CI passed, accumulated
+Qodo review was clean, independent review covered the final selector repair, and
+the actual merged tree equals the tested tree. [Merge receipt](../qa/2026-09-19-mcp-tools-header/pr2726-closeout.json).
+
+TASK-32868 reproduces the retained Tools header race on that merged baseline.
+Local cache invalidation at measurement restores the composed header without
+changing layout or selection. [152 targeted passes, seven guards, independent
+review and native before/after evidence](../qa/2026-09-19-mcp-tools-header/README.md)
+qualify the bounded fix; [visual approval](../qa/2026-09-19-mcp-tools-header/GALLERY.md)
+and this PR's own current-head CI/review remain before merge. Next is existing
+PR2727's Permissions restored-root review, then remaining MCP component work.
+PR2707's heartbeat remains paused. Earlier pending/next statements below are
+historical checkpoints.
+
 ## PR2726 approved closeout — selector-budget repair
 
 The owner approved PR2726's integrated conflict choices and gallery. Qodo found
@@ -128,6 +404,60 @@ This fresh-dev branch does not include that or the inspector refresh/layout/
 guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
 and connected-runtime qualification remain separate. Current-head CI and final
 visual approval still gate merging. Next: Permissions restored-roots review.
+
+## Post-review MCP catalog and guidance — TASK-32840
+
+[49 targeted cases, seven preflight guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/README.md)
+qualify passive repopulation of reviewed local definitions, current-view
+publication through navigation/service changes, successful approval with a
+catalog retry warning, and accurate retained-history guidance. No discovery,
+connection or grants occur. The private native app exits normally with unchanged
+user defaults; one unrelated Evals enrollment diagnostic is recorded.
+
+This follow-up stacks on PR #2727's ownership guards and closes its deferred
+catalog/guidance items. Retarget its draft to dev after the parent merges.
+Next review: bulk permission actions and approval workflows, then remaining
+connected-runtime journeys. Current-head CI and final visual approval still
+gate merging. The resume heartbeat remains paused.
+
+## Post-merge restored MCP review completion — TASK-32839
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Its unmerged closeout checkpoint below is historical; component review resumed
+on bounded follow-up branches and the resume heartbeat remains paused.
+
+[45 targeted cases, seven preflight guards and 16 inspected native captures](../qa/2026-09-18-mcp-restored-roots/README.md)
+qualify accepted-review receipt ownership through native completion/rendering,
+mode and screen round trips, service replacement, fresh Ask/local defaults and
+clearing old passive catalog displays. Real owner approval, cancellation and
+changed-root rejection remain intact. The private app exited cleanly with user
+defaults unchanged. One unrelated restored Evals enrollment diagnostic is recorded.
+
+This fresh-dev branch is independent of Audit PRs #2724/#2726 and earlier
+inspector/lifecycle follow-ups. It does not reload discovery or qualify connected
+runtime use. Next review: post-review catalog repopulation/status guidance,
+then bulk permission actions and approval workflows. Current-head CI and final
+visual approval still gate merging this draft.
+
+## Post-merge continuation: Console approval actions
+
+PR2707 has merged; its closeout statements below are historical checkpoints.
+The continuation heartbeat is paused. TASK-32841 is an independent bounded
+follow-up from merged dev, separate from draft PR2727/PR2728.
+
+Queued Console Approve all, Deny all and Submit actions now retain their displayed
+batch identity, and each batch can submit only once. Unchanged resyncs preserve
+choices; changed/cleared/finishing batches invalidate old actions and fresh rounds
+remain usable. [123 passing targeted cases, 19 identical baseline failures and
+eight inspected native captures](../qa/2026-09-19-approval-action-ownership/README.md)
+cover the existing controls. All seven derived guards pass, including a separate
+Canvas input-fetch retry. Native uses synthetic pending calls with the real
+controller and never dispatches a tool. No connected-runtime claim is made.
+
+The proposed MCP permission-matrix bulk-actions ADR is not implemented here.
+Next: session-grant review/revocation and remaining approval/connected-runtime
+journeys. This draft requires current-head CI/review and final visual approval
+before merge; the wider component review remains open.
 
 ## Qualified
 

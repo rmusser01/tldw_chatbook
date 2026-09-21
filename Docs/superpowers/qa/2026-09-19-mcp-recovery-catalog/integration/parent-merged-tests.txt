@@ -1,0 +1,30 @@
+........................................................................ [ 84%]
+.............                                                            [100%]
+-------- generated xml file: /private/tmp/mcp-2727-merged-tests-001.xml --------
+============================= slowest 25 durations =============================
+7.42s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision
+6.38s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[approve]
+5.37s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[source]
+5.16s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[navigation]
+4.98s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-current]
+4.78s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]
+4.70s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_follow_mode
+4.14s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume
+3.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile]
+3.89s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[duplicate]
+3.78s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[empty]
+3.66s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[target_round_trip]
+3.65s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]
+3.30s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row]
+3.25s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-current]
+3.22s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-mode]
+3.11s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-round_trip]
+3.10s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen]
+3.04s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[cancel]
+2.99s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[cancel_accepted]
+2.92s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-mode]
+2.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-screen]
+2.82s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_ordinary_mcp_review_preserves_existing_permission_controls
+2.80s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen_round_trip]
+2.72s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-round_trip]
+85 passed in 206.96s (0:03:26)

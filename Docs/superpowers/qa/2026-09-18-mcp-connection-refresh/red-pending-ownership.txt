@@ -1,0 +1,301 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_rejected_refresh_does_not_stop_another_pending_connection[False] _____
+
+self = <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[False]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[False]>>, 't.../m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not0'), 'denied': False}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_rejected_refresh_does_not_stop_another_pending_connection[False] _____
+E
+E           request = <FixtureRequest for <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[False]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not0/private-profile-process/pytest/test_rejected_refresh_does_not0')
+E           denied = False
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("denied", [False, True])
+E               @private_profile_test
+E               async def test_rejected_refresh_does_not_stop_another_pending_connection(
+E                   request, tmp_path, denied
+E               ):
+E                   async with profile(tmp_path) as (service, client, _store, policy, state, trace):
+E                       state.write_text(json.dumps({"version": "original", "hold": True}))
+E                       connecting = asyncio.create_task(service.connect_profile("catalog"))
+E                       try:
+E                           async with asyncio.timeout(5):
+E                               while not (trace.exists() and '"initialize"' in trace.read_text()):
+E                                   await asyncio.sleep(0.01)
+E                           pending = client._pending_connections["catalog"]
+E                           assert not client.sessions
+E                           if denied:
+E                               policy.denied = "mcp.external_profiles.launch.local"
+E                           with pytest.raises(PermissionError if denied else RuntimeError):
+E                               await service.refresh_external_profile("catalog")
+E           >               assert client._pending_connections.get("catalog") is pending
+E           E               AssertionError: assert None is <tldw_chatbook.MCP.client._PendingConnection object at 0x10ea29fa0>
+E           E                +  where None = <built-in method get of dict object at 0x10e2f53c0>('catalog')
+E           E                +    where <built-in method get of dict object at 0x10e2f53c0> = {}.get
+E           E                +      where {} = <tldw_chatbook.MCP.client.MCPClient object at 0x10e0ab860>._pending_connections
+E
+E           Tests/MCP/test_profile_refresh.py:175: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 19:10:32.753 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 19:10:32.761 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 19:10:32.835 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 19:10:32.897 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 19:10:32.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 19:10:32.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 19:10:32.925 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-18 19:10:33.004 | WARNING  | tldw_chatbook.MCP.client:connect_to_server:1171 - MCP connection attempt already in progress
+E           2026-09-18 19:10:33.006 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-18 19:10:33.006 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E           2026-09-18 19:10:33.007 | ERROR    | tldw_chatbook.MCP.client:connect_to_server:1303 - Failed to connect to MCP server
+E           2026-09-18 19:10:33.007 | WARNING  | tldw_chatbook.MCP.client:disconnect_from_server:1325 - Server catalog not found
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+E           1 failed in 0.72s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 19:10:32.098 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 19:10:32.105 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 19:10:32.176 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 19:10:32.220 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 19:10:32.221 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 19:10:32.221 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_____ test_rejected_refresh_does_not_stop_another_pending_connection[True] _____
+
+self = <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[True]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[True]>>, 'tm...n/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not1'), 'denied': True}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_rejected_refresh_does_not_stop_another_pending_connection[True] _____
+E
+E           request = <FixtureRequest for <Coroutine test_rejected_refresh_does_not_stop_another_pending_connection[True]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2882/test_rejected_refresh_does_not1/private-profile-process/pytest/test_rejected_refresh_does_not0')
+E           denied = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("denied", [False, True])
+E               @private_profile_test
+E               async def test_rejected_refresh_does_not_stop_another_pending_connection(
+E                   request, tmp_path, denied
+E               ):
+E                   async with profile(tmp_path) as (service, client, _store, policy, state, trace):
+E                       state.write_text(json.dumps({"version": "original", "hold": True}))
+E                       connecting = asyncio.create_task(service.connect_profile("catalog"))
+E                       try:
+E                           async with asyncio.timeout(5):
+E                               while not (trace.exists() and '"initialize"' in trace.read_text()):
+E                                   await asyncio.sleep(0.01)
+E                           pending = client._pending_connections["catalog"]
+E                           assert not client.sessions
+E                           if denied:
+E                               policy.denied = "mcp.external_profiles.launch.local"
+E                           with pytest.raises(PermissionError if denied else RuntimeError):
+E                               await service.refresh_external_profile("catalog")
+E           >               assert client._pending_connections.get("catalog") is pending
+E           E               AssertionError: assert None is <tldw_chatbook.MCP.client._PendingConnection object at 0x10f6c0b90>
+E           E                +  where None = <built-in method get of dict object at 0x10fb86000>('catalog')
+E           E                +    where <built-in method get of dict object at 0x10fb86000> = {}.get
+E           E                +      where {} = <tldw_chatbook.MCP.client.MCPClient object at 0x10f622ea0>._pending_connections
+E
+E           Tests/MCP/test_profile_refresh.py:175: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 19:10:33.771 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 19:10:33.779 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 19:10:33.853 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 19:10:33.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 19:10:33.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 19:10:33.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 19:10:33.926 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E           2026-09-18 19:10:34.013 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E           2026-09-18 19:10:34.013 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E           2026-09-18 19:10:34.014 | ERROR    | tldw_chatbook.MCP.client:connect_to_server:1303 - Failed to connect to MCP server
+E           2026-09-18 19:10:34.014 | WARNING  | tldw_chatbook.MCP.client:disconnect_from_server:1325 - Server catalog not found
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+E           1 failed in 0.70s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+FAILED Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+2 failed, 7 deselected in 2.89s

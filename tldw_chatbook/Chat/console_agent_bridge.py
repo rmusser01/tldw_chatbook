@@ -231,7 +231,9 @@ from tldw_chatbook.config import (
     MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     coerce_int_setting,
     get_cli_setting,
+    load_settings,
 )
+
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
@@ -4698,6 +4700,8 @@ def build_console_first_request_plan(
     run_skill_script_enabled: bool,
     fork_chat_enabled: bool = False,
     new_chat_enabled: bool = False,
+    spawn_override_enabled: bool = False,
+    spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
     worktree_merge_enabled: bool = False,
     agent_messages: list[dict],
     agent_definitions: tuple[AgentDefinition, ...] = (),
@@ -4894,6 +4898,8 @@ def build_console_first_request_plan(
         run_skill_script_enabled=run_skill_script_enabled,
         fork_chat_enabled=fork_chat_enabled,
         new_chat_enabled=new_chat_enabled,
+        spawn_override_enabled=spawn_override_enabled,
+        spawn_override_targets=spawn_override_targets,
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
@@ -6004,6 +6010,30 @@ class ConsoleAgentBridge:
                 run_id=assistant_message_id,
             )
 
+        # TASK-32874 (Qodo round, finding 1): the prebuilt plan is the one
+        # the Console actually runs with, so the routing flags MUST be
+        # computed here or the gated provider/model args are never
+        # advertised -- this also un-blinds spawn_subagent's own override
+        # args on this path (same flags, same plan builder).
+        from tldw_chatbook.Agents.agent_routing import (
+            load_agents_routing_config as _load_spawn_routing,
+        )
+        from tldw_chatbook.Agents.agent_service import _spawn_override_targets
+
+        try:
+            _spawn_routing_cfg = _load_spawn_routing()
+        except ValueError:
+            _spawn_routing_cfg = None
+        chat_create_spawn_override_enabled = bool(
+            _spawn_routing_cfg is not None
+            and _spawn_routing_cfg.spawn_override_enabled
+        )
+        chat_create_spawn_override_targets = (
+            _spawn_override_targets(load_settings(), _spawn_routing_cfg)
+            if chat_create_spawn_override_enabled
+            else ()
+        )
+
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -6040,6 +6070,8 @@ class ConsoleAgentBridge:
             run_skill_script_enabled=script_tool_enabled,
             fork_chat_enabled=bool(fork_chat_tool is not None),
             new_chat_enabled=bool(new_chat_tool is not None),
+            spawn_override_enabled=chat_create_spawn_override_enabled,
+            spawn_override_targets=chat_create_spawn_override_targets,
             worktree_merge_enabled=request_worktree_merge_confirm is not None,
             agent_messages=planning_messages,
             agent_definitions=runtime_definitions,
@@ -10506,13 +10538,11 @@ def build_chat_create_tool_closures(
     """Build the fork_chat/new_chat runtime-tool closures for one run.
 
     Both share one per-run denial counter (terminal after two denials --
-    the model is told, once, that chat creation is off for the run) and
-    one per-run remember memo. The memo is the RUN-local half of the
-    remember contract: a remembered tool skips the confirm card for the
-    rest of this run, while the controller's session-scoped grants
-    (``_chat_create_session_grants``) cover cross-run remembers inside
-    the same session -- the confirm callback itself short-circuits those
-    before a card is ever armed.
+    the model is told, once, that chat creation is off for the run). The
+    remember contract lives ENTIRELY in the controller's session-scoped
+    grants (``_chat_create_session_grants``), which the confirm callback
+    consults before arming a card -- and which refuse to ride for
+    sub-agent requesters, so there is deliberately no run-local memo.
 
     Args:
         confirm: Worker-thread blocking confirm callable (the controller's
@@ -10530,7 +10560,6 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
-    remembered: set[str] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -10547,10 +10576,16 @@ def build_chat_create_tool_closures(
         raw_title = args.get("title", "")
         raw_prompt = args.get("opening_prompt", "")
         raw_instructions = args.get("instructions", "")
+        raw_provider = args.get("provider", "")
+        raw_model = args.get("model", "")
+        raw_preset = args.get("preset", "")
         for name, value in (
             ("title", raw_title),
             ("opening_prompt", raw_prompt),
             ("instructions", raw_instructions),
+            ("provider", raw_provider),
+            ("model", raw_model),
+            ("preset", raw_preset),
         ):
             if not isinstance(value, str):
                 return ToolResult(
@@ -10561,6 +10596,9 @@ def build_chat_create_tool_closures(
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
+        provider = raw_provider.strip()
+        model = raw_model.strip()
+        preset = raw_preset.strip()
         if (
             len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
             or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
@@ -10579,22 +10617,27 @@ def build_chat_create_tool_closures(
             "title": title,
             "opening_prompt": opening_prompt,
             "instructions": instructions,
+            "provider": provider,
+            "model": model,
+            "preset": preset,
         }
-        if tool not in remembered:
-            try:
-                decision = confirm(dict(payload))
-            except Exception:  # noqa: BLE001 — a UI error fails closed
-                decision = {"allow": False, "remember": False}
-            if not isinstance(decision, Mapping) or not decision.get(
-                "allow", False
-            ):
-                denials[tool] += 1
-                return ToolResult(
-                    ok=False,
-                    error="The user declined. Do not retry this turn.",
-                )
-            if decision.get("remember", False):
-                remembered.add(tool)
+        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
+        # controller's session grants are the single remember authority,
+        # and they REFUSE to ride for sub-agent requesters -- caching a
+        # remember here would let a later child-run call on this turn skip
+        # consent entirely.
+        try:
+            decision = confirm(dict(payload))
+        except Exception:  # noqa: BLE001 — a UI error fails closed
+            decision = {"allow": False, "remember": False}
+        if not isinstance(decision, Mapping) or not decision.get(
+            "allow", False
+        ):
+            denials[tool] += 1
+            return ToolResult(
+                ok=False,
+                error="The user declined. Do not retry this turn.",
+            )
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an

@@ -1,0 +1,22 @@
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+3.95s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+3.79s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+3.64s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-message]
+3.61s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+3.59s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+3.56s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+3.44s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+3.25s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_before_start_does_not_create_service_coroutine
+2.91s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+2.87s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+2.87s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+
+(14 durations < 1s hidden.)
+11 passed in 38.61s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-42270b76-1c61-4082-be90-e9d575b5eece/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-42270b76-1c61-4082-be90-e9d575b5eece/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-42270b76-1c61-4082-be90-e9d575b5eece
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-42270b76-1c61-4082-be90-e9d575b5eece'
+  warnings.warn(

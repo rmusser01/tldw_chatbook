@@ -11,7 +11,7 @@ from functools import partial
 from typing import Any
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -1131,14 +1131,18 @@ class MCPInspector(Vertical):
             self.server_key = server_key
 
     class CancelRequested(Message, namespace="mcp_inspector"):
-        """Posted when the user clicks Cancel on an in-flight (CHECKING)
-        lifecycle operation. `MCPWorkbench` owns the actual worker and
-        cancels it -- this pane only knows which server the button belongs
-        to."""
+        """Cancel intent bound to the operation displayed when accepted."""
 
-        def __init__(self, server_key: str) -> None:
+        def __init__(self, server_key: str, operation: object | None = None) -> None:
+            """Bind cancellation to the rendered server and operation.
+
+            Args:
+                server_key: Server identity shown by the accepted control.
+                operation: Displayed lifecycle worker, when supplied by the UI.
+            """
             super().__init__()
             self.server_key = server_key
+            self.operation = operation
 
     class ToolTestRequested(Message, namespace="mcp_inspector"):
         """One click bound to the immutable preview currently rendered."""
@@ -1169,11 +1173,14 @@ class MCPInspector(Vertical):
             server_key: str,
             tool_name: str,
             profile_context: PermissionProfileContext | None = None,
+            *,
+            panel_token: object | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
             self.profile_context = profile_context
+            self.panel_token = panel_token
 
     class ToolTestPreviewRevocationRequested(Message, namespace="mcp_inspector"):
         """Best-effort revocation request for a preview leaving the panel."""
@@ -1334,6 +1341,7 @@ class MCPInspector(Vertical):
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"ds-inspector {classes}".strip(), **kwargs)
         self._snapshot: ReadinessSnapshot | None = None
+        self._cancel_control: tuple[Button, str, object | None] | None = None
         self._service: Any = None
         self._sections: list[tuple[str, str]] = [("Overview", "overview")]
         self._action_templates: dict[str, str] = {}
@@ -1448,6 +1456,7 @@ class MCPInspector(Vertical):
         # The only execution authority this renderer retains is the immutable,
         # metadata-only preview the service issued for the visible panel.
         self._test_preview: ToolTestAdmissionPreview | None = None
+        self._test_panel_token: object | None = None
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -1815,7 +1824,13 @@ class MCPInspector(Vertical):
 
     # -- readiness block -----------------------------------------------------
 
-    async def update_readiness(self, snapshot: ReadinessSnapshot | None) -> None:
+    async def update_readiness(
+        self,
+        snapshot: ReadinessSnapshot | None,
+        *,
+        cancelling: bool = False,
+        cancel_operation: object | None = None,
+    ) -> None:
         """Rebuild the action-button list for the given snapshot.
 
         Awaited end to end (remove, then mount) within a single call so
@@ -1832,8 +1847,16 @@ class MCPInspector(Vertical):
         racing a pump-driven one) can't interleave their remove/mount
         cycles -- the second call's remove_children()/mount_all() only
         begins once the first has fully completed.
+
+        Args:
+            snapshot: Current server readiness, or None to clear the view.
+            cancelling: Whether the displayed operation is awaiting cleanup.
+            cancel_operation: Lifecycle worker paired with this snapshot before
+                rendering yields; Cancel targets only this operation.
         """
         async with self._refresh_lock:
+            # Retire the old control before the first awaited DOM mutation.
+            self._cancel_control = None
             self._snapshot = snapshot
             state = self.query_one("#mcp-inspector-state", Static)
             # RAG-50: `show_tool()` owns `state.display` (hidden while tool
@@ -1897,13 +1920,23 @@ class MCPInspector(Vertical):
                 # with a single Cancel button -- nothing else is actionable
                 # on this server until the worker finishes or is cancelled.
                 cancel_button = Button(
-                    "Cancel",
+                    "Cancelling…" if cancelling else "Cancel",
                     id="mcp-inspector-cancel",
                     classes="mcp-inspector-action console-action-secondary",
                     compact=True,
-                    tooltip="Cancel the in-flight operation.",
+                    tooltip=(
+                        "Waiting for the current operation to finish cleanup."
+                        if cancelling
+                        else "Cancel the in-flight operation."
+                    ),
+                    disabled=cancelling or cancel_operation is None,
                 )
                 await actions.mount_all([cancel_button])
+                self._cancel_control = (
+                    cancel_button,
+                    snapshot.server_key,
+                    cancel_operation,
+                )
                 return
             wired = _wired_actions(snapshot)
             buttons = []
@@ -1980,6 +2013,7 @@ class MCPInspector(Vertical):
         profile_context: PermissionProfileContext | None = None,
         arg_rules: Sequence[Mapping[str, Any]] = (),
         session_approvals: Sequence[tuple[str, str]] = (),
+        refresh_from: HubTool | None = None,
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -2001,11 +2035,45 @@ class MCPInspector(Vertical):
         not reentrant). `None` (every pre-Task-7 call site, and a cleared
         selection) hides `#mcp-inspector-permission` instead of leaving a
         previous tool's permission facts on screen.
+
+        Args:
+            tool: Current catalog definition, or None to clear the selection.
+            effective: Resolved permission state, or None to hide policy detail.
+            profile_context: Captured profile authority for this detail view.
+            arg_rules: Current exact-input rules shown in the permission block.
+            session_approvals: Current profile's session grants to display.
+            refresh_from: Exact previously selected object owned by a catalog
+                refresh. Ignore the refresh if selection has since changed;
+                preserve the form only when definition and policy inputs match.
         """
         async with self._refresh_lock:
+            # A queued refresh owns only the selection captured by its caller.
+            if refresh_from is not None:
+                if self._current_tool is not refresh_from:
+                    return
+                if (
+                    tool == refresh_from
+                    and profile_context == self._current_tool_profile_context
+                    and effective == self._current_permission_effective
+                    and list(arg_rules) == self._current_permission_arg_rules
+                    and list(session_approvals)
+                    == self._current_permission_session_approvals
+                ):
+                    return
+            container = self.query_one("#mcp-inspector-tool", Vertical)
+            had_test_panel = bool(container.query("#mcp-inspector-test-panel"))
+            focused = self.app.focused
+            restore_focus = bool(
+                refresh_from is not None
+                and focused is not None
+                and container in focused.ancestors
+            )
             # Both jump controls belong to the view being retired, including
             # the permission block that is pruned later in this refresh.
             self._permission_navigation.clear()
+            # DOM children remain queryable during awaited removal. Retire their
+            # publication owner now, including previews still being minted.
+            self._test_panel_token = None
             self._current_tool = tool
             self._current_tool_profile_context = (
                 profile_context if tool is not None else None
@@ -2016,7 +2084,10 @@ class MCPInspector(Vertical):
             old_nonce = self.clear_test_preview()
             if old_nonce:
                 self.post_message(self.ToolTestPreviewRevocationRequested(old_nonce))
-            container = self.query_one("#mcp-inspector-tool", Vertical)
+            if restore_focus:
+                # Retire focus before removal chooses an arbitrary sibling.
+                # A new user focus during the awaits below must remain theirs.
+                self.app.set_focus(None)
             await container.remove_children()
             # RAG-50 / task-2270: the empty-state badge's DISPLAY is owned
             # by `_sync_state_badge_display()` (badge shows exactly when NO
@@ -2033,6 +2104,8 @@ class MCPInspector(Vertical):
             if tool is None:
                 container.display = False
                 await self._render_permission_container(None, None)
+                if refresh_from is not None:
+                    self.app.notify("The selected tool is no longer available.")
                 return
             container.display = True
             widgets: list[Any] = [
@@ -2068,6 +2141,16 @@ class MCPInspector(Vertical):
                     Static(
                         "Stale — not currently connected.",
                         id="mcp-inspector-tool-stale",
+                        classes="ds-field-row",
+                        markup=False,
+                    )
+                )
+            if refresh_from is not None and had_test_panel:
+                widgets.append(
+                    Static(
+                        "Tool details changed. Reopen Test Tool to review the "
+                        "current parameters and permissions.",
+                        id="mcp-inspector-tool-refresh-note",
                         classes="ds-field-row",
                         markup=False,
                     )
@@ -2118,6 +2201,12 @@ class MCPInspector(Vertical):
                 arg_rules=arg_rules,
                 session_approvals=session_approvals,
             )
+            if (
+                restore_focus
+                and tool.executable
+                and self.app.focused in (None, focused)
+            ):
+                self.query_one("#mcp-inspector-test-tool", Button).focus()
 
     async def _render_permission_container(
         self,
@@ -2796,12 +2885,16 @@ class MCPInspector(Vertical):
             ),
             id="mcp-inspector-test-panel",
         )
+        panel_token = self._test_panel_token = object()
         await container.mount(panel)
+        if self._test_panel_token is not panel_token:
+            return
         self.post_message(
             self.ToolTestPreviewRequested(
                 tool.server_key,
                 tool.name,
                 self._current_tool_profile_context,
+                panel_token=panel_token,
             )
         )
         # F-056: opening the panel moves keyboard focus into it -- the
@@ -2957,6 +3050,7 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
+        self._test_panel_token = None
         self._retire_permission_navigation("mcp-inspector-goto-permission-test")
         nonce = self.clear_test_preview()
         if nonce:
@@ -2973,6 +3067,16 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:
             pass
+
+    @property
+    def test_panel_token(self) -> object | None:
+        """Return the test form's current publication owner.
+
+        Returns:
+            The opaque identity of the opening or live form, or None when no
+            form owns publication. Retirement precedes asynchronous removal.
+        """
+        return self._test_panel_token
 
     @property
     def current_permission_tool(self) -> HubTool | None:
@@ -3569,9 +3673,19 @@ class MCPInspector(Vertical):
         if self._service is None:
             return
         payload = await self._service.load_section(section)
-        self.query_one("#mcp-adv-content", Static).update(
-            _render_section_payload(section, payload)
-        )
+        # TASK-32800.1: `_hide_advanced()` removes the whole Advanced
+        # collapsible, and it can run while this await is in flight -- the
+        # reveal toggle is re-enabled before this worker is scheduled, so the
+        # window is the entire round trip. `exclusive=True` does not protect
+        # us: it cancels another worker in the same GROUP, never this one. The
+        # await therefore used to resume into a removed subtree, raise
+        # NoMatches, and -- with exit_on_error defaulting to True -- take the
+        # whole app down. Everything below this point touches that subtree,
+        # including `_refresh_advanced_actions()`, so bail out as one.
+        content = self.query("#mcp-adv-content")
+        if not content:
+            return
+        content.first(Static).update(_render_section_payload(section, payload))
         # C2: available_actions() is section-dependent (mirrors the legacy
         # panel, unified_mcp_panel.py). `load_section()` above is what
         # actually moves the service's notion of "current section" forward,
@@ -3760,8 +3874,22 @@ class MCPInspector(Vertical):
             return
         if button_id == "mcp-inspector-cancel":
             event.stop()
-            if self._snapshot is not None:
-                self.post_message(self.CancelRequested(self._snapshot.server_key))
+            current = self._cancel_control
+            if current is None or event.button is not current[0]:
+                return
+            button, server_key, operation = current
+            if (
+                button.disabled
+                or not button.is_attached
+                or button.screen is not self.app.screen
+                or any(
+                    not node.display or not node.visible
+                    for node in button.ancestors_with_self
+                )
+            ):
+                return
+            button.disabled = True
+            self.post_message(self.CancelRequested(server_key, operation))
             return
         if button_id.startswith("mcp-inspector-action-"):
             event.stop()
@@ -3802,6 +3930,7 @@ class MCPInspector(Vertical):
                     tool.server_key,
                     tool.name,
                     self._current_tool_profile_context,
+                    panel_token=self._test_panel_token,
                 )
             )
             return

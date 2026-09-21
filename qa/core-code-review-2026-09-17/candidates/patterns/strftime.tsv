@@ -1,0 +1,45 @@
+tldw_chatbook/Agents/agent_runtime.py	142	%Y-%m-%dT%H:%M:%S.%fZ
+tldw_chatbook/Agents/agent_runtime.py	144	%Y-%m-%dT%H:%M:%S.%fZ
+tldw_chatbook/Agents/agent_service.py	1182	%Y-%m-%dT%H:%M:%S.%fZ
+tldw_chatbook/Agents/run_log.py	981	%Y-%m-%dT%H:%M:%S.%fZ
+tldw_chatbook/Chat/Chat_Functions.py	2658	%Y%m%d_%H%M%S
+tldw_chatbook/Chat/Chat_Functions.py	2745	%Y%m%d_%H%M%S
+tldw_chatbook/Chat/console_chat_controller.py	19241	%Y-%m-%d %H:%M UTC
+tldw_chatbook/Chat/console_save_targets.py	108	%Y-%m-%d
+tldw_chatbook/Chat/console_semantic_revision.py	1014	%Y-%m-%dT%H:%M:%fZ
+tldw_chatbook/Chat/console_switcher_state.py	189	%Y-%m-%d %H:%M %Z
+tldw_chatbook/DB/AgentRuns_DB.py	146	%Y-%m-%dT%H:%M:%S.%fZ
+tldw_chatbook/DB/ChaChaNotes_DB.py	5773	%Y-%m-%dT%H:%M:%fZ
+tldw_chatbook/DB/Client_Media_DB_v2.py	2218	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/DB/Client_Media_DB_v2.py	4354	%Y-%m-%d %H:%M:%S
+tldw_chatbook/DB/Client_Media_DB_v2.py	4458	%Y-%m-%d %H:%M:%S
+tldw_chatbook/DB/Client_Media_DB_v2.py	9257	%Y-%m-%dT%H:%M:%SZ
+tldw_chatbook/DB/Prompts_DB.py	1016	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/DB/Prompts_DB.py	4807	%Y%m%d_%H%M%S
+tldw_chatbook/DB/Prompts_DB.py	4968	%Y%m%d_%H%M%S
+tldw_chatbook/LLM_Calls/Summarization_General_Lib.py	2804	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Tools/tool_executor.py	144	%A
+tldw_chatbook/UI/Console_Modules/message.py	2096	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Console_Modules/review_selection.py	474	%Y-%m-%d
+tldw_chatbook/UI/Console_Modules/right_rail.py	208	%H:%M:%S UTC
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3597	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py	901	%Y-%m-%d %H:%M
+tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py	277	%Y-%m-%d %H:%M:%S
+tldw_chatbook/UI/Screens/chat_screen.py	20325	%Y%m%d-%H%M%S
+tldw_chatbook/UI/Screens/personas_screen.py	5684	%Y%m%d-%H%M%S
+tldw_chatbook/UI/Screens/personas_screen.py	13535	%Y%m%d-%H%M%S-%f
+tldw_chatbook/Utils/Utils.py	700	%b %d, %Y
+tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py	660	%Y%m%d_%H%M%S
+tldw_chatbook/Widgets/Console/console_conversation_inspector.py	2094	%Y%m%d_%H%M%S
+tldw_chatbook/Widgets/Console/console_transcript.py	5640	%H:%M:%S
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1466	%Y-%m-%d %H:%M
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	1626	%Y-%m-%d %H:%M UTC
+tldw_chatbook/Widgets/activity_log.py	81	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/activity_log.py	283	%H:%M:%S
+tldw_chatbook/Widgets/activity_log.py	499	%Y%m%d_%H%M%S
+tldw_chatbook/Widgets/file_list_item_enhanced.py	63	%Y-%m-%d %H:%M
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	47	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	364	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/status_widget.py	56	%H:%M:%S
+tldw_chatbook/config.py	6034	%Y%m%dT%H%M%S
+tldw_chatbook/config.py	7212	%Y%m%d_%H%M%S

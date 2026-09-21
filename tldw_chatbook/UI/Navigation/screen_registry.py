@@ -113,12 +113,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         # the per-visit connection churn reuse exists to retire.
         reusable=True,
     ),
-    "artifacts": ScreenRoute(
-        "artifacts",
-        "artifacts",
-        "tldw_chatbook.UI.Screens.artifacts_screen",
-        "ArtifactsScreen",
-    ),
     "personas": ScreenRoute(
         "personas",
         "personas",
@@ -229,6 +223,8 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
 }
 
 _SCREEN_ALIASES = {
+    # ADR-172: the compatibility route uses Library; packs keep their manager.
+    "artifacts": "library",
     TAB_CCP: "ccp",
     TAB_LLM: "llm",
     "subscriptions": "watchlists_collections",

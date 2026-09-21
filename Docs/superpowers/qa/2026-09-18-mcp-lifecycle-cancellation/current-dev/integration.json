@@ -1,0 +1,19 @@
+{
+  "baseline": "ab57681864bc2f5c6d8b255203e011a95321c02c",
+  "saved_pr_head": "2518d40bf77c67f53bf2989d20541bb05b266d9e",
+  "conflicts": [
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+      "function": "_sync_children",
+      "selected": "Both implementations: retain the current recovery-token checks immediately before and after update_readiness; pass the captured lifecycle worker and cancelling state into that same call.",
+      "preserved": "Current restored-root ownership checks, later selected-tool refresh and current styles.",
+      "verification": "All six navigation-interruption cases and thirteen selected-tool refresh cases pass."
+    }
+  ],
+  "task_renumber": {
+    "old": 32829,
+    "new": 32880,
+    "reason": "The unrelated landed task retains TASK-32829. Its file is byte-identical to HEAD."
+  },
+  "css_changes": false
+}
