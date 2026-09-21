@@ -15,8 +15,8 @@ self = <Coroutine test_test_form_controls_remain_reachable_through_resize[textua
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-dark]>>, 'theme': 'textual-dark'}
@@ -100,10 +100,10 @@ E           Loguru: Configured to forward its messages to standard Python loggin
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ____ test_test_form_controls_remain_reachable_through_resize[textual-dark] _____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-dark]>>
 E           theme = 'textual-dark'
-E           
+E
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 E               @private_profile_test
 E               async def test_test_form_controls_remain_reachable_through_resize(request, theme):
@@ -142,18 +142,18 @@ E                       await _wait(pilot, lambda: bool(inspector.query("#mcp-in
 E                       field = inspector.query_one("#mcp-inspector-test-form Input", Input)
 E                       assert app.focused is field
 E           >           _visible(app, field)
-E           
-E           Tests/UI/test_mcp_inspector_compact_access.py:62: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_mcp_inspector_compact_access.py:62:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           app = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
 E           control = Input(id='mcp-schema-field-0', classes='-valid')
-E           
+E
 E               def _visible(app, control):
 E           >       region, clip = app.screen._compositor.visible_widgets[control]
 E                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E           E       KeyError: Input(id='mcp-schema-field-0', classes='-valid')
-E           
+E
 E           Tests/UI/test_mcp_inspector_compact_access.py:17: KeyError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-20 22:51:50.444 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
@@ -220,7 +220,7 @@ E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward it
 E           - generated xml file: /private/tmp/32882-baseline-corrected-pytest/test_test_form_controls_remain0/private-profile-process/pytest.xml -
 E           ============================= slowest 25 durations =============================
 E           4.90s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark]
@@ -247,8 +247,8 @@ self = <Coroutine test_test_form_controls_remain_reachable_through_resize[textua
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -257,7 +257,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-light]>>, 'theme': 'textual-light'}
@@ -332,10 +332,10 @@ E           Loguru: Configured to forward its messages to standard Python loggin
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ____ test_test_form_controls_remain_reachable_through_resize[textual-light] ____
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-light]>>
 E           theme = 'textual-light'
-E           
+E
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 E               @private_profile_test
 E               async def test_test_form_controls_remain_reachable_through_resize(request, theme):
@@ -374,18 +374,18 @@ E                       await _wait(pilot, lambda: bool(inspector.query("#mcp-in
 E                       field = inspector.query_one("#mcp-inspector-test-form Input", Input)
 E                       assert app.focused is field
 E           >           _visible(app, field)
-E           
-E           Tests/UI/test_mcp_inspector_compact_access.py:62: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_mcp_inspector_compact_access.py:62:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           app = TldwCli(title='tldw chatbook', classes={'-dark-mode', '-theme-textual-dark'}, pseudo_classes={'nocolor', 'dark', 'focus'})
 E           control = Input(id='mcp-schema-field-0', classes='-valid')
-E           
+E
 E               def _visible(app, control):
 E           >       region, clip = app.screen._compositor.visible_widgets[control]
 E                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E           E       KeyError: Input(id='mcp-schema-field-0', classes='-valid')
-E           
+E
 E           Tests/UI/test_mcp_inspector_compact_access.py:17: KeyError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-20 22:51:58.648 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
@@ -452,7 +452,7 @@ E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward it
 E           - generated xml file: /private/tmp/32882-baseline-corrected-pytest/test_test_form_controls_remain1/private-profile-process/pytest.xml -
 E           ============================= slowest 25 durations =============================
 E           4.79s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light]

@@ -64,6 +64,7 @@ or messages, unchanged user defaults and unrelated sentinels, no logged errors,
 empty fault traces and zero network attempts. The native runs qualify the scalar
 real-server workflow; the separate keyboard tests cover raw JSON and resizing.
 
+Export/log trailing whitespace is normalized without changing rendered content.
 Sixteen representative captures are retained below; each run also generated
 intermediate/retry argument and permission captures in its private evidence root.
 

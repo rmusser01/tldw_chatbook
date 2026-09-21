@@ -15,8 +15,8 @@ self = <Coroutine test_test_form_controls_remain_reachable_through_resize[textua
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -25,7 +25,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-dark-search]>>, 'theme': 'textual-dark', 'tool_name': 'search'}
@@ -135,13 +135,13 @@ E                       assert service.test_calls == [("local:docs", tool_name, 
 E                       assert service.decision_calls == ["approved"]
 E                       close = inspector.query_one("#mcp-inspector-test-close", Button)
 E           >           await _tab_to(pilot, close)
-E           
-E           Tests/UI/test_mcp_inspector_compact_access.py:147: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_mcp_inspector_compact_access.py:147:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           pilot = <Pilot app=TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
 E           target = Button(id='mcp-inspector-test-close', classes='-style-default console-action-secondary -textual-compact')
-E           
+E
 E               async def _tab_to(pilot, target, *, reverse=False):
 E                   visited = []
 E                   for _ in range(30):
@@ -152,7 +152,7 @@ E                       if pilot.app.focused is target:
 E                           return
 E           >       pytest.fail(f"Keyboard traversal never reached {target.id}; mounted={target.is_mounted}; visits={visited}")
 E           E       Failed: Keyboard traversal never reached mcp-inspector-test-close; mounted=True; visits=['CollapsibleTitle()', "Button(id='mcp-inspector-goto-permission-test', classes='-style-default console-action-secondary -textual-compact')", "Button(id='mcp-inspector-goto-permission', classes='-style-default console-action-secondary -textual-compact')", "Button(id='mcp-inspector-advanced-reveal', classes='-style-default -textual-compact console-action-subdued')", "NavigationButton(id='nav-home', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-console', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-library', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-personas', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-watchlists_collections', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-workflows', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-mcp', classes='-style-default ascii-nav-tab nav-button is-active')", "NavigationButton(id='nav-acp', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-logs', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-settings', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-research', classes='-style-default ascii-nav-tab nav-button')", "NavigationButton(id='nav-meetings', classes='-style-default ascii-nav-tab nav-button')", "Button(id='nav-overflow-hint', classes='nav-overflow-hint -style-default -textual-compact')", "Button(id='mcp-mode-servers', classes='mcp-mode-chip -textual-compact -style-default console-action-subdued')", "Button(id='mcp-mode-tools', classes='console-action-subdued mcp-mode-chip -textual-compact -style-default is-active')", "Button(id='mcp-mode-permissions', classes='mcp-mode-chip -textual-compact -style-default console-action-subdued')", "Button(id='mcp-mode-audit', classes='mcp-mode-chip -textual-compact -style-default console-action-subdued')", "Select(id='mcp-rail-source')", "Button(id='mcp-rail-row-0', classes='mcp-rail-row console-action-subdued -style-default -textual-compact is-active')", "Button(id='mcp-rail-row-1', classes='mcp-rail-row mcp-status-muted console-action-subdued -style-default -textual-compact')", "Button(id='mcp-rail-row-2', classes='mcp-rail-row mcp-status-ready console-action-subdued -style-default -textual-compact')", "Button(id='mcp-rail-row-3', classes='mcp-rail-row mcp-status-ready console-action-subdued -style-default -textual-compact')", "MCPToolsMode(id='mcp-mode-canvas-tools')", "MCPLocalMasterButton(id='mcp-tools-local-enabled', classes='-style-default console-action-secondary -textual-compact')", "Input(id='mcp-tools-workspace-root')", "Button(id='mcp-tools-workspace-save', classes='console-action-primary -textual-compact -style-default')"]
-E           
+E
 E           Tests/UI/test_mcp_inspector_compact_access.py:57: Failed
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-20 23:18:16.355 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
@@ -219,7 +219,7 @@ E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward it
 E           - generated xml file: /private/tmp/32882-focus-diagnostic-pytest/test_test_form_controls_remain0/private-profile-process/pytest.xml -
 E           ============================= slowest 25 durations =============================
 E           20.06s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-search]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-search]
@@ -246,8 +246,8 @@ self = <Coroutine test_test_form_controls_remain_reachable_through_resize[textua
             c.setattr(*self._synchronization_target_attr, synchronized_obj)
 >           super().runtest()
 
-.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
     runner.run(coro, context=context)
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
@@ -256,7 +256,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
     return future.result()
            ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
 kwargs = {'request': <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]>>, 'theme': 'textual-dark', 'tool_name': 'fetch'}
@@ -331,10 +331,10 @@ E           Loguru: Configured to forward its messages to standard Python loggin
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           _ test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch] __
-E           
+E
 E           request = <FixtureRequest for <Coroutine test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]>>
 E           theme = 'textual-dark', tool_name = 'fetch'
-E           
+E
 E               @pytest.mark.parametrize("tool_name", ["search", "fetch"])
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 E               @private_profile_test
@@ -394,13 +394,13 @@ E                           assert (
 E                               json.loads(field.text) if raw else {"query": field.value}
 E                           ) == arguments
 E           >               _visible(app, field)
-E           
-E           Tests/UI/test_mcp_inspector_compact_access.py:118: 
-E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-E           
+E
+E           Tests/UI/test_mcp_inspector_compact_access.py:118:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
 E           app = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})
 E           control = TextArea(id='mcp-schema-raw')
-E           
+E
 E               def _visible(app, control):
 E           >       assert control in app.screen._compositor.visible_widgets, (app.size, control.region, [(p.id, p.region, p.scroll_y, p.max_scroll_y) for p in control.ancestors if isinstance(p, Widget)])
 E           E       AssertionError: (Size(width=100, height=30), Region(x=82, y=27, width=15, height=8), [('mcp-inspector-test-form', Region(x=82, y=21, w...(x=0, y=7, width=100, height=22), 0.0, 0), ('mcp-hub-workbench', Region(x=0, y=7, width=100, height=22), 0.0, 0), ...])
@@ -408,7 +408,7 @@ E           E       assert TextArea(id='mcp-schema-raw') in {Static(id='footer-k
 E           E        +  where {Static(id='footer-key-quit'): (Region(x=1, y=29, width=79, height=1), Region(x=1, y=29, width=98, height=1)), Static(...av-overflow-hint -style-default'): (Region(x=90, y=0, width=10, height=3), Region(x=0, y=0, width=100, height=2)), ...} = <Compositor size=Size(width=100, height=30) widgets={Vertical(id='mcp-tools-local-config'), Vertical(id='mcp-inspector...av-overflow-hint-left', classes='nav-overflow-hint'), Static(id='mcp-inspector-test-preview', classes='ds-field-row')}>.visible_widgets
 E           E        +    where <Compositor size=Size(width=100, height=30) widgets={Vertical(id='mcp-tools-local-config'), Vertical(id='mcp-inspector...av-overflow-hint-left', classes='nav-overflow-hint'), Static(id='mcp-inspector-test-preview', classes='ds-field-row')}> = MCPScreen(classes='shell-header-normal')._compositor
 E           E        +      where MCPScreen(classes='shell-header-normal') = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}).screen
-E           
+E
 E           Tests/UI/test_mcp_inspector_compact_access.py:20: AssertionError
 E           ---------------------------- Captured stderr setup -----------------------------
 E           2026-09-20 23:18:40.357 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
@@ -475,7 +475,7 @@ E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward it
 E           - generated xml file: /private/tmp/32882-focus-diagnostic-pytest/test_test_form_controls_remain1/private-profile-process/pytest.xml -
 E           ============================= slowest 25 durations =============================
 E           10.04s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]
-E           
+E
 E           (2 durations < 1s hidden.)
 E           =========================== short test summary info ============================
 E           FAILED Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]
