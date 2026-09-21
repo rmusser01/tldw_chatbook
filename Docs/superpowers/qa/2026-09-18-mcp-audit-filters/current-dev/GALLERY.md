@@ -1,8 +1,4 @@
-# Audit filter native gallery
-
-Historical checkpoint from the saved 2026-09-18 branch.
-See the [current merged-dev qualification](current-dev/README.md) and
-[current 18-capture gallery](current-dev/GALLERY.md) for PR2721 review.
+# Audit filter native gallery — current dev 2026-09-21
 
 All 18 SVG exports were rendered and inspected. Each cell shows real private-profile
 terminal typing, keyboard selection and last-row access. See [scope and lifecycle](README.md).

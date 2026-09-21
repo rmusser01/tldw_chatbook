@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  ╭──────────────╮    Findings                                             ││                                             │
+│ Source                                     ││  │  Executions  │                                                         ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  ╰──────────────╯                                                         ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  review                                                             ▎  ││  Add server                                 │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││  review_01 — local:audit-review             │
+│ Servers                                    ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                                             │
+│  ◦ off (opt-in) · ⌂ built-in               ││  ▊  Blocked (kill switch)                                           ▼  ▎  ││ {                                           │
+│    All servers                             ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││   "ts":                                     │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││                                                                           ││ "2026-09-21T15:25:00.990758+00:00",         │
+│                                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││   "tool": "local:audit-review::review_01",  │
+│                                            ││  ▊  Test                                                            ▼  ▎  ││   "initiator": "test",                      │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││   "decision": "denied-killswitch",          │
+│                                            ││                                                                           ││   "decision_label": "Blocked (kill          │
+│                                            ││  When                 Tool                           Initiator  Decisio▁▁ ││ switch)",                                 ▃ │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_45  test       Blocked   ││   "ok": false,                              │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_43  test       Blocked   ││   "status": "error",                        │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_41  test       Blocked   ││   "duration": "42ms",                       │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_39  test       Blocked   ││   "error_category": null,                   │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_37  test       Blocked   ││  Open tool                                  │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_35  test       Blocked   ││  Adjust permission                          │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_33  test       Blocked   ││  Advanced…                                  │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_31  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_29  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_27  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_25  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_23  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_21  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_19  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_17  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_15  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_13  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_11  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_09  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_07  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_05  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:01  local:audit-review::review_03  test       Blocked   ││                                             │
+│                                            ││  2026-09-21 08:25:00  local:audit-review::review_01  test       Blocked   ││                                             │
+│                                            ││                                                 ▏                         ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

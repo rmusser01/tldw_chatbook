@@ -1,0 +1,261 @@
+[
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/result.json",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/result.json",
+    "original_sha256": "1983e55badd41155b401ba983f3a10fa374f4c0a5e93a8003aec3631b4412a13",
+    "copied_sha256": "1983e55badd41155b401ba983f3a10fa374f4c0a5e93a8003aec3631b4412a13",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-decision.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-decision.svg",
+    "original_sha256": "600119995b7049eb617712ceff9e020ff94150d1268757464e495e8711b68a1a",
+    "copied_sha256": "411d66a5a4ee2e4bd0b1b3063c972140b668d2a2fe339e24127bd80b6efb7d18",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-decision.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-decision.txt",
+    "original_sha256": "87ba4b21c00b5e4305d531ac569525908ed31d90192e1120772a5ee43a350d3a",
+    "copied_sha256": "87ba4b21c00b5e4305d531ac569525908ed31d90192e1120772a5ee43a350d3a",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-initiator.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-initiator.svg",
+    "original_sha256": "2f042c514d91c9f0d54753de26f3dde723c0ae32b1d41858738003e71ae8b6e0",
+    "copied_sha256": "f387fb44b4f7763b4598a38e6f8ba965d6eb99d09d04d835889a314119ce5515",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-initiator.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-initiator.txt",
+    "original_sha256": "bc95a062b60cb70c090fef00f8ebb5436c60245685e9727d173e6d7f2076bdc6",
+    "copied_sha256": "bc95a062b60cb70c090fef00f8ebb5436c60245685e9727d173e6d7f2076bdc6",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-last-row.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-last-row.svg",
+    "original_sha256": "900f686edd60f75af8cb1c249357f8a190ffc3a109d89a8a20f6295eff01643a",
+    "copied_sha256": "19d208c3c51433937c60324351c7b2f341962cb9a50b9a302569ffca827c8a8a",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-last-row.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-last-row.txt",
+    "original_sha256": "bc95a062b60cb70c090fef00f8ebb5436c60245685e9727d173e6d7f2076bdc6",
+    "copied_sha256": "bc95a062b60cb70c090fef00f8ebb5436c60245685e9727d173e6d7f2076bdc6",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-text.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-text.svg",
+    "original_sha256": "36219315341445aa752a79a01d7da262172a65fd8e02b2495fb13fbd6dabbab9",
+    "copied_sha256": "99ae37ff0db4f3b3c79701a7a2a4f8a6b968bf1ec53730a80b4a8776720c0a6d",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-170x48-text.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-170x48-text.txt",
+    "original_sha256": "4036cbe8008f59d29e0a51ae1b603180c425d09fe8dd23e5da8de7cbdf785ebc",
+    "copied_sha256": "4036cbe8008f59d29e0a51ae1b603180c425d09fe8dd23e5da8de7cbdf785ebc",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-decision-menu.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-decision-menu.svg",
+    "original_sha256": "2224d16c8bc965a796d3bfd0c093156f95777442cb592384fb5e9f11554766eb",
+    "copied_sha256": "3aa9f0c58018ee95e9cc71b8ceeae2b770b89fe6229614ec49d6bca5c836f239",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-decision-menu.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-decision-menu.txt",
+    "original_sha256": "675fde3a41e5eefad5536c01fb041f6329668f353ce9a09273b6bffae3176f86",
+    "copied_sha256": "675fde3a41e5eefad5536c01fb041f6329668f353ce9a09273b6bffae3176f86",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-decision.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-decision.svg",
+    "original_sha256": "29b9921433b149f45f04223642c80114e05adf59f59bbe4910062297df7fdc36",
+    "copied_sha256": "593aad36ca0e31d35b386e5af223fed79eeaad4afebf814cb39ca400b640c0bc",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-decision.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-decision.txt",
+    "original_sha256": "6d65c611139ac0b7c3e816f334df0aee5d3d10cba0205506802c5f74948e3da5",
+    "copied_sha256": "6d65c611139ac0b7c3e816f334df0aee5d3d10cba0205506802c5f74948e3da5",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-initiator.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-initiator.svg",
+    "original_sha256": "0e6bf7bff8df0cff6969f6372f7af415aa31b2e45af72d72d7c8ea7752b570e3",
+    "copied_sha256": "b316355a895932f4c5df66f8af3c3e966346a10e193e0e34a9d960ed6c768097",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-initiator.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-initiator.txt",
+    "original_sha256": "caaa2ad2324ab2094108f307e53fcb254d785e1bef20923897535c13dbdb4f9c",
+    "copied_sha256": "caaa2ad2324ab2094108f307e53fcb254d785e1bef20923897535c13dbdb4f9c",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-last-row.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-last-row.svg",
+    "original_sha256": "375de777a3bf24ecef0f6189ada9271514c9a55a8e84582d0728342fc5971b68",
+    "copied_sha256": "934c428c81254482cf438cd58a276243dd01b7f4087f6a551365efd276f53426",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-last-row.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-last-row.txt",
+    "original_sha256": "542c1c2ddb9c9801fbd4797d8d2975048f2f0a0b6082a2851efff13a563028ba",
+    "copied_sha256": "542c1c2ddb9c9801fbd4797d8d2975048f2f0a0b6082a2851efff13a563028ba",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-text.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-text.svg",
+    "original_sha256": "1ae9720e43e9f2729df30232494c59c6794440adaf464aa57a5897145188fc84",
+    "copied_sha256": "99ce39faf95559193baabd469afa098fcff1445ee265e6fe78b2aef64a085327",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-dark-80x24-text.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-dark-80x24-text.txt",
+    "original_sha256": "3f5e91084d10e15aa550b108356d11d153d4c29b4cec12a5befac3c9a10f7150",
+    "copied_sha256": "3f5e91084d10e15aa550b108356d11d153d4c29b4cec12a5befac3c9a10f7150",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-decision.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-decision.svg",
+    "original_sha256": "afe984b4b37566ff44f63385bd03f4b7e882887f7d0b248dfd79acb9228ac788",
+    "copied_sha256": "cf21c2344ce91bf990c60608e15e12083c5ccdbddf0c27dd7eea18e7f7e70021",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-decision.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-decision.txt",
+    "original_sha256": "6792f84397ceba4d46c119d4e022fce2c65cc870361cdadb579acd8324ca5153",
+    "copied_sha256": "6792f84397ceba4d46c119d4e022fce2c65cc870361cdadb579acd8324ca5153",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-initiator.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-initiator.svg",
+    "original_sha256": "820bd46f7383d212d57dd2f17690759f988e4cd5f85f04aed254d79160cb266d",
+    "copied_sha256": "92cbd66a0ba7e8685f798bf1715866ea10eda620c8b9dcbc723a5054d8c4e0e4",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-initiator.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-initiator.txt",
+    "original_sha256": "ca6043d27c0a2d5219bc25f1103853bc45c9db666b303605c20c1a8946ee15b2",
+    "copied_sha256": "ca6043d27c0a2d5219bc25f1103853bc45c9db666b303605c20c1a8946ee15b2",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-last-row.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-last-row.svg",
+    "original_sha256": "af9a813c721104b25d8a6c9027b3584363c0d9a262d385cec9bc5d4ea58590d6",
+    "copied_sha256": "4dfa3bd94254f9026473ac21beaa31b3ad18b16817c248adae51c15056c54b26",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-last-row.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-last-row.txt",
+    "original_sha256": "ca6043d27c0a2d5219bc25f1103853bc45c9db666b303605c20c1a8946ee15b2",
+    "copied_sha256": "ca6043d27c0a2d5219bc25f1103853bc45c9db666b303605c20c1a8946ee15b2",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-text.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-text.svg",
+    "original_sha256": "720161ff985539758c327116e5436a049331a29f7bd90a38b9484b0e6f76f3d9",
+    "copied_sha256": "1679e326be809f937aab7105d9525bcdb0183441f2470c052a12143354e0de2a",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-170x48-text.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-170x48-text.txt",
+    "original_sha256": "0dd01a1cd36807ea40d0ae18c816da39de5827eb788d67fffc7b314c8d71758c",
+    "copied_sha256": "0dd01a1cd36807ea40d0ae18c816da39de5827eb788d67fffc7b314c8d71758c",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-decision-menu.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-decision-menu.svg",
+    "original_sha256": "023dfa1c17f6bca229eb1863c5851a693bc271166598867ae822362711a5ee87",
+    "copied_sha256": "96b1f4465e0788f57e1930abb3e029ebec7a7f694784a7a3ff550650da39ee46",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-decision-menu.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-decision-menu.txt",
+    "original_sha256": "b28efae774802675ca08dca876daf7329a0a8b1d5d24cf7d79ba354227e3c36d",
+    "copied_sha256": "b28efae774802675ca08dca876daf7329a0a8b1d5d24cf7d79ba354227e3c36d",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-decision.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-decision.svg",
+    "original_sha256": "b4cc1d589ab3c38ac2535c4f6437e72c01ae77303122f8eb95c0b284e30423aa",
+    "copied_sha256": "f02550de72d4918e579339905eeb3d61e0c8ca938fb945a8f2d2ba84f31c2f31",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-decision.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-decision.txt",
+    "original_sha256": "02d42f5fac988f144b6f61bbd4c9d330e43f7f19c317997dcaf2fd49c81a3331",
+    "copied_sha256": "02d42f5fac988f144b6f61bbd4c9d330e43f7f19c317997dcaf2fd49c81a3331",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-initiator.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-initiator.svg",
+    "original_sha256": "bcdf201883e656b07b4c89d3959f8cc11e09601649cb41ae2e37087096d74caa",
+    "copied_sha256": "1719113b7062f65206262b84e1689c82f1929a3d9eb1387b4e7d14de1536c162",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-initiator.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-initiator.txt",
+    "original_sha256": "db3fc49e0935a5a562662be9426a6b3d443d44706c22d68176a7922eb21b9912",
+    "copied_sha256": "db3fc49e0935a5a562662be9426a6b3d443d44706c22d68176a7922eb21b9912",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-last-row.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-last-row.svg",
+    "original_sha256": "3314f5ca7427d3b6986ee80752522910cc13058331aa8b01055a37e4e3394b8d",
+    "copied_sha256": "8d4594c6c3b6dbd7ddc8c6ce221df36f604f28a92de0c760a2700466d60990f7",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-last-row.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-last-row.txt",
+    "original_sha256": "26235efda937e225a7a4e9451a0726459a695a0dbba39c3b1185c69669320cc9",
+    "copied_sha256": "26235efda937e225a7a4e9451a0726459a695a0dbba39c3b1185c69669320cc9",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-text.svg",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-text.svg",
+    "original_sha256": "3266795ebbd8ca8154501df75325723625c9db578b266b57e1f8d99d4fd68ba9",
+    "copied_sha256": "16bcb0f7c6c7c1c1b0bf79410c38a2d2afa00c45d44085c4b8e051e3efa66130",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "source": "/private/tmp/tldw-32835-current-001/evidence/textual-light-80x24-text.txt",
+    "copy": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/textual-light-80x24-text.txt",
+    "original_sha256": "6fc7d08a4a1d725326907484ec20aed873182b3abcc42849c374dcfda3871679",
+    "copied_sha256": "6fc7d08a4a1d725326907484ec20aed873182b3abcc42849c374dcfda3871679",
+    "normalization": "trailing whitespace only"
+  }
+]

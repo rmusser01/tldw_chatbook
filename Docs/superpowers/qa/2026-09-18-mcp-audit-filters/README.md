@@ -1,5 +1,9 @@
 # MCP Audit filter layout — TASK-32835
 
+Historical checkpoint from the saved 2026-09-18 branch.
+See the [current merged-dev qualification](current-dev/README.md) and
+[current 18-capture gallery](current-dev/GALLERY.md) for PR2721 review.
+
 At 80 columns, fixed-width decision/initiator slots squeezed the Audit text
 filter out of view; intermediate pane widths crowded the labels. Filters now
 occupy full-width rows using existing design tokens. The execution pane scrolls

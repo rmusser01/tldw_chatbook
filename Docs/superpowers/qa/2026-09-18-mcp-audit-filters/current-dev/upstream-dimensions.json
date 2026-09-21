@@ -1,0 +1,43 @@
+{
+  "base": "7a758b8196",
+  "unchanged_offenders": {
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": {
+      "base": [
+        "width: 1"
+      ],
+      "current": [
+        "width: 1"
+      ],
+      "same": true
+    },
+    "tldw_chatbook/css/features/_workflows.tcss": {
+      "base": [
+        "height: 45",
+        "height: 8",
+        "height: 1",
+        "height: 1",
+        "height: 1",
+        "height: 6",
+        "width: 90",
+        "width: 100",
+        "height: 90",
+        "height: 1",
+        "height: 6"
+      ],
+      "current": [
+        "height: 45",
+        "height: 8",
+        "height: 1",
+        "height: 1",
+        "height: 1",
+        "height: 6",
+        "width: 90",
+        "width: 100",
+        "height: 90",
+        "height: 1",
+        "height: 6"
+      ],
+      "same": true
+    }
+  }
+}

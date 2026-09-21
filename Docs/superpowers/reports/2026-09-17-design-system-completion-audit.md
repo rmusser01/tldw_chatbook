@@ -1,5 +1,22 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2721 current-dev Audit filters ready for visual review — 2026-09-21
+
+The saved compact-filter slice now includes merged PR2720 dev `7a758b8196`.
+Product/source CSS apply without conflicts; both review-document histories remain.
+[Current qualification](../qa/2026-09-18-mcp-audit-filters/current-dev/README.md):
+294 targeted passes, one inherited dimension-governance failure (all twelve flagged
+declarations unchanged from dev), nine artifact guards, no new Ruff diagnostics
+and independent review clear. Eighteen current native captures verify readable
+filters, keyboard menus, retained values and last-row access in both themes/sizes,
+with clean private-profile lifecycle and source provenance.
+
+TASK-32835 remains In Progress pending its own fresh visual approval, current-head
+CI, accumulated Qodo review and final dev/conflict checks. PR2720 is merged and
+TASK-32834 is Done. PR2722 inspector guidance ownership remains the next separate
+slice; other component/destination reviews remain open. Earlier checkpoints below
+are historical, and the post-PR2707 heartbeat remains paused.
+
 ## PR2720 merged; compact Audit filters resumed — 2026-09-21
 
 PR2720 merged as `7a758b8196` after owner approval and resolved Qodo review.

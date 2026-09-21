@@ -1,0 +1,166 @@
+[
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "22-22",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "331-332",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "334-334",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "336-336",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "338-343",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "345-345",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "349-351",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "523-543",
+      "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "707-752",
+      "Tests/UI/test_mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "756-765",
+      "Tests/UI/test_mcp_audit_mode.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "Tests/UI/test_mcp_audit_filter_layout.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "14-14",
+      "Tests/Utils/test_mcp_native_qa_args.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "41-41",
+      "Tests/Utils/test_mcp_native_qa_args.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/ruff",
+      "format",
+      "--check",
+      "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  }
+]

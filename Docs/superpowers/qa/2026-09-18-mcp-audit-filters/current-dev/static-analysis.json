@@ -1,0 +1,27 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": {
+    "baseline_diagnostics": 2,
+    "current_diagnostics": 2,
+    "introduced": []
+  },
+  "Tests/UI/test_mcp_audit_mode.py": {
+    "baseline_diagnostics": 3,
+    "current_diagnostics": 3,
+    "introduced": []
+  },
+  "Tests/UI/test_mcp_audit_filter_layout.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Tests/Utils/test_mcp_native_qa_args.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/native_check.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  }
+}
