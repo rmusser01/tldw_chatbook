@@ -65,6 +65,14 @@ class SkillEvalPanel(Widget):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._depth: SkillEvalDepth = SkillEvalDepth.STANDARD
+        #: The EFFECTIVE subject: the last real choice from either subject
+        #: control, or the ref the screen restored from a persisted bench.
+        #: The Run guard (TASK-32885) reads this so a subjectless Run can
+        #: never dispatch -- it used to become a real run that failed in
+        #: the worker and left a failed row in the rail. A NULL picker pick
+        #: never clears it: that matches what a run would actually use (the
+        #: screen persists every SubjectChanged the moment it posts).
+        self._subject_ref: str = ""
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -86,7 +94,19 @@ class SkillEvalPanel(Widget):
     def on_mount(self) -> None:
         self._refresh_estimate()
 
+    #: The screen's remount fallback for a subjectless draft bench -- the
+    #: display line must say something, but it is NOT a runnable subject.
+    _NO_SUBJECT_DISPLAY = "(no subject set)"
+
     def set_subject(self, name: str, source: str) -> None:
+        """Update the subject display line and the Run guard's subject.
+
+        ``name`` is the screen's display string: a real subject ref, or the
+        ``_NO_SUBJECT_DISPLAY`` sentinel for a subjectless draft. Only a
+        real ref arms the guard's subject half.
+        """
+        if name and name != self._NO_SUBJECT_DISPLAY:
+            self._subject_ref = name
         widget = self.query_one("#skill-eval-subject", Static)
         widget.update(f"Subject: {name} ({source})")
 
@@ -130,6 +150,7 @@ class SkillEvalPanel(Widget):
                 return
             # Last-touched wins: a store pick clears the directory path.
             self.query_one("#skill-eval-subject-dir", Input).value = ""
+            self._subject_ref = str(event.value)
             self.post_message(self.SubjectChanged(str(event.value), "store"))
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -142,6 +163,7 @@ class SkillEvalPanel(Widget):
             return
         # Last-touched wins: a typed path resets the store pick.
         self.query_one("#skill-eval-subject-picker", Select).value = Select.NULL
+        self._subject_ref = ref
         self.post_message(self.SubjectChanged(ref, "directory"))
 
     def _refresh_estimate(self) -> None:
@@ -160,6 +182,16 @@ class SkillEvalPanel(Widget):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "skill-eval-run":
+            # TASK-32885: a missing subject used to dispatch a run that
+            # failed in the worker (SubjectError) and left a failed row in
+            # the rail -- guard it the same way the model pickers are
+            # guarded, with a message that names the two ways to set one.
+            if not self._subject_ref:
+                self.notify(
+                    "Pick a subject skill or type a directory path first.",
+                    severity="warning",
+                )
+                return
             gen = self.query_one("#skill-eval-generator", Select).value
             jud = self.query_one("#skill-eval-judge", Select).value
             # Select.NULL is a truthy sentinel (Textual 8), so a bare
