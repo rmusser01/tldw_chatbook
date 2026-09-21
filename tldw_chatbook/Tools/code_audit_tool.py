@@ -16,6 +16,7 @@ from collections import defaultdict
 from loguru import logger
 
 from .tool_executor import Tool
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 @dataclass
@@ -203,7 +204,7 @@ Focus on detecting deception and incomplete implementations, not just syntax err
 
         # Create audit record
         record = FileAuditRecord(
-            timestamp=datetime.now().isoformat(),
+            timestamp=utc_now_iso(),
             operation_type=operation_type,
             file_path=file_path,
             content_hash=content_hash,
@@ -451,7 +452,7 @@ class CodeAuditTool(Tool):
         return {
             "audit_type": "deception_report",
             "timeframe_hours": hours,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": utc_now_iso(),
             "summary": summary,
             "recommendations": self._generate_deception_recommendations(summary),
         }

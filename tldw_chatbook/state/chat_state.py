@@ -5,6 +5,7 @@ Chat state management.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 @dataclass
@@ -29,7 +30,7 @@ class ChatSession:
         message = {
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": utc_now_iso(),
             **kwargs,
         }
         self.messages.append(message)

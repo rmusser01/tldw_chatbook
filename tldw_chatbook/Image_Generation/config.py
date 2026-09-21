@@ -463,18 +463,6 @@ def normalize_comfyui_image_origin(value: Any) -> str:
     return f"{scheme}://{normalized_host}{normalized_port}"
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "off"}:
-            return False
-    return default
-
-
 def _coerce_choice(
     value: Any,
     *,
@@ -562,6 +550,8 @@ def _get_image_generation_config_unlocked(
     if _config_cache is not None and not reload:
         return _config_cache
 
+    from tldw_chatbook.Utils.Utils import coerce_bool_flag
+
     section, key_sources = _load_image_generation_section()
 
     default_backend = _get_config_value(section, "default_backend") or DEFAULT_BACKEND
@@ -577,7 +567,9 @@ def _get_image_generation_config_unlocked(
     default_batch = max(1, _coerce_int(section.get("default_batch"), DEFAULT_IMAGE_BATCH))
     max_variants_per_message = max(1, _coerce_int(section.get("max_variants_per_message"), DEFAULT_MAX_VARIANTS_PER_MESSAGE))
 
-    context_llm_enabled = _coerce_bool(section.get("context_llm_enabled"), DEFAULT_CONTEXT_LLM_ENABLED)
+    context_llm_enabled = coerce_bool_flag(
+        section.get("context_llm_enabled"), DEFAULT_CONTEXT_LLM_ENABLED
+    )
     context_llm_turns = max(1, _coerce_int(section.get("context_llm_turns"), DEFAULT_CONTEXT_LLM_TURNS))
     context_llm_timeout_seconds = max(
         0.1, _coerce_float(section.get("context_llm_timeout_seconds"), DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS)

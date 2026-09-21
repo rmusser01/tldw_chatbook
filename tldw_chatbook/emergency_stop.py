@@ -11,10 +11,10 @@ proceeding -- for an emergency stop, halting on doubt is the safe direction.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from .Utils.atomic_file_ops import atomic_write_text
 
 from loguru import logger
 
@@ -83,19 +83,13 @@ def clear_emergency_stop(path: Path) -> None:
 
 def _write(path: Path, state: EmergencyStopState) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"active": state.active, "reason": state.reason})
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".estop-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    # task-32808.5: the previous temp-file + os.replace skipped fsync, so this
+    # "durable" safety switch (its own docstring) could be lost or truncated on
+    # power loss between the write and the OS flush. Route through the shared
+    # atomic-write helper, which fsyncs the temp inode before the atomic rename
+    # (and creates the parent directory).
+    atomic_write_text(path, payload)
 
 
 def default_emergency_stop_path() -> Path:

@@ -1,0 +1,18 @@
+............                                                             [100%]
+----------- generated xml file: /private/tmp/32825-overlap-green.xml -----------
+============================= slowest 25 durations =============================
+5.58s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete]
+3.33s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[disconnect]
+3.23s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_stays_retired_after_mode_round_trip[delete-confirm]
+3.18s call     Tests/UI/test_mcp_server_action_departure.py::test_departure_refresh_preserves_actions_from_a_newer_sync[after_release]
+2.91s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_an_overlapping_departure_toolbar_refresh
+2.45s call     Tests/UI/test_mcp_server_action_departure.py::test_departure_refresh_preserves_actions_from_a_newer_sync[before_release]
+1.88s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-delete-confirm]
+1.83s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-delete-confirm]
+1.79s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[disabled-connect]
+1.78s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-delete-confirm]
+1.76s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[covered-connect]
+1.75s call     Tests/UI/test_mcp_server_action_departure.py::test_queued_server_action_cannot_use_an_unavailable_view[ancestor_disabled-connect]
+
+(13 durations < 1s hidden.)
+12 passed in 32.63s

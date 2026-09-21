@@ -1034,52 +1034,6 @@ class SkillsListInput(BaseModel):
         return value.strip().lower() if type(value) is str else value
 
 
-def validate_email(email: str) -> bool:
-    """Validate email address format."""
-    start_time = time.time()
-    log_counter("input_validation_email_attempt")
-
-    if not email or len(email) > 254:
-        log_counter("input_validation_email_invalid", labels={"reason": "length"})
-        return False
-
-    # Basic email regex - not perfect but good enough for most cases
-    pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-    result = bool(pattern.match(email))
-
-    # Log result
-    duration = time.time() - start_time
-    log_histogram("input_validation_email_duration", duration)
-    log_counter("input_validation_email_result", labels={"valid": str(result)})
-
-    return result
-
-
-def validate_username(username: str, min_length: int = 3, max_length: int = 50) -> bool:
-    """Validate username format."""
-    start_time = time.time()
-    log_counter(
-        "input_validation_username_attempt",
-        labels={"min_length": str(min_length), "max_length": str(max_length)},
-    )
-
-    if not username or len(username) < min_length or len(username) > max_length:
-        log_counter(
-            "input_validation_username_invalid",
-            labels={"reason": "empty" if not username else "length"},
-        )
-        return False
-
-    # Allow alphanumeric, underscore, hyphen
-    pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
-    result = bool(pattern.match(username))
-
-    # Log result
-    duration = time.time() - start_time
-    log_histogram("input_validation_username_duration", duration)
-    log_counter("input_validation_username_result", labels={"valid": str(result)})
-
-    return result
 
 
 def validate_env_var_reference(name: str) -> bool:
@@ -1102,32 +1056,6 @@ def validate_env_var_reference(name: str) -> bool:
         return False
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
-
-def validate_ip_address(ip: str) -> bool:
-    """Validate IP address (IPv4 or IPv6)."""
-    start_time = time.time()
-    log_counter("input_validation_ip_attempt")
-
-    try:
-        ip_obj = ipaddress.ip_address(ip)
-
-        # Log success with IP version
-        duration = time.time() - start_time
-        log_histogram("input_validation_ip_duration", duration)
-        log_counter(
-            "input_validation_ip_result",
-            labels={
-                "valid": "true",
-                "version": "ipv4"
-                if isinstance(ip_obj, ipaddress.IPv4Address)
-                else "ipv6",
-            },
-        )
-
-        return True
-    except ValueError:
-        log_counter("input_validation_ip_result", labels={"valid": "false"})
-        return False
 
 
 def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
@@ -1230,34 +1158,6 @@ def validate_buddy_import_path(value: object) -> str:
         )
     return str(path)
 
-
-def validate_port(port: Union[str, int]) -> bool:
-    """Validate port number."""
-    log_counter("input_validation_port_attempt")
-
-    try:
-        port_num = int(port)
-        result = 1 <= port_num <= 65535
-
-        log_counter(
-            "input_validation_port_result",
-            labels={
-                "valid": str(result),
-                "range": "privileged"
-                if result and port_num < 1024
-                else "unprivileged"
-                if result
-                else "invalid",
-            },
-        )
-
-        return result
-    except (ValueError, TypeError):
-        log_counter(
-            "input_validation_port_result",
-            labels={"valid": "false", "range": "invalid"},
-        )
-        return False
 
 
 def validate_url(url: str) -> bool:
@@ -1405,67 +1305,6 @@ def validate_git_ref(ref: str) -> None:
             "ref may only contain letters, digits, '.', '_', '/', '-'"
         )
 
-
-def validate_filename(filename: str) -> bool:
-    """Validate filename to prevent path traversal and dangerous characters."""
-    log_counter("input_validation_filename_attempt")
-
-    if not filename or len(filename) > 255:
-        log_counter(
-            "input_validation_filename_invalid",
-            labels={"reason": "empty" if not filename else "too_long"},
-        )
-        return False
-
-    # Reject dangerous characters and patterns
-    dangerous_chars = ["/", "\\", "..", "<", ">", ":", '"', "|", "?", "*"]
-    for char in dangerous_chars:
-        if char in filename:
-            log_counter(
-                "input_validation_filename_invalid",
-                labels={
-                    "reason": "dangerous_char",
-                    "char": char.replace("\\", "backslash"),
-                },
-            )
-            return False
-
-    # Reject reserved Windows filenames
-    reserved_names = {
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-    }
-
-    name_without_ext = filename.split(".")[0].upper()
-    if name_without_ext in reserved_names:
-        log_counter(
-            "input_validation_filename_invalid",
-            labels={"reason": "reserved_name", "name": name_without_ext},
-        )
-        return False
-
-    log_counter("input_validation_filename_result", labels={"valid": "true"})
-    return True
 
 
 def validate_text_input(
@@ -1803,13 +1642,6 @@ class ValidationError(Exception):
 
     pass
 
-
-def validate_and_raise(condition: bool, message: str) -> None:
-    """Validate condition and raise ValidationError if false."""
-    if not condition:
-        raise ValidationError(message)
-
-
 # --------------------------------------------------------------------------
 # Markup escaping
 #
@@ -1854,3 +1686,4 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
+

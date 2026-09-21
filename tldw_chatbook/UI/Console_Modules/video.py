@@ -697,6 +697,9 @@ class ConsoleVideoController:
                     return "confirm"
                 if current_identity != confirmed_identity:
                     return "confirm"
+                # task-32808.5 AC#3: hand-rolled (not Utils.atomic_file_ops) --
+                # the rename is pinned to a parent dir_fd for a TOCTOU-safe
+                # publish, which the shared helper cannot express.
                 os.replace(
                     sibling,
                     target.name,

@@ -1,5 +1,10 @@
 # PR2716 current-dev tool-error qualification
 
+Merged into dev as `9cf5ba67b2` after recorded owner approval,
+current-head CI and resolved accumulated review. The [merge receipt](merge-closeout.json)
+binds the final head, tested current-dev merge tree, review and approval evidence.
+The remaining pending-gate notes below describe historical qualification checkpoints.
+
 Owner approved the gallery at `19ceab4dc3`. A subsequent
 [test/CI-only follow-up](ci-followup/README.md) repairs a splash-dependent watcher
 test and accommodates both required test steps within a bounded 30-minute job.

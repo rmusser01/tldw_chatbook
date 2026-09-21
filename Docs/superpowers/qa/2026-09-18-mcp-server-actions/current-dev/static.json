@@ -1,0 +1,226 @@
+{
+  "baseline": "9cf5ba67b2396e67c16f3ad7157066b1f7bf740f",
+  "files": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": {
+      "baseline_count": 5,
+      "current_count": 5,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "435-436",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "936-938",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1080-1092",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1100-1106",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1108-1111",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1124-1126",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1129-1131",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1133-1134",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1141-1143",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1152-1175",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1764-1776",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1786-1786",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1803-1803",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1811-1811",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1828-1828",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    },
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+      "baseline_count": 66,
+      "current_count": 66,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "3754-3759",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3773-3774",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3787-3787",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3789-3789",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3854-3854",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3860-3862",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    },
+    "Tests/UI/test_mcp_workbench.py": {
+      "baseline_count": 4,
+      "current_count": 4,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "1384-1385",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1387-1388",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1390-1390",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1393-1393",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1395-1396",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1408-1410",
+          "passed": true,
+          "output": "Superseded by final enclosing test range check."
+        },
+        {
+          "range": "1421-1426",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1381-1427",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ],
+      "unchanged_diagnostic_note": "F811 existing duplicate test name shifted with preceding edits; comparing messages after normalizing embedded source line numbers leaves no introduced findings."
+    },
+    "Tests/Utils/test_mcp_native_qa_args.py": {
+      "baseline_count": 0,
+      "current_count": 0,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "14-15",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "39-39",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    },
+    "Tests/Utils/test_mcp_cancellation_native_fixture.py": {
+      "baseline_count": 0,
+      "current_count": 0,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "21-30",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "46-47",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "52-57",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "64-65",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "94-94",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "97-99",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    }
+  }
+}

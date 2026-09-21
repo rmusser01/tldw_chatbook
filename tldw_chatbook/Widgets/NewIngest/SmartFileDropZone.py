@@ -95,10 +95,13 @@ class FilePreviewItem(CaptureSafePostMixin, Widget):
 
     @staticmethod
     def _format_file_size(size: int) -> str:
-        if size >= 1_000_000_000:
-            return f"{size / (1024 * 1024 * 1024):.1f} GB"
-        if size >= 1_000_000:
-            return f"{size / (1024 * 1024):.1f} MB"
+        # TASK-32808.1: binary thresholds to match the binary divisors. The
+        # decimal thresholds (1_000_000...) with 1024-based divisors made
+        # 999,999 B read '976.6 KB' but 1,000,000 B read '1.0 MB'.
+        if size >= 1024 ** 3:
+            return f"{size / (1024 ** 3):.1f} GB"
+        if size >= 1024 ** 2:
+            return f"{size / (1024 ** 2):.1f} MB"
         if size >= 1024:
             return f"{size / 1024:.1f} KB"
         return f"{float(size):.1f} B"

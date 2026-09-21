@@ -36,6 +36,7 @@ from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from ..Utils.github_api_client import GitHubAPIClient, GitHubAPIError
 from ..config import get_cli_config_path
 from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -1117,7 +1118,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 # Add a manifest file
                 manifest = {
                     "repository": repo_name,
-                    "export_date": datetime.now().isoformat(),
+                    "export_date": utc_now_iso(),
                     "total_files": len(selected_files),
                     "files": selected_files,
                 }

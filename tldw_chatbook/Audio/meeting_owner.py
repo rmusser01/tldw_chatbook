@@ -39,6 +39,7 @@ from .meeting_session import (
 from .system_audio_tap import TapMode, build_tap, probe
 from .wav_writer import HEADER_BYTES, PlaceholderWavWriter, patch_wav_header, wav_needs_patch
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 MEETINGS_DIRNAME = "meetings"
 DIARIZATION_MODULES = ("torch", "torchaudio", "speechbrain", "sklearn")
@@ -1244,7 +1245,7 @@ class MeetingSessionOwner:
                     raise
                 meta = MeetingMeta(
                     folder=folder, mode=capture.mode,
-                    started_at=datetime.now().isoformat(timespec="seconds"),
+                    started_at=utc_now_iso(),
                     mic_device=self.settings.mic_device or "default",
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
@@ -1853,7 +1854,7 @@ class MeetingSessionOwner:
             try:
                 from .voiceprint import Voiceprint, unit_normalise
 
-                now = datetime.now().isoformat(timespec="seconds")
+                now = utc_now_iso()
                 self._voiceprint_store().save(Voiceprint(
                     model_id=self._active_model_id(), centroid=unit_normalise(centroid),
                     sample_count=float(embedded_s), meetings_contributed=0,

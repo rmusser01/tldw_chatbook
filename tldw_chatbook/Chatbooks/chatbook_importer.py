@@ -23,7 +23,6 @@ import unicodedata
 import uuid
 import zipfile
 from contextlib import nullcontext
-from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Dict, List, Mapping, Optional, Tuple
 
@@ -74,6 +73,7 @@ from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
 from .conflict_resolver import ConflictResolution, ConflictResolver
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
 _MAX_ARCHIVE_MEMBERS = 10_000
@@ -1265,10 +1265,10 @@ class ChatbookImporter:
                     "id": str(uuid.uuid4()),
                     "title": conv_name,
                     "created_at": conv_data.get(
-                        "created_at", datetime.now().isoformat()
+                        "created_at", utc_now_iso()
                     ),
                     "updated_at": conv_data.get(
-                        "updated_at", datetime.now().isoformat()
+                        "updated_at", utc_now_iso()
                     ),
                     "character_id": character_id,
                     "assistant_authority_id": None,
@@ -1346,7 +1346,7 @@ class ChatbookImporter:
                                 "sender": msg["role"],
                                 "content": msg["content"],
                                 "timestamp": msg.get(
-                                    "timestamp", datetime.now().isoformat()
+                                    "timestamp", utc_now_iso()
                                 ),
                             }
                             if graph_messages is not None:

@@ -1000,6 +1000,10 @@ class MCPPermissionStore:
             mcp_sources.stamp_payload(self, payload, stamp)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # task-32808.5 AC#3: hand-rolled rather than Utils.atomic_file_ops --
+        # this store fsyncs BOTH the file (below) and the parent directory
+        # (_fsync_parent_directory) so the rename itself survives power loss,
+        # a guarantee the shared helper does not make.
         temp_fd, raw_temp_path = tempfile.mkstemp(
             prefix=f".{self.path.name}.",
             suffix=".tmp",

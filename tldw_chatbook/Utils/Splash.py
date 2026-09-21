@@ -191,12 +191,6 @@ LOADING_BAR_FILL_CHARS = {"default": "#", "block": "█", "dots": ".", "arrow": 
 # Functions:
 
 
-def print_tldw_ascii():
-    """Legacy function for backwards compatibility."""
-    print(TLDW_ASCII_ART)
-    time.sleep(2)
-    return
-
 
 def get_ascii_art(name: str = "default") -> str:
     """Get ASCII art by name for use in splash screens.
@@ -241,24 +235,6 @@ def get_ascii_art(name: str = "default") -> str:
 """
     return ascii_arts.get(name, TLDW_ASCII_ART)
 
-
-def get_splash_card_config(name: str) -> Dict[str, Any]:
-    """Get a splash card configuration using ASCII art from this module.
-
-    Args:
-        name: Name of the ASCII art variant to use.
-
-    Returns:
-        Dictionary configuration for use with the splash screen system.
-    """
-    ascii_art = get_ascii_art(name)
-
-    return {
-        "type": "static",
-        "content": ascii_art,
-        "style": "bold cyan on rgb(0,0,0)",
-        "effect": None,
-    }
 
 
 #

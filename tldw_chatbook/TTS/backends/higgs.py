@@ -8,7 +8,6 @@ import os
 import time
 import json
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
-from datetime import datetime
 from pathlib import Path
 from loguru import logger
 
@@ -81,6 +80,7 @@ from tldw_chatbook.config import get_cli_setting
 # duplicated verbatim here, in Embeddings/Embeddings_Lib.py, and in
 # Local_Ingestion/transcription_service.py).
 from ...Utils.fd_protection import protect_file_descriptors  # noqa: E402,F401
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 #######################################################################################################################
@@ -1343,7 +1343,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 "display_name": display_name or profile_name,
                 "reference_audio": str(dest_path),
                 "language": language or self.default_language,
-                "created_at": datetime.now().isoformat(),
+                "created_at": utc_now_iso(),
                 "metadata": metadata or {},
             }
 

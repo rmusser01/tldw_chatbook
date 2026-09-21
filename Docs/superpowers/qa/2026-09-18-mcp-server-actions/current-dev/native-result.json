@@ -1,0 +1,97 @@
+{
+  "pid": 34193,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "safe_confirmation_visible": true,
+      "keep_kept_profiles": true,
+      "escape_kept_profiles": true,
+      "round_trip_confirmation_ignored": true,
+      "retired_connect_ignored": true,
+      "accepted_delete_only_alpha": true,
+      "beta_selected_and_persisted": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "safe_confirmation_visible": true,
+      "keep_kept_profiles": true,
+      "escape_kept_profiles": true,
+      "round_trip_confirmation_ignored": true,
+      "retired_connect_ignored": true,
+      "accepted_delete_only_alpha": true,
+      "beta_selected_and_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "safe_confirmation_visible": true,
+      "keep_kept_profiles": true,
+      "escape_kept_profiles": true,
+      "round_trip_confirmation_ignored": true,
+      "retired_connect_ignored": true,
+      "accepted_delete_only_alpha": true,
+      "beta_selected_and_persisted": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "safe_confirmation_visible": true,
+      "keep_kept_profiles": true,
+      "escape_kept_profiles": true,
+      "round_trip_confirmation_ignored": true,
+      "retired_connect_ignored": true,
+      "accepted_delete_only_alpha": true,
+      "beta_selected_and_persisted": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook.MCP.local_control_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/local_control_service.py",
+    "tldw_chatbook.MCP.local_store": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/local_store.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/unified_control_plane_service.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_servers_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.Utils.terminal_utils": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/terminal_utils.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "cc0d291c2e256faf8fa84d774ec729e95c714f8a9e4f87536dc5a7ad916ba5ac",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "e585a3f4e052a3e21b08efe0c2cbcb2dac47638a0ac5303ae3fc3018eda6915d",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "629a904285ee7d513c7cda1e257c199727e8e2b4f0517f722cd105a4e219c5db",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "8122d9fa6f6a554640f2cf1d609b82591a1a66bac372293bec6049714c7983da",
+    "tldw_chatbook/MCP/local_store.py": "819f20aae4276e1c0b82f66dbb85947ef3f8f5ece69a8c52d62c11cf6c7995db",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Utils/terminal_utils.py": "95e8d1fda8326714aebed3773da2fac4d0782fb2feb5c790c72c1baafe034ebb",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a",
+    "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py": "3119f5806fc46c28a925b0555328452a9e060d220d44e836b2a5420f61d3c6a5"
+  },
+  "runner_sha256": "c5c9b821d09c2c9acf59c962fc6660712998317d3a31ea8a1d01991966309de5",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

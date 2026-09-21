@@ -1,0 +1,7 @@
+{
+  "pid": 34193,
+  "started_at": "2026-09-21T01:28:46.599586+00:00",
+  "repo": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+  "head": "e9c492744075db517d294caed6d79163ee011981",
+  "dirty_status": " M Tests/Utils/test_mcp_cancellation_native_fixture.py\n M Tests/Utils/test_mcp_native_qa_args.py\n M tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py\n M tldw_chatbook/UI/MCP_Modules/mcp_workbench.py\n M tldw_chatbook/css/components/_agentic_terminal.tcss\n M tldw_chatbook/css/tldw_cli_modular.tcss\n?? Docs/superpowers/qa/2026-09-18-mcp-server-actions/\n?? Tests/UI/test_mcp_server_action_departure.py\n?? Tests/UI/test_mcp_server_action_ownership.py\n?? \"backlog/tasks/task-32825 - Keep-MCP-server-actions-bound-to-their-displayed-target.md\"\n"
+}

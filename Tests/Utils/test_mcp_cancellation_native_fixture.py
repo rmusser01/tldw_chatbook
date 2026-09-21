@@ -18,7 +18,16 @@ RUNNER = (
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["cancellation", "refresh", "tool-errors"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "cancellation",
+        "refresh",
+        "tool-errors",
+        "server-actions-alpha",
+        "server-actions-beta",
+    ],
+)
 @pytest.mark.parametrize("existing", ["cleanup-demo", "other", None])
 async def test_fixture_preserves_existing_profile_and_runtime(
     tmp_path: Path, existing: str | None, kind: str
@@ -34,17 +43,26 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         "cancellation": "cleanup-demo",
         "refresh": "wire-review",
         "tool-errors": "execution-review",
+        "server-actions-alpha": "alpha",
+        "server-actions-beta": "beta",
     }[kind]
     if existing == "cleanup-demo":
         existing = fixture_id
     runner = RUNNER
-    if kind != "cancellation":
+    if kind.startswith("server-actions"):
+        runner = (
+            Path(__file__).resolve().parents[2]
+            / "Docs/superpowers/qa/2026-09-18-mcp-server-actions/current-dev/native_check.py"
+        )
+    elif kind != "cancellation":
         directory = "mcp-connection-refresh" if kind == "refresh" else "mcp-tool-errors"
         runner = (
             Path(__file__).resolve().parents[2]
             / f"Docs/superpowers/qa/2026-09-18-{directory}/current-dev/native_check.py"
         )
     arguments = () if kind == "cancellation" else (runner.parents[5], tmp_path)
+    if kind.startswith("server-actions"):
+        arguments = (fixture_id,)
     store_path = tmp_path / "mcp.json"
     store = LocalMCPStore(store_path)
     if existing is not None:
@@ -73,10 +91,12 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         service.save_local_profile.assert_not_awaited()
         assert store_path.read_bytes() == before
     else:
-        await create(service, *arguments)
+        assert await create(service, *arguments) == fixture_id
         service.save_local_profile.assert_awaited_once()
         assert store.get_profile(fixture_id).command == (
-            "/usr/bin/false" if kind == "cancellation" else sys.executable
+            "/usr/bin/false"
+            if kind == "cancellation" or kind.startswith("server-actions")
+            else sys.executable
         )
         if existing:
             assert store.get_profile(existing) == original
