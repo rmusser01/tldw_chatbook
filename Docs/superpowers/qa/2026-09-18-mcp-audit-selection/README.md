@@ -2,8 +2,7 @@
 
 The current integration is qualified on merged PR2770 dev. See the
 [2026-09-21 qualification](current-dev/README.md): 305 targeted cases, nine
-artifact guards and twenty native captures. PR2720 still requires its own
-current-head CI/review and owner visual approval before merge.
+artifact guards and twenty native captures. The owner has now approved PR2720; the [latest-dev rebase replay](approved-rebase/README.md) preserves that approved behavior. Current-head CI/review and final dev review remain merge gates.
 
 ## Historical qualification — 2026-09-18
 

@@ -1,0 +1,10 @@
+---
+
++++
+
+@@ -262,3 +262,3 @@
+
+ ('rect', [('fill', '#97abb9'), ('height', '24.65'), ('shape-rendering', 'crispEdges'), ('width', '24.4'), ('x', '244'), ('y', '294.3')], '')
+-('rect', [('fill', '#97abb9'), ('height', '24.65'), ('shape-rendering', 'crispEdges'), ('width', '0'), ('x', '268.4'), ('y', '294.3')], '')
++('rect', [('fill', '#1f1f1f'), ('height', '24.65'), ('shape-rendering', 'crispEdges'), ('width', '0'), ('x', '268.4'), ('y', '294.3')], '')
+ ('rect', [('fill', '#97abb9'), ('height', '24.65'), ('shape-rendering', 'crispEdges'), ('width', '24.4'), ('x', '268.4'), ('y', '294.3')], '')

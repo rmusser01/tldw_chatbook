@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 03:45'
-updated_date: '2026-09-21 07:38'
+updated_date: '2026-09-21 14:33'
 labels: []
 dependencies: []
 ---
@@ -43,4 +43,6 @@ Current integration: 305 targeted cases and nine artifact guards pass. Four unch
 PR2770 merged as ba5aa6e9ec60bb93aec4adc6aae219deb9266b78 with a tree identical to the qualified parent. Saved PR2720 documentation conflicts retain both histories; no product conflicts. Existing shared native admission and stdio fixture replace the outdated runner boundary and duplicate fixture.
 Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/current-dev/README.md. Fresh owner visual approval, current-head CI/review and current-dev review remain PR2720 merge gates. Compact filters and guidance remain saved PR2721/2722. Task remains In Progress until closeout.
 ADR required: no; existing backlog/decisions/170-table-repopulation-selection-boundary.md and ADR150/161 apply. No schema, runtime authority or token change.
+
+Owner approved PR2720 at 6180cf54c9. Rebased without conflicts onto f1a027c12b (PR2766 Evals); all fourteen captured sources and the runner are unchanged. Fresh replay passes 27 selection/startup checks, nine artifact guards and all four private native cells with normal cleanup. Twenty captures match approved content apart from timestamps and caret blinking. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-selection/approved-rebase/README.md. Current-head CI/Qodo and final dev review remain the authorized merge gates.
 <!-- SECTION:NOTES:END -->
