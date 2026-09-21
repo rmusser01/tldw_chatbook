@@ -558,6 +558,116 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def current_folder_binding_exclusions() -> tuple[Path, ...]:
+    """Absolute user-exclusion paths for the current run's folder bindings.
+
+    Family-2 injection point (spec 2026-09-20): the builtin file tools fold
+    these into their per-call sensitive context, mirroring what
+    ``WorkspaceToolExecutor._call_context`` and the local provider's preflight
+    already do for the other file-tool families. Enumerates exactly the
+    bindings ``allowed_file_roots`` would admit for the current run workspace
+    on the READ side (the superset: a read-admitted binding's exclusions apply
+    to its writes too), so a binding dropped for path drift, narrowed run
+    scopes, or a frozen-authority mismatch also drops its exclusions here.
+    Mirrors ``allowed_file_roots`` exactly: with no run workspace bound, the
+    ACTIVE workspace's bindings (and their exclusions) still apply.
+
+    Exclusions frozen into the run's ``ConsoleProjectBindingSnapshot``
+    authority are UNIONED with the live entries per admitted binding: a
+    mid-run registry removal stays enforced for the rest of the run
+    (family-1 high-water parity -- run authority never expands mid-run),
+    while a mid-run addition applies on the next call.
+
+    Returns:
+        Resolved exclusion paths from the admitted bindings; ``()`` when no
+        workspace resolves (no run workspace and no active workspace), for
+        the default workspace, when no admitted binding carries exclusions,
+        or when the registry is unavailable (consistent with
+        ``allowed_file_roots`` degrading to sandbox-only there, which
+        already makes every bound path unreachable). An individual entry
+        that cannot be resolved (e.g. replaced by a symlink loop mid-run)
+        is skipped with a warning while the resolvable rest stays enforced.
+    """
+    paths: list[Path] = []
+    try:
+        workspace_id = current_run_workspace_id()
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        registry = _registry_factory()
+        if workspace_id is None:
+            # Fallback parity (Finding A, PR #2767): ``allowed_file_roots``
+            # admits the ACTIVE workspace's bindings when no run workspace
+            # is bound; the exclusions here must follow the same fallback or
+            # the builtin tools reach those folders with ZERO exclusions.
+            active = registry.get_active_workspace()
+            workspace_id = active.workspace_id if active is not None else None
+        if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
+            return ()
+        maximum_binding_ids = _RUN_WORKSPACE_READ_BINDING_IDS.get()
+        frozen_authority = _RUN_WORKSPACE_BINDING_AUTHORITY.get()
+        authority_by_id = (
+            {
+                str(getattr(item, "binding_id", "")): item
+                for item in frozen_authority
+            }
+            if frozen_authority is not None
+            else None
+        )
+        from tldw_chatbook.Workspaces.registry_service import (
+            binding_exclusion_entries,
+        )
+
+        for binding, folder in _iter_valid_folder_bindings(
+            registry.list_folder_bindings(workspace_id)
+        ):
+            binding_id = str(getattr(binding, "binding_id", ""))
+            if (
+                maximum_binding_ids is not None
+                and binding_id not in maximum_binding_ids
+            ):
+                continue
+            frozen = (
+                authority_by_id.get(binding_id)
+                if authority_by_id is not None
+                else None
+            )
+            if authority_by_id is not None and frozen is None:
+                continue
+            if frozen is not None and not _binding_matches_frozen_authority(
+                folder, frozen
+            ):
+                continue
+            # Live entries first, then the run's frozen exclusion rels that
+            # are no longer live (union; deduped). Frozen rels keep mid-run
+            # removals enforced for this run exactly as family-1's
+            # high-water provider does; live rels make additions apply on
+            # the next call.
+            rels = [entry.path for entry in binding_exclusion_entries(binding)]
+            if frozen is not None:
+                seen = set(rels)
+                for rel in tuple(getattr(frozen, "exclusions", ()) or ()):
+                    if isinstance(rel, str) and rel and rel not in seen:
+                        seen.add(rel)
+                        rels.append(rel)
+            for rel in rels:
+                try:
+                    paths.append((folder / rel).resolve(strict=False))
+                except Exception:  # noqa: BLE001 - per-entry isolation (final
+                    # review Finding 2c): skip the unresolvable entry at
+                    # warning, keep the resolvable rest. Collapsing to () here
+                    # would fail OPEN (every exclusion dropped at once).
+                    logger.warning(
+                        "Workspace binding exclusion could not be resolved; "
+                        "skipped while keeping the remaining exclusions"
+                    )
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Workspace binding exclusions unavailable; treating as none"
+        )
+        return ()
+    return tuple(paths)
+
+
 def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
     """Return whether one live binding is still the exact admitted root."""
     try:

@@ -3,9 +3,13 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Utils.sensitive_paths import (
+    SensitiveExclusion,
     find_root_binding_conflict,
     is_sensitive_path,
+    merge_sensitive_context,
     refuses_new_directory_chain,
+    resolve_sensitive_context,
+    sensitive_exclusions_under,
 )
 
 
@@ -644,3 +648,54 @@ def test_refuses_new_directory_chain_allows_existing_containers():
     # itself a direct child of the user data dir, so it must stay allowed.
     new_nested_dir = sandbox_root / "brand_new_subdir"
     assert not refuses_new_directory_chain(new_nested_dir)
+
+
+# ---------------------------------------------------------------------------
+# Workspace-binding exclusions (spec 2026-09-20): user-exclusion folding into
+# SensitivePathContext via ``merge_sensitive_context`` (spec §2 injection
+# point).
+# ---------------------------------------------------------------------------
+
+
+def test_merged_dir_refuses_path_and_children(tmp_path: Path):
+    excluded = tmp_path / "secrets"
+    base = resolve_sensitive_context()
+    merged = merge_sensitive_context(base, extra_dirs=(excluded,))
+    assert is_sensitive_path(excluded / "key.pem", context=merged)
+    assert is_sensitive_path(excluded, context=merged)
+
+
+def test_merged_file_refuses_exact_path_only(tmp_path: Path):
+    excluded = tmp_path / "notes.txt"
+    merged = merge_sensitive_context(resolve_sensitive_context(), extra_files=(excluded,))
+    assert is_sensitive_path(excluded, context=merged)
+    assert not is_sensitive_path(tmp_path / "other.txt", context=merged)
+
+
+def test_merge_feeds_exclusions_under_root(tmp_path: Path):
+    root = tmp_path
+    excluded_dir = root / "build"
+    excluded_file = root / ".env.local"
+    merged = merge_sensitive_context(
+        resolve_sensitive_context(),
+        extra_files=(excluded_file,),
+        extra_dirs=(excluded_dir,),
+    )
+    entries = sensitive_exclusions_under(root, context=merged)
+    assert SensitiveExclusion("subtree", "build") in entries
+    assert SensitiveExclusion("file", ".env.local") in entries
+
+
+def test_merge_dedupes_casefold(tmp_path: Path):
+    excluded = tmp_path / "Secrets"
+    merged = merge_sensitive_context(
+        merge_sensitive_context(resolve_sensitive_context(), extra_dirs=(excluded,)),
+        extra_dirs=(tmp_path / "secrets",),
+    )
+    assert merged.dirs.count(excluded.resolve()) == 1
+
+
+def test_merge_preserves_base_entries():
+    base = resolve_sensitive_context()
+    merged = merge_sensitive_context(base)
+    assert merged == base

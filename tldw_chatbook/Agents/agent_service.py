@@ -2759,6 +2759,7 @@ class AgentService:
                 if source is not None
                 else None
             ),
+            excluded_dirs=getattr(candidate, "excluded_dirs", frozenset()),
         )
 
     def build_project_instruction_request(

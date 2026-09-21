@@ -404,6 +404,7 @@ class RunAdmittedWorkspaceRoot:
     root_identity: tuple[tuple[str, int, int, int], ...]
     allow_write: bool
     guard: Callable[[bool], bool]
+    exclusions_provider: Callable[[], tuple[Path, ...]] | None = None
     workspace_executor: WorkspaceToolExecutor | None = None
     authority_scope: Callable[[], ContextManager[Path]] | None = None
     on_cleanup_unproven: Callable[[], None] | None = None
@@ -684,7 +685,8 @@ class LocalToolProvider:
             for alias, authority in self._admitted_roots.items():
                 try:
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
-                        authority.root
+                        authority.root,
+                        user_exclusion_paths=authority.exclusions_provider,
                     )
                     authority_specs = _default_specs(
                         authority.root,
@@ -855,7 +857,8 @@ class LocalToolProvider:
             # KeyError or (worse) silently fall back to the generic spec
             # bound to the provider's own base root.
             executor = authority.workspace_executor or WorkspaceToolExecutor(
-                authority.root
+                authority.root,
+                user_exclusion_paths=authority.exclusions_provider,
             )
             authority_specs = {
                 spec.name: spec
@@ -1138,12 +1141,19 @@ class LocalToolProvider:
         if scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
             with scope():
                 return self._path_targets_without_authority(
-                    tool_id, clean_args, root=root
+                    tool_id, clean_args, root=root, authority=authority
                 )
-        return self._path_targets_without_authority(tool_id, clean_args, root=root)
+        return self._path_targets_without_authority(
+            tool_id, clean_args, root=root, authority=authority
+        )
 
     def _path_targets_without_authority(
-        self, tool_id: str, args: Mapping[str, Any], *, root: Path
+        self,
+        tool_id: str,
+        args: Mapping[str, Any],
+        *,
+        root: Path,
+        authority: RunAdmittedWorkspaceRoot | None = None,
     ) -> tuple[ToolPathTarget, ...]:
         """Map supported local file and git calls to validated path targets."""
         name = tool_id.split(":", 1)[-1]
@@ -1154,21 +1164,43 @@ class LocalToolProvider:
             LocalToolError,
             resolve_workspace_path,
         )
+        from tldw_chatbook.Utils.sensitive_paths import (
+            SensitivePathContext,
+            merge_sensitive_context,
+            resolve_sensitive_context,
+        )
 
         root = Path(root).resolve()
+        # Per-binding user exclusions fold into the deny context so preflight
+        # refuses an excluded target BEFORE any approval card renders it.
+        extra: tuple[Path, ...] = ()
+        if authority is not None and authority.exclusions_provider is not None:
+            try:
+                extra = tuple(authority.exclusions_provider())
+            except Exception:  # noqa: BLE001
+                extra = ()
+        context: SensitivePathContext | None = (
+            merge_sensitive_context(
+                resolve_sensitive_context(),
+                extra_files=tuple(p for p in extra if p.is_file()),
+                extra_dirs=tuple(p for p in extra if not p.is_file()),
+            )
+            if extra
+            else None
+        )
         # `intent` only selects the refusal wording (and, for writes, the
         # new-directory-chain guard) inside the choke point; a protected
         # path raises LocalToolError here exactly as it does at execution
         # time, so this preflight can never report a target the tool would
         # then refuse to touch.
         if name == "fs_read":
-            path = resolve_workspace_path(args["path"], root, intent="read")
+            path = resolve_workspace_path(args["path"], root, intent="read", context=context)
             return (ToolPathTarget(path=path, kind="exact"),)
         if name in {"fs_write", "fs_edit"}:
-            path = resolve_workspace_path(args["path"], root, intent="write")
+            path = resolve_workspace_path(args["path"], root, intent="write", context=context)
             return (ToolPathTarget(path=path, kind="exact"),)
         if name == "fs_list":
-            path = resolve_workspace_path(args["path"], root, intent="list")
+            path = resolve_workspace_path(args["path"], root, intent="list", context=context)
             return (ToolPathTarget(path=path, kind="directory"),)
         if name in {"fs_glob", "fs_grep"}:
             return (ToolPathTarget(path=root, kind="directory"),)
@@ -1186,7 +1218,7 @@ class LocalToolProvider:
             seen: set[Path] = set()
             for plan in plans:
                 assert plan.new_path is not None
-                path = resolve_workspace_path(plan.new_path, root, intent="write")
+                path = resolve_workspace_path(plan.new_path, root, intent="write", context=context)
                 if path in seen:
                     continue
                 seen.add(path)
@@ -1210,14 +1242,14 @@ class LocalToolProvider:
             repo_root = _prepare_for_path(root, raw_path)
             if raw_path is None:
                 return (ToolPathTarget(path=repo_root, kind="repository"),)
-            path = resolve_workspace_path(raw_path, root)
+            path = resolve_workspace_path(raw_path, root, context=context)
             _repo_relative_path(root, repo_root, raw_path)
             scope = path if path.is_dir() else path.parent
             return (ToolPathTarget(path=scope, kind="repository"),)
         if name == "git_blame":
             raw_path = args["path"]
             repo_root = _prepare_for_path(root, raw_path)
-            path = resolve_workspace_path(raw_path, root)
+            path = resolve_workspace_path(raw_path, root, context=context)
             _repo_relative_path(root, repo_root, raw_path)
             return (ToolPathTarget(path=path.parent, kind="repository"),)
         return ()

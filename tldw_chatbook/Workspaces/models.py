@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, NamedTuple
 
 
 class WorkspaceAuthority(str, Enum):
@@ -230,6 +230,19 @@ class WorkspaceRuntimeBinding:
             _coerce_enum(self.status, RuntimeBindingStatus, "status"),
         )
         object.__setattr__(self, "metadata", scrub_secret_metadata(dict(self.metadata)))
+
+
+class BindingExclusion(NamedTuple):
+    """One user-managed path excluded from agent access under a binding.
+
+    ``path`` is binding-relative POSIX text; ``kind`` is display metadata
+    only — enforcement always matches the path itself and everything under
+    it (a file has nothing under it).
+    """
+
+    path: str
+    kind: str  # "file" | "directory"
+    added_at: str
 
 
 @dataclass(frozen=True)

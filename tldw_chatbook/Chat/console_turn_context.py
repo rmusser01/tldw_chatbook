@@ -111,6 +111,12 @@ class ConsoleProjectBindingSnapshot:
         default=(),
         repr=False,
     )
+    #: Binding-relative exclusion paths admitted at freeze time. Kept so the
+    #: file-tool roots helper can enforce them for the whole run (mid-run
+    #: registry removals never relax a live run's exclusions), matching the
+    #: family-1 provider's high-water semantics. Empty for pre-exclusion
+    #: snapshots; readers must treat absent/empty identically.
+    exclusions: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
