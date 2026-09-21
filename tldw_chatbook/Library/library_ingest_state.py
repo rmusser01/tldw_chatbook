@@ -607,17 +607,14 @@ _TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
 
 
 def _human_size(size_bytes: int) -> str:
-    """Return a compact human-readable size string."""
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    value = float(size_bytes)
-    for unit in ("KB", "MB", "GB", "TB"):
-        value /= 1024
-        if value < 1024:
-            return f"{value:.1f} {unit}"
-    # Sizes above ~1 PB: divide once more so the value is actually in petabytes.
-    value /= 1024
-    return f"{value:.1f} PB"
+    """Return a compact human-readable size string.
+
+    TASK-32808.1: delegates to the shared `format_size_bytes` (binary divisors,
+    scales through PB). Byte-identical to the previous local implementation.
+    """
+    from tldw_chatbook.Utils.Utils import format_size_bytes
+
+    return format_size_bytes(size_bytes)
 
 
 def build_type_breakdown_line(type_groups: dict[str, list[str]]) -> str:

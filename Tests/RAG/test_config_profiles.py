@@ -1143,3 +1143,38 @@ def test_load_still_skips_a_structurally_unparseable_profile_file(tmp_path):
 
     assert m.get_profile("broken") is None
     assert "broken" not in m.list_profiles()
+
+
+# -- task-32808.5: profile writes are atomic + content-preserving -------------
+
+
+def test_save_one_writes_atomically_and_content_is_unchanged(tmp_path, monkeypatch):
+    """`_save_one` routes through the atomic-write helper (temp + fsync +
+    os.replace) with byte-identical JSON, not a bare truncate-then-write.
+
+    The storage-admission scope (`_definition_write`) is exercised by the
+    save_profile suite; here it is bypassed so the test isolates the WRITE.
+    """
+    import contextlib
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    # __new__: the manager's __init__ opens the storage-admission scope (the
+    # ADR-126 gate); this test isolates the WRITE, so build a bare instance.
+    mgr = ConfigProfileManager.__new__(ConfigProfileManager)
+    mgr.profiles_dir = profiles_dir
+    monkeypatch.setattr(
+        mgr, "_definition_write", lambda *a, **k: contextlib.nullcontext()
+    )
+
+    profile = _profile()
+    if not getattr(profile, "id", None):
+        profile.id = "rt"
+    mgr._save_one(profile)
+
+    path = mgr._profile_path(profile.id)
+    assert path.exists()
+    # Byte-identical to the previous `json.dump(..., indent=2, default=str)`.
+    assert path.read_text() == json.dumps(profile.to_dict(), indent=2, default=str)
+    # Atomic write leaves no temp/partial file behind.
+    assert [p.name for p in path.parent.iterdir()] == [path.name]

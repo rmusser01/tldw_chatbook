@@ -3583,6 +3583,19 @@ Button.mcp-callout {
     border: none;
 }
 
+.mcp-compact #mcp-detail-toolbar {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-size-1;
+}
+
+.mcp-compact #mcp-detail-toolbar .console-action-primary,
+.mcp-compact #mcp-detail-toolbar .console-action-secondary {
+    width: 1fr;
+    min-width: $ds-size-0;
+}
+
 
 #mcp-import-list {
     height: auto;
@@ -11834,13 +11847,6 @@ Select {
 
 
 
-.media-details-theme {
-    height: $ds-height-fill;
-    width: $ds-width-full;
-    overflow-y: auto !important;
-    min-height: $ds-size-0;
-}
-
 
 .media-content-right-pane Markdown {
     height: $ds-height-fill !important;
@@ -11854,13 +11860,6 @@ VerticalScroll.media-content-right-pane {
 
 VerticalScroll.media-content-right-pane > Markdown {
     height: $ds-height-fill !important;
-}
-
-
-MediaDetailsWidget {
-    height: $ds-height-fill;
-    width: $ds-width-full;
-    layout: vertical;
 }
 
 .metadata-section {
@@ -13732,18 +13731,7 @@ IngestWindowTabbed {
     padding: $ds-space-1;
 }
 
-.file-list-item-container {
-    padding: $ds-space-1;
-    margin-bottom: $ds-space-1;
-    border: round $surface-lighten-2;
-    background: $surface-lighten-1;
-    height: auto;
-}
 
-.file-list-item-container:hover {
-    background: $surface-lighten-2;
-    border: round $primary;
-}
 
 .file-info-main {
     width: $ds-width-fill;
@@ -14219,114 +14207,6 @@ Select > SelectCurrent:hover {
     max-width: $ds-size-40;
 
     display: none;
-}
-
-.tooltip-content {
-    color: $text;
-
-}
-
-
-.help-icon {
-
-    margin-left: $ds-space-1;
-    color: $primary;
-}
-
-.help-icon:hover {
-    color: $primary-lighten-1;
-}
-
-
-
-.chunk-preview-widget {
-    width: $ds-width-full;
-    height: auto;
-}
-
-.chunk-preview-container {
-    width: $ds-width-full;
-    max-height: $ds-size-30;
-    background: $surface;
-    border: round $primary-darken-1;
-    padding: $ds-space-1;
-}
-
-.chunk-preview-title {
-    text-style: bold;
-    margin-bottom: $ds-space-1;
-    color: $primary;
-}
-
-.chunk-preview-empty {
-    color: $text-muted;
-    text-align: center;
-    padding: $ds-space-2;
-}
-
-.chunk-item {
-    margin-bottom: $ds-space-2;
-    padding: $ds-space-1;
-    background: $panel;
-    border: round $primary-darken-2;
-}
-
-.chunk-header {
-    layout: horizontal;
-    margin-bottom: $ds-space-1;
-    padding-bottom: $ds-space-1;
-    border-bottom: dashed $primary-darken-2;
-}
-
-.chunk-number {
-    text-style: bold;
-    color: $accent;
-    margin-right: $ds-space-2;
-}
-
-.chunk-range {
-    color: $text-muted;
-
-    margin-right: $ds-space-2;
-}
-
-.chunk-size {
-    color: $text-muted;
-
-}
-
-.chunk-overlap {
-    background: $warning 20%;
-    padding: $ds-space-0 $ds-space-1;
-    margin-bottom: $ds-space-1;
-    border-left: thick $warning;
-    text-style: italic;
-    color: $text-muted;
-}
-
-.chunk-content {
-    padding: $ds-space-0 $ds-space-1;
-
-}
-
-.chunk-truncated {
-    color: $text-muted;
-    text-style: italic;
-    text-align: right;
-    margin-top: $ds-space-0;
-}
-
-.chunk-more {
-    text-align: center;
-    color: $text-muted;
-    text-style: italic;
-    margin-top: $ds-space-1;
-}
-
-.chunk-boundary {
-    text-align: center;
-    color: $primary-darken-1;
-    margin: $ds-space-1 $ds-space-0;
 }
 
 

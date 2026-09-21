@@ -62,6 +62,7 @@ from .chatbook_models import (
     ContentType,
     Relationship,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
 MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
@@ -945,7 +946,7 @@ class ChatbookCreator:
             timestamp = (
                 msg.get("timestamp")
                 or msg.get("created_at")
-                or datetime.now().isoformat()
+                or utc_now_iso()
             )
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
@@ -1527,8 +1528,8 @@ class ChatbookCreator:
                     "name": char["name"],
                     "description": char.get("description", ""),
                     "personality": char.get("personality", ""),
-                    "created_at": datetime.now().isoformat(),  # Characters don't have timestamps in DB
-                    "updated_at": datetime.now().isoformat(),
+                    "created_at": utc_now_iso(),  # Characters don't have timestamps in DB
+                    "updated_at": utc_now_iso(),
                     "avatar_path": char.get("avatar_path"),
                     "card": char,  # The full character card data
                 }
@@ -2017,8 +2018,8 @@ class ChatbookCreator:
                     "name": char["name"],
                     "description": char.get("description", ""),
                     "personality": char.get("personality", ""),
-                    "created_at": datetime.now().isoformat(),  # Characters don't have timestamps in DB
-                    "updated_at": datetime.now().isoformat(),
+                    "created_at": utc_now_iso(),  # Characters don't have timestamps in DB
+                    "updated_at": utc_now_iso(),
                     "avatar_path": char.get("avatar_path"),
                     "card": char,  # The full character card data
                 }

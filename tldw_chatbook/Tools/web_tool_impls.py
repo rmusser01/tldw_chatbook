@@ -461,13 +461,15 @@ def _strip_tags(html: str) -> str:
 
 
 def _format_size(num_bytes: int) -> str:
-    """Human-readable byte count for binary-fetch metadata lines."""
-    size = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024.0:
-            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} TB"
+    """Human-readable byte count for binary-fetch metadata lines.
+
+    TASK-32808.1: delegates to the shared `format_size_bytes` (binary divisors,
+    "N B" / "N.N KB..PB"). Byte-identical for every reachable size here (fetches
+    are capped well below a terabyte).
+    """
+    from tldw_chatbook.Utils.Utils import format_size_bytes
+
+    return format_size_bytes(num_bytes)
 
 
 def _member_display_name(name: str) -> str:

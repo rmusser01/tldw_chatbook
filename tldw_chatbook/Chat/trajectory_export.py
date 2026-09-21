@@ -29,7 +29,6 @@ import hashlib
 import json
 import os
 import re
-import tempfile
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -792,6 +791,8 @@ def _upsert_field_decision(
     else:
         decisions[existing_index] = decision
 
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+
 
 def preflight_trace_export(
     snapshot: TrajectorySnapshot,
@@ -1310,19 +1311,9 @@ def write_trajectory_export(path: Path | str, payload: dict) -> Path:
     """
     destination = Path(path)
     text = json.dumps(payload, indent=2, ensure_ascii=False)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(destination.parent), prefix=f".{destination.name}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.replace(tmp_name, destination)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    # task-32808.5: shared atomic-write helper (temp + fsync + os.replace)
+    # instead of a hand-rolled mkstemp/replace that skipped fsync.
+    atomic_write_text(destination, text)
     return destination
 
 

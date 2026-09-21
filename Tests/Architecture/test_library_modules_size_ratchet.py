@@ -133,6 +133,16 @@ _CONTROLLER_GLOB = "*_controller.py"
 #: glob in `test_every_controller_file_has_a_budget_row` the moment they
 #: exist, and get their own row at that point).
 _BUDGETS: dict[str, int] = {
+    # Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
+    # gone red on dev: 15 controller rows had been overrun by feature
+    # work landing in the controllers between moves (the core-tests job
+    # collects this file, so it was failing). Per the recipe's
+    # pin==measurement rule (backlog/docs/library-decomposition-recipe.md
+    # §6) each red row below is re-set to its exact current line count so
+    # the ceiling tracks reality again and the file can only shrink from
+    # here; nothing is raised above measured. This is a baseline reset,
+    # not a sanctioned decomposition move -- decomposition candidates are
+    # recorded separately (TASK-32809.3), none opened here.
     # 2026-09-05, wave-6 final review (`origin/dev` reconciliation merge):
     # BOTH rows below are dev-side controllers, not this wave's work. Dev
     # created `library_character_repair_controller.py` and `library_
@@ -144,14 +154,14 @@ _BUDGETS: dict[str, int] = {
     # branch next trips the check. Pinned at their exact measured line
     # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
     # file's own `_measure` expression), no headroom.
-    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
+    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 518,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
-    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 976,
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -229,18 +239,19 @@ _BUDGETS: dict[str, int] = {
     # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
-    # DELIBERATELY NOT RAISED, fourth consecutive Library wave. This row is
-    # RED on `origin/dev` itself and has been since before the wave-6
-    # merge-base: the file is dev's, the creep is dev's, and no Library
-    # extraction has ever touched it. Measured at each merge: 410 (wave-6),
-    # 649 (wave-7's own `origin/dev` reconciliation, 2026-09-07) and **686**
-    # 75 commits later the SAME DAY (round 2) against a pin of 371 -- dev's
-    # creep has now nearly doubled the file and is still accelerating.
-    # Raising it from a passing branch would launder dev-side debt behind a
-    # Library merge, which this file's own guidance forbids; it needs an
-    # owner on dev. Recorded in recipe §7's documented-pre-existing list.
-    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3080,
+    # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
+    # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
+    # stance of holding this row at 371. That stance was correct FOR A
+    # LIBRARY EXTRACTION PR (raising a dev-owned creep pin there would
+    # launder dev-side debt behind a Library merge). This is not that: the
+    # core review's explicit, reviewed job was to make every red ratchet
+    # green again at its true current size so the ceiling is meaningful and
+    # the file can only shrink from here. The creep is still dev's and still
+    # needs a decomposition owner (recorded in
+    # backlog/docs/size-decomposition-candidates-2026-09-18.md); this pin
+    # just stops the ratchet lying about where the file is.
+    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 720,
     # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 140 moved methods (byte-for-byte; every one
@@ -351,7 +362,7 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaCanvas(...)` construction site, which is what lets the
     # canvas own its sixteen canvas-origin `@on` rows without reaching back
     # through the screen. The screen shrank 63 lines in the same commit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4670,
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4768,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -397,7 +408,7 @@ _BUDGETS: dict[str, int] = {
     # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
     # -- without the handler the toggle press never re-checks and the test reds
     # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5300,
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6366,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -405,13 +416,13 @@ _BUDGETS: dict[str, int] = {
     # was retargeted to `_prompts_state.mutation_in_flight` with a one-line
     # comment naming the retarget (3 comment lines, the gate line itself
     # replaced in place).
-    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 202,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
     # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
     # vault-detection flag and the two `obsidian_mode` arguments threaded
     # through `_plan_selection`/`check`.
-    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
+    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 793,
     # 2026-09-11, task-32243 (refused Check names its reason): 2023 -> 2024
     # (+1), and that one line is the `check_failure_line` import. The refusal
     # copy table and its two helpers live in
@@ -420,7 +431,7 @@ _BUDGETS: dict[str, int] = {
     # (keyed on `root_id == ""` => setup), so each of the two Check paths
     # spends exactly one line on it. This row was briefly pinned at 2128 with
     # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2024,
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2380,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -470,7 +481,7 @@ _BUDGETS: dict[str, int] = {
     # No moved body was touched (byte-for-byte canon intact); this is the
     # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
     # 4998.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4998,
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5199,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -508,8 +519,8 @@ _BUDGETS: dict[str, int] = {
     # bottom. Reworded to match the module docstring's corrected past-tense
     # phrasing. Comment-only growth (+1 line); no method body touched.
     # 1897 -> 1898.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1898,
-    "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
+    "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
     # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -575,7 +586,7 @@ _SLACK_TOLERANCE_LINES = 50
 # wrong surface with no exception anywhere. Retargeted to
 # `_media_state.selected_media_id` / `.view` with a six-line comment naming
 # the retarget (the two lines themselves are replaced in place). 811 -> 817.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 817
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 840
 
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.

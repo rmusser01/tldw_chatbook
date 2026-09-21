@@ -99,3 +99,29 @@ async def test_scheduler_holds_dispatch_when_stopped(tmp_path):
     clear_emergency_stop(loop._emergency_stop_path)
     await loop._dispatch_due(datetime.now(timezone.utc))
     assert popped["count"] == 2
+
+
+def test_durable_write_routes_through_the_fsyncing_atomic_helper(
+    tmp_path: Path, monkeypatch
+):
+    """The switch's own docstring calls it durable; that requires an fsync,
+    so the write must go through the shared atomic-write helper (which flushes
+    + fsyncs before the rename) rather than a bare write+os.replace
+    (task-32808.5)."""
+    import tldw_chatbook.emergency_stop as es
+
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        es,
+        "atomic_write_text",
+        lambda path, content, **kwargs: calls.append((Path(path), content)),
+    )
+
+    target = tmp_path / "estop.json"
+    es.set_emergency_stop(target, reason="drain")
+
+    assert len(calls) == 1
+    written_path, written_content = calls[0]
+    assert written_path == target
+    assert '"active": true' in written_content
+    assert "drain" in written_content

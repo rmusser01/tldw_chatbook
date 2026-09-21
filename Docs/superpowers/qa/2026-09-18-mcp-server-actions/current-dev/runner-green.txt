@@ -1,0 +1,6 @@
+....................................                                     [100%]
+----------- generated xml file: /private/tmp/32825-runner-green.xml ------------
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+36 passed, 98 deselected in 3.24s

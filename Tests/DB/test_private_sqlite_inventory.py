@@ -45,11 +45,6 @@ EXPECTED_PARENT_CREATORS = {
         "user_data_base_dir_server.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/Utils/paths",
-        "get_project_databases_dir",
-        "PROJECT_DATABASES_DIR.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/DB/base_db",
         "BaseDB.__init__",
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
@@ -1306,9 +1301,9 @@ def test_parent_rows_and_explicit_exclusions_are_fully_reconciled() -> None:
     parent_rows = _inventory_rows("P")
     exclusion_rows = _inventory_rows("X")
 
-    assert {row["id"] for row in parent_rows if row["state"] == "current"} == {
-        "P04",
-    }
+    # TASK-32807.6 deleted P04's unreachable creator (get_project_databases_dir),
+    # moving it to state=migrated like P05; no parent row remains "current".
+    assert {row["id"] for row in parent_rows if row["state"] == "current"} == set()
     assert all(
         row["disposition"] == "justified_exclusion"
         for row in parent_rows
@@ -1538,7 +1533,7 @@ def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
     assert {
         (row["module"], row["symbol"], row["creator_call"])
         for row in parent_rows
-        if row["id"] != "P05"
+        if row["id"] not in {"P04", "P05"}
     } == (EXPECTED_PARENT_CREATORS)
     assert len({row["id"] for row in parent_rows}) == len(parent_rows)
     assert all(row["disposition"] in ALLOWED_PARENT_DISPOSITIONS for row in parent_rows)

@@ -20,6 +20,7 @@ from textual.reactive import reactive
 from textual.timer import Timer
 from textual.message import Message
 from loguru import logger
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Configure logger
 logger = logger.bind(module="activity_log")
@@ -522,7 +523,7 @@ class ActivityLogWidget(Widget):
     def _write_json_export(self, handle, entries: List[ActivityEntry]) -> None:
         """Write entries as JSON."""
         data = {
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": utc_now_iso(),
             "entries": [entry.to_dict() for entry in entries],
         }
         json.dump(data, handle, indent=2)
@@ -543,7 +544,7 @@ class ActivityLogWidget(Widget):
 
     def _write_text_export(self, handle, entries: List[ActivityEntry]) -> None:
         """Write entries as plain text."""
-        handle.write(f"Exported at: {datetime.now().isoformat()}\n")
+        handle.write(f"Exported at: {utc_now_iso()}\n")
         handle.write("=" * 80 + "\n")
         for entry in entries:
             handle.write(entry.to_string() + "\n")

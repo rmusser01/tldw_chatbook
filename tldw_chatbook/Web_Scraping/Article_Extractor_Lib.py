@@ -85,6 +85,7 @@ async_playwright = None
 sync_playwright = None
 
 import requests  # noqa: E402
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
 trafilatura = None
@@ -404,7 +405,7 @@ async def scrape_article(
             "title": "Invalid URL",
             "author": "N/A",
             "content": "The provided URL is invalid or malformed.",
-            "date": datetime.now().isoformat(),
+            "date": utc_now_iso(),
             "url": url,
             "extraction_successful": False,
         }
@@ -421,7 +422,7 @@ async def scrape_article(
             "title": "Error",
             "author": "Unknown",
             "content": "Playwright not available for web scraping",
-            "date": datetime.now().isoformat(),
+            "date": utc_now_iso(),
             "url": url,
             "extraction_successful": False,
             "error": "Playwright not installed",
@@ -435,7 +436,7 @@ async def scrape_article(
             "title": "Error",
             "author": "Unknown",
             "content": "Trafilatura not available for content extraction",
-            "date": datetime.now().isoformat(),
+            "date": utc_now_iso(),
             "url": url,
             "extraction_successful": False,
             "error": "Trafilatura not installed",
@@ -657,7 +658,7 @@ async def scrape_article(
                 "title": "Scraping Failed",
                 "author": "N/A",
                 "content": f"Failed to scrape article after {e.attempts} attempts. Last error: {e.last_error}",
-                "date": datetime.now().isoformat(),
+                "date": utc_now_iso(),
                 "url": url,
                 "extraction_successful": False,
                 "error": str(e.last_error),
@@ -668,7 +669,7 @@ async def scrape_article(
                 "title": "Scraping Error",
                 "author": "N/A",
                 "content": f"Error scraping article: {e}",
-                "date": datetime.now().isoformat(),
+                "date": utc_now_iso(),
                 "url": url,
                 "extraction_successful": False,
                 "error": str(e),
