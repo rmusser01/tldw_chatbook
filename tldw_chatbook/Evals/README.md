@@ -8,6 +8,7 @@ The Evals module provides a comprehensive framework for evaluating Large Languag
 
 - [Quick Start](#quick-start)
 - [User Guide](#user-guide)
+- [Skill Eval](#skill-eval)
 - [Developer Guide](#developer-guide)
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
@@ -203,6 +204,61 @@ except EvaluationError as e:
     else:
         print(f"Error: {e.get_user_message()}")
 ```
+
+## Skill Eval
+
+The `skill_eval/` sub-harness scores a **skill as the subject under test** —
+not a model's outputs, but the skill definition itself: how well its
+description triggers, how fit its instructions are, and how reliably it
+behaves in simulated use. Any local-store skill or skill directory (by path)
+can be evaluated, and the skill **never executes**: packages are read for
+structure only, scripts are inspected as declarations, and untrusted skill
+content is inert, delimited data in every prompt (ADR-009).
+
+Scoring runs in three layers, blended into one composite 0–100 score with a
+letter grade:
+
+1. **Static analysis** (deterministic, instant, free) — front-matter quality,
+   trigger phrasing, token efficiency, progressive disclosure, tool-surface
+   sanity, and trust-surface consistency. Also flags seven anti-patterns
+   (`EMPTY_DESCRIPTION`, `MISSING_TRIGGER`, `OVER_CONSTRAINED`,
+   `BLOATED_SKILL`, `ORPHAN_REFERENCE`, `UNKNOWN_TOOLS`, `NAME_COLLISION`),
+   each a 5% multiplicative penalty on the composite (floor 50%).
+2. **LLM-as-judge** (~16 calls) — a generator model synthesizes 10
+   should/shouldn't-trigger prompts and answers single-shot selections
+   (precision/recall/F1), while a judge model rates task output quality,
+   instruction fitness, and scope calibration on anchored 5-point rubrics.
+   Strict JSON with one retry; anything else fails that cell.
+3. **Monte Carlo simulation** (deep only) — seeded, description-only
+   selection calls pitting the subject against a stable decoy set of
+   installed skills. Reports activation rate (Wilson CI), output consistency
+   (bootstrap CI), and failure rate (Clopper–Pearson CI). Pure Python; no
+   new dependencies.
+
+### Depths and cost
+
+| Depth | Layers | Estimated LLM calls | Confidence label |
+|---|---|---|---|
+| quick | static | 0 | Estimated |
+| standard | static + judge | 16 | Assessed |
+| deep | all three | 67 (17 + sim total) | Certified |
+
+If a depth-required layer becomes unusable (e.g. every judge call fails at
+standard), the run still completes: blends renormalize over the intact
+layers and the confidence label degrades with a warning.
+
+### Provenance and guarantees
+
+Every report embeds its `methodology_version` (`skill-eval/1`) plus subject
+provenance — the sha256 content digest, trust tier at capture, and subject
+source (store row or directory path) — so historical scores stay
+interpretable when calibrations change. Skills under test never execute;
+results persist in the existing EvalsDB generic tables (`eval_tasks` bench
+rows, run-grouped `eval_runs`, per-artifact `eval_results`) with no schema
+migration.
+
+Design: [Docs/superpowers/specs/2026-09-20-skill-eval-design.md](../../Docs/superpowers/specs/2026-09-20-skill-eval-design.md) ·
+Decision record: [ADR-172](../../backlog/decisions/172-skill-eval-sub-harness.md)
 
 ## Developer Guide
 
