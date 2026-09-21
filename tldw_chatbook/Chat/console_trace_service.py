@@ -5072,7 +5072,6 @@ class ConsoleTraceService:
             raise ValueError("system_composition_invalid")
         return cast(tuple[Mapping[str, object], ...], raw)
 
-    reconstruct_logical_header = reconstruct_header
 
     def _validate_owner(
         self,
@@ -6356,15 +6355,6 @@ def _saved_descriptors(
     return ()
 
 
-def _revision_only(descriptor: TraceProvenance) -> bool:
-    if type(descriptor) is SavedRevisionTraceProvenance:
-        return True
-    if type(descriptor) is not DerivedTraceProvenance:
-        return False
-    derived = cast(DerivedTraceProvenance, descriptor)
-    return derived.artifact is None and all(
-        _revision_only(item) for item in derived.inputs
-    )
 
 
 def _omitted_inputs(
@@ -6506,15 +6496,6 @@ def _header_structural_provenance(
     }
 
 
-def _omission_source(
-    provenance: ProviderRequestProvenance,
-) -> TraceProvenanceSource:
-    for descriptor in provenance.messages_payload:
-        if type(descriptor) is OmittedTraceProvenance:
-            return cast(OmittedTraceProvenance, descriptor).source
-        if type(descriptor) is ProviderArtifactTraceProvenance:
-            return cast(ProviderArtifactTraceProvenance, descriptor).source
-    return TraceProvenanceSource.PROVIDER_OVERLAY
 
 
 def _policies(
