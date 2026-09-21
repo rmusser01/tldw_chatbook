@@ -1208,6 +1208,13 @@ def coerce_bool_setting(value: Any, default: bool = True) -> bool:
     Returns:
         Coerced boolean value.
     """
+    # TASK-32808.4: _get_typed_value returns None unchanged for a None value
+    # (other typed getters rely on that passthrough), which violated this
+    # function's `-> bool` annotation and let a feature that ships ON read OFF
+    # whenever the key was absent. Return the default here, as
+    # coerce_int_setting already does.
+    if value is None:
+        return default
     return _get_typed_value({"value": value}, "value", default, bool)
 
 

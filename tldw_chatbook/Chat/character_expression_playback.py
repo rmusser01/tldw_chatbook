@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
+from tldw_chatbook.Utils.Utils import coerce_bool_flag
+
 MAX_PREPARATION_BYTES = 64 * 1024 * 1024
 _DECODE_LOCK = threading.Lock()
 _BUDGET_LOCK = threading.Lock()
@@ -21,18 +23,6 @@ def normalize_expression_mode(value: object) -> str:
     """Return a supported local preference, defaulting to Dynamic."""
     value = str(value).strip().lower()
     return value if value in {"dynamic", "static"} else "dynamic"
-
-
-def _bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (str, int)):
-        text = str(value).lower()
-        if text in {"true", "1", "yes", "on"}:
-            return True
-        if text in {"false", "0", "no", "off"}:
-            return False
-    return default
 
 
 def expression_motion_enabled(
@@ -46,8 +36,8 @@ def expression_motion_enabled(
         (react or manual)
         and normalize_expression_mode(appearance.get("character_expression_mode"))
         == "dynamic"
-        and _bool(appearance.get("animations_enabled"), True)
-        and not _bool(appearance.get("reduce_motion"), False)
+        and coerce_bool_flag(appearance.get("animations_enabled"), True)
+        and not coerce_bool_flag(appearance.get("reduce_motion"), False)
     )
 
 

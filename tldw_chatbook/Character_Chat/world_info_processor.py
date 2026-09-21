@@ -673,9 +673,19 @@ class WorldInfoProcessor:
 
     def _estimate_entry_tokens(self, entry: Dict[str, Any]) -> int:
         """
-        Estimate tokens for a single entry.
-        Simple approximation: 1 token ≈ 4 characters
+        Estimate tokens for a single entry through the shared estimator.
+
+        task-32808.10: a plain ``len(content) // 4`` badly under-counts CJK
+        (roughly one token per character, not per four), so a Chinese/Japanese
+        lorebook entry could pass ``_apply_token_budget`` and then overflow the
+        real context window. ``token_counter.estimate_tokens`` weights CJK and
+        applies headroom (tiktoken when available, a language-aware chars floor
+        otherwise). Kept the ``max(1, ...)`` floor so a non-empty entry never
+        costs zero.
         """
         content = entry.get("content", "")
-        # Rough estimate: 1 token per 4 characters
-        return max(1, len(content) // 4)
+        if not content:
+            return 1
+        from ..Utils.token_counter import estimate_tokens
+
+        return max(1, estimate_tokens(content))
