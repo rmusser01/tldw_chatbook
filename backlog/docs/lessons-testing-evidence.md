@@ -16190,3 +16190,25 @@ joins the real startup task and verifies the Home header before keeping all
 original watcher and disposal assertions. A persisted splash override was rejected
 in review because this module shares its bootstrap profile. Qualify the intended
 startup state; app-loop readiness alone does not establish it.
+## A harness that skips a production CSS load path manufactures a "pre-existing failures" baseline (task-32832, 2026-09-20)
+
+**What happened.** The skill-eval UI work inherited 30 failing tests across
+8+ evals suites. An earlier round had measured "18 pre-existing" failures on
+a clean tree and the baseline was accepted as noise, so every new red was
+triaged against it. The actual cause was single: the consolidated evals UI
+test harness never loaded `css/screen_feature_evals.tcss`. Production does
+not load it through `CSS_PATH` either — the app mounts it via the TAB_EVALS
+first-navigation path — so a harness that faithfully reproduced each screen's
+`CSS_PATH` was still missing the sheet, and dozens of layout-dependent
+assertions failed for reasons no diff could explain. Task 10 teaching the
+harness to load that one file cleared all 30 failures at once, with zero new
+failures.
+
+**What to do.** When a screen's styles load via a mechanism other than
+`CSS_PATH` (lazy navigation mounts, runtime `add_css`, tab-first-load side
+effects), the test harness must reproduce that mechanism — verify the
+harness's loaded stylesheet set against what the running app has mounted,
+not against the screen class's declaration. And a "pre-existing failures"
+baseline earns one root-cause pass before it is treated as noise: a number
+you inherited and never explained is a standing assumption that every future
+triage will be measured against.
