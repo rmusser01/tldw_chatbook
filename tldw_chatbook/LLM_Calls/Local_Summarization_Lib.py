@@ -648,82 +648,86 @@ def summarize_with_kobold(
 
         if streaming:
             logging.debug("Kobold Summarization: Streaming mode enabled")
-            try:
-                # Create a session
-                session = create_default_session()
 
-                # Load config values
-                retry_count = kobold_legacy["api_retries"]
-                retry_delay = kobold_legacy["api_retry_delay"]
+            def _kobold_stream():
+                try:
+                    # Create a session
+                    session = create_default_session()
 
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
+                    # Load config values
+                    retry_count = kobold_legacy["api_retries"]
+                    retry_delay = kobold_legacy["api_retry_delay"]
 
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
+                    # Configure the retry strategy
+                    retry_strategy = Retry(
+                        total=retry_count,  # Total number of retries
+                        backoff_factor=retry_delay,  # A delay factor (exponential backoff)
+                        status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+                    )
 
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
-                # Send the request with streaming enabled
-                response = session.post(
-                    kobold_openai_api_IP,
-                    headers=headers,
-                    json=data_payload,
-                    stream=True,
-                )
-                logging.debug(
-                    "Kobold Summarization: API Response Status Code: %d",
-                    response.status_code,
-                )
+                    # Create the adapter
+                    adapter = HTTPAdapter(max_retries=retry_strategy)
 
-                if response.status_code == 200:
-                    # Process the streamed response
-                    for line in response.iter_lines():
-                        if line:
-                            decoded_line = line.decode("utf-8")
-                            # OpenAI API streams data prefixed with 'data: '
-                            if decoded_line.startswith("data: "):
-                                content = decoded_line[len("data: ") :].strip()
-                                if content == "[DONE]":
-                                    break
-                                try:
-                                    data_chunk = json.loads(content)
-                                    if (
-                                        "choices" in data_chunk
-                                        and len(data_chunk["choices"]) > 0
-                                    ):
-                                        delta = data_chunk["choices"][0].get(
-                                            "delta", {}
-                                        )
-                                        text = delta.get("content", "")
-                                        if text:
-                                            yield text
-                                    else:
-                                        logging.error(
-                                            "Kobold: Expected data not found in streamed response."
-                                        )
-                                except json.JSONDecodeError as e:
-                                    logging.error(
-                                        "Kobold: Failed to decode streamed JSON; exception_type=%s",
-                                        safe_metadata_token(type(e).__name__),
-                                    )
-                else:
-                    logging.error(
-                        "Kobold: API request failed; status_code=%s",
+                    # Mount adapters for both HTTP and HTTPS
+                    session.mount("http://", adapter)
+                    session.mount("https://", adapter)
+                    # Send the request with streaming enabled
+                    response = session.post(
+                        kobold_openai_api_IP,
+                        headers=headers,
+                        json=data_payload,
+                        stream=True,
+                    )
+                    logging.debug(
+                        "Kobold Summarization: API Response Status Code: %d",
                         response.status_code,
                     )
-                    yield f"Kobold: API request failed: {response.text}"
-            except Exception as e:
-                logging.error(
-                    "Kobold: Processing failed; exception_type=%s",
-                    safe_metadata_token(type(e).__name__),
-                )
-                yield f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
+
+                    if response.status_code == 200:
+                        # Process the streamed response
+                        for line in response.iter_lines():
+                            if line:
+                                decoded_line = line.decode("utf-8")
+                                # OpenAI API streams data prefixed with 'data: '
+                                if decoded_line.startswith("data: "):
+                                    content = decoded_line[len("data: ") :].strip()
+                                    if content == "[DONE]":
+                                        break
+                                    try:
+                                        data_chunk = json.loads(content)
+                                        if (
+                                            "choices" in data_chunk
+                                            and len(data_chunk["choices"]) > 0
+                                        ):
+                                            delta = data_chunk["choices"][0].get(
+                                                "delta", {}
+                                            )
+                                            text = delta.get("content", "")
+                                            if text:
+                                                yield text
+                                        else:
+                                            logging.error(
+                                                "Kobold: Expected data not found in streamed response."
+                                            )
+                                    except json.JSONDecodeError as e:
+                                        logging.error(
+                                            "Kobold: Failed to decode streamed JSON; exception_type=%s",
+                                            safe_metadata_token(type(e).__name__),
+                                        )
+                    else:
+                        logging.error(
+                            "Kobold: API request failed; status_code=%s",
+                            response.status_code,
+                        )
+                        yield f"Kobold: API request failed: {response.text}"
+                except Exception as e:
+                    logging.error(
+                        "Kobold: Processing failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
+                    yield f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
+
+            return _kobold_stream()
         else:
             try:
                 # Create a session
@@ -1153,73 +1157,77 @@ def summarize_with_tabbyapi(
 
         if streaming:
             logging.debug("TabbyAPI: Streaming mode enabled")
-            try:
-                # Create a session
-                session = create_default_session()
 
-                # Load config values
-                retry_count = tabby_legacy["api_retries"]
-                retry_delay = tabby_legacy["api_retry_delay"]
+            def _tabby_stream():
+                try:
+                    # Create a session
+                    session = create_default_session()
 
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
+                    # Load config values
+                    retry_count = tabby_legacy["api_retries"]
+                    retry_delay = tabby_legacy["api_retry_delay"]
 
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
+                    # Configure the retry strategy
+                    retry_strategy = Retry(
+                        total=retry_count,  # Total number of retries
+                        backoff_factor=retry_delay,  # A delay factor (exponential backoff)
+                        status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+                    )
 
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
-                response = session.post(
-                    tabby_api_ip, headers=headers, json=data2, stream=True
-                )
-                response.raise_for_status()
-                # Process the streamed response
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8").strip()
-                        if decoded_line.startswith("data: "):
-                            data_line = decoded_line[len("data: ") :]
-                            if data_line == "[DONE]":
-                                break
-                            try:
-                                data_json = json.loads(data_line)
-                                if (
-                                    "choices" in data_json
-                                    and len(data_json["choices"]) > 0
-                                ):
-                                    delta = data_json["choices"][0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError as e:
-                                logging.error(
-                                    "TabbyAPI: Failed to parse streamed JSON; "
-                                    "exception_type=%s; line_length=%s",
-                                    safe_metadata_token(type(e).__name__),
-                                    len(data_line),
+                    # Create the adapter
+                    adapter = HTTPAdapter(max_retries=retry_strategy)
+
+                    # Mount adapters for both HTTP and HTTPS
+                    session.mount("http://", adapter)
+                    session.mount("https://", adapter)
+                    response = session.post(
+                        tabby_api_ip, headers=headers, json=data2, stream=True
+                    )
+                    response.raise_for_status()
+                    # Process the streamed response
+                    for line in response.iter_lines():
+                        if line:
+                            decoded_line = line.decode("utf-8").strip()
+                            if decoded_line.startswith("data: "):
+                                data_line = decoded_line[len("data: ") :]
+                                if data_line == "[DONE]":
+                                    break
+                                try:
+                                    data_json = json.loads(data_line)
+                                    if (
+                                        "choices" in data_json
+                                        and len(data_json["choices"]) > 0
+                                    ):
+                                        delta = data_json["choices"][0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            yield content
+                                except json.JSONDecodeError as e:
+                                    logging.error(
+                                        "TabbyAPI: Failed to parse streamed JSON; "
+                                        "exception_type=%s; line_length=%s",
+                                        safe_metadata_token(type(e).__name__),
+                                        len(data_line),
+                                    )
+                            else:
+                                logging.debug(
+                                    "TabbyAPI: Ignored non-data stream line; line_length=%s",
+                                    len(decoded_line),
                                 )
-                        else:
-                            logging.debug(
-                                "TabbyAPI: Ignored non-data stream line; line_length=%s",
-                                len(decoded_line),
-                            )
-            except requests.exceptions.RequestException as e:
-                logging.error(
-                    "TabbyAPI: Streaming request failed; exception_type=%s",
-                    safe_metadata_token(type(e).__name__),
-                )
-                yield f"Error summarizing with TabbyAPI: {str(e)}"
-            except Exception as e:
-                logging.error(
-                    "TabbyAPI: Streaming failed; exception_type=%s",
-                    safe_metadata_token(type(e).__name__),
-                )
-                yield f"Unexpected error in summarization process: {str(e)}"
+                except requests.exceptions.RequestException as e:
+                    logging.error(
+                        "TabbyAPI: Streaming request failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
+                    yield f"Error summarizing with TabbyAPI: {str(e)}"
+                except Exception as e:
+                    logging.error(
+                        "TabbyAPI: Streaming failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
+                    yield f"Unexpected error in summarization process: {str(e)}"
+
+            return _tabby_stream()
         else:
             try:
                 # Create a session
@@ -1289,10 +1297,14 @@ def summarize_with_tabbyapi(
             "TabbyAPI: Unexpected failure; exception_type=%s",
             safe_metadata_token(type(e).__name__),
         )
+        message = f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
         if streaming:
-            yield f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
-        else:
-            return f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
+
+            def _tabby_error_stream():
+                yield message
+
+            return _tabby_error_stream()
+        return message
 
 
 @_provider_recovery.unqualified
@@ -2000,7 +2012,10 @@ def summarize_with_custom_openai(
                                 len(data_str),
                             )
                             continue
-                yield collected_messages
+                # task-32805.4: no trailing full-text yield here. A consumer
+                # that joins the streamed chunks already has the whole
+                # summary; re-emitting the accumulated text doubled it (the
+                # huggingface/anthropic/groq/mistral siblings omit it too).
 
             return stream_generator()
         else:
@@ -2259,7 +2274,10 @@ def summarize_with_custom_openai_2(
                                 len(data_str),
                             )
                             continue
-                yield collected_messages
+                # task-32805.4: no trailing full-text yield here. A consumer
+                # that joins the streamed chunks already has the whole
+                # summary; re-emitting the accumulated text doubled it (the
+                # huggingface/anthropic/groq/mistral siblings omit it too).
 
             return stream_generator()
         else:

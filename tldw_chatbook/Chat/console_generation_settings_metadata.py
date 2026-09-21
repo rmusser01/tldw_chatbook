@@ -362,6 +362,17 @@ def strict_json_metadata_object(
     def reject_constant(value: str) -> None:
         raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
 
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        # task-32805.5: a stored metadata string is a config boundary; a
+        # repeated key is ambiguous, so fail rather than silently take
+        # last-wins.
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key {key!r} is not supported.")
+            result[key] = value
+        return result
+
     def finite_float(value: str) -> float:
         number = float(value)
         if not math.isfinite(number):
@@ -386,6 +397,7 @@ def strict_json_metadata_object(
                 metadata,
                 parse_constant=reject_constant,
                 parse_float=finite_float,
+                object_pairs_hook=reject_duplicate_keys,
             )
         else:
             raise ValueError("Unsupported metadata type.")

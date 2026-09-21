@@ -128,6 +128,12 @@ def _build_retry_policy(*, retries: int, retry_delay: float) -> Retry:
     )
 
 
+#: task-32805.4: upper bound on a provider-supplied Retry-After. api_base_url
+#: is user-configurable and this delay is slept on the gateway worker thread
+#: that Stop cannot interrupt, so an unbounded value would pin the worker.
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
 def _advance_retry_policy(
     retry_policy: Retry,
     *,
@@ -305,6 +311,21 @@ def _validate_scalar_parameters(
 
 def _reject_non_finite_json_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON constant is not supported: {value}")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    # task-32805.5: reconcile the non-streaming tool-call-argument parse with
+    # its streaming sibling (qwencloud_streaming._strict_json_loads) and the
+    # continuation checkpoint, which both reject duplicate keys. The same
+    # provider's function-call arguments must not be accepted last-wins on one
+    # path and refused on the other -- and these arguments drive tool
+    # execution, so a repeated key is ambiguity to reject, not to guess at.
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key is not supported: {key}")
+        result[key] = value
+    return result
 
 
 def normalize_qwencloud_api_mode(
@@ -500,7 +521,9 @@ def _validate_tool_calls(
             )
         try:
             decoded_arguments = json.loads(
-                arguments, parse_constant=_reject_non_finite_json_constant
+                arguments,
+                parse_constant=_reject_non_finite_json_constant,
+                object_pairs_hook=_reject_duplicate_json_keys,
             )
         except (TypeError, ValueError) as exc:
             raise _bad_request(
@@ -866,7 +889,9 @@ def _normalize_response_tool_call(raw_call: Mapping[str, Any]) -> dict[str, Any]
         raise _provider_error("QwenCloud returned an incomplete function call.")
     try:
         decoded_arguments = json.loads(
-            arguments, parse_constant=_reject_non_finite_json_constant
+            arguments,
+            parse_constant=_reject_non_finite_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
     except (TypeError, ValueError) as exc:
         raise _provider_error(

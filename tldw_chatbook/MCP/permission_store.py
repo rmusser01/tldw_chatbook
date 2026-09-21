@@ -747,7 +747,16 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
+            # task-32805.5: the enforcement read fail-closes on an ambiguous
+            # policy file. A duplicate `global_default` (or any repeated key)
+            # would otherwise take last-wins under plain json.loads -- a tamper
+            # vector on a security file; reject it (and non-finite constants)
+            # so this path backs up and resets to the fail-closed defaults.
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.warning(
                 f"MCP permission store at '{self.path}' is unreadable/corrupt ({exc}); "
@@ -888,7 +897,15 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
+            # task-32805.5: even the best-effort inspection view must not
+            # present the last-wins reading of a duplicate-keyed policy file;
+            # reject duplicates/non-finite constants and fall back to a fresh
+            # payload like any other unreadable input.
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
             return _fresh_payload()
 

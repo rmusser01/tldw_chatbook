@@ -364,9 +364,13 @@ def _chat_with_openai_compatible_local_server(
                 finally:
                     if response:
                         response.close()
-                    # It's common for OpenAI streams to end with this
-                    # Yield it here to ensure the stream always terminates correctly for the client
-                    yield "data: [DONE]\n\n"
+                # TASK-32805.1: sentinel emitted AFTER the finally. Closing
+                # the response first meant no socket leak here, but yielding
+                # inside finally still raised 'generator ignored
+                # GeneratorExit' on a consumer Stop -- and every local
+                # provider (llama.cpp/vllm/ollama/mlx/ooba/tabby/aphrodite/
+                # custom-openai) routes through this one generator.
+                yield "data: [DONE]\n\n"
 
             return stream_generator()
         else:

@@ -61,6 +61,7 @@ class VisualIdentityRepository:
                     context = json.loads(
                         pack["source_context_json"],
                         parse_constant=_reject_nonstandard_json_constant,
+                        object_pairs_hook=_reject_duplicate_json_keys,
                     )
                 except (TypeError, ValueError) as exc:
                     raise ValueError("visual_identity_source_context_invalid") from exc
@@ -798,3 +799,15 @@ def _json_dump(value: object) -> str:
 
 def _reject_nonstandard_json_constant(_value: str) -> None:
     raise ValueError("nonstandard JSON constant")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    # task-32805.5: a repeated key in stored JSON is corruption/ambiguity, not
+    # a last-wins convenience -- fail closed so callers hit the same
+    # invalid-context path as any other unreadable value.
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
