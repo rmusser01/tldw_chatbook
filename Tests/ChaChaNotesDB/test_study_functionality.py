@@ -282,6 +282,11 @@ class TestFlashcardOperations:
         # All five match the token; the explicit limit caps the returned rows.
         assert len(db_instance.search_flashcards("widget", limit=2)) == 2
         assert len(db_instance.search_flashcards("widget", limit=100)) == 5
+        # Non-positive / non-int limits fall back to the default cap rather than
+        # reaching SQLite (where LIMIT -1 means "no limit" and a str would error).
+        assert len(db_instance.search_flashcards("widget", limit=-1)) == 5
+        assert len(db_instance.search_flashcards("widget", limit=0)) == 5
+        assert len(db_instance.search_flashcards("widget", limit="7")) == 5  # type: ignore[arg-type]
 
     def test_get_due_flashcards(self, db_instance, sample_deck):
         """Test getting flashcards due for review."""

@@ -19,7 +19,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Union
 from weakref import WeakValueDictionary
@@ -840,8 +840,9 @@ class BaseDB(ABC):
             return
 
         try:
-            with closing(self._get_connection()) as conn:
-                conn.execute("VACUUM")
+            conn = self._get_connection()
+            conn.execute("VACUUM")
+            conn.close()
             logger.info(f"Successfully vacuumed database: {self.db_path_str}")
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
@@ -855,12 +856,13 @@ class BaseDB(ABC):
             bool: True if integrity check passes, False otherwise
         """
         try:
-            with closing(self._get_connection()) as conn:
-                cursor = conn.cursor()
-                cursor.execute("PRAGMA integrity_check")
-                result = cursor.fetchone()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            conn.close()
 
-            is_ok = bool(result and result[0] == "ok")
+            is_ok = result and result[0] == "ok"
             if is_ok:
                 logger.info(f"Database integrity check passed: {self.db_path_str}")
             else:
