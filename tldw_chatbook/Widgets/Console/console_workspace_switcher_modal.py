@@ -35,16 +35,12 @@ def workspace_persona_label_suffix(
             resolve_effective_assistant_default,
         )
 
-        registry = getattr(app_instance, "workspace_registry_service", None)
-        record = None
-        if registry is not None and hasattr(registry, "get_workspace"):
-            try:
-                record = registry.get_workspace(workspace.workspace_id)
-            except Exception:  # noqa: BLE001 - display-only, degrade silently
-                record = None
-        if record is None:
-            record = workspace
-        defaults = getattr(record, "assistant_defaults", None)
+        # task-32804.6 ([W-console-2]): `_open` already fetched these
+        # WorkspaceRecords off-thread via `list_workspaces`, so re-reading each
+        # one with a synchronous `registry.get_workspace()` per row (~2 ms x N)
+        # in `compose()` undid that deliberate offload. The passed-in record
+        # already carries `assistant_defaults`; read it straight off.
+        defaults = getattr(workspace, "assistant_defaults", None)
         personas = getattr(app_instance, "local_character_persona_service", None)
 
         def lookup(persona_id: str):

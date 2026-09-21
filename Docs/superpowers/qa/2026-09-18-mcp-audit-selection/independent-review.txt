@@ -1,0 +1,4 @@
+Read-only reviewer: /root/mcp_server_action_review.
+Initial finding: duplicate equal records lost selection on a same-snapshot filter.
+Added a regression that failed before repair; retained the selected snapshot key.
+Second review: finding resolved; no remaining concrete blockers. No reviewer app/test run.

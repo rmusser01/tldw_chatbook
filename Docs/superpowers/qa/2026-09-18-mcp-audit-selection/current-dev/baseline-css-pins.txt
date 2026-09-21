@@ -1,0 +1,3 @@
+Tests/UI/test_mcp_audit_mode.py: identical to approved PR2770 base d6c15f9e4a
+tldw_chatbook/css/components/_agentic_terminal.tcss: identical to approved PR2770 base d6c15f9e4a
+tldw_chatbook/css/tldw_cli_modular.tcss: identical to approved PR2770 base d6c15f9e4a

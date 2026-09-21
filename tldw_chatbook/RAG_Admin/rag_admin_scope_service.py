@@ -84,7 +84,7 @@ class RAGAdminScopeService:
             return await value
         return value
 
-    async def _call_off_loop(self, service: Any, method_name: str) -> Any:
+    async def _call_off_loop(self, service: Any, method_name: str, **call_kwargs: Any) -> Any:
         """Invoke a backend method without blocking the event loop.
 
         (TASK-21126) ``_maybe_await(service.method())`` evaluates its
@@ -109,14 +109,19 @@ class RAGAdminScopeService:
         """
         method = getattr(service, method_name)
         if inspect.iscoroutinefunction(method):
-            return await method()
+            return await method(**call_kwargs)
         safe = getattr(service, "diagnostics_are_thread_safe", None)
         if not callable(safe) or not safe():
-            return await self._maybe_await(method())
+            return await self._maybe_await(method(**call_kwargs))
         # `to_thread` propagates the callee's exception into this await, so
         # every existing failure path (an unmigrated media DB, a policy
-        # error, a closed connection) reaches callers unchanged.
-        return await self._maybe_await(await asyncio.to_thread(method))
+        # error, a closed connection) reaches callers unchanged. The
+        # thread-safety flag covers every media-DB read this service offloads
+        # (diagnostics AND list_templates): both read via the same
+        # thread-local MediaDatabase connection (task-32804.12).
+        return await self._maybe_await(
+            await asyncio.to_thread(method, **call_kwargs)
+        )
 
     def _enforce_policy(self, action_id: str) -> None:
         """Require a policy action id (no-op without an enforcer).
@@ -206,13 +211,17 @@ class RAGAdminScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._template_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
-        records = await self._maybe_await(
-            service.list_templates(
-                include_builtin=include_builtin,
-                include_custom=include_custom,
-                tags=tags,
-                user_id=user_id,
-            )
+        # task-32804.12: list_templates on the local backend is a synchronous
+        # `SELECT * FROM ChunkingTemplates`; _maybe_await evaluated it before the
+        # first suspension point, so it ran on the event loop. Route it through
+        # the same off-loop hop diagnostics uses.
+        records = await self._call_off_loop(
+            service,
+            "list_templates",
+            include_builtin=include_builtin,
+            include_custom=include_custom,
+            tags=tags,
+            user_id=user_id,
         )
         return [
             normalize_template_record(normalized_mode.value, record)

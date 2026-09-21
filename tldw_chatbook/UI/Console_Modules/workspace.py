@@ -7299,6 +7299,29 @@ class ConsoleWorkspaceController:
                 severity="warning",
             )
             return
+        # The emoji catalog build blocks the event loop for ~180 ms on first
+        # process use (task-32804.12); build it off-thread, then push the modal
+        # with the result already prepared so the click never freezes the UI.
+        # exclusive=True: a second appearance click supersedes an in-flight one.
+        self.run_worker(
+            self._present_console_conversation_appearance_picker(
+                normalized_id,
+                str(conversation_title or ""),
+                icon or None,
+                color or None,
+            ),
+            group="console-appearance-picker",
+            exclusive=True,
+        )
+
+    async def _present_console_conversation_appearance_picker(
+        self,
+        conversation_id: str,
+        conversation_title: str,
+        icon: str | None,
+        color: str | None,
+    ) -> None:
+        """Build the emoji index off the loop, then present the picker."""
         # Deferred import (PR #2480 CI): the picker's module (and the emoji
         # catalog machinery it pulls in) must not join the boot path -- the
         # ui-ready module census and the boot CSS byte budget both ratchet
@@ -7306,19 +7329,22 @@ class ConsoleWorkspaceController:
         # opened a handful of times per session.
         from ...Widgets.Console.console_appearance_picker_modal import (
             ConsoleAppearancePickerModal,
+            _default_emoji_sequence,
         )
 
+        emojis = await asyncio.to_thread(_default_emoji_sequence)
         self.push_screen(
             ConsoleAppearancePickerModal(
-                conversation_id=normalized_id,
-                conversation_title=str(conversation_title or ""),
-                icon=icon or None,
-                color=color or None,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                icon=icon,
+                color=color,
+                emojis=emojis,
             ),
             callback=partial(
                 self._on_console_conversation_appearance_result,
-                normalized_id,
-                str(conversation_title or ""),
+                conversation_id,
+                conversation_title,
             ),
         )
 

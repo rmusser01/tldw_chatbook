@@ -2110,11 +2110,16 @@ class PersonasScreen(BaseAppScreen):
         }
         try:
             db = self._character_db()
-            if db.get_local_authority_id() != link.character.data_authority_id:
+            # task-32804.12: these reads ran inline while siblings below already
+            # thread the same db -- hop them off the loop too.
+            authority_id = await asyncio.to_thread(db.get_local_authority_id)
+            if authority_id != link.character.data_authority_id:
                 self._notify("The active Data Profile changed.", "warning")
                 self._show_character_link_recovery("The active Data Profile changed.")
                 return CharacterConversationLinkOutcome.REJECTED
-            card = db.get_character_card_by_id(link.character.character_id)
+            card = await asyncio.to_thread(
+                db.get_character_card_by_id, link.character.character_id
+            )
             if not card:
                 self._notify("The saved character is unavailable.", "warning")
                 self._show_character_link_recovery(
@@ -5702,11 +5707,13 @@ class PersonasScreen(BaseAppScreen):
             exports_dir = get_user_data_dir() / "exports"
             temp = None
             try:
-                exports_dir.mkdir(parents=True, exist_ok=True)
+                # task-32804.12: file I/O off the event loop, like the
+                # sibling `_lore_export_worker`.
+                await asyncio.to_thread(exports_dir.mkdir, parents=True, exist_ok=True)
                 target = exports_dir / f"{slug}-{stamp}.{extension}"
                 temp = exports_dir / f".{slug}-{stamp}.{extension}.tmp"
-                temp.write_text(body, encoding="utf-8")
-                temp.replace(target)
+                await asyncio.to_thread(temp.write_text, body, "utf-8")
+                await asyncio.to_thread(temp.replace, target)
             except OSError as exc:
                 logger.opt(exception=True).warning("Could not write the export file.")
                 if temp is not None:
@@ -13559,12 +13566,13 @@ class PersonasScreen(BaseAppScreen):
         # second would otherwise collide on the target/temp filenames.
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         exports_dir = get_user_data_dir() / "exports"
-        exports_dir.mkdir(parents=True, exist_ok=True)
+        # task-32804.12: file I/O off the event loop, like `_lore_export_worker`.
+        await asyncio.to_thread(exports_dir.mkdir, parents=True, exist_ok=True)
         target = exports_dir / f"{slug}-expressions-{stamp}.zip"
         temp = exports_dir / f".{slug}-expressions-{stamp}.zip.tmp"
         try:
-            temp.write_bytes(blob)
-            temp.replace(target)
+            await asyncio.to_thread(temp.write_bytes, blob)
+            await asyncio.to_thread(temp.replace, target)
         except OSError:
             temp.unlink(missing_ok=True)
             raise

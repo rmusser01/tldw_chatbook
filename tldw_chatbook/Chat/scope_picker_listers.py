@@ -494,7 +494,16 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
     UI loop via ``asyncio.to_thread``.
     """
 
-    async def _tag_lister(query: str) -> tuple[TagCount, ...]:
+    # task-32804.12: the unioned usage vocabulary does not depend on `query`
+    # (only the substring filter below does), yet it was rebuilt on every
+    # keystroke -- a media `get_keyword_usage_stats` plus up to 200
+    # `get_notes_for_keyword` scans (~22 ms, ~50x at the cap). Build it once
+    # per modal and reuse it; the lister is created fresh per modal open, so
+    # the cache lives exactly one picker session (no staleness window a user
+    # can hit by typing).
+    counts_cache: dict[str, int] | None = None
+
+    async def _build_counts() -> dict[str, int]:
         counts: dict[str, int] = {}
 
         media_db = getattr(app, "media_db", None)
@@ -525,6 +534,14 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
                 notes_counts = {}
             for text, usage in notes_counts.items():
                 counts[text] = counts.get(text, 0) + usage
+
+        return counts
+
+    async def _tag_lister(query: str) -> tuple[TagCount, ...]:
+        nonlocal counts_cache
+        if counts_cache is None:
+            counts_cache = await _build_counts()
+        counts = counts_cache
 
         normalized_query = query.strip().casefold()
         filtered = [

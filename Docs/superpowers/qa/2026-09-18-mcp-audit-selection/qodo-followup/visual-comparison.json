@@ -1,0 +1,145 @@
+[
+  {
+    "capture": "textual-dark-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "f3fbc5fd5c8a8c47a0551ff48faa6cbc160c81433657778750f10f08b4fa9bfc",
+    "approved_svg_sha256": "d14e1c3301b259ea2624389a7e32e2c89f7c8db2c19ee0bd385dfe34de6b3c3f"
+  },
+  {
+    "capture": "textual-dark-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e",
+    "approved_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e"
+  },
+  {
+    "capture": "textual-dark-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "e6e0f091933bf87149939bf35f0d3bec13eda31c90fdcfa074d9a91f46ad06b0",
+    "approved_svg_sha256": "f11369ad6abf0d14161d91a3185e47e051568a80cba938e206286c208708c33d",
+    "remaining_difference": "Input caret blink on the first letter of audit-alpha."
+  },
+  {
+    "capture": "textual-dark-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "79d021c4391acf7db036e3943d36af292dcbcee8fb319b025dd771e83b9c5652",
+    "approved_svg_sha256": "ede654e2cc7d11915568879d2b4368a4df0a22447e776b73708a2d0cb05d4606"
+  },
+  {
+    "capture": "textual-dark-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "ac26f952cea4cd34dbe4ac2085cc80d21f6b113ffaf9639ab01c352a33f863a5",
+    "approved_svg_sha256": "98ff756c8022abe6dce005914665ebbc5cf27f92de8af77432e6eaa27b900f4d"
+  },
+  {
+    "capture": "textual-dark-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "b4d9981a8dd6b9c1054ba6ffe3b9e659dd1d96bd89b6d53c4e0313d209f6b62a",
+    "approved_svg_sha256": "7050212d0695698bac213dfd12a2460937829f6f55792fc0b70f2b583fec40f4"
+  },
+  {
+    "capture": "textual-dark-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f",
+    "approved_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f"
+  },
+  {
+    "capture": "textual-dark-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "181749b7e357352951f19a0869c42ed4e7d026f2ff4c2b6821a524bb8ed7ef87",
+    "approved_svg_sha256": "ec013febc4c66a0f217f04e494ad8c071c9257196098e0b8770a73e781f2cf6a"
+  },
+  {
+    "capture": "textual-dark-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "7ed37510614b487ad0e6dbb2af8277bf976eee5942e3e5e23f67afb7848d9562",
+    "approved_svg_sha256": "ed35403451f4a075984090f84263e35de862466c92fdf95daa6a7e802d607b2a"
+  },
+  {
+    "capture": "textual-dark-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "9fe10a08402e6822cc0f887726e31feae542663fbe5a16ae8738a09eb2dbb585",
+    "approved_svg_sha256": "736458813e26bb5793f71bc5fbb87175a26526e35d24bd014a5bc02922b177ff"
+  },
+  {
+    "capture": "textual-light-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "0f4d6f8f6b81ae1123f4951a2e011c99fc0120d3291ffb38903684cee39e7b46",
+    "approved_svg_sha256": "a570263250dcea9d70d9be1dd47d41750f149637fbd06ddb0956dc6c37ecaccc"
+  },
+  {
+    "capture": "textual-light-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6",
+    "approved_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6"
+  },
+  {
+    "capture": "textual-light-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "da975efea16eacde753a454c5bf1087fc8b5dfba836d97d32253089fe3b826f9",
+    "approved_svg_sha256": "4e168de98de5697bdc5e60541994b62305914e544d133e9c34422a740311a748",
+    "remaining_difference": "Input caret blink on the first letter of audit-alpha."
+  },
+  {
+    "capture": "textual-light-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "160f41910ec65652be5c5ac6ce287a70170e5af77786ffb4e9a3d7230bd66b71",
+    "approved_svg_sha256": "035f6cc97edb3ccd78e0f04486ad798af8c73ae8e8eebf72dbc9adc36d464c4c"
+  },
+  {
+    "capture": "textual-light-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "691c284868263b4ee1345102159cdb28ad8216813159e91f4e5e12e7a9fa0158",
+    "approved_svg_sha256": "3ef5e9105bbf53d83d40cf4a2f64c7f9ab389c42e229f662d2c1d143540ebe90"
+  },
+  {
+    "capture": "textual-light-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "69837b40913f0dca93a63c92e1d5e217dcffce14a91fa15b70bc3af9d13a269d",
+    "approved_svg_sha256": "02caebbf933b96cfbeba15dd1382cb349fae721ad88b007ca265cb0a39a3c739"
+  },
+  {
+    "capture": "textual-light-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694",
+    "approved_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694"
+  },
+  {
+    "capture": "textual-light-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "c0ad4abc07f37d2fe6bb2d2abfa969ee090b28e8e275ad9a8bd0eebfab98ed68",
+    "approved_svg_sha256": "65545c45eee199454aea0a20af0162ca0faf7fe38e567a15da00a1e29137062f",
+    "remaining_difference": "Input caret blink; zero-width compact rectangle is invisible."
+  },
+  {
+    "capture": "textual-light-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a6803113ae852a05c8e079c1ef1028389b53a1ba6709f6038e6f04f1a62d36c0",
+    "approved_svg_sha256": "cdcfa9941cdf1be84e98a11658adf19369e2ce90852145c80851a7c4cd8d96e8"
+  },
+  {
+    "capture": "textual-light-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "574583b84fd00842fcc5aeb9dd7914c2dd06e25a3bcc9c970a7a87d6089aa3ff",
+    "approved_svg_sha256": "ee7dda4cd3578239f735841a4338516593212a8fc072ff500b0120ec91fce166"
+  }
+]

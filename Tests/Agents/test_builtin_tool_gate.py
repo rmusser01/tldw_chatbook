@@ -467,18 +467,33 @@ def test_network_tag_floors_inherited_allow_to_ask():
 
 # --- task-3240: unified [tools]/[console] gate enumerator -------------------
 #
-# Seam namespace note (spec review, Minor 6): `all_tool_gates()` reads
-# `tldw_chatbook.config.get_cli_setting` via a FUNCTION-LOCAL import (like
-# `BuiltinToolProvider.__init__`), so these tests patch that module
-# attribute directly -- patching `mcp_workbench`'s (or any other caller's)
-# own imported name would not reach it.
+# Seam namespace note (task-32804.7): `all_tool_gates()` /
+# `_off_tool_gate_status()` now read the whole config ONCE via
+# `_gate_config_snapshot()` ->
+# `tldw_chatbook.config.load_cli_config_and_ensure_existence` (a FUNCTION-LOCAL
+# import), instead of a `get_cli_setting` per gate key. These tests patch that
+# loader with a controlled config, so gate states stay deterministic and
+# environment-independent (an empty config = every gate at its own default).
 
 
-def _no_override_get_cli_setting(section, key=None, default=None):
-    """A `get_cli_setting` fake that always returns the caller's own
-    default -- gives every gate a deterministic, environment-independent
-    `enabled=False` baseline regardless of the real config.toml on disk."""
-    return default
+def _patch_gate_config(monkeypatch, *, tools=None, console=None):
+    """Patch the single config load the gate enumerators now make."""
+    import tldw_chatbook.config as config_module
+
+    config = {"tools": dict(tools or {}), "console": dict(console or {})}
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda *a, **k: config,
+    )
+    return config
+
+
+def _tools_all_on():
+    """Every `[tools]` gate key set to True (for the 'all gates on' baselines)."""
+    from tldw_chatbook.Agents.builtin_tool_gate import _gate_key_pairs
+
+    return {k: True for section, k in _gate_key_pairs() if section == "tools"}
 
 
 def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypatch):
@@ -487,7 +502,7 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
 
     gates = all_tool_gates()
     # Derived, not a literal (TASK-16174): the arity is "every builtin row
@@ -539,7 +554,7 @@ def test_all_tool_gates_carry_display_titles_from_the_shared_table(monkeypatch):
     from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
 
     gates = all_tool_gates()
     assert all(gate.title.strip() for gate in gates)
@@ -567,7 +582,7 @@ def test_only_externally_published_gates_are_flagged_restart_required(monkeypatc
     from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
 
     gates = all_tool_gates()
     assert [g.key for g in gates if g.restart_required] == [WEB_DEEP_SEARCH_GATE_KEY]
@@ -585,15 +600,14 @@ def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
 
     assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
     everything_but_the_master_off = tool_gate_breadcrumb()
     assert everything_but_the_master_off is not None
     assert TOOL_GATES_PANE_PATH in everything_but_the_master_off
 
-    def only_master_off(section, key=None, default=None):
-        return False if key == LOCAL_TOOLS_MASTER_KEY else True
-
-    monkeypatch.setattr(config_module, "get_cli_setting", only_master_off)
+    _patch_gate_config(
+        monkeypatch, tools=_tools_all_on(), console={LOCAL_TOOLS_MASTER_KEY: False}
+    )
     master_off = tool_gate_breadcrumb()
     assert master_off is not None
     assert TOOL_GATES_PANE_PATH in master_off
@@ -609,12 +623,7 @@ def test_all_tool_gates_enabled_is_coerced_not_raw_truthy(monkeypatch):
 
     target_key = _GATEABLE_BUILTINS[0].gate_key
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == target_key:
-            return "false"
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    _patch_gate_config(monkeypatch, tools={target_key: "false"})
     gates = {gate.key: gate for gate in all_tool_gates()}
     assert gates[target_key].enabled is False
 
@@ -626,12 +635,7 @@ def test_all_tool_gates_enabled_coerces_quoted_true(monkeypatch):
 
     target_key = _GATEABLE_BUILTINS[0].gate_key
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == target_key:
-            return "true"
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    _patch_gate_config(monkeypatch, tools={target_key: "true"})
     gates = {gate.key: gate for gate in all_tool_gates()}
     assert gates[target_key].enabled is True
 
@@ -641,14 +645,11 @@ def test_all_tool_gates_enabled_passes_through_real_bools(monkeypatch):
     from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        if key == "local_tools_enabled":
-            return True
-        if key == WEB_DEEP_SEARCH_GATE_KEY:
-            return False
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    _patch_gate_config(
+        monkeypatch,
+        console={"local_tools_enabled": True},
+        tools={WEB_DEEP_SEARCH_GATE_KEY: False},
+    )
     gates = {gate.key: gate for gate in all_tool_gates()}
     assert gates["local_tools_enabled"].enabled is True
     assert gates[WEB_DEEP_SEARCH_GATE_KEY].enabled is False
@@ -662,7 +663,7 @@ def test_web_deep_search_gate_key_is_the_relocated_constant_not_a_literal(monkey
     from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
     gate = next(g for g in all_tool_gates() if g.tool_name == "web_deep_search")
     assert gate.key == WEB_DEEP_SEARCH_GATE_KEY
 
@@ -671,8 +672,8 @@ def test_tool_gate_breadcrumb_absent_when_all_gates_are_on(monkeypatch):
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import tool_gate_breadcrumb
 
-    monkeypatch.setattr(
-        config_module, "get_cli_setting", lambda section, key=None, default=None: True
+    _patch_gate_config(
+        monkeypatch, tools=_tools_all_on(), console={"local_tools_enabled": True}
     )
     assert tool_gate_breadcrumb() is None
 
@@ -686,7 +687,7 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
 
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
-    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    _patch_gate_config(monkeypatch)
     gates = all_tool_gates()  # master defaults on; every other gate defaults off
     off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
     text = tool_gate_breadcrumb(gates)
@@ -705,10 +706,9 @@ def test_tool_gate_breadcrumb_names_expanded_principal_when_master_is_off(
         tool_gate_breadcrumb,
     )
 
-    def only_master_off(section, key=None, default=None):
-        return False if key == LOCAL_TOOLS_MASTER_KEY else True
-
-    monkeypatch.setattr(config_module, "get_cli_setting", only_master_off)
+    _patch_gate_config(
+        monkeypatch, tools=_tools_all_on(), console={LOCAL_TOOLS_MASTER_KEY: False}
+    )
 
     text = tool_gate_breadcrumb()
     assert text is not None
@@ -722,6 +722,7 @@ def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
     places — this pin makes silent divergence impossible."""
     from tldw_chatbook.Agents.builtin_tool_gate import _gate_key_pairs, all_tool_gates
 
+    _patch_gate_config(monkeypatch)
     assert [(g.section, g.key) for g in all_tool_gates()] == _gate_key_pairs()
 
 
@@ -737,7 +738,7 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
         raise AssertionError(f"count path constructed a tool: {entry}")
 
     monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
-    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d)
+    _patch_gate_config(monkeypatch)
     off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
     assert builtin_tool_gate.count_off_tool_gates() == off_count
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
@@ -748,22 +749,35 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     assert TOOL_GATES_PANE_PATH in breadcrumb
 
 
-def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
-    """Count and master-state messaging share one coherent config snapshot."""
+def test_tool_gate_breadcrumb_loads_config_once_not_per_gate(monkeypatch):
+    """task-32804.7: the breadcrumb's gate-state read is ONE config load, not
+    one storage-admission-scoped `get_cli_setting` per gate key (~4.8 ms each;
+    the finding measured ~56 ms per Permissions-matrix Space press). Count and
+    master-state messaging share one coherent config snapshot."""
+    import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents import builtin_tool_gate
 
-    reads: list[tuple[str, str]] = []
+    loads = {"n": 0}
+    empty = {"tools": {}, "console": {}}
 
-    def read_gate(section, key, default=None):
-        reads.append((section, key))
-        return default
+    def counting_load(*args, **kwargs):
+        loads["n"] += 1
+        return empty
 
-    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", read_gate)
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", counting_load
+    )
+    # And the per-key reader must not be consulted at all any more.
+    def _no_per_key(*args, **kwargs):
+        raise AssertionError("gate enumeration must not read keys one at a time")
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_per_key)
 
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
 
+    # Empty config -> most gates at their default-off -> a breadcrumb exists.
     assert breadcrumb is not None
-    assert reads == builtin_tool_gate._gate_key_pairs()
+    assert loads["n"] == 1
 
 
 # -- task-32291: session approvals are reviewable and revocable --------------

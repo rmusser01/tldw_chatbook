@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from io import BytesIO
 from typing import Literal
+import functools
 from urllib.parse import unquote, urlparse
 
 from loguru import logger
@@ -25,8 +26,15 @@ from tldw_chatbook.Chat.attachment_core import attachment_filter_specs
 from tldw_chatbook.Utils.path_validation import is_safe_path
 
 
+@functools.lru_cache(maxsize=1)
 def _supported_patterns() -> tuple[str, ...]:
-    """Glob patterns for attachable files, from the call-time picker specs."""
+    """Glob patterns for attachable files, from the picker specs.
+
+    TASK-32804.9: memoized. looks_attachable() calls this per candidate
+    path, and it re-read the attachment config each time (~5 ms/path ->
+    98 ms for a 20-file clipboard paste, on the event loop). The supported
+    formats do not change within a session.
+    """
     return tuple(
         pattern
         for _label, patterns in attachment_filter_specs()

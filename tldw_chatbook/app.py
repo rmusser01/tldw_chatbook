@@ -2807,15 +2807,21 @@ class LibraryIngestQueueMixin:
         coordinator (and therefore never touches SQLite) synchronously inside
         the registry mutation.
         """
-        jobs = self.library_ingest_jobs.jobs()
-        self._research_source_terminal_jobs_scheduled.intersection_update(
-            job.job_id for job in jobs
-        )
+        # TASK-32804.5: this listener fires on every registry mutation. Run
+        # the cheap early-returns BEFORE touching the queue, and iterate the
+        # jobs WITHOUT the per-job deep copy jobs() makes (read-only here) --
+        # a 1,000-file folder import fired this per file, each deep-copying
+        # the whole queue (O(n^2), 1.65 s).
         if self._research_source_restore_in_progress:
             return
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is None:
             return
+        jobs = list(self.library_ingest_jobs.iter_jobs_for_listeners())
+        if self._research_source_terminal_jobs_scheduled:
+            self._research_source_terminal_jobs_scheduled.intersection_update(
+                job.job_id for job in jobs
+            )
         terminal_states = {
             IngestJobState.DONE,
             IngestJobState.FAILED,

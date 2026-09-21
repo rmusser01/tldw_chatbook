@@ -14257,6 +14257,59 @@ UPDATE db_schema_version
             )
             raise
 
+    def get_message_versions_by_ids(
+        self, message_ids: Iterable[str]
+    ) -> Dict[str, int]:
+        """Return current positive versions for many non-deleted messages.
+
+        task-32804.12 ([D2]): ``_durable_context_snapshots`` read one
+        ``get_message_by_id_without_blob`` per active-path message on the
+        event loop, on every dispatch (N point reads per send on a long
+        conversation). This batches the version projection -- same shape as
+        ``get_conversations_metadata_by_ids`` -- so the snapshot capture is a
+        handful of chunked SELECTs instead of one round trip per message.
+        Deleted rows, and rows whose ``version`` is not a positive integer,
+        are omitted; unknown ids are simply absent from the result (mirroring
+        ``get_message_version``'s per-row validity contract).
+
+        Args:
+            message_ids: Persisted Chat message UUIDs. Duplicates are
+                collapsed; the empty input returns an empty mapping.
+
+        Returns:
+            A mapping of message id to its positive integer row version.
+
+        Raises:
+            CharactersRAGDBError: For database errors during fetching.
+        """
+        ids = list(dict.fromkeys(str(value) for value in message_ids if value))
+        results: Dict[str, int] = {}
+        # SQLite's default host-parameter ceiling is 999; chunk well below it.
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            query = (
+                "SELECT id, version FROM messages "
+                f"WHERE id IN ({placeholders}) AND deleted = 0"
+            )
+            cursor = None
+            try:
+                cursor = self.execute_query(query, tuple(chunk))
+                for row in cursor.fetchall():
+                    version = row["version"]
+                    if type(version) is int and version >= 1:
+                        results[str(row["id"])] = version
+            except CharactersRAGDBError as e:
+                logger.error(
+                    "Database error fetching message version batch error_type={}",
+                    type(e).__name__,
+                )
+                raise
+            finally:
+                if cursor is not None:
+                    cursor.close()
+        return results
+
     def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
         """Replace the extra attachments (positions >= 1) for a message.
 

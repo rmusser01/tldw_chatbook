@@ -1880,13 +1880,18 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-actions",
             "#file-notes-git-push-actions",
         )
-        if any(not list(self.query(selector)) for selector in selectors):
+        # TASK-32804.11: the existence probe (a self.query per selector,
+        # ~1.4 ms) guarded ~0.03 ms of work and ran per keypress/resize and
+        # 3x per set_mutating. Compute directly and let a missing selector
+        # fall through NoMatches, as :2788 already does.
+        try:
+            needs_stack = any(
+                self._visible_action_cells(selector)
+                > self._action_row_width(selector, width)
+                for selector in selectors
+            )
+        except NoMatches:
             return
-        needs_stack = any(
-            self._visible_action_cells(selector)
-            > self._action_row_width(selector, width)
-            for selector in selectors
-        )
         self.set_class(needs_stack, "-stack-actions")
 
     def _sync_commit_footer_layout(self, width: int) -> None:

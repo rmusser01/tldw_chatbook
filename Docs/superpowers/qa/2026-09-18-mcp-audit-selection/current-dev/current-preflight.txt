@@ -1,0 +1,42 @@
+preflight: using .venv/bin/python (3.12.11)
+
+=== generated stylesheets ===
+CSS bundle reproduces from its source modules.
+widget_defaults_self.tcss reproduces from its Python sources.
+widget_defaults_scoped.tcss reproduces from its Python sources.
+screen_css_self.tcss reproduces from its Python sources.
+screen_css_scoped.tcss reproduces from its Python sources.
+screen_agentic_library.tcss reproduces from its Python sources.
+screen_agentic_settings.tcss reproduces from its Python sources.
+screen_feature_evals.tcss reproduces from its Python sources.
+screen_feature_scheduling.tcss reproduces from its Python sources.
+screen_feature_workflows.tcss reproduces from its Python sources.
+screen_feature_watchlists.tcss reproduces from its Python sources.
+
+=== Canvas Mermaid generated assets ===
+Canvas Mermaid assets reproduce: 6 outputs
+
+=== profile-owned path census ===
+profile-owned path census verified: 54 executable occurrence(s) across 22 file(s), all matched by 51 approved exceptions.
+
+=== production diagnostic inventory ===
+diagnostic inventory verified: 605 owners, 1355 TASK-492 calls, 55 TASK-31551 calls, 7708 TASK-494 calls, 14 sink files
+
+=== backlog task ids ===
+No duplicate task IDs across 4302 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+
+=== chachanotes table allowlist ===
+chachanotes: 116 declared tables, all present in VALID_TABLES['chachanotes'].
+
+=== index plan pins ===
+index plan pins: 304 index names declared under tldw_chatbook/DB, 304 census rows, 86 plan-pinned.
+check_index_plan_pins: OK
+
+=== textual worker contract ===
+textual worker contract: no synchronous run_worker targets; 269 post-await DOM lookup(s) in 136 function(s), none new; 3 baseline lookup(s) resolved.
+
+=== timestamp writers ===
+timestamp writers: 0 datetime.utcnow() site(s), 0 naive datetime.now().isoformat() occurrence(s) (0 pinned).
+check_timestamp_writers: OK
+
+preflight: all derived-artifact checks passed.

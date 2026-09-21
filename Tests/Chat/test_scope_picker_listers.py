@@ -446,3 +446,47 @@ async def test_v6_listers_return_full_universe_with_no_visibility_wrapper(
 
     assert media_seen == {str(mid) for mid in media_ids}
     assert notes_seen == note_ids
+
+
+# -- task-32804.12: tag-usage vocabulary is built once per modal ---------------
+
+
+class _CountingMediaDB:
+    """Fake media_db whose usage-stats scan counts how often it runs."""
+
+    def __init__(self, stats):
+        self._stats = stats
+        self.calls = 0
+
+    def get_keyword_usage_stats(self):
+        self.calls += 1
+        return self._stats
+
+
+class _FakeTagApp:
+    def __init__(self, media_db=None, chachanotes_db=None):
+        self.media_db = media_db
+        self.chachanotes_db = chachanotes_db
+
+
+@pytest.mark.asyncio
+async def test_keyword_tag_lister_builds_usage_counts_once_per_modal():
+    """The query-independent usage vocabulary must be scanned once, then reused
+    for each keystroke's substring filter (task-32804.12)."""
+    media = _CountingMediaDB(
+        [
+            {"keyword": "alpha", "usage_count": 5},
+            {"keyword": "beta", "usage_count": 3},
+            {"keyword": "alpine", "usage_count": 1},
+        ]
+    )
+    lister = build_keyword_tag_lister(_FakeTagApp(media_db=media))
+
+    first = await lister("alp")  # builds the vocabulary, filters to alp*
+    second = await lister("be")  # must REUSE the vocabulary
+    third = await lister("")  # empty query -> whole (capped) vocabulary
+
+    assert media.calls == 1, "usage scan re-ran per query instead of once per modal"
+    assert [t.tag for t in first] == ["alpha", "alpine"]  # usage desc, then name
+    assert [t.tag for t in second] == ["beta"]
+    assert {t.tag for t in third} == {"alpha", "beta", "alpine"}

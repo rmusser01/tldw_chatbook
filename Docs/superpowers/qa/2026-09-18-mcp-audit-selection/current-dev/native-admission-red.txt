@@ -1,0 +1,136 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 20, in main
+E         root = Path(sys.argv[1]).resolve()
+E                     ~~~~~~~~^^^
+E     IndexError: list index out of range
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in main\n    root = Path(sys.argv[1]).resolve()\n                ~~~~~~~~^^^\nIndexError: list index out of range\n').returncode
+---------------------------- Captured stderr setup -----------------------------
+2026-09-21 00:16:55.121 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-21 00:16:55.198 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_99bh3g6h/config/config.toml
+2026-09-21 00:16:55.198 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_99bh3g6h/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-21 00:16:55.200 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_99bh3g6h/config/config.toml
+2026-09-21 00:16:55.200 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6248 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-21 00:16:55.201 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6252 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-21 00:16:55.214 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-21 00:16:55.215 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-21 00:16:55.217 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1890 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-21 00:16:55.218 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2211 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-21 00:16:55.261 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_99bh3g6h/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-21 00:16:55.262 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3445 - load_settings: Configuration cached for future use
+2026-09-21 00:16:55.263 | INFO     | tldw_chatbook.config:<module>:9768 - Default API Endpoint (from config.py global scope): openai
+2026-09-21 00:16:55.263 | DEBUG    | tldw_chatbook.config:<module>:9791 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-21 00:16:55.457 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-21 00:16:55.670 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-21 00:16:55.775 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-21 00:16:55.787 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-21 00:16:55.789 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 21, in main
+E         socket, session = sys.argv[2:4]
+E         ^^^^^^^^^^^^^^^
+E     ValueError: not enough values to unpack (expected 2, got 0)
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...  socket, session = sys.argv[2:4]\n    ^^^^^^^^^^^^^^^\nValueError: not enough values to unpack (expected 2, got 0)\n').returncode
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 24, in main
+E         runpy.run_path(
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E         database = config["database"]
+E                    ~~~~~~^^^^^^^^^^^^
+E     KeyError: 'database'
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in validate_profile\n    database = config["database"]\n               ~~~~~~^^^^^^^^^^^^\nKeyError: \'database\'\n').returncode
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 24, in main
+E         runpy.run_path(
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E         database = config["database"]
+E                    ~~~~~~^^^^^^^^^^^^
+E     KeyError: 'database'
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in validate_profile\n    database = config["database"]\n               ~~~~~~^^^^^^^^^^^^\nKeyError: \'database\'\n').returncode
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 24, in main
+E         runpy.run_path(
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E         database = config["database"]
+E                    ~~~~~~^^^^^^^^^^^^
+E     KeyError: 'database'
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in validate_profile\n    database = config["database"]\n               ~~~~~~^^^^^^^^^^^^\nKeyError: \'database\'\n').returncode
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 24, in main
+E         runpy.run_path(
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E         database = config["database"]
+E                    ~~~~~~^^^^^^^^^^^^
+E     KeyError: 'database'
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in validate_profile\n    database = config["database"]\n               ~~~~~~^^^^^^^^^^^^\nKeyError: \'database\'\n').returncode
+_ test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-selection] _
+Tests/Utils/test_mcp_native_qa_args.py:87: in test_invalid_cli_exits_with_usage_without_touching_profile
+    assert result.returncode == 2, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 351, in <module>
+E         main()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py", line 24, in main
+E         runpy.run_path(
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E         database = config["database"]
+E                    ~~~~~~^^^^^^^^^^^^
+E     KeyError: 'database'
+E
+E   assert 1 == 2
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven..., in validate_profile\n    database = config["database"]\n               ~~~~~~^^^^^^^^^^^^\nKeyError: \'database\'\n').returncode
+============================= slowest 25 durations =============================
+1.28s setup    Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-selection]
+
+(20 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-selection]
+FAILED Tests/Utils/test_mcp_native_qa_args.py::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-selection]
+7 failed, 119 deselected in 2.05s

@@ -807,6 +807,30 @@ def save_marks_needs_review(trust_status: str, trust_blocked: bool) -> bool:
     return trust_status == "trusted" and not trust_blocked
 
 
+def skill_trust_header_has_skills(
+    trust_posture: str,
+    *,
+    source_summary_fresh: bool,
+    has_rows: bool,
+    has_title_count: bool,
+    blocked_total: int,
+) -> bool:
+    """Whether the Skills trust header should treat the store as populated.
+
+    ``recovery_review`` ALWAYS shows the header -- its 'Review restored
+    skills' banner is the only list-level recovery entry point. Otherwise
+    the header appears once a fresh source summary reports rows, a title
+    count, or blocked skills. TASK-32804.11: the compose path and
+    ``sync_state``'s header-only in-place update both derive this; sharing
+    it here stops them disagreeing -- the in-place copy omitted the
+    ``recovery_review`` disjunct and dropped the recovery banner when the
+    posture settled during a routine refresh.
+    """
+    return trust_posture == "recovery_review" or (
+        source_summary_fresh and (has_rows or has_title_count or blocked_total > 0)
+    )
+
+
 def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str] | None:
     """Return (copy, action_id) for the Skills-list trust header, or None to hide.
 
