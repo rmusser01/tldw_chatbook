@@ -13,7 +13,7 @@ from threading import RLock
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from loguru import logger
-from rich.markup import escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob

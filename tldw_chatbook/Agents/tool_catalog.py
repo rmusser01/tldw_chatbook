@@ -233,6 +233,82 @@ def build_spawn_schema(
     )
 
 
+def build_chat_create_schema(
+    base: ToolSchema,
+    definitions: Sequence[AgentDefinition],
+    *,
+    override_enabled: bool = False,
+    override_targets: Sequence[tuple[str, tuple[str, ...]]] = (),
+) -> ToolSchema:
+    """A chat-creation tool's schema for THIS run (TASK-32874).
+
+    Mirrors ``build_spawn_schema``'s ADR-147 pattern: returns ``base``
+    itself when there is nothing to add (byte-identical disclosure for
+    every pre-routing caller). Adds an OPTIONAL ``preset`` string arg --
+    enum + prose roster -- when named definitions carry routing
+    (provider/model); their sub-agent task fields are irrelevant here,
+    only the routing rides. When ``spawn_override_enabled``, also adds the
+    OPTIONAL ``provider``/``model`` ad-hoc args with the allowlisted
+    targets enumerated (identity only).
+
+    Args:
+        base: ``FORK_CHAT_TOOL_SCHEMA`` or ``NEW_CHAT_TOOL_SCHEMA``.
+        definitions: This turn's named agent presets (may be empty).
+        override_enabled: Whether ad-hoc provider/model args are offered.
+        override_targets: Allowlisted ``(provider, models)`` pairs.
+
+    Returns:
+        ``base`` itself when nothing to add, else a new ToolSchema sharing
+        its id/name/description.
+    """
+    routed = tuple(d for d in definitions if (d.provider or d.model))
+    if not routed and not override_enabled:
+        return base
+    properties: dict[str, Any] = {
+        name: dict(spec)
+        for name, spec in base.parameters["properties"].items()
+    }
+    if routed:
+        roster = "\n".join(
+            f"- {d.name} (runs on {d.provider or 'parent'}"
+            f" / {d.model or 'default model'})"
+            for d in routed
+        )
+        properties["preset"] = {
+            "type": "string",
+            "enum": [d.name for d in routed],
+            "description": (
+                "Optional: create the chat with this named profile's "
+                "provider/model routing:\n" + roster
+            ),
+        }
+    if override_enabled:
+        properties["provider"] = {
+            "type": "string",
+            "description": _override_provider_description(override_targets),
+        }
+        properties["model"] = {
+            "type": "string",
+            "description": (
+                "Optional: the model for the new chat on the chosen "
+                "provider. Prefer one of the models enumerated under your "
+                "chosen provider above; an unlisted model is still accepted "
+                "when it matches an allowlist glob (globs are not expanded "
+                "here) and refused otherwise."
+            ),
+        }
+    return ToolSchema(
+        id=base.id,
+        name=base.name,
+        description=base.description,
+        parameters={
+            "type": "object",
+            "properties": properties,
+            "required": list(base.parameters.get("required") or []),
+        },
+    )
+
+
 def _spawn_roster_line(d: AgentDefinition) -> str:
     """One roster line; ADR-147 routing suffix only when routed."""
     line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"

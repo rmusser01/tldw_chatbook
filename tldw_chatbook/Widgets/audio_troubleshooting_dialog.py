@@ -223,7 +223,11 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
 
     def on_mount(self):
         """Initialize when dialog is shown."""
-        self.run_worker(self._initialize_audio())
+        # _initialize_audio is @work-decorated: calling it already creates
+        # and starts the worker. Re-passing that Worker to run_worker always
+        # raised WorkerError (TASK-32830), so the device scan never
+        # completed cleanly on any mount path.
+        self._initialize_audio()
 
     @work(exclusive=True, group="audio-troubleshooting-initialize")
     async def _initialize_audio(self):
@@ -243,9 +247,20 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
             await asyncio.sleep(0.5)  # Brief delay for UI
 
             try:
-                self.audio_devices = await self.run_worker(
-                    self._get_devices_safe
-                ).wait()
+                # thread=True is required, not optional: `_get_devices_safe`
+                # is a plain `def` (a blocking sounddevice enumeration), and
+                # Textual's async worker raises WorkerError for a non-coroutine
+                # target, so the device scan never completes. `exit_on_error`
+                # also defaults to True, so without thread=True the dialog takes
+                # the whole app down when it opens. The enumeration blocks and
+                # belongs off the loop anyway. group= dedups concurrent opens
+                # (TASK-32800.3 / TASK-32830).
+                devices_worker = self.run_worker(
+                    self._get_devices_safe,
+                    thread=True,
+                    group="audio-troubleshooting-devices",
+                )
+                self.audio_devices = await devices_worker.wait()
 
                 if self.audio_devices:
                     self._update_device_list()

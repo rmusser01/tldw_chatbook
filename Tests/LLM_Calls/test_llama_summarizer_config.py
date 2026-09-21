@@ -43,12 +43,17 @@ def captured_post(monkeypatch):
         def mount(self, *_args, **_kwargs):
             pass
 
-        def post(self, url, headers=None, json=None, stream=False):
+        def post(self, url, headers=None, json=None, stream=False, **kwargs):
             captured["url"] = url
             captured["json"] = json
             return _FakeResponse()
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _FakeSession())
+    # TASK-32854: llama posts through the shared _post_with_retry transport
+    # in Summarization_General_Lib, so the session seam moves there too
+    # (kept on BOTH modules while the remaining local handlers migrate).
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _FakeSession())
     return captured
 
 
@@ -163,6 +168,10 @@ def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
             return _FakeResponse()
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "SUMMARY"
 
@@ -180,6 +189,8 @@ def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypat
             return _FakeResponse({"content": " NATIVE "})
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "NATIVE"
 
@@ -197,6 +208,8 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
             return _FakeResponse({"unexpected": True})
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -263,6 +276,8 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
             )
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
 
@@ -291,7 +306,7 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
         def mount(self, *_a, **_k):
             pass
 
-        def post(self, url, headers=None, json=None, stream=False):
+        def post(self, url, headers=None, json=None, stream=False, **kwargs):
             seen["max_tokens"] = json["max_tokens"]
             return _FakeResponse(
                 {
@@ -310,6 +325,8 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
             )
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = analyze(
         input_data="a chunk of packed evidence",

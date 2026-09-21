@@ -127,7 +127,31 @@ class ChatCreateConfirmCard(Container):
                 )
         run_id = self._payload.get("run_id")
         if run_id:
-            lines.append(f"Requested by agent run {run_id}.")
+            from tldw_chatbook.Agents.agent_models import AGENT_KIND_SUBAGENT
+
+            who = "agent run"
+            if str(self._payload.get("agent_kind") or "") == AGENT_KIND_SUBAGENT:
+                who = "SUB-AGENT run"
+            lines.append(f"Requested by {who} {run_id}.")
+            bits = []
+            if self._payload.get("parent_run_id"):
+                bits.append(f"parent run {self._payload['parent_run_id']}")
+            if self._payload.get("agent_task"):
+                bits.append(f"task: {self._payload['agent_task']}")
+            if bits:
+                lines.append("(" + "; ".join(bits) + ")")
+        target_bits = []
+        if self._payload.get("preset"):
+            target_bits.append(f"preset '{self._payload['preset']}'")
+        if self._payload.get("provider"):
+            target_bits.append(
+                f"provider {self._payload['provider']}"
+                + (f" / {self._payload['model']}" if self._payload.get("model") else "")
+            )
+        elif self._payload.get("model"):
+            target_bits.append(f"model {self._payload['model']}")
+        if target_bits:
+            lines.append("Runs on: " + ", ".join(target_bits))
         if self._payload.get("opening_prompt"):
             lines.append(
                 "Opening prompt (draft for the input box):\n"

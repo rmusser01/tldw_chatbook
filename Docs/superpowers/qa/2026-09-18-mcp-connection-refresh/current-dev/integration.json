@@ -1,0 +1,30 @@
+{
+  "base": "5e0f9f82c3dc5673ddba47415b490e61a0e192cb",
+  "saved_pr": 2714,
+  "saved_head": "970f568c2fab5266ccd6c6ac8b403fff617d136e",
+  "service_patch_applied_without_conflicts": true,
+  "production_files": [
+    "tldw_chatbook/MCP/local_control_service.py"
+  ],
+  "ui_or_css_changes": false,
+  "new_adr_required": false,
+  "existing_adrs": [
+    111,
+    161
+  ],
+  "historical_task_id_collision": false,
+  "qodo_rebase": {
+    "base": "7bfd3300465c67e28580dda710a35b6746e3ef69",
+    "conflicts": false,
+    "mcp_ui_css_overlap": false,
+    "native_tested_head": "1ad83a1dbe25bd0e5cce465db7720cf3a4e0aec4",
+    "later_source_change": "Only corrected public docstring; executable AST identical, see native-doc-only-change.json."
+  },
+  "qodo_second_pass": {
+    "base": "7bfd3300465c67e28580dda710a35b6746e3ef69",
+    "native_tested_head": "8a749cc5bf647939094478ae7ca588134f65f36e",
+    "conflicts": false,
+    "production_scope": "Canonical stored IDs and retained-owner postcondition in existing local service only.",
+    "exact_source_hashes": true
+  }
+}

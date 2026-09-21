@@ -1,0 +1,24 @@
+{
+  "inspected": [
+    "textual-dark-170x48-cancel.svg",
+    "textual-dark-170x48-confirm.svg",
+    "textual-dark-170x48-launch.svg",
+    "textual-dark-170x48-paths.svg",
+    "textual-dark-80x24-cancel.svg",
+    "textual-dark-80x24-confirm.svg",
+    "textual-dark-80x24-launch.svg",
+    "textual-dark-80x24-paths.svg",
+    "textual-light-170x48-cancel.svg",
+    "textual-light-170x48-confirm.svg",
+    "textual-light-170x48-launch.svg",
+    "textual-light-170x48-paths.svg",
+    "textual-light-80x24-cancel.svg",
+    "textual-light-80x24-confirm.svg",
+    "textual-light-80x24-launch.svg",
+    "textual-light-80x24-paths.svg"
+  ],
+  "outcome": "All 16 native captures inspected: compact/wide, dark/light; paths left aligned and readable, focus visible, both action labels complete. No product adjustment required.",
+  "native_run": "002",
+  "source_hashes_match": true,
+  "runner_hash_matches": true
+}

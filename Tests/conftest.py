@@ -933,6 +933,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "slow: Tests that take more than 1 second")
     config.addinivalue_line(
+        "markers",
+        "bootstrap_profile: keep the collection-time profile instead of the per-test sandbox (config-participant admission)",
+    )
+    config.addinivalue_line(
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
@@ -1034,10 +1038,51 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     # Source-bound consumers retain the private profile selected at collection.
     # These MCP widget modules also use imported real config getters; their
     # per-case config fakes and database cleanup remain in the existing fixtures.
+    # The hosted-chat/QwenCloud transport contract tests (TASK-19642.10) are in
+    # the same class: owned_json_post/qwencloud build real sessions through
+    # create_default_session(), whose default-timeout and TLS-trust reads go
+    # through the config-participant admission (TASK-32628). Under the per-test
+    # env redirect the bound config selection no longer matches and admission
+    # fails closed with RecoveryRequired("raw_source_selection_changed"), so
+    # 20 transport contract nodes went red the day that admission landed. They
+    # fake the transport itself, not the config getters, so they keep the
+    # bootstrap profile like the MCP widgets do. The summarization suites
+    # (TASK-32853) are the same class: every summarize_with_* handler reads
+    # provider settings through get_cli_setting on its hot path, and their
+    # broad excepts turn the admission failure into an error STRING, so the
+    # 119 pre-existing reds (91 diagnostic-privacy + 28 model-capabilities,
+    # failing since TASK-32628 landed) are this exact signature swallowed.
     keep_bootstrap_profile = (
         is_private_profile_child(request)
+        # TASK-32873: per-NODE opt-in for suites that are MOSTLY sandbox
+        # unit tests but contain real-app mounts (the runtime-ownership
+        # suite): mark only the mounting tests.
+        or request.node.get_closest_marker("bootstrap_profile") is not None
         or request.node.path.name in {
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
+            "test_hosted_chat.py", "test_qwencloud.py",
+            "test_groq_openrouter_migration_characterization.py",
+            "test_summarization_diagnostic_privacy.py",
+            "test_summarization_model_capabilities.py",
+            # TASK-32853/32854: the analyze boundary and the local config
+            # suites read provider settings through get_cli_setting on their
+            # hot paths (same admission signature as the two above).
+            "test_summarization_analyze.py",
+            "test_llama_summarizer_config.py",
+            "test_kobold_tabby_config.py",
+            "test_custom_openai_credential_resolution.py",
+            "test_summarization_request_timeouts.py",
+            # TASK-32873: the runtime-ownership and viewless suites mount
+            # real apps end to end; same config-participant admission
+            # signature as above. (The few pure-unit tests inside the
+            # ownership suite were fixed to be profile-agnostic.)
+            "test_console_runtime_ownership.py",
+            "test_console_viewless_hooks.py",
+            # TASK-32873: same signature, discovered while re-verifying --
+            # install_skill dispatch drives scripted agent runs whose config
+            # reads go through the config-participant admission.
+            "test_install_skill_runtime_tool.py",
+            "test_console_chat_create_integration.py",
         }
     )
     test_data_dir = (

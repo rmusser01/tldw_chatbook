@@ -1,0 +1,277 @@
+F..FF.F..                                                                [100%]
+=================================== FAILURES ===================================
+_____ test_refresh_discovers_changes_and_preserves_connection_state[True] ______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_discovers_changes0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _____ test_refresh_discovers_changes_and_preserves_connection_state[True] ______
+E
+E   request = <FixtureRequest for <Coroutine test_refresh_discovers_changes_and_preserves_connection_state[True]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_discovers_changes0/private-profile-process/pytest/test_refresh_discovers_changes0')
+E   connected = True
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("connected", [True, False])
+E       @private_profile_test
+E       async def test_refresh_discovers_changes_and_preserves_connection_state(
+E           request, tmp_path, connected
+E       ):
+E           async with profile(tmp_path) as (service, client, store, policy, state, trace):
+E               await service.connect_profile("catalog")
+E               original_process = client.sessions["catalog"].process
+E               if not connected:
+E                   await service.disconnect_profile("catalog")
+E               state.write_text(json.dumps({"version": "updated"}))
+E               snapshot = await service.refresh_external_profile("catalog")
+E   >           assert_catalog(snapshot, "updated")
+E
+E   Tests/MCP/test_profile_refresh.py:80:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   snapshot = {'args': ['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Tests/MCP/fixture...14:09:21.569242', 'prompts': [{'annotations': {}, 'arguments': [], 'description': '', 'name': 'original_prompt'}], ...}
+E   version = 'updated'
+E
+E       def assert_catalog(snapshot, version):
+E   >       assert [tool["name"] for tool in snapshot["tools"]] == [f"{version}_tool"]
+E   E       AssertionError: assert ['original_tool'] == ['updated_tool']
+E   E
+E   E         At index 0 diff: 'original_tool' != 'updated_tool'
+E   E         Use -v to get more diff
+E
+E   Tests/MCP/test_profile_refresh.py:60: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 14:09:21.237 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-20 14:09:21.339 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 14:09:21.423 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 14:09:21.466 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 14:09:21.467 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 14:09:21.510 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E   2026-09-20 14:09:21.584 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E   2026-09-20 14:09:21.585 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E   2026-09-20 14:09:21.646 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E   2026-09-20 14:09:21.646 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_discovers_changes0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+E   1 failed in 1.06s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 14:09:20.146 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-20 14:09:20.319 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 14:09:20.426 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 14:09:20.467 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 14:09:20.469 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+________ test_refresh_denial_preserves_live_session_and_catalog[launch] ________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_denial_preserves_1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_refresh_denial_preserves_live_session_and_catalog[launch] ________
+E
+E   request = <FixtureRequest for <Coroutine test_refresh_denial_preserves_live_session_and_catalog[launch]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_denial_preserves_1/private-profile-process/pytest/test_refresh_denial_preserves_0')
+E   action = 'launch'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("action", ["observe", "launch"])
+E       @private_profile_test
+E       async def test_refresh_denial_preserves_live_session_and_catalog(
+E           request, tmp_path, action
+E       ):
+E           async with profile(tmp_path) as (service, client, store, policy, state, trace):
+E               before = await service.connect_profile("catalog")
+E               session = client.sessions["catalog"]
+E               wire_before = trace.read_text()
+E               state.write_text(json.dumps({"version": "updated"}))
+E               policy.denied = f"mcp.external_profiles.{action}.local"
+E   >           with pytest.raises(PermissionError, match=policy.denied):
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E           Failed: DID NOT RAISE <class 'PermissionError'>
+E
+E   Tests/MCP/test_profile_refresh.py:105: Failed
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 14:09:25.814 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-20 14:09:25.924 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 14:09:26.014 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 14:09:26.057 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 14:09:26.059 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 14:09:26.099 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E   2026-09-20 14:09:26.169 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E   2026-09-20 14:09:26.169 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E   2026-09-20 14:09:26.224 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E   2026-09-20 14:09:26.225 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_refresh_denial_preserves_1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+E   1 failed in 0.97s
+_______ test_failed_refresh_preserves_saved_catalog_and_can_retry[True] ________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_failed_refresh_preserves_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_failed_refresh_preserves_saved_catalog_and_can_retry[True] ________
+E
+E   request = <FixtureRequest for <Coroutine test_failed_refresh_preserves_saved_catalog_and_can_retry[True]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_failed_refresh_preserves_0/private-profile-process/pytest/test_failed_refresh_preserves_0')
+E   connected = True
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("connected", [True, False])
+E       @private_profile_test
+E       async def test_failed_refresh_preserves_saved_catalog_and_can_retry(
+E           request, tmp_path, connected
+E       ):
+E           async with profile(tmp_path) as (service, client, store, _policy, state, _trace):
+E               before = await service.connect_profile("catalog")
+E               original_process = client.sessions["catalog"].process
+E               if not connected:
+E                   await service.disconnect_profile("catalog")
+E               state.write_text(json.dumps({"version": "updated", "fail": True}))
+E   >           with pytest.raises(RuntimeError, match="Failed to connect profile"):
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E           Failed: DID NOT RAISE <class 'RuntimeError'>
+E
+E   Tests/MCP/test_profile_refresh.py:125: Failed
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 14:09:27.314 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-20 14:09:27.420 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 14:09:27.511 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 14:09:27.552 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 14:09:27.555 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 14:09:27.598 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E   2026-09-20 14:09:27.661 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E   2026-09-20 14:09:27.662 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E   2026-09-20 14:09:27.717 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E   2026-09-20 14:09:27.717 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_failed_refresh_preserves_0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+E   1 failed in 1.01s
+_________ test_disconnected_refresh_cleans_up_if_saving_catalog_fails __________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_disconnected_refresh_clea0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _________ test_disconnected_refresh_cleans_up_if_saving_catalog_fails __________
+E
+E   request = <FixtureRequest for <Coroutine test_disconnected_refresh_cleans_up_if_saving_catalog_fails>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_disconnected_refresh_clea0/private-profile-process/pytest/test_disconnected_refresh_clea0')
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a9cdfd0>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_disconnected_refresh_cleans_up_if_saving_catalog_fails(
+E           request, tmp_path, monkeypatch
+E       ):
+E           async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+E
+E               def fail_save(*args):
+E                   raise OSError("disk unavailable")
+E
+E               monkeypatch.setattr(store, "save_discovery_snapshot", fail_save)
+E               with pytest.raises(OSError, match="disk unavailable"):
+E                   await service.refresh_external_profile("catalog")
+E   >           assert not client.sessions
+E   E           AssertionError: assert not {'catalog': <tldw_chatbook.MCP.client._StdioJSONRPCConnection object at 0x10d576e70>}
+E   E            +  where {'catalog': <tldw_chatbook.MCP.client._StdioJSONRPCConnection object at 0x10d576e70>} = <tldw_chatbook.MCP.client.MCPClient object at 0x10cef3650>.sessions
+E
+E   Tests/MCP/test_profile_refresh.py:151: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 14:09:30.330 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-20 14:09:30.423 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 14:09:30.501 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 14:09:30.540 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 14:09:30.542 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 14:09:30.573 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E   2026-09-20 14:09:30.649 | INFO     | tldw_chatbook.MCP.client:_discover_server_capabilities:1357 - Discovered MCP capabilities: 1 tools, 1 resources, 1 prompts
+E   2026-09-20 14:09:30.650 | INFO     | tldw_chatbook.MCP.client:connect_to_server:1283 - Successfully connected to MCP server: catalog
+E   2026-09-20 14:09:30.651 | WARNING  | tldw_chatbook.MCP.client:_mark_reader_unavailable:776 - MCP transport unavailable
+E   2026-09-20 14:09:30.651 | INFO     | tldw_chatbook.MCP.client:disconnect_from_server:1322 - Disconnected from MCP server: catalog
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-904/test_disconnected_refresh_clea0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/MCP/test_profile_refresh.py::test_disconnected_refresh_cleans_up_if_saving_catalog_fails
+E   1 failed in 0.89s
+============================= slowest 25 durations =============================
+1.55s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]
+1.55s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[False]
+1.55s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+1.49s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[observe]
+1.47s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+1.44s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+1.39s call     Tests/MCP/test_profile_refresh.py::test_disconnected_refresh_cleans_up_if_saving_catalog_fails
+1.25s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+1.15s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+FAILED Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+FAILED Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+FAILED Tests/MCP/test_profile_refresh.py::test_disconnected_refresh_cleans_up_if_saving_catalog_fails
+4 failed, 5 passed in 13.99s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4e2815a2-1381-4fca-a76f-572b4dbbbf10/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4e2815a2-1381-4fca-a76f-572b4dbbbf10/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4e2815a2-1381-4fca-a76f-572b4dbbbf10
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4e2815a2-1381-4fca-a76f-572b4dbbbf10'
+  warnings.warn(

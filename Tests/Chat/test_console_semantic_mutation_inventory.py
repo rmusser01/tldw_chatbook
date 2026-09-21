@@ -97,7 +97,6 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Character_Chat/Character_Chat_Lib.py::start_new_chat_session::call:db:add_message",
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.create_character_chat_message::call:db:add_message",
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.update_character_chat_message::call:db:update_message",
-            "tldw_chatbook/Chat/Chat_Functions.py::save_chat_history_to_db_wrapper::call:persistence:save_history",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_attachment::call:db:append_message_attachment_with_metadata",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars",
@@ -158,7 +157,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_metadata::call:db:update_message_metadata_local",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_usage::call:db:update_message_usage_local",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.write_trajectory_rows::call:db:upsert_trajectory_rows",
-            "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_locked::call:persistence:append_message_exchanges",
+            "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_admitted::call:persistence:append_message_exchanges",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_metadata_only::call:persistence:update_message_metadata",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_usage_only::call:persistence:update_message_usage",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.commit_full_capture_purge::call:persistence:delete_full_exchanges_for_conversation",
@@ -2780,7 +2779,7 @@ def test_boundary_scanner_resolves_roleplay_projection_writer_carrier() -> None:
 def test_boundary_scanner_resolves_reviewed_residual_writer_routes() -> None:
     expected = {
         "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._discard_provider_continuation::call:db:update_provider_continuation",
-        "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_locked::call:persistence:append_message_exchanges",
+        "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_admitted::call:persistence:append_message_exchanges",
         "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_metadata_only::call:persistence:update_message_metadata",
         "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_usage_only::call:persistence:update_message_usage",
         "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._promote_ephemeral_session_atomically::call:persistence:promote_console_conversation_bundle",
@@ -2813,7 +2812,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 67,
+        "model-visible": 66,
         "visibility/ownership-only": 12,
         "presentation-only": 26,
     }

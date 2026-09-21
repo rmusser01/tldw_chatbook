@@ -4,11 +4,10 @@
 
 Library is where everything the app knows about lives: media you've
 imported, conversations from Console, notes, prompts, skills, and
-Collections — plus search and RAG over all of it, and the import/export
+Collections, registered Chatbooks, and reports — plus search and RAG over all of it, and the import/export
 tools that move content in and out. Reach for it to add source material,
 find something you saved, or hand a bundle of sources off to Console or
-Study. This page is the orientation tour; the details live on eight child
-pages:
+Study. This page is the orientation tour; the details live on these pages:
 
 - [Media & conversations](library/media-and-conversations.md) — browse imported media (with the media viewer) and your Console conversations.
 - [Notes](library/notes.md) — the notes list, editor, templates, reviewed import, and lasting folder sync.
@@ -17,12 +16,14 @@ pages:
 - [Skills](library/skills.md) — skill packs: import, editing, and the trust/approval flow.
 - [Collections](library/collections.md) — the Quick Capture reading list: saved web captures, highlights, and the legacy-records recovery path.
 - [Search & RAG](library/search-and-rag.md) — the Library Search/RAG canvas, evidence, and the Console handoff.
+- [Artifacts](artifacts.md) — registered Chatbooks, all reports, kept copies, and sharing.
 - [Import & export](library/import-and-export.md) — the Import media flow and the Export bundle (.zip) canvas.
 
 ## Getting there
 
 - Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
+- **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter.
 - Old destination names still find it: the six retired screens —
   **notes**, **prompts**, **skills**, **ingest**, **research**, and
   **media** — now live inside Library, and typing any of them into the

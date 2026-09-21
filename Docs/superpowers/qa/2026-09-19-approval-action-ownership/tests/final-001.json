@@ -1,0 +1,92 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[fast-approve]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[fast-deny]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_submitted_round_stays_inert_but_a_fresh_round_can_submit",
+      "status": "passed"
+    }
+  ]
+}

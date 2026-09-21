@@ -1,0 +1,22 @@
+{
+  "baseline": "ad0f76e23b8737904f24eb34760bbee9ac01a04c",
+  "failed": 4,
+  "cases": [
+    {
+      "name": "test_catalog_filter_theme_and_resize_keep_header_and_selection[False]",
+      "failure": "AssertionError: (' Tool  State  Server  Schema                                                                                        ...rver  raw                                                                                                            ')\nassert {0: 0, 1: 6, 2: 13, 3: 21} == {0: 0, 1: 30, 2: 37, 3: 58}\n  \n  Omitting 1 identical items, use -vv to show\n  Differing items:\n  {1: 6} != {1: 30}\n  {2: 13} != {2: 37}\n  {3: 21} != {3: 58}\n  Use -v to get more diff"
+    },
+    {
+      "name": "test_catalog_filter_theme_and_resize_keep_header_and_selection[True]",
+      "failure": "AssertionError: (' Tool  State  Server  Schema                                                                                        ...rver  raw                                                                                                            ')\nassert {0: 0, 1: 6, 2: 13, 3: 21} == {0: 0, 1: 30, 2: 37, 3: 58}\n  \n  Omitting 1 identical items, use -vv to show\n  Differing items:\n  {1: 6} != {1: 30}\n  {2: 13} != {2: 37}\n  {3: 21} != {3: 58}\n  Use -v to get more diff"
+    },
+    {
+      "name": "test_header_painted_before_measurement_aligns_with_new_catalog[textual-dark]",
+      "failure": "AssertionError: (' Tool  State  Server  Tags  Schema                                                                                  ...ver  read-only  raw                                                                                                  ')\nassert {0: 0, 1: 6, ...3, 3: 21, ...} == {0: 0, 1: 28,...5, 3: 57, ...}\n  \n  Omitting 1 identical items, use -vv to show\n  Differing items:\n  {1: 6} != {1: 28}\n  {2: 13} != {2: 35}\n  {3: 21} != {3: 57}\n  {4: 27} != {4: 68}\n  Use -v to get more diff"
+    },
+    {
+      "name": "test_header_painted_before_measurement_aligns_with_new_catalog[textual-light]",
+      "failure": "AssertionError: (' Tool  State  Server  Tags  Schema                                                                                  ...ver  read-only  raw                                                                                                  ')\nassert {0: 0, 1: 6, ...3, 3: 21, ...} == {0: 0, 1: 28,...5, 3: 57, ...}\n  \n  Omitting 1 identical items, use -vv to show\n  Differing items:\n  {1: 6} != {1: 28}\n  {2: 13} != {2: 35}\n  {3: 21} != {3: 57}\n  {4: 27} != {4: 68}\n  Use -v to get more diff"
+    }
+  ]
+}

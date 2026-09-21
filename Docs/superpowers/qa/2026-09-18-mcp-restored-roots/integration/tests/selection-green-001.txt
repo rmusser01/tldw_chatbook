@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 120.0s
+timeout method: signal
+timeout func_only: False
+collected 22 items / 18 deselected / 4 selected
+
+Tests/Backup_Recovery/test_mcp_recovery_publication.py ....              [100%]
+
+------ generated xml file: /private/tmp/mcp-roots-selection-green-001.xml ------
+============================= slowest 25 durations =============================
+4.76s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]
+3.90s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_profile]
+3.88s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row]
+3.55s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]
+
+(8 durations < 1s hidden.)
+====================== 4 passed, 18 deselected in 16.89s =======================

@@ -1,0 +1,46 @@
+{
+  "pid": 6288,
+  "cells": [],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "919f0acb74e1baded36e3772d22745b89368f956dc722a2b02229d6e9376b46f",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c"
+  },
+  "runner_sha256": "606396e7edf8192c845cc43ae08b4060a1bd8fd871b53d23fc02f43582daeca0",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "final disconnect",
+  "first_pid": 6377,
+  "connected_tools": [
+    "original_tool"
+  ],
+  "connected_trace": "{\"pid\": 6377, \"method\": \"initialize\"}\n{\"pid\": 6377, \"method\": \"notifications/initialized\"}\n{\"pid\": 6377, \"method\": \"tools/list\"}\n{\"pid\": 6377, \"method\": \"resources/list\"}\n{\"pid\": 6377, \"method\": \"prompts/list\"}\n",
+  "refreshed_tools": [
+    "original_tool"
+  ],
+  "refresh_pid": 6377,
+  "refreshed_trace": "{\"pid\": 6377, \"method\": \"initialize\"}\n{\"pid\": 6377, \"method\": \"notifications/initialized\"}\n{\"pid\": 6377, \"method\": \"tools/list\"}\n{\"pid\": 6377, \"method\": \"resources/list\"}\n{\"pid\": 6377, \"method\": \"prompts/list\"}\n",
+  "refresh_attempt": {
+    "last_action": "refresh",
+    "last_attempt_at": "2026-09-19T01:58:14.517318+00:00",
+    "last_error": null,
+    "last_ok_at": "2026-09-19T01:58:14.517318+00:00",
+    "ok": true
+  },
+  "first_process_returncode": -15,
+  "second_pid": 6419,
+  "reconnected_tools": [
+    "updated_tool"
+  ],
+  "second_process_returncode": -15,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

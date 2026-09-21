@@ -1,0 +1,66 @@
+/* Artifacts compose the shared reader and standard interactive control states. */
+#library-artifacts-reader-shell {
+    height: $ds-height-fill;
+    width: $ds-width-full;
+}
+#library-artifacts-reader-shell #library-canvas,
+#library-artifacts-work {
+    padding: $ds-space-0 $ds-space-inset;
+}
+#library-artifacts-heading,
+#library-artifacts-title {
+    height: $ds-height-auto;
+    text-style: $ds-text-strong;
+}
+#library-artifacts-retention,
+#library-artifacts-count {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
+}
+.library-artifacts-toolbar {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+}
+.library-artifacts-toolbar Button {
+    width: $ds-width-auto;
+    min-width: $ds-space-0;
+    margin-right: $ds-space-inline;
+}
+#library-artifacts-list,
+#library-artifacts-body {
+    height: $ds-height-fill;
+}
+#library-artifacts-content {
+    height: $ds-height-auto;
+}
+#library-artifacts-body:focus {
+    border: tall $ds-focus-accent;
+}
+#library-artifacts-markdown {
+    height: $ds-height-auto;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+.library-artifacts-share-strip {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-inset;
+}
+#library-artifacts-share-status {
+    width: $ds-width-fill;
+    height: $ds-height-auto;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+.library-artifacts-share-strip Button {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    width: $ds-width-auto;
+    min-width: $ds-space-0;
+    margin-left: $ds-space-inline;
+}
+#library-artifacts-markdown MarkdownHeader {
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+    content-align: left middle;
+}

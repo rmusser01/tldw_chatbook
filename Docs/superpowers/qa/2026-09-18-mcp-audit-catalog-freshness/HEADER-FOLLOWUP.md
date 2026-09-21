@@ -1,5 +1,9 @@
 # Intermittent Tools header alignment — retained follow-up
 
+Follow-up: TASK-32868 now reproduces this ordering on merged dev and qualifies
+a local Tools repair. See [the current evidence and visual review](../2026-09-19-mcp-tools-header/README.md).
+The observations below remain the original discovery record.
+
 During the first current-dev catalog-freshness journey, the light 170×48 Tools
 header painted its labels together at their initial widths while body cells
 used measured widths. Both the SVG and terminal text show the mismatch. The

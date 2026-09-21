@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-restored-roots]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-restored-roots]",
+      "status": "failure"
+    }
+  ]
+}

@@ -17,6 +17,7 @@ from textual.widgets import Button, Checkbox, Select, Static
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
@@ -3392,7 +3393,8 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
 
 
 @pytest.mark.asyncio
-async def test_mcp_destination_footer_shortcuts_follow_mode():
+@private_profile_test
+async def test_mcp_destination_footer_shortcuts_follow_mode(request):
     """F-055: the footer only advertises keys that work in the ACTIVE mode
     -- `t` appears in Tools mode, `space` in Permissions mode, and neither
     leaks into the other modes where pressing it is dead or hijacking."""
@@ -3425,7 +3427,10 @@ async def test_mcp_destination_footer_shortcuts_follow_mode():
 
 
 @pytest.mark.asyncio
-async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume():
+@private_profile_test
+async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume(
+    request,
+):
     """T13: shortcuts clear when another screen suspends the MCP destination
     (e.g. the mcpServers-import file picker pushed on top) and re-register
     once that overlay pops back to the MCP screen.

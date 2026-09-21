@@ -1,0 +1,6 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_fast_lane_is_one_serial_minimal_python_312_job ______________
+Tests/CI/test_ci_queue_pressure_contract.py:180: in test_fast_lane_is_one_serial_minimal_python_312_job
+    assert fast["timeout-minutes"] == 30
+E   assert 20 == 30

@@ -1,0 +1,30 @@
+{
+  "pid": 17295,
+  "cells": [],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/MCP/client.py": "712f672ec2d26881183056b2acbe35ed3f7d91a04b6838d110a8dc59deb0e407",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c623a8bd25550d7a454aa06e98365656bd399673158f05e16cbc2304ef030711",
+    "Tests/MCP/fixtures/stdio_tool_result_server.py": "09bda60b8c32ed7ffb76bbad059a00cc271e433ad036c84e89d281b67822bfbf"
+  },
+  "runner_sha256": "cdacb22eb9d1ed7c83bb2e5638baa970e5d229adb384575994c2a11a31883dad",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "resize",
+  "fixture_pid": 17369,
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/native_check.py\", line 256, in journey\n    failure = await run_result(\n              ^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/native_check.py\", line 208, in run_result\n    field = await focus(\"#mcp-schema-field-0\")\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/native_check.py\", line 130, in focus\n    visible(control)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/native_check.py\", line 121, in visible\n    region, clip = app.screen._compositor.visible_widgets[control]\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^\nKeyError: Input(id='mcp-schema-field-0')\n",
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

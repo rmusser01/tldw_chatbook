@@ -1,0 +1,13 @@
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py: 46 -> 47 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 7932c0d7b43dd946 (now line 3407)
+      | logger.warning(
+      |     "{}",
+      |     _safe_diagnostic_message(
+      |         "Reviewed MCP catalog refresh failed", exc
+      |     ),
+      | )
+
+Review: the sole added warning passes exception data through _safe_diagnostic_message, which bounds output and redacts secret assignments, bearer/key values and paths, including nested exception mappings. The literal prefix is fixed. No sink or handler changed. Updated only the workbench count/digest and aggregate call count in Docs/security/production-diagnostic-inventory.json.

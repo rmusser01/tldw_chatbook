@@ -20,7 +20,12 @@ from uuid import uuid4
 
 import toml
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
+# The narrow rich escape is kept for the call sites below whose value
+# reaches a markup-OFF sink, where any escape shows the reader a literal
+# backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
+# widening the escape would make that leak worse rather than fix it.
+from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult, ScreenStackError
@@ -4869,7 +4874,7 @@ class ChatScreen(BaseAppScreen):
             )
             if authority_summary is not None:
                 authority_rows = tuple(
-                    (escape_markup(label), escape_markup(value))
+                    (_escape_for_markup_off_sink(label), _escape_for_markup_off_sink(value))
                     for label, value in authority_summary.contextual_help_rows()
                 )
                 shortcut_groups = (
@@ -4888,7 +4893,7 @@ class ChatScreen(BaseAppScreen):
                 context_data = None
             else:
                 context_data = getattr(tray, "_workspace_tree_context_data", None)
-            label = escape_markup(
+            label = _escape_for_markup_off_sink(
                 str(getattr(context_data, "raw_label", "") or "Workspace tree")
             )
             shortcut_groups = (
@@ -14487,7 +14492,7 @@ class ChatScreen(BaseAppScreen):
         Resolves the db lazily. Conversation-only: ``char_data`` is ``None``
         (native sessions carry no character card). Honors the same
         ``[character_chat] enable_world_info`` gate as the legacy send path
-        (`Event_Handlers/Chat_Events/chat_events.py`).
+        (the `[character_chat]` table).
         """
         db = getattr(self.app_instance, "chachanotes_db", None)
         if (
@@ -24483,6 +24488,7 @@ class ChatScreen(BaseAppScreen):
         workspace_id: str | None,
         nodes: "list[Any] | None" = None,
         active_leaf_persisted_id: "str | None" = None,
+        settings: "object | None" = None,
         assistant_kind: "str | None" = None,
         assistant_id: "str | None" = None,
         assistant_authority_id: "str | None" = None,
@@ -24549,6 +24555,7 @@ class ChatScreen(BaseAppScreen):
                 persisted_conversation_id=conversation_id,
                 all_nodes=nodes or [],
                 active_leaf_persisted_id=active_leaf_persisted_id,
+                settings=settings,
                 assistant_kind=assistant_kind,
                 assistant_id=assistant_id,
                 assistant_authority_id=assistant_authority_id,
@@ -24557,7 +24564,10 @@ class ChatScreen(BaseAppScreen):
                 character_name=character_name,
                 activate=False,
             )
-            if opening_prompt:
+            # Single write path: the restore rehydrates the draft from
+            # the persisted console_agent_handoff key; this fill only
+            # covers a degraded restore-side read (empty draft).
+            if opening_prompt and not session.draft:
                 store.set_session_draft(session.id, opening_prompt)
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(

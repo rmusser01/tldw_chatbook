@@ -1,0 +1,116 @@
+{
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/2749",
+  "state": "MERGED",
+  "merged_at": "2026-09-20T05:12:16Z",
+  "verified_at": "2026-09-20T05:12:44.994287+00:00",
+  "owner_visual_approval": true,
+  "approved_head": "35c254040d32b234119ba0eea73f2fa869a64a0e",
+  "final_head": "89a678c304d8b60fea225c17d2d55421b9d44751",
+  "local_test_source_head": "83b3eb2748c80d16daf5a1f3811e6bb3b1239600",
+  "merge_commit": "65d79cc2b7bd8b7b1d86ee87cc31f1823475ab3a",
+  "merge_parents": [
+    "b91340a5dba92429b041400da0d6fb304e58317a",
+    "89a678c304d8b60fea225c17d2d55421b9d44751"
+  ],
+  "final_head_tree": "bbc507f48be29b3988606bd8c861c5baa4b33398",
+  "merged_tree": "bbc507f48be29b3988606bd8c861c5baa4b33398",
+  "actual_merged_tree_matches_final_head": true,
+  "targeted_tests_passed": 152,
+  "artifact_guards_passed": 7,
+  "pixel_identical_approved_views": 4,
+  "unresolved_review_threads": 0,
+  "qodo_head": "89a678c304d8b60fea225c17d2d55421b9d44751",
+  "qodo_outstanding_findings": 0,
+  "final_head_checks": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T04:57:26Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432125/job/106024319742",
+      "name": "platform-evidence",
+      "startedAt": "2026-09-20T04:57:26Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T04:57:26Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432123/job/106024319597",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-09-20T04:57:26Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T04:57:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432130/job/106024319208",
+      "name": "No duplicate backlog task IDs",
+      "startedAt": "2026-09-20T04:57:29Z",
+      "status": "COMPLETED",
+      "workflowName": "Backlog Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T04:57:50Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432122/job/106024319203",
+      "name": "CSS bundle reproduces from its sources",
+      "startedAt": "2026-09-20T04:57:28Z",
+      "status": "COMPLETED",
+      "workflowName": "CSS Bundle Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T05:08:21Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432140/job/106024319232",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-09-20T04:57:29Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T05:02:58Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432124/job/106024319349",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-09-20T04:57:29Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T05:11:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35490432140/job/106025550876",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-09-20T05:08:24Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-20T04:57:26Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2749",
+      "name": "cubic \u00b7 AI code reviewer",
+      "startedAt": "2026-09-20T04:57:26Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-20T04:57:29Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "conflict_resolution": "Entire dev lessons document plus complete approved Tools lesson. No product conflicts.",
+  "next_scope": "Existing PR2727 restored-roots review; reproduce same-mode Permissions selection ownership gap.",
+  "worktree_clean": true
+}

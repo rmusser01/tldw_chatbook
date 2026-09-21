@@ -271,6 +271,7 @@ CSS_MODULES = [
     "features/_console_panels.tcss",
     "features/_library.tcss",
     "features/_library_panels.tcss",
+    "features/_library_artifacts.tcss",
     "features/_settings.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
@@ -444,7 +445,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # library owner (asserted during the carve); lazily loaded by
     # LibraryScreen's CSS_PATH.
     ScreenOwnedSplit(
-        modules=("features/_library.tcss", "features/_library_panels.tcss"),
+        modules=("features/_library.tcss", "features/_library_panels.tcss", "features/_library_artifacts.tcss"),
         sheets={"library": "screen_agentic_library.tcss"},
         prefixes={"library": ("library",)},
         pinned=frozenset(),

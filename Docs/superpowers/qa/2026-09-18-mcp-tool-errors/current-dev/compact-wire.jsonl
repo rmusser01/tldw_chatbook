@@ -1,0 +1,5 @@
+{"pid": 71768, "method": "initialize"}
+{"pid": 71768, "method": "notifications/initialized"}
+{"pid": 71768, "method": "tools/list"}
+{"pid": 71768, "method": "resources/list"}
+{"pid": 71768, "method": "prompts/list"}

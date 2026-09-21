@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││  Review restored MCP roots                          ││                               │
+│ Source                       ││ Review creates fresh Ask/local defaults.            ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Historical rules and grants remain inactive.        ││  Pick a server, tool, or      │
+│ ▊  Local                ▼  ▎ ││ Connecting and granting tools are separate        ▇ ││  entry to see what's wrong    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ actions.                                            ││  and what you can do.         │
+│                              ││  Block all tool calls in chat: Off ▸                ││                               │
+│ Servers                      ││  Also blocks the app's own built-in tools           ││                               │
+│  ○ setup · ◦ off · ⌂         ││  (calculator, date/time, file and note tools).      ││    Advanced…                  │
+│  built-in                    ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                               │
+│    All servers               ││ ▊  Filter tool or server…                        ▎  ││                               │
+│  ◦ ⌂ tldw_chatbook (bu…      ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                               │
+│                              ││  Tool                                     State     ││                               │
+│  ○ demo                      ││  Global default                           Ask       ││                               │
+│                              ││  Server default — Local workspace, web,   Ask       ││                               │
+│                              ││  and Watchlists                                     ││                               │
+│                              ││    fs_edit                                Ask       ││                               │
+│                              ││    fs_glob                                Ask       ││                               │
+│                              ││    fs_grep                                Ask       ││                               │
+│                              ││    fs_list                                Ask       ││                               │
+│                              ││    fs_patch                               Ask       ││                               │
+│                              ││    fs_read                                Ask       ││                               │
+│                              ││    fs_write                               Ask       ││                               │
+│                              ││    git_blame                              Ask       ││                               │
+│                              ││    git_branches                           Ask     ▆ ││                               │
+│                              ││    git_diff                               Ask       ││                               │
+│                              ││    git_log                                Ask       ││                               │
+│                              ││    git_status                             Ask       ││                               │
+│                              ││    shell_exec                             Ask       ││                               │
+│                              ││    watchlists_check_sources               Ask       ││                               │
+│                              ││    watchlists_create_collection           Ask       ││                               │
+│                              ││    watchlists_create_sources              Ask       ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 · F6 · Ctrl+P · Ctrl+Q

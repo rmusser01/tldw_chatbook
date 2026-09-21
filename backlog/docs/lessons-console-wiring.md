@@ -95,3 +95,22 @@ next poll reconciles them. Compare credential status as well as completion: an
 expiry can happen inside the cache TTL without a new completion revision.
 Coverage: `Tests/UI/test_personas_subscription_readiness.py` and
 `Tests/UI/test_settings_subscription_readiness.py`.
+
+## A lock that looks redundant may be the barrier something else promises on
+
+**TASK-32801.4, 2026-09-18.** The core review found `_capture_quiescence_lock`
+held across the persistence adapter's own `BEGIN IMMEDIATE`, inverting against
+`_dispatch_branch_mutation`, and recommended narrowing it to the in-memory
+merge. Narrowing alone would have been a data bug. `begin_capture_quiescence`
+never waits on anything explicitly: it inherits its guarantee from the lock, so
+blocking on it means no exchange write is mid-flight, and
+`commit_full_capture_purge` deletes rows on that promise. Narrow the lock and a
+writer that passed the quiescence check before the fence armed re-adds rows the
+purge has just deleted -- a stall traded for silent capture resurrection. The
+sibling `_trajectory_lock` genuinely was redundant (the DB assigns `seq` inside
+its own transaction and the adapter retries the loser) and was deleted; the
+fence lock instead became explicit -- admit and count the writer under the lock,
+write outside it, and have the fence arm first and then drain the admitted
+writers on a condition. Before deleting or narrowing a lock, find every caller
+that treats *acquiring* it as proof of quiescence; a barrier inherited from
+mutual exclusion has no other name in the code to grep for.

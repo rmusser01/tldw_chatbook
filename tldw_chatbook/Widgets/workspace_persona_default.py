@@ -169,7 +169,12 @@ class WorkspacePersonaPicker(Vertical):
         )
         await self.recompose()
         self._sync_memory_controls()
-        self.query_one("#workspace-default-persona", Select).focus()
+        # TASK-32800.4's guard: a query_one resuming after an await can find
+        # its subtree gone, and NoMatches out of a handler exits the app.
+        selects = self.query("#workspace-default-persona")
+        if not selects:
+            return
+        selects.first(Select).focus()
 
     @on(Select.Changed)
     def _choice_changed(self, event: Select.Changed) -> None:

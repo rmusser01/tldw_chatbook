@@ -281,10 +281,32 @@ class LocalMCPControlService:
     @producer_call
     @guarded
     async def connect_profile(self, profile_id: str) -> dict[str, Any]:
+        """Connect or replace a profile session and persist fresh discovery.
+
+        Discovery and persistence failures clean up the session established by
+        this call only if its identity still owns the profile. Connection
+        failures are reported as RuntimeError; discovery and persistence
+        exceptions propagate. The last saved catalog is retained when discovery
+        fails before saving.
+
+        Args:
+            profile_id: ID of the stored local stdio profile.
+
+        Returns:
+            The newly discovered tools, resources and prompts snapshot.
+
+        Raises:
+            PermissionError: Local launch permission is denied.
+            KeyError: The profile is unknown.
+            RuntimeError: Spawn environment resolution, connection or usable
+                capability discovery fails.
+            OSError: Snapshot persistence fails.
+        """
         self._require_allowed("mcp.external_profiles.launch.local")
         profile = self.store.get_profile(profile_id)
         if profile is None:
             raise KeyError(f"Unknown profile_id: {profile_id}")
+        profile_id = profile.profile_id
 
         client = self._get_client()
         resolved_env = self._build_spawn_env(profile)
@@ -297,14 +319,24 @@ class LocalMCPControlService:
         if connected is False:
             raise RuntimeError(f"Failed to connect profile: {profile.profile_id}")
 
-        snapshot = await client.describe_server(profile.profile_id)
-        if not self._has_capabilities(snapshot):
-            await self._disconnect_best_effort(client, profile.profile_id)
-            raise RuntimeError(
-                f"Connected profile '{profile.profile_id}' returned no discoverable capabilities"
-            )
-        self.store.save_discovery_snapshot(profile.profile_id, snapshot)
-        return snapshot
+        session = getattr(client, "sessions", {}).get(profile_id)
+        try:
+            snapshot = await client.describe_server(profile.profile_id)
+            if not self._has_capabilities(snapshot):
+                raise RuntimeError(
+                    f"Connected profile '{profile.profile_id}' returned no discoverable capabilities"
+                )
+            self.store.save_discovery_snapshot(profile.profile_id, snapshot)
+            return snapshot
+        except BaseException:
+            # Only clean up the connection this call established, never a
+            # different caller's pending connection or replacement session.
+            if (
+                session is not None
+                and getattr(client, "sessions", {}).get(profile_id) is session
+            ):
+                await self._disconnect_best_effort(client, profile_id)
+            raise
 
     @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
@@ -367,8 +399,52 @@ class LocalMCPControlService:
     @producer_call
     @guarded
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
+        """Reconnect to discover and persist the current profile catalog.
+
+        Successful refresh preserves whether the profile was connected at
+        entry, removing its temporary session when initially disconnected.
+        Observe and launch denials leave the existing connection untouched.
+        A failed reconnect may leave the profile disconnected; the last saved
+        catalog remains available when discovery fails before saving.
+        Failed temporary cleanup reports an error with the fresh catalog already
+        saved, retaining the owned session so disconnection can be retried.
+
+        Args:
+            profile_id: ID of the stored local stdio profile.
+
+        Returns:
+            The refreshed tools, resources and prompts snapshot.
+
+        Raises:
+            PermissionError: Local observe or launch permission is denied.
+            KeyError: The profile is unknown.
+            RuntimeError: Spawn environment resolution, connection, usable
+                capability discovery or temporary-session cleanup fails.
+            OSError: Snapshot persistence fails.
+        """
         self._require_allowed("mcp.external_profiles.observe.local")
-        return await self._describe_profile(profile_id, keep_connected=True)
+        profile = self.store.get_profile(profile_id)
+        if profile is not None:
+            profile_id = profile.profile_id
+        client = self._get_client()
+        was_connected = profile_id in getattr(client, "sessions", {})
+        # describe_server reads cached discovery; reconnect to refresh it.
+        snapshot = await self.connect_profile(profile_id)
+        if not was_connected:
+            # The real client's cached describe and synchronous store save do
+            # not yield after session publication. Disconnect captures that
+            # session's identity before its first suspension, so subsequent
+            # replacement sessions are not owned by this temporary cleanup.
+            session = getattr(client, "sessions", {}).get(profile_id)
+            await self._disconnect_best_effort(client, profile_id)
+            if (
+                session is not None
+                and getattr(client, "sessions", {}).get(profile_id) is session
+            ):
+                raise RuntimeError(
+                    f"Failed to disconnect temporary profile session: {profile_id}"
+                )
+        return snapshot
 
     def delete_external_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.configure.local")

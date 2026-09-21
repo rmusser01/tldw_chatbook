@@ -1,0 +1,76 @@
+{
+  "pid": 99733,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "5123aa0e078f38f70a96038b33b21f8874aa6ef6b87e66d98fb03bb6a46f9866",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "919f0acb74e1baded36e3772d22745b89368f956dc722a2b02229d6e9376b46f",
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c"
+  },
+  "runner_sha256": "c026550888ab116c583bfb0bb95a42739a3a1d6e8469c6611df5512c41867554",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

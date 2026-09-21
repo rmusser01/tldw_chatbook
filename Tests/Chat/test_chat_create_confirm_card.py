@@ -325,3 +325,38 @@ def test_console_view_hooks_exposes_chat_create_sinks(mock_chat_host):
     assert "set_pending_chat_create" in hooks
     assert "complete_agent_chat_create" in hooks
     assert callable(hooks["complete_agent_chat_create"])
+
+
+def test_card_renders_requested_routing_target():
+    """TASK-32874: the card shows the requested provider/model/preset
+    before allow — model-chosen routing is always visible."""
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload(provider="llama_cpp", model="m2", preset="localy"))
+    body = card._body_text()
+    assert "Runs on: preset 'localy', provider llama_cpp / m2" in body
+
+
+def test_card_omits_routing_line_when_unset():
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload())
+    assert "Runs on:" not in card._body_text()
+
+
+def test_card_sub_agent_identity_lines():
+    """Qodo 2761 finding 6: requester-kind, parent-run, and task branches."""
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload(run_id="run-77", agent_kind="subagent", parent_run_id="parent-7",
+                              agent_task="inventory the docs"))
+    body = card._body_text()
+    assert "Requested by SUB-AGENT run" in body
+    assert "parent run parent-7" in body
+    assert "task: inventory the docs" in body
+
+
+def test_card_primary_and_unknown_identity_lines():
+    card = ChatCreateConfirmCard()
+    card.set_payload(_payload(run_id="run-77", agent_kind="primary"))
+    assert "Requested by agent run" in card._body_text()
+    card.set_payload(_payload(run_id="run-77", agent_kind="unknown", parent_run_id=None, agent_task=""))
+    body = card._body_text()
+    assert "Requested by agent run" in body and "parent run" not in body

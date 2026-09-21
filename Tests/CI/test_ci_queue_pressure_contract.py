@@ -177,9 +177,13 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     assert fast["name"] == "PR Fast Lane"
     assert fast["if"] == "github.event_name == 'pull_request'"
     assert fast["runs-on"] == "ubuntu-latest"
-    assert fast["timeout-minutes"] == 20
+    assert fast["timeout-minutes"] == 30
     assert "strategy" not in fast
-    assert len(fast["steps"]) == 4
+    # TASK-32873: 5 steps -- the admission-sensitive suites run in a
+    # separate pytest invocation inside the same job (their
+    # keep_bootstrap_profile enrollment poisons sandboxed suites sharing
+    # a process).
+    assert len(fast["steps"]) == 5
 
     setup = next(
         step
