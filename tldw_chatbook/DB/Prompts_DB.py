@@ -3863,7 +3863,6 @@ class PromptsDatabase:
 
         # --- Robust FTS search using subqueries ---
         if search_query and search_fields:
-            matching_prompt_ids = set()
             text_search_fields = {
                 "name",
                 "author",
@@ -3889,57 +3888,31 @@ class PromptsDatabase:
             if not effective_match_query:
                 return [], 0
 
-            # Search in prompt text fields
+            # TASK-32804.10: keep the matching-id set in SQLite instead of
+            # materialising every matching id in Python and binding them as
+            # one `p.id IN (?,?,…)` list. That grew search cost linearly with
+            # the match count and hard-failed with "too many SQL variables"
+            # past SQLITE_LIMIT_VARIABLE_NUMBER (32766) matches. This is the
+            # exact subquery shape search_library_prompts_page already uses.
+            id_legs: list[str] = []
+            id_params: list[Any] = []
             if any(field in text_search_fields for field in search_fields):
-                try:
-                    cursor = self.execute_query(
-                        "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                        (effective_match_query,),
-                    )
-                    matching_prompt_ids.update(
-                        row["rowid"] for row in cursor.fetchall()
-                    )
-                except sqlite3.Error as e:
-                    logging.opt(exception=True).error(
-                        f"FTS search on prompts failed: {e}"
-                    )
-                    raise DatabaseError(f"FTS search on prompts failed: {e}") from e
-
-            # Search in keywords
+                id_legs.append(
+                    "p.id IN (SELECT rowid FROM prompts_fts "
+                    "WHERE prompts_fts MATCH ?)"
+                )
+                id_params.append(effective_match_query)
             if "keywords" in search_fields:
-                try:
-                    # 1. Find keyword IDs matching the query
-                    kw_cursor = self.execute_query(
-                        "SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?",
-                        (effective_match_query,),
-                    )
-                    matching_keyword_ids = {
-                        row["rowid"] for row in kw_cursor.fetchall()
-                    }
-
-                    # 2. Find prompt IDs linked to those keywords
-                    if matching_keyword_ids:
-                        placeholders = ",".join("?" * len(matching_keyword_ids))
-                        link_cursor = self.execute_query(
-                            f"SELECT DISTINCT prompt_id FROM PromptKeywordLinks WHERE keyword_id IN ({placeholders})",
-                            tuple(matching_keyword_ids),
-                        )
-                        matching_prompt_ids.update(
-                            row["prompt_id"] for row in link_cursor.fetchall()
-                        )
-                except sqlite3.Error as e:
-                    logging.opt(exception=True).error(
-                        f"FTS search on keywords failed: {e}"
-                    )
-                    raise DatabaseError(f"FTS search on keywords failed: {e}") from e
-
-            if not matching_prompt_ids:
-                return [], 0  # No matches found, short-circuit
-
-            # Add the final ID list to the main query conditions
-            id_placeholders = ",".join("?" * len(matching_prompt_ids))
-            conditions.append(f"p.id IN ({id_placeholders})")
-            params.extend(list(matching_prompt_ids))
+                id_legs.append(
+                    "p.id IN (SELECT prompt_id FROM PromptKeywordLinks "
+                    "WHERE keyword_id IN (SELECT rowid FROM prompt_keywords_fts "
+                    "WHERE prompt_keywords_fts MATCH ?))"
+                )
+                id_params.append(effective_match_query)
+            if not id_legs:
+                return [], 0
+            conditions.append("(" + " OR ".join(id_legs) + ")")
+            params.extend(id_params)
 
         # --- Build and Execute Final Query ---
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""

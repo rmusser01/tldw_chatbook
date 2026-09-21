@@ -3864,8 +3864,15 @@ class ConsoleSessionController:
         """Replace settings for only the active native Console session."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
+        # task-32804.6: title is discarded unless ensure_session CREATES the
+        # session; skip the synchronous registry SQLite lookup otherwise.
+        creating_blank_session = store.active_session_id is None
         session = store.ensure_session(
-            title=self._workspace_initial_session_title(workspace_id),
+            title=(
+                self._workspace_initial_session_title(workspace_id)
+                if creating_blank_session
+                else DEFAULT_CONSOLE_SESSION_TITLE
+            ),
             workspace_id=workspace_id,
             settings=self._default_console_session_settings(),
         )
@@ -4596,11 +4603,20 @@ class ConsoleSessionController:
         store = self._ensure_console_chat_store()
         creating_blank_session = store.active_session_id is None
         defaults = self._blank_console_session_settings()
+        # TASK-26839 / task-32804.6: `ensure_session` uses `title` only when
+        # it CREATES a session; with one active the argument is discarded. The
+        # workspace title is a synchronous registry `get_workspace` SQLite
+        # query, and this method runs on the 0.2 s transcript poll for the
+        # whole of every streaming run -- ~11 ms/s of wasted main-thread
+        # SQLite. Derive it only for the creation case, like the siblings.
+        workspace_id = store.workspace_context.active_workspace_id
         session = store.ensure_session(
-            title=self._workspace_initial_session_title(
-                store.workspace_context.active_workspace_id
+            title=(
+                self._workspace_initial_session_title(workspace_id)
+                if creating_blank_session
+                else DEFAULT_CONSOLE_SESSION_TITLE
             ),
-            workspace_id=store.workspace_context.active_workspace_id,
+            workspace_id=workspace_id,
             settings=defaults,
             canonical_settings_baseline=defaults,
         )

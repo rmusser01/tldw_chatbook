@@ -230,6 +230,7 @@ class ConsoleAppearancePickerModal(
         conversation_title: str = "",
         icon: str | None = None,
         color: str | None = None,
+        emojis: list[ProcessedEmoji] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -243,7 +244,13 @@ class ConsoleAppearancePickerModal(
         self._selected_color: str | None = (
             color if color and is_valid_console_appearance_color(color) else None
         )
-        self._all_emojis = _default_emoji_sequence()
+        # The emoji catalog build costs ~180 ms on first process use.
+        # A caller that opens this modal builds it off the event loop and
+        # injects the result (task-32804.12); a direct construction (tests,
+        # any future caller) still self-serves from the process cache.
+        self._all_emojis = (
+            emojis if emojis is not None else _default_emoji_sequence()
+        )
         self._filter_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:

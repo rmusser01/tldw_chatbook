@@ -464,3 +464,8 @@ def test_is_git_metadata_write_predicate_is_exact_on_components():
     assert not is_git_metadata_write(Path("/repo/.gitattributes"))
     assert not is_git_metadata_write(Path("/repo/.github/workflows/ci.yml"))
     assert not is_git_metadata_write(Path("/repo/src/git/config"))
+
+
+# -- task-32804.12: bound the recursive ListDirectory walk --------------------
+
+

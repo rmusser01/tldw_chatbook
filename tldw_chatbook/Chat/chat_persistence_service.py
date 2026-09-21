@@ -942,6 +942,16 @@ class ChatPersistenceService:
             return None
         return version
 
+    def get_message_versions(self, message_ids: Sequence[str]) -> Dict[str, int]:
+        """Batch form of ``get_message_version`` (task-32804.12 [D2]).
+
+        Returns a mapping of message id to positive version for the given
+        ids; missing, deleted, or untrustworthy-version rows are simply
+        absent, matching ``get_message_version``'s per-row contract in a
+        single chunked read set instead of one point read per message.
+        """
+        return self.db.get_message_versions_by_ids(message_ids)
+
     def get_console_fork_source_message(
         self, message_id: str
     ) -> tuple[int, str] | None:

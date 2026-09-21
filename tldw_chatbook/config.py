@@ -6260,14 +6260,65 @@ def _load_cli_config_bootstrap_unlocked(
     return _ConfigBootstrapResult(loaded_config, bootstrap_succeeded)
 
 
+def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
+    """Return the installed config on a warm hit, or None to fall through.
+
+    TASK-32804.1: `get_cli_setting` has ~400 call sites, many on the Textual
+    event loop, and each funnels into `_load_cli_config_bootstrap`, which is
+    `@config_participants.guarded` -- so every read, even a warm cache hit,
+    paid the ADR-126 admission handshake (`operation(...)`). Measured at
+    ~4.8 ms per warm read, tens of ms per second of streaming on the paint
+    loop. The handshake protects the file/build lifecycle, not a pure
+    in-memory cache read, so a warm hit is resolved HERE, ahead of the
+    guarded call, amortising the handshake to actual (re)derivations.
+
+    This repeats the guarded fast path's exact lock-free check (all atomic
+    global reads, plus the throttled external-edit stat), and returns None
+    on any miss so the guarded bootstrap runs unchanged. The soundness
+    reasoning is `_load_cli_config_bootstrap`'s (a brand-new dict per
+    publish; a miss re-reads; the edit check only turns a hit into a
+    forced re-read, never a false hit).
+    """
+    config_path = _get_effective_config_path()
+    generation_before = _CONFIG_GENERATION
+    cached_config = _CONFIG_CACHE
+    cached_source = _CONFIG_CACHE_SOURCE
+    if (
+        cached_config is not None
+        and cached_source == config_path
+        and _CONFIG_CACHE is cached_config
+        and _CONFIG_GENERATION == generation_before
+        and not _external_edit_detected(config_path)
+    ):
+        return cached_config
+    return None
+
+
 def load_cli_config_and_ensure_existence(
     force_reload: bool = False,
 ) -> Dict[str, Any]:  # Renamed from load_cli_config
+    """Load the merged CLI configuration, creating the file if absent.
+
+    Reads ~/.config/tldw_cli/config.toml, creating it from
+    CONFIG_TOML_CONTENT defaults on first run, and uses those programmatic
+    defaults as the base for the merge. A warm cache hit is served without
+    the ADR-126 admission handshake (TASK-32804.1).
+
+    Args:
+        force_reload: Rebuild from disk even on a warm cache hit, bypassing
+            the fast path and re-running the guarded bootstrap.
+
+    Returns:
+        The installed configuration mapping (programmatic defaults merged
+        with the on-disk config).
     """
-    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
-    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
-    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
-    """
+    # TASK-32804.1: serve a warm read without entering the admission
+    # handshake (see `_warm_config_cache_hit`). A miss or a forced reload
+    # falls through to the guarded bootstrap exactly as before.
+    if not force_reload:
+        warm = _warm_config_cache_hit()
+        if warm is not None:
+            return warm
     return _load_cli_config_bootstrap(force_reload=force_reload).config
 
 

@@ -3128,6 +3128,11 @@ class SettingsScreen(BaseAppScreen):
         #: merely opening the category (never editing anything) never
         #: triggers a load at all.
         self._image_gen_raw_section_cache: Mapping[str, object] | None = None
+        #: task-32804.2: active-profile RAG defaults, cached for the
+        #: lifetime of a Library/RAG category visit (the load is ~53 ms,
+        #: re-run 7x per keystroke before this). Invalidated by
+        #: _invalidate_library_rag_loaded_cache at every on-disk-change point.
+        self._library_rag_loaded_defaults_cache: "SettingsLibraryRagDefaults | None" = None
         # task-1369: set from the manual-sync confirm callback until the run
         # worker lands; on_screen_resume skips its sync-rows refresh while
         # this is True so it cannot overwrite the "running" rows.
@@ -7263,7 +7268,25 @@ class SettingsScreen(BaseAppScreen):
         return self._appearance_validation_result().valid
 
     def _library_rag_loaded_defaults(self) -> SettingsLibraryRagDefaults:
-        return load_rag_defaults_from_active_profile()
+        # task-32804.2: cache the ~53 ms active-profile load for the lifetime
+        # of a category visit -- the staging cascade + compose re-ran it 7x per
+        # keystroke. Invalidated at every point the on-disk profile can change
+        # (see _invalidate_library_rag_loaded_cache), the same contract as
+        # _image_gen_raw_section_cache.
+        if self._library_rag_loaded_defaults_cache is None:
+            self._library_rag_loaded_defaults_cache = (
+                load_rag_defaults_from_active_profile()
+            )
+        return self._library_rag_loaded_defaults_cache
+
+    def _invalidate_library_rag_loaded_cache(self) -> None:
+        """Drop the cached active-profile RAG defaults (task-32804.2).
+
+        Called at exactly the moments the on-disk profile can change under the
+        editor: entering the category, save, revert, set-active, and
+        clone/rename/delete -- mirrors _image_gen_raw_section_cache's contract.
+        """
+        self._library_rag_loaded_defaults_cache = None
 
     def _library_rag_loaded_values(self) -> dict[str, object]:
         return asdict(self._library_rag_loaded_defaults())
@@ -20956,10 +20979,12 @@ class SettingsScreen(BaseAppScreen):
             ) = self._speech_tts_cached_runtime_state()
             try:
                 app_config = get_runtime_config_snapshot().values
-                speech_tts_state = load_global_speech_tts_state(
+                speech_tts_config = (
                     app_config if isinstance(app_config, Mapping) else {}
                 )
+                speech_tts_state = load_global_speech_tts_state(speech_tts_config)
             except (OSError, TypeError, ValueError):
+                speech_tts_config = {}
                 speech_tts_state = load_global_speech_tts_state({})
             if not self._speech_tts_profile_choices_requested:
                 self._speech_tts_profile_choices_requested = True
@@ -20971,6 +20996,7 @@ class SettingsScreen(BaseAppScreen):
                 draft_snapshot=self._speech_tts_draft_snapshot,
                 profiles=self._speech_tts_profile_choices,
                 profiles_unavailable=self._speech_tts_profile_choices_unavailable,
+                config_snapshot=speech_tts_config,
                 audio_cpp_observation=audio_cpp_observation,
                 audio_cpp_configuration_revision=provider_runtime_revisions.get(
                     "audio_cpp"
@@ -23766,6 +23792,10 @@ class SettingsScreen(BaseAppScreen):
             # survive into a new one (e.g. an Advanced Config hand-edit
             # to [image_generation] made while away).
             self._image_gen_raw_section_cache = None
+        if category_value == SettingsCategoryId.LIBRARY_RAG.value:
+            # task-32804.2: a prior visit's cached RAG defaults must never
+            # survive into a new one (mirrors the Image Gen line above).
+            self._invalidate_library_rag_loaded_cache()
         if restore_focus:
             if category_changed:
                 # The pane swap from assigning active_category destroys the
@@ -24539,13 +24569,16 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         auth_token = str(result.get("auth_token") or "").strip()
-        saved = save_settings_to_cli_config(
+        # task-32804.12: off the loop -- the atomic write + cache reload is
+        # ~64 ms, and this method runs on the event loop via run_worker(coroutine).
+        saved = await asyncio.to_thread(
+            save_settings_to_cli_config,
             {
                 "tldw_api": {
                     "base_url": base_url,
                     "auth_token": auth_token,
                 }
-            }
+            },
         )
         if not saved:
             self.app.notify(
@@ -24556,7 +24589,9 @@ class SettingsScreen(BaseAppScreen):
             return
 
         try:
-            refreshed_config = load_settings(force_reload=True)
+            refreshed_config = await asyncio.to_thread(
+                load_settings, force_reload=True
+            )
         except Exception as exc:
             logger.warning(
                 "Saved server settings could not be loaded (exception_category=%s).",
@@ -27173,6 +27208,8 @@ class SettingsScreen(BaseAppScreen):
         # all.
         self._rag_preview_profile_id = None
         if ok:
+            # task-32804.2: the active profile changed.
+            self._invalidate_library_rag_loaded_cache()
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             info = active_profile_info()
             message = f"Active profile: {info['name']}"
@@ -27658,6 +27695,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
         if ok:
+            # task-32804.2: the profile set (and possibly the active one) changed.
+            self._invalidate_library_rag_loaded_cache()
             # Task 4 (541 v2 UX AC1): a successful clone/rename/delete can
             # change the active profile's own name (rename) or identity
             # (delete-the-active-profile's hybrid_basic fallback), or move
@@ -30304,6 +30343,9 @@ class SettingsScreen(BaseAppScreen):
             self._sync_appearance_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.LIBRARY_RAG:
+            # task-32804.2: scope the cache to "since the draft was last known
+            # consistent with disk" (mirrors Image Gen's revert invalidation).
+            self._invalidate_library_rag_loaded_cache()
             self._library_rag_result = (
                 "Library/RAG defaults reverted to last loaded values."
             )
@@ -31072,6 +31114,8 @@ class SettingsScreen(BaseAppScreen):
                     copy.deepcopy(dict(applied_sections))
                 )
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            # task-32804.2: the save changed the on-disk profile.
+            self._invalidate_library_rag_loaded_cache()
             message = "Library/RAG defaults saved."
             # Task 4 (SP3), save-path trigger (a): honest re-index warning
             # when the just-saved fields re-point the fingerprinted

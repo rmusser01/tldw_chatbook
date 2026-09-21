@@ -11966,13 +11966,23 @@ class ChatScreen(BaseAppScreen):
             or not self.is_current
         ):
             return
-        _settings, readiness = self._active_console_settings_readiness()
-        snapshot = (subscription_readiness_revision(), readiness.subscription_status)
-        if snapshot == self._console_credential_snapshot:
-            return
-        self._console_credential_snapshot = snapshot
-        self._sync_console_settings_summary()
-        self._sync_console_control_bar()
+        # task-32804.3: build readiness inside the derivation scope so the
+        # per-tick config reads share ONE app_config admission instead of six
+        # (~49 ms -> ~8 ms/tick). The (revision, status) gate is preserved
+        # exactly -- status() reports a credential's time-based expiry with no
+        # revision bump, so gating on the revision alone would leave the send
+        # controls stale; both signals stay in the snapshot.
+        with self._console_derivation_scope():
+            _settings, readiness = self._active_console_settings_readiness()
+            snapshot = (
+                subscription_readiness_revision(),
+                readiness.subscription_status,
+            )
+            if snapshot == self._console_credential_snapshot:
+                return
+            self._console_credential_snapshot = snapshot
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar()
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""

@@ -213,12 +213,15 @@ class SplashScreen(Container):
         # Try to load from config
         try:
             _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
+            # TASK-32804.8: read the splash_screen section ONCE, then index
+            # it, instead of a get_cli_setting call per key (its docstring
+            # documents this section-only shape).
+            section = get_cli_setting("splash_screen", default={})
+            section = section if isinstance(section, dict) else {}
+            effects = section.get("effects", {})
+            effects = effects if isinstance(effects, dict) else {}
             config = {
-                key: get_cli_setting(
-                    "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen",
-                    key,
-                    value,
-                )
+                key: (effects if key in _EFFECTS_KEYS else section).get(key, value)
                 for key, value in default_config.items()
             }
 

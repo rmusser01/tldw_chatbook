@@ -137,7 +137,11 @@ def _derive_runs_db(app_instance) -> AgentRunsDB | None:
     if not db_path or str(db_path) == ":memory:":
         return None
     try:
-        return AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        # TASK-32804.10 AC#3: this factory feeds a compose() body; defer the
+        # orphan-reconcile sweep off the event loop (run in on_mount below).
+        return AgentRunsDB(
+            Path(db_path).parent / "agent_runs.db", reconcile_on_init=False
+        )
     except Exception as exc:  # noqa: BLE001 - any failure means "no DB"
         logger.warning(
             "Settings ▸ Agents: could not open agent runs database (error_type={})",
@@ -323,6 +327,17 @@ class AgentsSettingsPanel(Vertical):
     async def on_mount(self) -> None:
         await self._reload_list()
         self._load_routing_controls()
+        # TASK-32804.10 AC#3: run the deferred orphan-reconcile sweep off the
+        # event loop (it was skipped at construction). Idempotent per file
+        # per process, and AgentRunsDB uses thread-local connections.
+        if self._owns_runs_db and self._runs_db is not None:
+            self.run_worker(
+                self._runs_db.reconcile_orphaned_runs,
+                name="agent-runs-reconcile",
+                group="agent-runs-reconcile",
+                thread=True,
+                exclusive=False,
+            )
 
     # -- app config / provider options ------------------------------------
     def _app_config(self) -> Mapping[str, Any]:

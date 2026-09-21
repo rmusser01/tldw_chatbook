@@ -60,7 +60,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Iterable, Protocol
+from typing import Any, Callable, Iterable, Iterator, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
@@ -1597,6 +1597,20 @@ class LibraryIngestJobRegistry:
             for job in reversed(self._jobs)
             if not (job.superseded or job.dismissed)
         )
+
+    def iter_jobs_for_listeners(self) -> Iterator[LibraryIngestJob]:
+        """Yield visible jobs newest-first WITHOUT copying (TASK-32804.5).
+
+        For read-only consumers on the registry's own notification path.
+        A registry listener that only inspects job fields must not
+        deep-copy the entire queue on every mutation -- a folder import
+        fires listeners once per file, which turned each submit's copy of
+        the whole queue into O(n^2) (1.65 s per 1,000 files). Callers MUST
+        NOT mutate the yielded jobs; use jobs() for an owned snapshot.
+        """
+        for job in reversed(self._jobs):
+            if not (job.superseded or job.dismissed):
+                yield job
 
     def count_duplicate_done(self) -> int:
         """Count visible DONE jobs whose outcome was a dedup match.
