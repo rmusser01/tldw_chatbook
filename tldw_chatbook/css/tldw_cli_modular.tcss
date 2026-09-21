@@ -11834,13 +11834,6 @@ Select {
 
 
 
-.media-details-theme {
-    height: $ds-height-fill;
-    width: $ds-width-full;
-    overflow-y: auto !important;
-    min-height: $ds-size-0;
-}
-
 
 .media-content-right-pane Markdown {
     height: $ds-height-fill !important;

@@ -200,13 +200,6 @@
 }
 */
 
-.media-details-theme {
-    height: $ds-height-fill;
-    width: $ds-width-full;
-    overflow-y: auto !important;
-    min-height: $ds-size-0;
-}
-
 /* Force Markdown content in Media tab to expand fully */
 .media-content-right-pane Markdown {
     height: $ds-height-fill !important;
