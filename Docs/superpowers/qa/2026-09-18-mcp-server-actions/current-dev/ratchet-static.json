@@ -1,0 +1,22 @@
+[
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_mcp_inspector.py",
+    "introduced": []
+  },
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "introduced": []
+  }
+]

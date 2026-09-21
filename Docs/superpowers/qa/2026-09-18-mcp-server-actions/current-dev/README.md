@@ -1,5 +1,33 @@
 # Current-dev server actions — 2026-09-21
 
+## Merge and integration follow-up — 2026-09-21
+
+[PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712) merged as
+`4b61a5ca8f` after owner visual approval, successful final-head CI
+(1,152 main cases; 123 admission passes and one existing expected failure),
+resolved Qodo review with zero findings, and conflict-free current-dev review.
+All 14 captured native source hashes match the actual merge.
+[Merge receipt](merge-closeout.json) separates the CI-tested base from two later
+locally tested dev combinations (40 and 38 focused passes).
+
+PR2744 arrived at merge time with four architecture-test/documentation files;
+merged runtime matches the last verified combination. Its new size ratchet
+exposed Workbench at 6,771 lines against a 6,761-line ceiling:
+[66 architecture passes, one failure](post-merge-architecture.txt).
+The bounded follow-up moves the existing three-panel clearing sequence into
+MCPInspector, retaining Workbench's async worker, exclusive group and await order.
+Workbench is now 6,760 lines and the ceiling is tightened to that value.
+[106 targeted cases pass](ratchet-followup.txt); independent review found no
+blockers, [no new Ruff diagnostics](ratchet-static.json) and
+[all changed ranges formatted](ratchet-format.json).
+[All nine artifact guards pass](ratchet-preflight.txt).
+Approved native visuals remain applicable to this mechanical move; no new native
+run is claimed. Follow-up PR/CI and final merge checks remain pending.
+
+Earlier qualification checkpoints below are historical. Compact Test Tool
+reachability remains the next separate review.
+
+
 PR2712 keeps every server toolbar press bound to the profile displayed when its
 control was created. Retired, hidden, covered or disabled controls cannot act.
 Mode departure revokes queued actions synchronously, including a quick return
