@@ -22,7 +22,29 @@ blockers, [no new Ruff diagnostics](ratchet-static.json) and
 [all changed ranges formatted](ratchet-format.json).
 [All nine artifact guards pass](ratchet-preflight.txt).
 Approved native visuals remain applicable to this mechanical move; no new native
-run is claimed. Follow-up PR/CI and final merge checks remain pending.
+run is claimed. [PR2769](https://github.com/rmusser01/tldw_chatbook/pull/2769)
+contains this repair; final-head CI and merge checks remain pending.
+
+PR2769 CI exposed a separate current-dev integration regression: PR2735's UTC
+timestamp helper raised the UI-ready census from 1,026 to 1,027. Following
+existing ADR-097, the Advanced execution readiness constant is now imported at
+execution time. Permission, admission and audit behavior stay unchanged; no
+budget is raised. The isolated import regression failed before the move and
+passes afterward. [All 12 boot/import checks pass](boot-import-followup.txt),
+measuring 675/686 imported modules and exactly 1,026/1,026 at UI-ready.
+[All eight Advanced execution cases pass](advanced-followup.txt), including
+Allow, approved Ask, Off and fail-closed gate errors. Three actual-execution
+cases needed the existing bootstrap-profile marker: the same three failed with
+`raw_source_selection_changed` on unchanged HEAD. Their original assertions and
+per-test MCP stores are preserved. An initial combined run was interrupted
+when unrelated cases hit that same pre-existing fixture error; it is not claimed
+as passing. [No new Ruff diagnostics](boot-import-static.json) and
+[five changed ranges formatted](boot-import-format.json). Independent review
+found no blockers in either production or the test-profile markers.
+
+Rebased conflict-free onto dev `fce195590b` (PR2738). Its permission-store
+duplicate-key rejection is retained. [34 focused integration cases pass](boot-rebase-followup.txt),
+plus both new upstream permission-file regressions (2 passes).
 
 Earlier qualification checkpoints below are historical. Compact Test Tool
 reachability remains the next separate review.

@@ -652,6 +652,7 @@ async def test_hub_tool_omitted_registered_argument_names_keeps_pre_task4_behavi
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_advanced_tool_execute_routes_through_execute_hub_tool_and_logs(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
@@ -756,6 +757,7 @@ async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path):
     """An Ask-resolved tool (the default posture for a NON-hash-free server
     key, and what `resolve_effective_state_by_key()` collapses every
@@ -776,6 +778,7 @@ async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_advanced_tool_execute_allow_records_allowed_not_approved(tmp_path):
     """Fix Round A, Item 1: `builtin:tldw_chatbook` (the Advanced hatch's
     fixed gate key, `BUILTIN_SERVER_KEY`) is in `HASH_FREE_SERVER_KEYS` --

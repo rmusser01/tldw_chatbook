@@ -63,7 +63,6 @@ from .permission_store import (
     resolve_effective_state_by_key,
 )
 from .redaction import is_secret_key, redact_mapping
-from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -4768,6 +4767,8 @@ class UnifiedMCPControlPlaneService:
             RuntimeError: The tool call fails or exceeds the effective
                 timeout.
         """
+        from .readiness import BUILTIN_SERVER_KEY
+
         normalized_tool_name = str(tool_name or "").strip()
         normalized_arguments = dict(arguments or {})
         try:
