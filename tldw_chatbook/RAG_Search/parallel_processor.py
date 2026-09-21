@@ -24,16 +24,8 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
-from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
+from ..Metrics.metrics_logger import log_counter, log_gauge, log_histogram, timeit
 from .simplified.data_models import IndexingResult
-
-# Import log_gauge if available
-try:
-    from ..Metrics.metrics_logger import log_gauge
-except ImportError:
-    # Fallback if log_gauge is not available
-    def log_gauge(name: str, value: float, labels: Optional[Dict[str, str]] = None):
-        pass
 
 
 @dataclass
