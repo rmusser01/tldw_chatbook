@@ -2341,28 +2341,12 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     )
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 =======
@@ -2736,6 +2720,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
 >>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+=======
+>>>>>>> fb04496444 (chore(diagnostic): re-pin for the local tree; timeout finder follows the shared transport seam)
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (

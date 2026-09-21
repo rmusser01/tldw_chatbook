@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 =======
@@ -260,6 +261,8 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
 >>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+=======
+>>>>>>> fb04496444 (chore(diagnostic): re-pin for the local tree; timeout finder follows the shared transport seam)
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,

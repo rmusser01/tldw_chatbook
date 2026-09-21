@@ -1083,6 +1083,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_custom_openai_credential_resolution.py",
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             "test_summarization_request_timeouts.py",
 =======
 <<<<<<< HEAD
@@ -1093,6 +1094,9 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
 >>>>>>> 4072370e89 (chore(diagnostic): re-pin for the current dev base; re-apply the Phase C capability seam re-key)
 =======
 >>>>>>> c7fdfb986a (feat(llm): local suites reconciled; llama summarizer onto the shared transport (TASK-32854 1/8))
+=======
+            "test_summarization_request_timeouts.py",
+>>>>>>> fb04496444 (chore(diagnostic): re-pin for the local tree; timeout finder follows the shared transport seam)
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
@@ -1104,8 +1108,6 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
-=======
->>>>>>> c0776ffe8e (feat(llm): local suites reconciled; llama summarizer onto the shared transport (TASK-32854 1/8))
         }
     )
     test_data_dir = (
