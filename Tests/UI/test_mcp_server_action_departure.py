@@ -118,6 +118,76 @@ async def test_accepted_delete_survives_an_overlapping_departure_toolbar_refresh
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hold_after_mount", [False, True])
+@private_profile_test
+async def test_accepted_delete_survives_departure_during_mount_completion(
+    request, monkeypatch, hold_after_mount
+):
+    """AwaitMount waits for registered children; resuming it cannot republish them."""
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._select_server_key("local:docs")
+        canvas = app.query_one(MCPServersMode)
+        canvas.query_one("#mcp-detail-delete", Button).press()
+        await pilot.pause()
+        toolbar = canvas.query_one("#mcp-detail-toolbar")
+        mount = toolbar.mount_all
+        entered, release = asyncio.Event(), asyncio.Event()
+        refreshed = asyncio.Event()
+        registered = []
+        calls = 0
+
+        def held_mount(widgets, **kwargs):
+            nonlocal calls
+            calls += 1
+            first = calls == 1
+            pending = mount(widgets, **kwargs)
+            if first:
+                registered.extend(toolbar.children)
+
+            async def finish():
+                if first:
+                    if hold_after_mount:
+                        await pending
+                    entered.set()
+                    await release.wait()
+                if not first or not hold_after_mount:
+                    await pending
+                if not first:
+                    refreshed.set()
+
+            return finish()
+
+        monkeypatch.setattr(toolbar, "mount_all", held_mount)
+        canvas.query_one("#mcp-detail-delete-confirm", Button).press()
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            assert len(registered) == 4
+            assert list(toolbar.children) == registered
+            workbench.set_mode("tools")
+            workbench.set_mode("servers")
+            # The first exclusive departure worker is intentionally cancelled.
+            # Observe the replacement's real mount completion instead.
+            await asyncio.wait_for(refreshed.wait(), 5)
+            current = list(toolbar.children)
+            assert len(current) == 4
+            assert len({button.id for button in current}) == 4
+            assert not set(registered).intersection(current)
+            assert all(not button.is_attached for button in registered)
+            assert all(
+                canvas._detail_action_target(button) == "local:docs"
+                for button in current
+            )
+        finally:
+            release.set()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert app.unified_mcp_service.delete_calls == ["docs"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("button_id", ["connect", "delete-confirm"])
 @pytest.mark.parametrize("state", ["disabled", "ancestor_disabled", "covered"])
 @private_profile_test

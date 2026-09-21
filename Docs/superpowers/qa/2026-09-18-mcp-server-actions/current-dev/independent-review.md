@@ -22,3 +22,26 @@ paint/hit/clip qualification, source provenance and supported terminal entry.
 No launch blockers found; `git diff --check` passed. The reviewer did not launch
 the app or alter files. The primary agent subsequently ran and inspected all
 four native journeys and verified clean shutdown.
+
+## Qodo mount-completion finding
+
+Qodo flagged the await of `mount_all()` as another possible publication race.
+The production reviewer independently traced installed Textual 8.2.8:
+`Widget.mount_all()` synchronously calls `mount()`, which invokes
+`App._register()` / `_register_child()` and adds children to the parent before
+returning `AwaitMount`. A later prune therefore sees those children.
+`AwaitMount.__await__()` waits for mount events, refreshes layout and updates
+mouse-over; it does not register controls. No yield separates the revision
+validation from registration. Completing an older await can only schedule the
+guarded current-Keep lookup and dispatch an accepted confirmation's captured key.
+The reviewer found no reachable counterexample and advised against adding a lock.
+
+Two new cases call the real `mount_all()` synchronously, then hold its consumer
+before or after awaiting completion while a mode round trip replaces controls.
+Both pass: original controls detach, replacement IDs are unique and mapped to
+the current target, and the accepted deletion dispatches exactly once. The
+reviewer inspected these tests and found no blockers. The before-await case does
+not claim to hold child mount events incomplete; it holds the consumer's wait.
+
+This follow-up changes tests and documentation only. The native production and
+runner hashes remain identical to all 16 reviewed captures.

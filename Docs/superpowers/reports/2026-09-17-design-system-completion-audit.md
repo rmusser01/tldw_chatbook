@@ -10,7 +10,7 @@ newer input, and overlapping rendering cannot interrupt accepted deletion.
 Compact actions use a token-backed two-column grid; wide layout is unchanged.
 
 [Current qualification](../qa/2026-09-18-mcp-server-actions/current-dev/README.md):
-230 distinct targeted cases, eight artifact guards, no introduced Ruff findings,
+232 distinct targeted cases, eight artifact guards, no introduced Ruff findings,
 independent review clear, four native theme/size journeys and 16 inspected captures.
 Real private profile persistence verifies Keep/Escape, ignored retired presses
 and exact-target deletion. Clean shutdown, healthy private databases, unchanged

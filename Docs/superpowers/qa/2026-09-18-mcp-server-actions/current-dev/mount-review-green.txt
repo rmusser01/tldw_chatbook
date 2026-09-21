@@ -1,0 +1,8 @@
+..                                                                       [100%]
+-------- generated xml file: /private/tmp/32825-mount-review-green.xml ---------
+============================= slowest 25 durations =============================
+2.80s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[True]
+2.72s call     Tests/UI/test_mcp_server_action_departure.py::test_accepted_delete_survives_departure_during_mount_completion[False]
+
+(4 durations < 1s hidden.)
+2 passed, 12 deselected in 6.35s

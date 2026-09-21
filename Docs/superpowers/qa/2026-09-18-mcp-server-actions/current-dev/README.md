@@ -17,9 +17,9 @@ apply; no service, storage, permission or runtime boundary changes.
 
 ## Verification
 
-- [230 distinct targeted cases](test-results.json): server ownership/departure,
+- [232 distinct targeted cases](test-results.json): server ownership/departure,
   Servers canvas, affected Workbench neighbors, native CLI/fixture admission and
-  CSS/token/selector guards. All 29 dedicated ownership/departure cases pass.
+  CSS/token/selector guards. All 31 dedicated ownership/departure cases pass.
   The [initial Workbench run](workbench.txt) had one stale test double; the
   [updated deferred-worker contract](worker-contract.txt) passes and verifies
   lazy async callable scheduling with the captured retirement revision.
@@ -39,6 +39,14 @@ apply; no service, storage, permission or runtime boundary changes.
   new Python files and modified ranges pass formatting.
 - [Independent production and runner review](independent-review.md) found no
   remaining blockers after the timing repairs. No full-suite sweep was run.
+- Qodo's proposed mount-completion race was not reproduced. Installed Textual
+  8.2.8 registers children synchronously before returning `AwaitMount`; completing
+  that await cannot publish them again. Two additional
+  [mount-overlap cases pass](mount-review-green.txt), with independent source/test
+  review supporting that conclusion. The [first harness attempt](mount-review.txt)
+  waited for an intentionally cancelled exclusive worker; the corrected test
+  observes the replacement's actual mount completion. No production change or
+  additional lock was needed. [New test static checks pass](mount-static.txt).
 
 ## Native evidence
 
@@ -80,6 +88,6 @@ output occurred. The owned tmux session was closed. The runner hash matches.
 [Export manifest](export-manifest.json) records original and whitespace-normalized
 artifact hashes; original captures remain in the owned private profile.
 
-The existing draft PR is updated separately. Current-head CI, accumulated Qodo
+The existing PR is ready for review. Current-head CI, accumulated Qodo
 review, current-dev/conflict checks and **fresh owner visual approval** still
 gate merge. PR2716's approval does not approve this UI slice.

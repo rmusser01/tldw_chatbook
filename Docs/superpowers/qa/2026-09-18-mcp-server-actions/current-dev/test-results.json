@@ -1,5 +1,5 @@
 {
-  "distinct_passed": 230,
+  "distinct_passed": 232,
   "note": "Latest result wins per test node. Initial Workbench fixture failure is retained and superseded by the one-test worker-contract pass. The initial 90-case UI run is supplemented by the 12-case departure run including the final overlap fix. All 17 ownership/geometry cases were rechecked after the final production change.",
   "runs": [
     {
@@ -1072,6 +1072,19 @@
           "status": "passed"
         }
       ]
+    },
+    {
+      "file": "mount-review-green.txt",
+      "cases": [
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_departure_during_mount_completion[False]",
+          "status": "passed"
+        },
+        {
+          "node": "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_departure_during_mount_completion[True]",
+          "status": "passed"
+        }
+      ]
     }
   ],
   "latest_by_test": {
@@ -1994,6 +2007,14 @@
     "Tests.Utils.test_mcp_cancellation_native_fixture::test_fixture_preserves_existing_profile_and_runtime[None-server-actions-beta]": {
       "status": "passed",
       "evidence": "runner-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_departure_during_mount_completion[False]": {
+      "status": "passed",
+      "evidence": "mount-review-green.txt"
+    },
+    "Tests.UI.test_mcp_server_action_departure::test_accepted_delete_survives_departure_during_mount_completion[True]": {
+      "status": "passed",
+      "evidence": "mount-review-green.txt"
     }
   }
 }

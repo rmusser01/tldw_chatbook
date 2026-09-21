@@ -300,6 +300,24 @@
       "file": "ownership-final.txt",
       "original_sha256": "3217c8531fdaa021b8cf9b5e8a14b63d7c136d917a09c8c88b125851e019a4a2",
       "export_sha256": "3217c8531fdaa021b8cf9b5e8a14b63d7c136d917a09c8c88b125851e019a4a2"
+    },
+    {
+      "source": "/private/tmp/32825-mount-review.txt",
+      "file": "mount-review.txt",
+      "original_sha256": "5b3bd662afc315b3ba97059b8561209669793f30e33087569652d0cdeb38807b",
+      "export_sha256": "8408c4efd74b8f08393ef905a8f34eb5490bc777c12fe2cb09063621473801a1"
+    },
+    {
+      "source": "/private/tmp/32825-mount-review-green.txt",
+      "file": "mount-review-green.txt",
+      "original_sha256": "8053fe32ab2580927ded20bd415d246c722d397d3bfbfc30aa7a4f762ba4ce5f",
+      "export_sha256": "8053fe32ab2580927ded20bd415d246c722d397d3bfbfc30aa7a4f762ba4ce5f"
+    },
+    {
+      "source": "/private/tmp/32825-mount-static.txt",
+      "file": "mount-static.txt",
+      "original_sha256": "ce04ce92b16073000b77c97a42c00b98b96305692d9d5ed4dcfa5a9ca9ea62d6",
+      "export_sha256": "ce04ce92b16073000b77c97a42c00b98b96305692d9d5ed4dcfa5a9ca9ea62d6"
     }
   ]
 }
