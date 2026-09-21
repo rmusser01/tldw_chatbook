@@ -3,8 +3,7 @@
 Screen-owned overlay: the owning screen feeds it suggestions, routes
 Up/Down/Enter/Tab/Escape to it while open, and it never takes focus. It
 positions itself (``overlay: screen`` + ``styles.offset``) so its bottom
-edge sits just above the composer — the same anchored-overlay technique as
-``Widgets/tooltip.py``.
+edge sits just above the composer with an anchored-overlay technique.
 """
 
 from __future__ import annotations

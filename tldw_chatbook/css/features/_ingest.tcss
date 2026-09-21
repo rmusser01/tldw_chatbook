@@ -549,18 +549,7 @@ IngestWindowTabbed {
     padding: $ds-space-1;
 }
 
-.file-list-item-container {
-    padding: $ds-space-1;
-    margin-bottom: $ds-space-1;
-    border: round $surface-lighten-2;
-    background: $surface-lighten-1;
-    height: auto;
-}
 
-.file-list-item-container:hover {
-    background: $surface-lighten-2;
-    border: round $primary;
-}
 
 .file-info-main {
     width: $ds-width-fill;

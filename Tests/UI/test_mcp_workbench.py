@@ -1471,6 +1471,7 @@ async def test_set_mode_defers_async_workers_as_callables():
 
     switcher = SimpleNamespace(current=None)
     canvas = SimpleNamespace(retire_detail_actions=lambda: 17)
+    inspector = SimpleNamespace()
     queued: list[tuple[Any, dict[str, Any]]] = []
     posted: list[Any] = []
     refreshed: list[int] = []
@@ -1481,6 +1482,8 @@ async def test_set_mode_defers_async_workers_as_callables():
     async def clear_tool_view() -> None:
         return None
 
+    inspector.clear_mode_view = clear_tool_view
+
     workbench = SimpleNamespace(
         _active_mode="servers",
         ModeChanged=lambda mode: SimpleNamespace(mode=mode),
@@ -1488,13 +1491,13 @@ async def test_set_mode_defers_async_workers_as_callables():
         # the switcher (deferred canvases stash instead); a non-empty result
         # models "canvas mounted".
         query=lambda _selector: [object()],
-        query_one=lambda widget_type: (
-            canvas if widget_type is MCPServersMode else switcher
-        ),
+        query_one=lambda widget_type: {
+            MCPServersMode: canvas,
+            MCPInspector: inspector,
+        }.get(widget_type, switcher),
         post_message=lambda message: posted.append(message),
         run_worker=lambda work, **kwargs: queued.append((work, kwargs)),
         _disarm_canvas_delete=disarm_canvas_delete,
-        _clear_tool_view=clear_tool_view,
     )
 
     MCPWorkbench.set_mode(workbench, "tools")
@@ -8730,7 +8733,7 @@ async def test_tools_mode_permission_block_change_button_clears_stale_tool_detai
     permission block's own "Change in Permissions" button fires from Tools
     mode, where `#mcp-inspector-tool` is populated. `_goto_permission_row()`
     dispatches `_open_audit_permission()` into the SAME exclusive
-    `"mcp-tool-clear"` worker group `set_mode()`'s own `_clear_tool_view()`
+    `"mcp-tool-clear"` worker group `set_mode()`'s own `clear_mode_view()`
     just used, cancelling that clear before it runs (the documented trap --
     see `_open_audit_tool()`'s own docstring for the mechanism), so
     `_open_audit_permission()` must explicitly clear `#mcp-inspector-tool`
@@ -9853,7 +9856,7 @@ async def test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_deta
 
         # Critical fix: the stale Audit-mode detail (with its own live
         # drill buttons) must not survive the drill-through -- it used to
-        # rely on set_mode()'s _clear_tool_view() worker, which the SAME
+        # rely on set_mode()'s clear_mode_view() worker, which the SAME
         # exclusive "mcp-tool-clear" dispatch above cancels before it ever
         # runs (see _open_audit_tool()'s docstring).
         assert app.query_one("#mcp-inspector-audit").display is False

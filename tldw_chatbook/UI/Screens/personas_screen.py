@@ -493,6 +493,9 @@ PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+# TASK-32806.6: the two importers above cap at 10 MB before reading;
+# character-card import read the picked file unbounded. Same ceiling.
+PERSONAS_CHARACTER_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 _PERSONAS_CHARACTER_IMPORT_WORKER_GROUP = "personas-character-import"
 _CHARACTER_TTS_WORKER_GROUP = "personas-character-tts"
 _CHARACTER_TTS_LOADING_COPY = "Loading voice profiles…"
@@ -13753,6 +13756,11 @@ class PersonasScreen(BaseAppScreen):
             file_type = "other"
         try:
             source = validate_path_simple(path, require_exists=True)
+            if source.stat().st_size > PERSONAS_CHARACTER_IMPORT_MAX_BYTES:
+                raise ValueError(
+                    "file is larger than "
+                    f"{PERSONAS_CHARACTER_IMPORT_MAX_BYTES // (1024 * 1024)} MB"
+                )
             source_bytes = await asyncio.to_thread(source.read_bytes)
             inspection = await asyncio.to_thread(
                 ccp_character_handler.inspect_character_card_tts_attachment,

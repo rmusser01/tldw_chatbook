@@ -3816,7 +3816,7 @@ class MCPWorkbench(Container):
             # Test Tool panel behind otherwise; switching INTO it starts
             # with nothing selected anyway, so this is a no-op there.
             self.run_worker(
-                self._clear_tool_view,
+                self.query_one(MCPInspector).clear_mode_view,
                 group="mcp-tool-clear",
                 exclusive=True,
             )
@@ -3860,17 +3860,6 @@ class MCPWorkbench(Container):
             canvas.query_one("#mcp-perm-table", DataTable).focus()
         except NoMatches:
             pass
-
-    async def _clear_tool_view(self) -> None:
-        await self.query_one(MCPInspector).show_tool(None)
-        # T7 (MCP Hub Phase 5): a mode change also invalidates whatever
-        # execution-log entry the inspector was showing -- same rationale
-        # as the `show_tool(None)` call above, one line up.
-        await self.query_one(MCPInspector).show_audit_entry(None)
-        # T8 (MCP Hub Phase 5): a mode change also invalidates whatever
-        # Findings-table selection the inspector was showing -- same
-        # rationale as the `show_audit_entry(None)` call above.
-        await self.query_one(MCPInspector).show_finding(None)
 
     async def _disarm_canvas_delete(self, retired_revision: int) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
@@ -4980,11 +4969,11 @@ class MCPWorkbench(Container):
 
         The populate work is dispatched into the SAME exclusive worker
         group (`"mcp-tool-clear"`) `set_mode()` just used for its own
-        `_clear_tool_view()` call, added HERE synchronously (no `await`
+        `clear_mode_view()` call, added HERE synchronously (no `await`
         between the two `run_worker()` calls) -- Textual cancels the
         PREVIOUSLY-QUEUED worker in an exclusive group at `add_worker()`
         time, before it ever runs, not at completion time. That means
-        the queued `_clear_tool_view` callable is never invoked here --
+        the queued `clear_mode_view` callable is never invoked here --
         `_open_audit_tool()`
         below does NOT rely on that cancelled worker to clear the audit
         panel; it clears `#mcp-inspector-audit` itself, explicitly, before
@@ -5022,7 +5011,7 @@ class MCPWorkbench(Container):
             await inspector.show_tool(None)
             return
         # Explicit clear -- see on_mcp_inspector_audit_open_tool_requested()'s
-        # docstring: set_mode()'s _clear_tool_view() worker (which would
+        # docstring: set_mode()'s clear_mode_view() worker (which would
         # otherwise hide #mcp-inspector-audit via show_audit_entry(None))
         # is cancelled before it runs by this method's own dispatch into
         # the same exclusive "mcp-tool-clear" group, so it must not be
@@ -5115,7 +5104,7 @@ class MCPWorkbench(Container):
         returns) and dispatches the actual row-select-plus-render work
         (`_open_audit_permission()`) into the SAME exclusive
         `"mcp-tool-clear"` worker group `set_mode()` just used for its own
-        `_clear_tool_view()` -- added HERE synchronously (no `await`
+        `clear_mode_view()` -- added HERE synchronously (no `await`
         between the two `run_worker()` calls) so Textual cancels the
         previously-queued clear before it ever runs, and
         `_open_audit_permission()` does its own explicit
@@ -5158,7 +5147,7 @@ class MCPWorkbench(Container):
         # Permissions" button, and the Test Tool panel's blocked/ask
         # button -- fire from Tools mode, where `#mcp-inspector-tool` and
         # its open Test Tool panel are populated. `set_mode()`'s own
-        # `_clear_tool_view()` worker
+        # `clear_mode_view()` worker
         # -- which would otherwise hide it via `show_tool(None)` -- is
         # cancelled by this method's SAME exclusive `"mcp-tool-clear"`
         # dispatch before it ever runs (the exact mechanism the comment
@@ -5442,7 +5431,7 @@ class MCPWorkbench(Container):
         every mode). With no tool selected the active mode now stays put
         and the hint says where the working key lives. (`set_mode("tools")`
         is a no-op once already there -- no mode change means
-        `_clear_tool_view()` never fires, see its own docstring -- and a
+        `clear_mode_view()` never fires, see its own docstring -- and a
         non-None `_current_tool` only exists in Tools mode anyway, since
         every mode change clears the tool view.)
         """

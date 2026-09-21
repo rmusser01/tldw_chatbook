@@ -343,7 +343,3 @@ def get_temp_manager() -> SecureTempFileManager:
     """Get the global temporary file manager."""
     return _global_temp_manager
 
-
-def cleanup_all_temp_files():
-    """Clean up all temporary files created by the global manager."""
-    _global_temp_manager.cleanup_all()

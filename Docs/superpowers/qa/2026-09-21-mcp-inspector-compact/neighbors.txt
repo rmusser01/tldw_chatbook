@@ -1,0 +1,34 @@
+........................................................................ [ 19%]
+........................................................................ [ 38%]
+........................................................................ [ 58%]
+........................................................................ [ 77%]
+........................................................................ [ 96%]
+............                                                             [100%]
+------------- generated xml file: /private/tmp/32882-neighbors.xml -------------
+============================= slowest 25 durations =============================
+21.92s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+10.40s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+5.77s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-removed]
+5.76s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-description]
+5.63s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-schema]
+5.62s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-unchanged]
+5.56s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[False-unchanged]
+5.25s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+5.23s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-removed]
+5.15s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+5.12s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-schema]
+5.06s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+5.06s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[True-description]
+4.96s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_queued_old_preview_request_cannot_replace_reopened_preview
+4.68s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_retirement_during_native_mount_cannot_leave_orphan_panel[close]
+4.57s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_retirement_during_native_mount_cannot_leave_orphan_panel[refresh]
+4.51s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+4.33s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_waiting_on_inspector_cannot_replace_newer_selection
+3.33s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+3.28s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[effective]
+3.13s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[session_approvals]
+3.10s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_equal_catalog_refresh_replaces_changed_permission_facts[arg_rules]
+2.38s call     Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]
+2.36s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.35s call     Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+372 passed in 282.14s (0:04:42)

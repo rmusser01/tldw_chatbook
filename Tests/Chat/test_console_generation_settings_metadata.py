@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     parse_console_generation_settings,
     snapshot_from_session_settings,
+    strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
@@ -700,3 +701,30 @@ def test_persistence_returns_missing_and_propagates_final_sibling_conflict(
             expected_snapshot=baseline,
         )
     assert race_number == 2
+
+
+def test_strict_json_metadata_object_rejects_duplicate_keys() -> None:
+    """task-32805.5: a stored metadata string is a config boundary -- a
+    repeated key is ambiguous and must fail, not silently take last-wins.
+
+    Re-serialization of a well-formed object cannot produce a duplicate key,
+    so only an external string can carry one; the mapping input path is
+    unaffected.
+    """
+    # well-formed still parses
+    assert strict_json_metadata_object('{"a": 1, "b": 2}') == {"a": 1, "b": 2}
+    # duplicate key rejected (would last-wins to {"a": 2} under plain json)
+    with pytest.raises(ValueError):
+        strict_json_metadata_object('{"a": 1, "a": 2}')
+    # a mapping input round-trips our own dumps and cannot carry a duplicate
+    assert strict_json_metadata_object({"x": 1}) == {"x": 1}
+
+
+def test_parse_console_generation_settings_rejects_duplicate_keys() -> None:
+    """The public parse entry inherits the duplicate-key rejection."""
+    dup = '{"version": %d, "temperature": 0.5, "temperature": 0.9}' % (
+        CONSOLE_GENERATION_SETTINGS_VERSION
+    )
+    result = parse_console_generation_settings(dup)
+    assert result.status is ConsoleGenerationSettingsReadStatus.INVALID
+    assert result.snapshot is None

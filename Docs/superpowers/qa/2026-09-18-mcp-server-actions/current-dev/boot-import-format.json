@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Tests/Performance/test_app_import_weight.py",
+    "range": "239-246",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/MCP/test_control_plane_tool_execute.py",
+    "range": "655-656",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/MCP/test_control_plane_tool_execute.py",
+    "range": "760-761",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/MCP/test_control_plane_tool_execute.py",
+    "range": "781-782",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
+    "range": "4770-4772",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  }
+]

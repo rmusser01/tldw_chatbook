@@ -326,6 +326,10 @@
 
 
 
+    MCPInspector #mcp-inspector-test-panel {
+        height: auto;
+    }
+
     MCPInspector #mcp-inspector-state {
         width: 1fr;
         height: auto;

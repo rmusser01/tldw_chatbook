@@ -1,0 +1,6 @@
+........                                                                 [100%]
+---------- generated xml file: /private/tmp/2769-advanced-green-2.xml ----------
+============================= slowest 25 durations =============================
+
+(24 durations < 1s hidden.)
+8 passed, 94 deselected in 2.34s

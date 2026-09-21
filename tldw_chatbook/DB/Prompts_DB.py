@@ -4793,11 +4793,14 @@ def export_prompt_keywords_to_csv(
     try:
         # If no file path provided, generate one
         if file_path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            temp_dir = tempfile.gettempdir()
-            file_path = os.path.join(
-                temp_dir, f"prompt_keywords_export_{timestamp}.csv"
+            # TASK-32806.7: a predictable name in the shared temp dir is
+            # world-readable and guessable, so any local user could read an
+            # exported prompt body between write and consumption. mkstemp
+            # gives a unique, O_EXCL, 0600 file instead.
+            fd, file_path = tempfile.mkstemp(
+                prefix="prompt_keywords_export_", suffix=".csv"
             )
+            os.close(fd)
 
         # Query to get keywords with associated prompt info (names, authors, counts)
         # This requires joining Prompts, PromptKeywordsTable, PromptKeywordLinks
@@ -4958,9 +4961,12 @@ def export_prompts_formatted(
         output_file_path = "None"
 
         if export_format == "csv":
-            temp_csv_file = os.path.join(
-                tempfile.gettempdir(), f"prompts_export_{timestamp}.csv"
+            # TASK-32806.7: unique, O_EXCL, 0600 -- not a guessable
+            # world-readable name in the shared temp dir.
+            _fd, temp_csv_file = tempfile.mkstemp(
+                prefix="prompts_export_", suffix=".csv"
             )
+            os.close(_fd)
             header_row = ["Name", "UUID"]  # Start with common fields
             if include_author:
                 header_row.append("Author")
@@ -4994,9 +5000,13 @@ def export_prompts_formatted(
 
         elif export_format == "markdown":
             temp_zip_dir = tempfile.mkdtemp()
-            zip_file_path = os.path.join(
-                tempfile.gettempdir(), f"prompts_export_markdown_{timestamp}.zip"
+            # TASK-32806.7: the staging dir above is already 0700; the zip
+            # itself went to a guessable world-readable temp name. mkstemp
+            # makes it unique and 0600 too.
+            _zip_fd, zip_file_path = tempfile.mkstemp(
+                prefix="prompts_export_markdown_", suffix=".zip"
             )
+            os.close(_zip_fd)
 
             templates = {
                 "Basic Template": """# {name} ({uuid})

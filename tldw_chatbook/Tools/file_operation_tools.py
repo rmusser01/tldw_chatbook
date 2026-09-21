@@ -20,6 +20,7 @@ from loguru import logger
 
 from . import Tool
 from ..Utils.path_validation import validate_path_multi
+from ..Utils.atomic_file_ops import atomic_write_text
 from ..Utils.sensitive_paths import (
     is_git_metadata_write,
     SensitivePathContext,
@@ -38,14 +39,14 @@ from .workspace_file_roots import (
 # Files or writes larger than this skip before/after capture entirely and
 # render as plain text results.
 DIFF_CAPTURE_MAX_BYTES = 256 * 1024
-#: task-32804.12: bound ``ListDirectoryTool``'s recursive walk. ``max_depth`` is
-#: clamped to the schema's own advertised maximum, and the scan stops after
-#: ``_LIST_DIR_MAX_SCAN_ENTRIES`` ``stat()``s (mirroring
-#: ``local_tool_impls.py``'s ``MAX_SCAN_ENTRIES``) so a
-#: ``recursive=True, max_depth=50`` request on a node_modules/build tree cannot
-#: ``stat()`` and append every entry in-process before the 100-entry return cap.
-_LIST_DIR_MAX_DEPTH = 5
-_LIST_DIR_MAX_SCAN_ENTRIES = 10_000
+
+#: TASK-32806.6: `ReadFileTool` returned the ENTIRE file as `content`. A
+#: 150 MB single-line file cost ~400 MB RSS and 1 s, and the whole string is
+#: then handed back to a model as a tool result. `_MAX_GREP_FILE_BYTES`
+#: (5 MB) already bounds one file for grep in this module; this is the same
+#: order of magnitude for a plain read, checked on `st_size` before the file
+#: is materialised.
+READ_FILE_MAX_BYTES = 10 * 1024 * 1024
 
 # Result keys carrying the raw before/after contents captured for UI diff
 # rendering (TASK-1351). Display-only, live-session state: they must be
@@ -329,11 +330,20 @@ class ReadFileTool(Tool):
                     "path_type": "directory" if path.is_dir() else "other",
                 }
 
+            # Bound the read before materialising the file (TASK-32806.6).
+            stat = path.stat()
+            if stat.st_size > READ_FILE_MAX_BYTES:
+                return {
+                    "error": (
+                        f"File too large to read ({stat.st_size} bytes); "
+                        f"maximum is {READ_FILE_MAX_BYTES} bytes"
+                    ),
+                    "file_path": str(path),
+                    "size_bytes": stat.st_size,
+                }
+
             # Read the file
             content = path.read_text(encoding=encoding)
-
-            # Get file info
-            stat = path.stat()
 
             return {
                 "file_path": str(path),
@@ -418,14 +428,19 @@ class ListDirectoryTool(Tool):
         directory_path = kwargs.get("directory_path", ".")
         include_hidden = kwargs.get("include_hidden", False)
         recursive = kwargs.get("recursive", False)
+        # TASK-32806.6: the schema says `maximum: 5`, but nothing clamped
+        # the value, so `max_depth=50` was honoured. Clamp to the schema's
+        # own bound. `SCAN_ENTRY_CAP` then stops the walk once enough entries
+        # are collected, instead of scanning everything and slicing to 100
+        # after the fact -- `local_tool_impls` caps its scan at MAX_SCAN_ENTRIES
+        # the same way.
+        LIST_DIR_MAX_DEPTH = 5
+        SCAN_ENTRY_CAP = 100
         max_depth = kwargs.get("max_depth", 2)
-        # task-32804.12: the schema advertises maximum 5, but nothing enforced
-        # it -- a model could pass max_depth=50. Clamp to the schema bound.
         try:
-            max_depth = int(max_depth)
+            max_depth = min(int(max_depth), LIST_DIR_MAX_DEPTH)
         except (TypeError, ValueError):
             max_depth = 2
-        max_depth = max(1, min(max_depth, _LIST_DIR_MAX_DEPTH))
 
         try:
             # Validate the path against the sandbox plus any read-eligible
@@ -480,22 +495,18 @@ class ListDirectoryTool(Tool):
                 }
 
             entries = []
-            scan_truncated = False
 
             def list_dir_contents(dir_path: Path, current_depth: int = 0):
                 """Recursively list directory contents."""
-                nonlocal scan_truncated
                 if current_depth > max_depth:
                     return
+                if len(entries) >= SCAN_ENTRY_CAP:
+                    return  # stop scanning once the cap is reached
 
                 try:
                     for item in sorted(dir_path.iterdir()):
-                        # task-32804.12: stop the whole walk once the scan cap
-                        # is reached, so the in-process stat()/append work is
-                        # bounded regardless of tree size.
-                        if len(entries) >= _LIST_DIR_MAX_SCAN_ENTRIES:
-                            scan_truncated = True
-                            return
+                        if len(entries) >= SCAN_ENTRY_CAP:
+                            break
                         # Skip hidden files if not requested
                         if not include_hidden and item.name.startswith("."):
                             continue
@@ -570,8 +581,7 @@ class ListDirectoryTool(Tool):
                 "total_entries": len(entries),
                 "file_count": file_count,
                 "directory_count": dir_count,
-                "entries": entries[:100],  # Limit to first 100 entries
-                "scan_truncated": scan_truncated,
+                "entries": entries[:SCAN_ENTRY_CAP],
             }
 
         except PermissionError:
@@ -763,16 +773,33 @@ class WriteFileTool(Tool):
                 }
 
             # Write the file
+            # TASK-32806.6: write through the shared atomic helper (temp +
+            # fsync + os.replace, no symlink follow at the target) instead
+            # of `open(path, "w"/"a")`, which truncated in place, never
+            # fsynced, and followed a symlink planted at the target. This
+            # matches the O_EXCL-temp + fsync path the fs_write family uses.
+            # `preserve_existing_mode` keeps a user's tightened bits on a
+            # rewrite rather than resetting to 0o644.
             if mode == "append" and file_exists:
-                # Append mode
-                with open(path, "a", encoding=encoding) as f:
-                    f.write(content)
+                try:
+                    existing_text = path.read_text(encoding=encoding)
+                except (UnicodeDecodeError, OSError):
+                    existing_text = ""
+                atomic_write_text(
+                    path,
+                    existing_text + content,
+                    encoding=encoding,
+                    preserve_existing_mode=True,
+                )
                 action = "appended to"
                 new_content = old_content + content if old_content is not None else None
             else:
-                # Overwrite mode
-                with open(path, "w", encoding=encoding) as f:
-                    f.write(content)
+                atomic_write_text(
+                    path,
+                    content,
+                    encoding=encoding,
+                    preserve_existing_mode=file_exists,
+                )
                 action = "created" if not file_exists else "overwritten"
                 new_content = content if old_content is not None else None
 

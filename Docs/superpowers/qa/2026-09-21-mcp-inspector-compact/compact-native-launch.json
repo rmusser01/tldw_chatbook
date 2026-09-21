@@ -1,0 +1,11 @@
+{
+  "pid": 41724,
+  "started_at": "2026-09-21T06:37:34.294587+00:00",
+  "repo": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+  "head": "659346e11eea90ee583bde19b4ac097df747b3e1",
+  "dirty_status": " M tldw_chatbook/UI/MCP_Modules/mcp_inspector.py\n",
+  "requested_size": [
+    80,
+    24
+  ]
+}

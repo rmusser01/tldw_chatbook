@@ -3,13 +3,14 @@ Input validation utilities for secure user input handling.
 """
 
 import ipaddress
+import json
 import math
 import re
 import time
 import unicodedata
 from collections.abc import Mapping
 from itertools import islice
-from typing import Any, Literal, Optional, TypeVar, Union
+from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
 import regex
@@ -31,6 +32,28 @@ from .reasoning_config import REASONING_HISTORY_MODES
 _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
 )
+_TMUX_IDENTIFIER = TypeAdapter(
+    Annotated[
+        str,
+        Field(strict=True, pattern=r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z"),
+    ]
+)
+
+
+def validate_tmux_identifier(value: object) -> str:
+    """Validate a native QA socket or session name without coercion.
+
+    Args:
+        value: Candidate containing 1–64 ASCII letters, digits, underscores or
+            hyphens, starting with a letter or digit.
+
+    Returns:
+        The exact validated name, without trimming or normalization.
+
+    Raises:
+        ValueError: The value is not a supported string identifier.
+    """
+    return _TMUX_IDENTIFIER.validate_python(value)
 
 
 def validate_batch_transcription_provider(value: object) -> str:
@@ -491,6 +514,124 @@ def validate_canvas_bridge_wire(value: object) -> CanvasBridgeWireInput:
         else:
             reason = "Canvas bridge request fields are invalid"
         raise ValueError(reason) from None
+
+
+#: Default structural caps for :func:`strict_json_loads`. Family A of the three
+#: strict-JSON families the core review found (hosted_chat/qwencloud) used these.
+STRICT_JSON_MAX_DEPTH = 128
+STRICT_JSON_MAX_NODES = 1_000_000
+
+
+class StrictJSONError(ValueError):
+    """Raised by :func:`strict_json_loads` on any strict-JSON violation.
+
+    A single exception type so every boundary can catch one thing; callers that
+    need a boundary-specific error (a sentinel, ``_InvalidContinuation``, a
+    protocol error) wrap this and translate it.
+    """
+
+
+def _strict_json_within_limits(value: object, *, max_depth: int, max_nodes: int) -> bool:
+    """Iteratively enforce depth/node caps, str-only keys and finite floats.
+
+    Mirrors the family-A shape check (hosted_chat ``_json_shape_is_safe``); kept
+    iterative so a hostile document cannot blow the recursion limit here.
+    """
+    stack: list[tuple[object, int]] = [(value, 1)]
+    scheduled_nodes = 1
+    try:
+        while stack:
+            node, depth = stack.pop()
+            if depth > max_depth:
+                return False
+            if type(node) is dict:
+                for key, child in node.items():  # type: ignore[union-attr]
+                    if not isinstance(key, str):
+                        return False
+                    scheduled_nodes += 1
+                    if scheduled_nodes > max_nodes:
+                        return False
+                    stack.append((child, depth + 1))
+                continue
+            if type(node) is list:
+                for child in node:  # type: ignore[union-attr]
+                    scheduled_nodes += 1
+                    if scheduled_nodes > max_nodes:
+                        return False
+                    stack.append((child, depth + 1))
+                continue
+            if node is None or isinstance(node, (str, bool)):
+                continue
+            if isinstance(node, int) and not isinstance(node, bool):
+                continue
+            if isinstance(node, float) and math.isfinite(node):
+                continue
+            return False
+    except (RecursionError, TypeError, ValueError):
+        return False
+    return True
+
+
+def strict_json_loads(
+    text: str,
+    *,
+    max_depth: int = STRICT_JSON_MAX_DEPTH,
+    max_nodes: int = STRICT_JSON_MAX_NODES,
+    reject_duplicate_keys: bool = True,
+) -> object:
+    """Parse JSON under one strict contract for every wire and storage boundary.
+
+    Rejects non-finite constants (``NaN``/``Infinity``), enforces a depth and
+    node-count cap plus str-only object keys and finite floats, and -- by
+    default -- rejects duplicate object keys. Any violation raises
+    :class:`StrictJSONError`.
+
+    This is the single home the core review (TASK-32805.5) names for the three
+    drifted strict-JSON families. The wire family (hosted_chat/qwencloud) and the
+    storage family (provider_continuation/thinking_blocks) both delegate here, so
+    a tool-call argument accepted on the wire can no longer be refused when its
+    continuation checkpoint is built: both now reject duplicate keys.
+
+    Args:
+        text: The raw JSON text.
+        max_depth: Maximum nesting depth.
+        max_nodes: Maximum total number of container children.
+        reject_duplicate_keys: When True (default), a repeated object key is a
+            violation rather than last-wins.
+
+    Returns:
+        The decoded JSON value.
+
+    Raises:
+        StrictJSONError: On malformed JSON, a non-finite constant, a duplicate
+            key, a non-str key, a non-finite float, or a shape past the caps.
+    """
+
+    def _reject_constant(_value: str) -> "NoReturn":
+        raise StrictJSONError("non-finite JSON constant")
+
+    object_pairs_hook = None
+    if reject_duplicate_keys:
+
+        def object_pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise StrictJSONError("duplicate JSON key")
+                result[key] = item
+            return result
+
+    try:
+        decoded = json.loads(
+            text, parse_constant=_reject_constant, object_pairs_hook=object_pairs_hook
+        )
+    except StrictJSONError:
+        raise
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise StrictJSONError("invalid JSON") from exc
+    if not _strict_json_within_limits(decoded, max_depth=max_depth, max_nodes=max_nodes):
+        raise StrictJSONError("JSON shape exceeds strict limits")
+    return decoded
 
 
 def _validate_strict_json_value(
@@ -1034,52 +1175,6 @@ class SkillsListInput(BaseModel):
         return value.strip().lower() if type(value) is str else value
 
 
-def validate_email(email: str) -> bool:
-    """Validate email address format."""
-    start_time = time.time()
-    log_counter("input_validation_email_attempt")
-
-    if not email or len(email) > 254:
-        log_counter("input_validation_email_invalid", labels={"reason": "length"})
-        return False
-
-    # Basic email regex - not perfect but good enough for most cases
-    pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-    result = bool(pattern.match(email))
-
-    # Log result
-    duration = time.time() - start_time
-    log_histogram("input_validation_email_duration", duration)
-    log_counter("input_validation_email_result", labels={"valid": str(result)})
-
-    return result
-
-
-def validate_username(username: str, min_length: int = 3, max_length: int = 50) -> bool:
-    """Validate username format."""
-    start_time = time.time()
-    log_counter(
-        "input_validation_username_attempt",
-        labels={"min_length": str(min_length), "max_length": str(max_length)},
-    )
-
-    if not username or len(username) < min_length or len(username) > max_length:
-        log_counter(
-            "input_validation_username_invalid",
-            labels={"reason": "empty" if not username else "length"},
-        )
-        return False
-
-    # Allow alphanumeric, underscore, hyphen
-    pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
-    result = bool(pattern.match(username))
-
-    # Log result
-    duration = time.time() - start_time
-    log_histogram("input_validation_username_duration", duration)
-    log_counter("input_validation_username_result", labels={"valid": str(result)})
-
-    return result
 
 
 def validate_env_var_reference(name: str) -> bool:
@@ -1102,32 +1197,6 @@ def validate_env_var_reference(name: str) -> bool:
         return False
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
-
-def validate_ip_address(ip: str) -> bool:
-    """Validate IP address (IPv4 or IPv6)."""
-    start_time = time.time()
-    log_counter("input_validation_ip_attempt")
-
-    try:
-        ip_obj = ipaddress.ip_address(ip)
-
-        # Log success with IP version
-        duration = time.time() - start_time
-        log_histogram("input_validation_ip_duration", duration)
-        log_counter(
-            "input_validation_ip_result",
-            labels={
-                "valid": "true",
-                "version": "ipv4"
-                if isinstance(ip_obj, ipaddress.IPv4Address)
-                else "ipv6",
-            },
-        )
-
-        return True
-    except ValueError:
-        log_counter("input_validation_ip_result", labels={"valid": "false"})
-        return False
 
 
 def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
@@ -1230,34 +1299,6 @@ def validate_buddy_import_path(value: object) -> str:
         )
     return str(path)
 
-
-def validate_port(port: Union[str, int]) -> bool:
-    """Validate port number."""
-    log_counter("input_validation_port_attempt")
-
-    try:
-        port_num = int(port)
-        result = 1 <= port_num <= 65535
-
-        log_counter(
-            "input_validation_port_result",
-            labels={
-                "valid": str(result),
-                "range": "privileged"
-                if result and port_num < 1024
-                else "unprivileged"
-                if result
-                else "invalid",
-            },
-        )
-
-        return result
-    except (ValueError, TypeError):
-        log_counter(
-            "input_validation_port_result",
-            labels={"valid": "false", "range": "invalid"},
-        )
-        return False
 
 
 def validate_url(url: str) -> bool:
@@ -1405,67 +1446,6 @@ def validate_git_ref(ref: str) -> None:
             "ref may only contain letters, digits, '.', '_', '/', '-'"
         )
 
-
-def validate_filename(filename: str) -> bool:
-    """Validate filename to prevent path traversal and dangerous characters."""
-    log_counter("input_validation_filename_attempt")
-
-    if not filename or len(filename) > 255:
-        log_counter(
-            "input_validation_filename_invalid",
-            labels={"reason": "empty" if not filename else "too_long"},
-        )
-        return False
-
-    # Reject dangerous characters and patterns
-    dangerous_chars = ["/", "\\", "..", "<", ">", ":", '"', "|", "?", "*"]
-    for char in dangerous_chars:
-        if char in filename:
-            log_counter(
-                "input_validation_filename_invalid",
-                labels={
-                    "reason": "dangerous_char",
-                    "char": char.replace("\\", "backslash"),
-                },
-            )
-            return False
-
-    # Reject reserved Windows filenames
-    reserved_names = {
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-    }
-
-    name_without_ext = filename.split(".")[0].upper()
-    if name_without_ext in reserved_names:
-        log_counter(
-            "input_validation_filename_invalid",
-            labels={"reason": "reserved_name", "name": name_without_ext},
-        )
-        return False
-
-    log_counter("input_validation_filename_result", labels={"valid": "true"})
-    return True
 
 
 def validate_text_input(
@@ -1803,13 +1783,6 @@ class ValidationError(Exception):
 
     pass
 
-
-def validate_and_raise(condition: bool, message: str) -> None:
-    """Validate condition and raise ValidationError if false."""
-    if not condition:
-        raise ValidationError(message)
-
-
 # --------------------------------------------------------------------------
 # Markup escaping
 #
@@ -1854,3 +1827,4 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
+

@@ -44,7 +44,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7807,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6761,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

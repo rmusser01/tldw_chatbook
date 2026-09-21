@@ -10837,10 +10837,26 @@ UPDATE db_schema_version
                     f"Non-finite JSON constant {value!r} is not supported."
                 )
 
+            def reject_duplicate_keys(
+                pairs: list[tuple[str, object]],
+            ) -> dict[str, object]:
+                # task-32805.5: a repeated key in stored conversation metadata
+                # is ambiguous; reject it rather than persist the last-wins
+                # reading of it.
+                result: dict[str, object] = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError(
+                            f"Duplicate JSON key {key!r} is not supported."
+                        )
+                    result[key] = value
+                return result
+
             try:
                 decoded_metadata = json.loads(
                     raw_metadata,
                     parse_constant=reject_constant,
+                    object_pairs_hook=reject_duplicate_keys,
                 )
             except (json.JSONDecodeError, ValueError) as exc:
                 raise InputError(

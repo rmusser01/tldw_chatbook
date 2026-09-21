@@ -1,0 +1,104 @@
+[
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "3798-3799",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "4951-4952",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "4955-4956",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "4993-4994",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "5086-5087",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "5129-5130",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": "5413-5414",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "1992-2002",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "2628-2629",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "range": "2707-2709",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "range": "1391-1392",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "range": "1402-1404",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "range": "1411-1415",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "range": "8640-8641",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_workbench.py",
+    "range": "9763-9764",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/UI/test_mcp_inspector.py",
+    "range": "4921-4922",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "range": "47-48",
+    "exit": 0,
+    "output": "1 file already formatted\n"
+  }
+]

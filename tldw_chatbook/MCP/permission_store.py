@@ -87,6 +87,9 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
+#: Sentinel key set only by _fail_closed_payload() to mark a store whose
+#: policy file could not be READ; raw getters deny on it (TASK-32806.3).
+_UNREADABLE_MARKER = "__unreadable__"
 HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 #: Risk tags that floor an INHERITED ``allow`` to ``ask`` for in-process
 #: built-ins. A superset of ``HIGH_RISK_TAGS``: built-ins additionally
@@ -232,6 +235,33 @@ def _fresh_payload() -> dict[str, Any]:
         "profiles": {
             _DEFAULT_PROFILE_ID: {
                 "global_default": DEFAULT_GLOBAL,
+                "servers": {},
+            }
+        },
+    }
+
+
+def _fail_closed_payload() -> dict[str, Any]:
+    """The payload to show when the real one could not be READ.
+
+    TASK-32806.3. Not ``_fresh_payload()``: that is the permissive
+    first-run default (kill switch off, global default ``ask``), and
+    returning it for an unreadable file tells the user the opposite of
+    what their policy says. A read failure is an absence of knowledge, so
+    this denies everything until the file can be read again. Nothing
+    persists it -- only the raw display getters use it.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kill_switch": True,
+        # TASK-32806.3 / Qodo #3: an explicit "could not read" marker. The
+        # raw display getters deny for ANY profile on this state, not just
+        # the default one -- a named profile is absent from a static
+        # fallback and would otherwise fall through to DEFAULT_GLOBAL ("ask").
+        _UNREADABLE_MARKER: True,
+        "profiles": {
+            _DEFAULT_PROFILE_ID: {
+                "global_default": "off",
                 "servers": {},
             }
         },
@@ -747,10 +777,27 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # task-32805.5 + TASK-32806.3: reject a duplicate `global_default`
+            # or a non-finite constant (a tamper vector on a security file) so an
+            # ambiguous policy is treated as corrupt and reset below; an OSError,
+            # by contrast, is an UNCERTAIN persistence failure (permission bit,
+            # full disk, mount blip) that must NOT reset policy -- it propagates
+            # (the documented fail-closed path, rendered as gate_error/deny).
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except OSError as exc:
             logger.warning(
-                f"MCP permission store at '{self.path}' is unreadable/corrupt ({exc}); "
+                f"MCP permission store at '{self.path}' could not be read "
+                f"({type(exc).__name__}); policy is left untouched."
+            )
+            raise
+        except (ValueError, json.JSONDecodeError) as exc:
+            # A genuine parse failure: the bytes arrived and are not JSON.
+            logger.warning(
+                f"MCP permission store at '{self.path}' is corrupt ({exc}); "
                 "backing it up and resetting to defaults."
             )
             self._backup_corrupt_file()
@@ -888,8 +935,28 @@ class MCPPermissionStore:
         try:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
-            payload = json.loads(raw_text)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
+            # task-32805.5: even the best-effort inspection view must not
+            # present the last-wins reading of a duplicate-keyed policy file;
+            # reject duplicates/non-finite constants (they fall to the corrupt
+            # branch below), while OSError still fail-closes per TASK-32806.3.
+            payload = json.loads(
+                raw_text,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except FileNotFoundError:
+            # No file yet is a KNOWN state, not an uncertain one: nothing
+            # has been configured, so the permissive first-run default is
+            # the honest answer. (``_load_locked`` says the same thing with
+            # its ``self.path.exists()`` guard.)
+            return _fresh_payload()
+        except OSError:
+            # TASK-32806.3: unreadable is not the same as unconfigured.
+            # These getters feed display surfaces, so they must not raise
+            # into a screen, but they must not report the permissive
+            # first-run default for a policy nobody could read either.
+            return _fail_closed_payload()
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
             return _fresh_payload()
 
         if (
@@ -1358,6 +1425,9 @@ class MCPPermissionStore:
             One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
         """
         payload = self._load_for_raw_getter()
+        if payload.get(_UNREADABLE_MARKER):
+            # Fail closed for EVERY profile, not only the default one.
+            return "off"
         profiles = _as_mapping(payload.get("profiles"))
         profile = _as_mapping(profiles.get(profile_id))
         return profile.get("global_default", DEFAULT_GLOBAL)

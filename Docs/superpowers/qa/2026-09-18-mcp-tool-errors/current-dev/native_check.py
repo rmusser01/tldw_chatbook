@@ -212,10 +212,14 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
             )
             if isinstance(control, Button):
                 painted = "".join(
-                    app.screen._compositor.render_strips()[row].text
+                    app.screen._compositor.render_strips()[row]
+                    .crop(region.x, region.right)
+                    .text
                     for row in range(region.y, region.bottom)
                 )
-                assert str(control.label) in painted, (
+                assert "".join(str(control.label).split()) in "".join(
+                    painted.split()
+                ), (
                     control.id,
                     str(control.label),
                     painted,
@@ -237,6 +241,19 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
             app.save_screenshot(stem + ".svg", path=str(evidence))
             pane = await tmux("capture-pane", "-p", "-t", session)
             (evidence / (stem + ".txt")).write_text(pane.stdout)
+
+        async def tab_to(selector):
+            control = app.screen.query_one(selector)
+            if control.has_focus:
+                visible(control)
+                return control
+            for _ in range(30):
+                await pilot.press("tab")
+                await settle()
+                if control.has_focus:
+                    visible(control)
+                    return control
+            raise AssertionError(f"Keyboard traversal never reached {selector}")
 
         fixture_id = None
         try:
@@ -302,18 +319,35 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
                 ),
                 "tool selected",
             )
-            await focus("#mcp-inspector-test-tool")
+            await tab_to("#mcp-inspector-test-tool")
             await pilot.press("enter")
             await wait_for(lambda: inspector._test_preview is not None, "preview ready")
 
             async def run_result(payload, message, expected, stem):
                 state.write_text(json.dumps(payload))
                 field = await focus("#mcp-schema-field-0")
-                field.value = message
+                await pilot.press("home", "shift+end", "backspace", *message)
                 await settle()
+                assert field.value == message
+                await capture(stem + "-arguments")
                 before = len(service.execution_log.read_recent(50))
-                run = await focus("#mcp-inspector-test-run")
+                run = await tab_to("#mcp-inspector-test-run")
                 assert not run.disabled
+                await pilot.press("up")
+                await settle()
+                preview = inspector.query_one("#mcp-inspector-test-preview", Static)
+                visible(preview)
+                visible(run)
+                painted = "".join(
+                    app.screen._compositor.render_strips()[row]
+                    .crop(preview.region.x, preview.region.right)
+                    .text
+                    for row in range(preview.region.y, preview.region.bottom)
+                )
+                assert "".join(str(preview.renderable).split()) in "".join(
+                    painted.split()
+                )
+                await capture(stem + "-permission")
                 await pilot.press("enter")
                 await wait_for(
                     lambda: (
@@ -388,6 +422,8 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
                             "failure": failure,
                             "recovery": recovery,
                             "same_connection": True,
+                            "keyboard_arguments_and_run": True,
+                            "permission_preview_fully_visible": True,
                         }
                     )
                     record()
