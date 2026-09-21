@@ -651,32 +651,21 @@ def summarize_with_kobold(
 
             def _kobold_stream():
                 try:
-                    # Create a session
-                    session = create_default_session()
+                    # TASK-32854: shared transport (session reuse, bounded Retry-After,
+                    # per-attempt closure); the adapter's real retry set preserved.
+                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-                    # Load config values
                     retry_count = kobold_legacy["api_retries"]
                     retry_delay = kobold_legacy["api_retry_delay"]
-
-                    # Configure the retry strategy
-                    retry_strategy = Retry(
-                        total=retry_count,  # Total number of retries
-                        backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                        status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                    )
-
-                    # Create the adapter
-                    adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                    # Mount adapters for both HTTP and HTTPS
-                    session.mount("http://", adapter)
-                    session.mount("https://", adapter)
-                    # Send the request with streaming enabled
-                    response = session.post(
-                        kobold_openai_api_IP,
+                    response = _post_with_retry(
+                        url=kobold_openai_api_IP,
                         headers=headers,
-                        json=data_payload,
-                        stream=True,
+                        payload=data_payload,
+                        streaming=True,
+                        max_attempts=int(retry_count) + 1,
+                        retry_delay=float(retry_delay),
+                        timeout=120.0,
+                        retry_status_codes=frozenset({429, 502, 503, 504}),
                     )
                     logging.debug(
                         "Kobold Summarization: API Response Status Code: %d",
@@ -730,28 +719,21 @@ def summarize_with_kobold(
             return _kobold_stream()
         else:
             try:
-                # Create a session
-                session = create_default_session()
+                # TASK-32854: shared transport (session reuse, bounded Retry-After,
+                # per-attempt closure); the adapter's real retry set preserved.
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-                # Load config values
                 retry_count = kobold_legacy["api_retries"]
                 retry_delay = kobold_legacy["api_retry_delay"]
-
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
-
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
-                response = session.post(
-                    kobold_api_ip, headers=headers, json=data_payload
+                response = _post_with_retry(
+                    url=kobold_api_ip,
+                    headers=headers,
+                    payload=data_payload,
+                    streaming=False,
+                    max_attempts=int(retry_count) + 1,
+                    retry_delay=float(retry_delay),
+                    timeout=120.0,
+                    retry_status_codes=frozenset({429, 502, 503, 504}),
                 )
                 logging.debug(
                     "Kobold Summarization: API Response Status Code: %d",
@@ -925,27 +907,22 @@ def summarize_with_oobabooga(
 
         if streaming:
             logging.debug("Oobabooga: Streaming mode enabled")
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
             retry_delay = loaded_config_data["ooba_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=api_url,
+                headers=headers,
+                payload=data,
+                streaming=True,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(api_url, headers=headers, json=data, stream=True)
             response.raise_for_status()
             try:
 
@@ -988,28 +965,23 @@ def summarize_with_oobabooga(
                 )
                 return f"Error summarizing with Oobabooga: {str(e)}"
         else:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
+            logging.debug("Oobabooga: Posting request")
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
             retry_delay = loaded_config_data["ooba_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=api_url,
+                headers=headers,
+                payload=data,
+                streaming=False,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            logging.debug("Oobabooga: Posting request")
-            response = session.post(api_url, headers=headers, json=data)
 
             if response.status_code == 200:
                 response_data = response.json()
@@ -1160,28 +1132,21 @@ def summarize_with_tabbyapi(
 
             def _tabby_stream():
                 try:
-                    # Create a session
-                    session = create_default_session()
+                    # TASK-32854: shared transport (session reuse, bounded Retry-After,
+                    # per-attempt closure); the adapter's real retry set preserved.
+                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-                    # Load config values
                     retry_count = tabby_legacy["api_retries"]
                     retry_delay = tabby_legacy["api_retry_delay"]
-
-                    # Configure the retry strategy
-                    retry_strategy = Retry(
-                        total=retry_count,  # Total number of retries
-                        backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                        status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                    )
-
-                    # Create the adapter
-                    adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                    # Mount adapters for both HTTP and HTTPS
-                    session.mount("http://", adapter)
-                    session.mount("https://", adapter)
-                    response = session.post(
-                        tabby_api_ip, headers=headers, json=data2, stream=True
+                    response = _post_with_retry(
+                        url=tabby_api_ip,
+                        headers=headers,
+                        payload=data2,
+                        streaming=True,
+                        max_attempts=int(retry_count) + 1,
+                        retry_delay=float(retry_delay),
+                        timeout=120.0,
+                        retry_status_codes=frozenset({429, 502, 503, 504}),
                     )
                     response.raise_for_status()
                     # Process the streamed response
@@ -1230,27 +1195,22 @@ def summarize_with_tabbyapi(
             return _tabby_stream()
         else:
             try:
-                # Create a session
-                session = create_default_session()
+                # TASK-32854: shared transport (session reuse, bounded Retry-After,
+                # per-attempt closure); the adapter's real retry set preserved.
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-                # Load config values
                 retry_count = tabby_legacy["api_retries"]
                 retry_delay = tabby_legacy["api_retry_delay"]
-
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+                response = _post_with_retry(
+                    url=tabby_api_ip,
+                    headers=headers,
+                    payload=data2,
+                    streaming=False,
+                    max_attempts=int(retry_count) + 1,
+                    retry_delay=float(retry_delay),
+                    timeout=120.0,
+                    retry_status_codes=frozenset({429, 502, 503, 504}),
                 )
-
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
-                response = session.post(tabby_api_ip, headers=headers, json=data2)
                 response.raise_for_status()
                 response_json = response.json()
 
@@ -1691,33 +1651,22 @@ def summarize_with_ollama(
         # 12) Attempt request with retries
 
         try:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
+            logging.debug("Ollama Summarize request being sent")
             retry_count = loaded_config_data["ollama_api"]["api_retries"]
             retry_delay = loaded_config_data["ollama_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            logging.debug("Ollama Summarize request being sent")
-            response = session.post(
-                api_url,
+            response = _post_with_retry(
+                url=api_url,
                 headers=headers,
-                json=data_payload,
-                stream=streaming,
-                timeout=local_api_timeout,
+                payload=data_payload,
+                streaming=streaming,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
             response.raise_for_status()  # Raise HTTPError if not 2xx
         except requests.exceptions.Timeout:
@@ -1775,26 +1724,8 @@ def summarize_with_ollama(
         else:
             # Non-streaming => parse entire JSON once and return the text
             try:
-                # Create a session
-                session = create_default_session()
-
-                # Load config values
-                retry_count = loaded_config_data["ollama_api"]["api_retries"]
-                retry_delay = loaded_config_data["ollama_api"]["api_retry_delay"]
-
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
-
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
+                # TASK-32854: the dead second session+adapter this block built
+                # and never used is deleted (the 2026-09-17 review's finding).
                 response_data = response.json()  # corrected object to get an json method(not avaliable in the session object)
             except json.JSONDecodeError:
                 logging.error("Ollama: Failed to parse JSON response.")
@@ -1963,28 +1894,21 @@ def summarize_with_custom_openai(
         }
 
         if streaming:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(
-                custom_openai_api_url, headers=headers, json=data, stream=True
+            response = _post_with_retry(
+                url=custom_openai_api_url,
+                headers=headers,
+                payload=data,
+                streaming=True,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
             response.raise_for_status()
 
@@ -2019,28 +1943,23 @@ def summarize_with_custom_openai(
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
+            logging.debug("Custom OpenAI API: Posting request")
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=custom_openai_api_url,
+                headers=headers,
+                payload=data,
+                streaming=False,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            logging.debug("Custom OpenAI API: Posting request")
-            response = session.post(custom_openai_api_url, headers=headers, json=data)
             logging.debug(
                 "Custom OpenAI API: Response received; status_code=%s",
                 response.status_code,
@@ -2225,28 +2144,21 @@ def summarize_with_custom_openai_2(
         }
 
         if streaming:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api_2"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(
-                custom_openai_api_url, headers=headers, json=data, stream=True
+            response = _post_with_retry(
+                url=custom_openai_api_url,
+                headers=headers,
+                payload=data,
+                streaming=True,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
             response.raise_for_status()
 
@@ -2281,28 +2193,23 @@ def summarize_with_custom_openai_2(
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
+            # TASK-32854: shared transport (session reuse, bounded Retry-After,
+            # per-attempt closure); the adapter's real retry set preserved.
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
 
-            # Load config values
+            logging.debug("Custom OpenAI API-2: Posting request")
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api_2"]["api_retry_delay"]
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=custom_openai_api_url,
+                headers=headers,
+                payload=data,
+                streaming=False,
+                max_attempts=int(retry_count) + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            logging.debug("Custom OpenAI API-2: Posting request")
-            response = session.post(custom_openai_api_url, headers=headers, json=data)
             logging.debug(
                 "Custom OpenAI API-2: Response received; status_code=%s",
                 response.status_code,

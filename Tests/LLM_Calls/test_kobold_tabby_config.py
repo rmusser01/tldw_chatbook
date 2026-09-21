@@ -70,6 +70,8 @@ def captured_post(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: FakeSession())
     return captured
 
 
@@ -238,6 +240,8 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
             return StreamResponse()
 
     monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: StreamSession())
 
     drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
 
@@ -277,6 +281,8 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(lib, "create_default_session", lambda: Session())
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+    monkeypatch.setattr(_general, "create_default_session", lambda: Session())
 
     result = drain(
         analyze(
