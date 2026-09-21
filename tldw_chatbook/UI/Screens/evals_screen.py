@@ -432,6 +432,12 @@ class EvalsScreen(LabScreen):
         #: benches' own no-current-reader tokens documented above, this one
         #: has a real Cancel affordance from day one.
         self._skill_eval_cancel: Optional[SkillEvalCancelToken] = None
+        #: TASK-32886: whether the local skills store holds at least one
+        #: skill (probed once after mount by ``_probe_store_skills_
+        #: presence``). Feeds the rail's empty-state steering: a
+        #: skills-holding user at an empty rail gets pointed at
+        #: "+ New skill eval", not the word-bench sample.
+        self._store_has_skills: bool = False
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -2054,6 +2060,48 @@ class EvalsScreen(LabScreen):
         except Exception:
             return
 
+    def on_mount(self) -> None:
+        """TASK-32886: probe the skills store once, after mount, so the
+        rail's empty state can steer a skills-holding user to
+        "+ New skill eval" instead of the word-bench sample.
+
+        Deliberately no ``super().on_mount()`` -- the dispatcher already
+        invokes ``LabScreen.on_mount`` (and ``BaseAppScreen.on_mount``)
+        for the same Mount event; a super call would run them twice (same
+        note as ``LabScreen.on_mount``'s own docstring).
+        """
+        self.run_worker(
+            self._probe_store_skills_presence(),
+            exclusive=False,
+            group="evals-store-skills-probe",
+        )
+
+    async def _probe_store_skills_presence(self) -> None:
+        """Sets ``_store_has_skills`` from the local skills store listing.
+
+        Same silent-degradation contract as ``_feed_skill_eval_subjects``
+        (an unreadable store changes nothing); a CHANGED answer refreshes
+        the mounted rail in place -- the same ``refresh(recompose=True)``
+        the rail's own section-toggle handler uses, avoiding the whole-
+        screen recompose (task-15475).
+        """
+        try:
+            summaries, _names = await store_skill_names(
+                self._current_app_config()
+            )
+        except Exception:
+            return
+        has_skills = bool(summaries)
+        if has_skills == self._store_has_skills:
+            return
+        self._store_has_skills = has_skills
+        try:
+            rail = self.query_one(LibraryRail)
+        except QueryError:
+            return
+        rail.skills_available = has_skills
+        rail.refresh(recompose=True)
+
     def _on_skill_eval_progress(self, done: int, total: int) -> None:
         """``SkillEvalRunner``'s progress callback -- called synchronously
         from within the runner's own coroutine (this worker's, not a
@@ -2638,6 +2686,7 @@ class EvalsScreen(LabScreen):
                 or self._character_bench_run_running
                 or self._skill_eval_run_running
             ),
+            skills_available=self._store_has_skills,
             id="evals-library-pane",
         )
 

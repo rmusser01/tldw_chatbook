@@ -18,6 +18,11 @@ import json
 from pathlib import Path
 
 import pytest
+
+#: The suite imports UI.Evals (config getters bind at collection); the
+#: per-test env redirect trips config-participant admission (TASK-32628).
+#: Keep the hermetic bootstrap profile (TASK-32873 opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual import on
 from textual.widgets import Button, DataTable, Input
 
@@ -2294,3 +2299,73 @@ async def test_notify_mixin_passes_markup_false_so_a_bracket_hazard_does_not_rai
         assert pilot.app.is_running, "an unescaped hazard message crashed the app"
         notifications = no_provider_app.app_instance.notifications
         assert notifications[-1] == ("target[/]name could not be reached", "error")
+
+
+# ---------------------------------------------------------------------------
+# TASK-32886: mode-aware empty state + visible per-button captions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skills_present_steers_the_empty_rail_to_skill_eval(
+    configured_app, monkeypatch
+):
+    """TASK-32886: a user whose skills store holds skills but who has no
+    benches yet is steered to '+ New skill eval', not the word-bench
+    sample -- the sample-bench 'Start here' copy actively pointed skill
+    users at the wrong feature (HCI review A4)."""
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+
+    async def _skills(_app_config):
+        return ([{"name": "csv-cleaner", "trust_status": "trusted"}],
+                frozenset({"csv-cleaner"}))
+
+    monkeypatch.setattr(screen_mod, "store_skill_names", _skills)
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        await _wait_until(pilot, lambda: bool(screen.query("#evals-rail-skill-eval-hint")))
+        hint = screen.query_one("#evals-rail-skill-eval-hint")
+        assert "skill eval" in str(hint.renderable)
+        assert not screen.query("#evals-rail-first-run-hint")
+        # The sample-bench control itself stays reachable either way.
+        assert screen.query_one("#evals-create-sample-bench")
+
+
+@pytest.mark.asyncio
+async def test_new_skill_eval_button_carries_a_visible_caption(configured_app):
+    """TASK-32886: the skill-eval CTA is the third of four near-identical
+    '+ New' buttons with a hover-only tooltip (keyboard-inaccessible,
+    contrary to TASK-1076's own visible-callout convention) -- it now
+    carries a permanent one-line caption."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        caption = screen.query_one("#evals-rail-new-skill-eval-hint")
+        assert "static" in str(caption.renderable)
+
+
+@pytest.mark.asyncio
+async def test_disabled_reason_hints_sit_under_their_own_buttons(
+    configured_app, evals_db: EvalsDB
+):
+    """TASK-32886: 'Create or import a dataset first.' used to render
+    after the whole button row -- directly under '+ New skill eval', where
+    a user reads it as that button's precondition. The hint must sit
+    BETWEEN its own button and the next one."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        from textual.widgets import Button, Static
+
+        screen = pilot.app.screen
+        body = screen.query_one("#evals-rail-section-body-benches")
+        ids = [
+            w.id
+            for w in body.query("Button, Static")
+            if w.id
+        ]
+        assert ids.index("evals-rail-new-bench") < ids.index(
+            "evals-rail-new-bench-hint"
+        ) < ids.index("evals-rail-new-character-bench")
+        assert ids.index("evals-rail-new-character-bench") < ids.index(
+            "evals-rail-new-character-bench-hint"
+        ) < ids.index("evals-rail-new-skill-eval")

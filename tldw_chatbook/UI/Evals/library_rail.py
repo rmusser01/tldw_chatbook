@@ -387,11 +387,22 @@ class LibraryRail(NotifyMixin, Vertical):
         open_sections: Optional[dict[str, bool]] = None,
         app_config: Optional[dict[str, Any]] = None,
         sample_bench_running: bool = False,
+        skills_available: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.view_model = view_model
         self.selection = selection or EvalsSelection()
+        #: TASK-32886: whether the local skills store holds at least one
+        #: skill. ``EvalsScreen`` probes the store after mount (its
+        #: ``_probe_store_skills_presence`` worker) and passes the answer in
+        #: on every rail rebuild; ``False`` is the unknown/none default for
+        #: callers that do not know (every pre-existing test). Only the
+        #: fully-empty Benches branch reads it: a skills-holding user at an
+        #: empty rail is steered to "+ New skill eval" instead of the
+        #: word-bench sample (HCI review A4 -- the sample steering actively
+        #: pointed skill users at the wrong feature).
+        self.skills_available = skills_available
         #: The app's loaded settings (``TldwCli.app_config``), read only for
         #: ``sample_bench.provider_is_configured``'s gate. ``None`` (a fake
         #: app_instance in a test, or a real one composed before settings
@@ -593,6 +604,15 @@ class LibraryRail(NotifyMixin, Vertical):
         """
         has_dataset = bool(self.view_model.word_bench_datasets())
         has_probe_set = bool(self.view_model.probe_sets())
+        # TASK-32886: each button's disabled-reason hint yields DIRECTLY
+        # after its own button, inside the same row container, so the
+        # rail-width vertical stack reads hint-under-button -- the old
+        # both-hints-after-the-row placement sat "Create or import a
+        # dataset first." directly under "+ New skill eval", where users
+        # read it as THAT button's precondition (HCI review A4/C1). The
+        # skill-eval CTA also gains a permanent one-line caption: its only
+        # explanation was a hover-only tooltip, keyboard-inaccessible,
+        # contrary to TASK-1076's own visible-callout convention.
         yield Horizontal(
             Button(
                 "+ New bench",
@@ -606,6 +626,16 @@ class LibraryRail(NotifyMixin, Vertical):
                     "dataset (or the newest one, if none is selected)."
                 ),
             ),
+            *(
+                (Static(
+                    "Create or import a dataset first.",
+                    id="evals-rail-new-bench-hint",
+                    classes="evals-rail-new-bench-hint",
+                    markup=False,
+                ),)
+                if not has_dataset
+                else ()
+            ),
             Button(
                 "+ New character bench",
                 id="evals-rail-new-character-bench",
@@ -618,6 +648,16 @@ class LibraryRail(NotifyMixin, Vertical):
                     "the newest probe set."
                 ),
             ),
+            *(
+                (Static(
+                    "Import or create a probe set first.",
+                    id="evals-rail-new-character-bench-hint",
+                    classes="evals-rail-new-bench-hint",
+                    markup=False,
+                ),)
+                if not has_probe_set
+                else ()
+            ),
             Button(
                 "+ New skill eval",
                 id="evals-rail-new-skill-eval",
@@ -628,37 +668,14 @@ class LibraryRail(NotifyMixin, Vertical):
                     "models in the detail pane."
                 ),
             ),
+            Static(
+                "grade one skill: static + judge + simulation",
+                id="evals-rail-new-skill-eval-hint",
+                classes="evals-rail-new-bench-hint",
+                markup=False,
+            ),
             classes="evals-rail-empty-actions",
         )
-        if not has_dataset:
-            # A DEDICATED class, not `.evals-rail-empty-copy` (same visual
-            # treatment, different identity): `test_first_run_marks_the_
-            # sample_bench_as_the_recommended_first_step` scopes on that
-            # exact class, within this exact section, to confirm "No
-            # benches yet." was REPLACED by the "Start here" hint, not
-            # supplemented -- this hint answers a different question (why
-            # "+ New bench" is disabled) and legitimately coexists with
-            # either, so it must not be mistaken for a second copy of that
-            # wording by a class-scoped query.
-            yield Static(
-                "Create or import a dataset first.",
-                id="evals-rail-new-bench-hint",
-                classes="evals-rail-new-bench-hint",
-                markup=False,
-            )
-        if not has_probe_set:
-            # A dedicated id (distinct from `#evals-rail-new-bench-hint`)
-            # sharing the SAME visual class -- both hints are one-line,
-            # muted "why this button is disabled" copy, and nothing here
-            # scopes a query on the shared class alone (see the comment
-            # just above for the one place that matters, which is id-
-            # scoped already).
-            yield Static(
-                "Import or create a probe set first.",
-                id="evals-rail-new-character-bench-hint",
-                classes="evals-rail-new-bench-hint",
-                markup=False,
-            )
 
     def _section(
         self,
@@ -853,7 +870,25 @@ class LibraryRail(NotifyMixin, Vertical):
                 # classic task also present, this text would just be a
                 # redundant wall above a real list; the actionable button
                 # below still renders either way.
-                if provider_ready and is_first_run:
+                if provider_ready and self.skills_available:
+                    # TASK-32886: the user's assets are SKILLS -- steer to
+                    # the skill-eval CTA, not the word-bench sample (the
+                    # TASK-1076 copy actively pointed skill users at the
+                    # wrong feature; HCI review A4). Same visual class as
+                    # the sample steering so it reads as THE recommended
+                    # path at a glance; the sample button itself still
+                    # renders below.
+                    children.append(
+                        Static(
+                            "Start here — you have skills installed. "
+                            "'+ New skill eval' below grades one end "
+                            "to end.",
+                            id="evals-rail-skill-eval-hint",
+                            classes="evals-rail-first-run-hint",
+                            markup=False,
+                        )
+                    )
+                elif provider_ready and is_first_run:
                     # TASK-1076: a genuinely first-run rail (no benches, no
                     # classic tasks, no datasets, no runs -- every count is
                     # zero at once) offered three equal-weight affordances
