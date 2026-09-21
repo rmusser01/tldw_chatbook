@@ -128,9 +128,31 @@ class EvalsViewModel:
         return row if is_skill_eval_bench(row) else None
 
     def skill_eval_targets(self) -> list[dict[str, Any]]:
+        """``eval_models`` rows whose provider can actually dispatch a chat.
+
+        Qodo F4: the picker used to list EVERY row, but a skill-eval run
+        routes every call through ``chat_api_call``'s
+        ``API_CALL_HANDLERS`` dispatch -- keyless local aliases (e.g.
+        ``local_transformers``) pass provider READINESS yet have no chat
+        handler, so picking one doomed the run at its first call. Filtered
+        to providers with a registered handler, normalized exactly the way
+        dispatch normalizes (lowercased provider name).
+
+        Returns:
+            list[dict[str, Any]]: Handler-dispatchable model rows, newest
+            first (``EvalsDB.list_models``'s own ordering), or ``[]`` if
+            no evaluation database is wired.
+        """
         if self._db is None:
             return []
-        return list(self._db.list_models(limit=200))
+        # Deferred, mirroring this class's other cross-package reads:
+        # Chat_Functions is a heavy module no other Evals read pulls in.
+        from ...Chat.Chat_Functions import API_CALL_HANDLERS
+
+        return [
+            row for row in self._db.list_models(limit=200)
+            if str(row.get("provider") or "").lower() in API_CALL_HANDLERS
+        ]
 
     def datasets(self) -> list[dict[str, Any]]:
         if self._db is None:

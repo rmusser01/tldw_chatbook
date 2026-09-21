@@ -11,7 +11,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
 from ...Evals.skill_eval.models import SkillEvalDepth
-from ...Evals.skill_eval.runner import estimate_calls
+from ...Evals.skill_eval.runner import estimate_calls, max_estimate_calls
 
 _DEPTH_OPTIONS = [
     (f"quick — static only ({estimate_calls(SkillEvalDepth.QUICK)} calls)",
@@ -146,7 +146,17 @@ class SkillEvalPanel(Widget):
 
     def _refresh_estimate(self) -> None:
         label = self.query_one("#skill-eval-estimate", Static)
-        label.update(f"Estimated LLM calls: {estimate_calls(self._depth)}")
+        nominal = estimate_calls(self._depth)
+        maximum = max_estimate_calls(self._depth)
+        # Qodo F1: the judge layer retries each failed cell once, so the
+        # worst case is the doubled judge budget -- shown as a parenthetical
+        # next to the nominal count (quick needs no parenthetical: 0 max).
+        if maximum > nominal:
+            label.update(
+                f"Estimated LLM calls: {nominal} "
+                f"(max {maximum} with judge retries)")
+        else:
+            label.update(f"Estimated LLM calls: {nominal}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "skill-eval-run":

@@ -1937,11 +1937,23 @@ class EvalsScreen(LabScreen):
         self._skill_eval_depth = event.depth
         self._skill_eval_generator_target_id = event.generator_target_id
         self._skill_eval_judge_target_id = event.judge_target_id
-        self.run_worker(
-            self._run_skill_eval_worker,
-            exclusive=True,
-            group="evals-run-skill-eval",
-        )
+        # Qodo F9: the running flag is set HERE, in the handler, before
+        # the worker is dispatched -- setting it only inside the worker
+        # left a window where a second queued Run event passed this
+        # method's guard before the worker's first line ran. The worker
+        # re-sets it (idempotent) and its ``finally`` still clears it;
+        # rolled back here if dispatch itself raises so a failed launch
+        # never wedges the guard closed.
+        self._skill_eval_run_running = True
+        try:
+            self.run_worker(
+                self._run_skill_eval_worker,
+                exclusive=True,
+                group="evals-run-skill-eval",
+            )
+        except Exception:
+            self._skill_eval_run_running = False
+            raise
 
     @on(SkillEvalPanel.CancelRequested)
     def _on_skill_eval_cancel_requested(
@@ -2186,15 +2198,27 @@ class EvalsScreen(LabScreen):
                     save_artifact(db, run_id, artifact)
             if runner.sim_result is not None:
                 for cell in runner.sim_result.cells:
+                    # Qodo F8: map every cell field explicitly --
+                    # ``save_artifact`` persists only sample_id/input/raw/
+                    # parsed/kind, so spreading the raw cell dropped its
+                    # prompt_index/repeat/activated/error evidence.
                     save_artifact(
                         db,
                         run_id,
                         {
-                            **cell,
                             "sample_id": (
                                 f"sim-{cell['prompt_index']}-{cell['repeat']}"
                             ),
                             "kind": "sim",
+                            "input": {
+                                "prompt_index": cell["prompt_index"],
+                                "repeat": cell["repeat"],
+                            },
+                            "parsed": {
+                                "activated": cell["activated"],
+                                "error": cell["error"],
+                            },
+                            "raw": str(cell.get("raw") or ""),
                         },
                     )
             status = "cancelled" if cancel_token.is_cancelled else "completed"
@@ -2336,14 +2360,18 @@ class EvalsScreen(LabScreen):
         or ``None`` when it's safe to delete.
 
         Gated ONLY on ``_bench_run_running``/``_character_bench_run_
-        running`` for THIS bench -- unlike ``_primary_action_state``, which
-        also blocks while the SAMPLE bench worker is running. That extra
-        gate exists there because a completing sample-bench worker
-        eventually selects a brand-new bench the primary action could
-        otherwise race a second run against; the sample-bench worker never
-        touches an *existing* bench id (it creates its own, not-yet-
-        selected one) until it finishes, so it must not block deleting
-        some OTHER, unrelated, already-selected bench here.
+        running``/``_skill_eval_run_running`` for THIS bench -- unlike
+        `_primary_action_state`, which also blocks while the SAMPLE bench
+        worker is running. That extra gate exists there because a
+        completing sample-bench worker eventually selects a brand-new bench
+        the primary action could otherwise race a second run against; the
+        sample-bench worker never touches an *existing* bench id (it
+        creates its own, not-yet-selected one) until it finishes, so it
+        must not block deleting some OTHER, unrelated, already-selected
+        bench here. The ``_skill_eval_run_running`` clause (Qodo F16)
+        mirrors the other two now that skill-eval benches are deletable:
+        the worker reads the bench's config at launch, but blocking mid-run
+        deletion keeps the invariant simple and consistent.
         """
         if bench_id and self._bench_run_running and self._bench_run_task_id == bench_id:
             return "A run of this bench is in flight."
@@ -2351,6 +2379,12 @@ class EvalsScreen(LabScreen):
             bench_id
             and self._character_bench_run_running
             and self._character_bench_run_task_id == bench_id
+        ):
+            return "A run of this bench is in flight."
+        if (
+            bench_id
+            and self._skill_eval_run_running
+            and self._skill_eval_bench_id == bench_id
         ):
             return "A run of this bench is in flight."
         return None
@@ -2460,7 +2494,11 @@ class EvalsScreen(LabScreen):
         # over adding duplication). `EvalsDB.delete_task` (called from
         # `_apply_bench_deletion` below) is a plain soft-delete by id --
         # it does not care what `config_data.bench_type` the row carries.
-        if selection.kind not in ("bench", "character_bench") or not selection.id:
+        # Qodo F16: `skill_eval_bench` joins the accepted set for the
+        # identical reason -- the inspector pane composes this button for
+        # it too (Delete-only, like character benches).
+        if selection.kind not in ("bench", "character_bench",
+                                  "skill_eval_bench") or not selection.id:
             return
         if self._bench_delete_disabled_reason(selection.id):
             # Defensive only: `_compose_inspector_pane` already disables
@@ -2470,11 +2508,12 @@ class EvalsScreen(LabScreen):
         if self._bench_delete_pending:
             return
         self._bench_delete_pending = True
-        bench = (
-            self._view_model.character_bench_by_id(selection.id)
-            if selection.kind == "character_bench"
-            else self._view_model.bench_by_id(selection.id)
-        )
+        if selection.kind == "character_bench":
+            bench = self._view_model.character_bench_by_id(selection.id)
+        elif selection.kind == "skill_eval_bench":
+            bench = self._view_model.skill_eval_bench_by_id(selection.id)
+        else:
+            bench = self._view_model.bench_by_id(selection.id)
         name = str(bench.get("name")) if bench else "Untitled bench"
         self.run_worker(
             self._delete_bench_flow(selection.id, name),
@@ -2970,6 +3009,23 @@ class EvalsScreen(LabScreen):
             # `EvalsInspector` vocabulary and this pane's generic primary
             # action both belong to bench types this kind is not).
             # `_primary_action_state()` is never consulted for this kind.
+            #
+            # Qodo F16: Delete IS composed (Delete-only, like the
+            # character-bench branch below -- Duplicate is word-bench
+            # machinery): this branch used to early-return before the
+            # delete control, so a skill-eval bench could never be
+            # deleted from the UI. `#evals-delete-bench` is the SAME
+            # id/handler the other kinds use; `EvalsDB.delete_task` is a
+            # plain soft-delete by id and does not care about
+            # `bench_type`. Gated on a RESOLVED bench like every other
+            # branch's controls.
+            skill_eval_bench_row = (
+                self._view_model.skill_eval_bench_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if skill_eval_bench_row is not None:
+                yield from self._compose_delete_bench_button(selection.id)
             return
 
         if selection.kind == "classic":

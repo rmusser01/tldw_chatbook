@@ -849,3 +849,269 @@ async def test_subject_picker_product_path_run_completes(
             "SubjectError" in message
             for message, _severity in screen.app_instance.notifications
         )
+
+
+# ---------------------------------------------------------------------------
+# Qodo PR-review fixes: F4 (undispatchable launch problem), F9 (overlap
+# window), F12 (paginated store listing), F16 (bench deletion), F8 (sim
+# artifact mapping)
+# ---------------------------------------------------------------------------
+
+
+def test_make_skill_eval_chat_adds_problem_for_undispatchable_provider(
+    monkeypatch,
+):
+    """F4 defense in depth: even a READY provider with no registered
+    ``chat_api_call`` handler stops the launch with an explicit problem
+    string instead of failing at the run's first call."""
+    from tldw_chatbook.UI.Evals import skill_eval_launch as launch
+
+    class _Ready:
+        ready = True
+        api_key = None
+        user_message = ""
+
+    monkeypatch.setattr(
+        launch, "get_provider_readiness", lambda provider, cfg, **kw: _Ready()
+    )
+    generator = EvalTarget(
+        id="g", provider="local_transformers", model_id="t5"
+    )
+    judge = EvalTarget(id="j", provider="llama_cpp", model_id="gen-m")
+
+    _chat, problems = launch.make_skill_eval_chat({}, generator, judge)
+
+    assert len(problems) == 1
+    assert "local_transformers" in problems[0]
+    assert "no chat handler" in problems[0]
+
+
+@pytest.mark.asyncio
+async def test_store_skill_names_drains_every_page(monkeypatch, tmp_path):
+    """F12: the store listing is paginated -- a store past the first page
+    used to contribute only its first 200 skills to the decoy pool and the
+    reserved-name set. A fake service holding 5 skills at 2-per-page must
+    be drained across 3 calls."""
+    from tldw_chatbook.Skills_Interop import local_skills_service
+    from tldw_chatbook.UI.Evals import skill_eval_launch as launch
+
+    all_skills = [{"name": f"s{i}", "description": "d"} for i in range(5)]
+    calls: list[int] = []
+
+    class _PagedFakeService:
+        """Never returns more than 2 rows per call regardless of the
+        requested limit, so 5 skills genuinely span 3 pages."""
+
+        PAGE = 2
+
+        def __init__(self, **_kwargs):
+            pass
+
+        async def list_skills(self, *, limit, offset, **_kw):
+            calls.append(offset)
+            page = all_skills[offset:offset + self.PAGE]
+            return {
+                "skills": page,
+                "count": len(page),
+                "total": len(all_skills),
+                "limit": limit,
+                "offset": offset,
+            }
+
+    monkeypatch.setattr(
+        local_skills_service, "LocalSkillsService", _PagedFakeService
+    )
+    monkeypatch.setattr(launch, "get_user_data_dir", lambda: tmp_path)
+
+    skills, names = await launch.store_skill_names({})
+
+    assert [s["name"] for s in skills] == [s["name"] for s in all_skills]
+    assert names == frozenset(f"s{i}" for i in range(5))
+    assert calls == [0, 2, 4]  # three pages, exhaustion by total
+
+
+@pytest.mark.asyncio
+async def test_store_skill_names_hard_caps_a_lying_listing(monkeypatch, tmp_path):
+    """F12 tail: a listing that always reports a huge ``total`` and keeps
+    returning full pages must terminate at the hard page cap instead of
+    looping forever inside the launch worker."""
+    from tldw_chatbook.Skills_Interop import local_skills_service
+    from tldw_chatbook.UI.Evals import skill_eval_launch as launch
+
+    pages: list[int] = []
+
+    class _LyingFakeService:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def list_skills(self, *, limit, offset, **_kw):
+            pages.append(offset)
+            return {
+                "skills": [{"name": f"x{offset}", "description": "d"}] * limit,
+                "count": limit,
+                "total": 10**9,
+                "limit": limit,
+                "offset": offset,
+            }
+
+    monkeypatch.setattr(
+        local_skills_service, "LocalSkillsService", _LyingFakeService
+    )
+    monkeypatch.setattr(launch, "get_user_data_dir", lambda: tmp_path)
+
+    skills, _names = await launch.store_skill_names({})
+
+    assert len(pages) == launch._STORE_MAX_PAGES
+    assert len(skills) == launch._STORE_MAX_PAGES * launch._STORE_PAGE_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_second_rapid_run_event_is_rejected(evals_app, evals_db,
+                                                  monkeypatch):
+    """F9: the running flag is set in the HANDLER, before the worker is
+    dispatched -- a second queued Run event must be rejected even though
+    the first worker has not yet run its first line."""
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+
+    async def _empty_store(_app_config):
+        return [], frozenset()
+
+    monkeypatch.setattr(screen_mod, "store_skill_names", _empty_store)
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.screen._selection.kind == "skill_eval_bench",
+        )
+        dispatched: list = []
+        screen.run_worker = lambda *a, **kw: dispatched.append(a)
+
+        event = SkillEvalPanel.RunRequested(
+            SkillEvalDepth.STANDARD, "g", "j"
+        )
+        screen._on_skill_eval_run_requested(event)
+        # The flag is set immediately after the handler returns -- BEFORE
+        # the worker exists (run_worker here is a recording stub).
+        assert screen._skill_eval_run_running is True
+        assert len(dispatched) == 1
+
+        screen._on_skill_eval_run_requested(event)
+        assert len(dispatched) == 1  # second rapid event rejected by guard
+
+        # Rollback so the harness teardown is not confused by the stub.
+        screen._skill_eval_run_running = False
+
+
+@pytest.mark.asyncio
+async def test_skill_eval_bench_can_be_deleted(evals_app, evals_db):
+    """F16: a skill-eval bench exposes the inspector's Delete control and
+    the shared delete flow accepts the kind -- previously the kind
+    early-returned before the delete button was ever composed, so a
+    skill-eval bench could never be deleted from the UI."""
+    from textual.widgets import Button
+
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.screen._selection.kind == "skill_eval_bench",
+        )
+        # The inspector pane composes the delete control for this kind.
+        delete_button = screen.query_one("#evals-delete-bench", Button)
+        assert delete_button.disabled is False
+
+        # post the press directly (the same route the queued-double-press
+        # race test uses): with a skill-eval selection the inspector's
+        # delete button can sit below the viewport fold, where a
+        # coordinate click would miss it.
+        evals_app.screen.post_message(Button.Pressed(delete_button))
+        await pilot.pause()
+        await pilot.pause()
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            ConfirmationDialog,
+        )
+
+        assert isinstance(evals_app.screen, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: screen._selection.kind == "none")
+        await pilot.pause()
+
+        assert evals_db.get_task(bench_id) is None  # soft-deleted out of view
+        message, _severity = evals_app.app_instance.notifications[-1]
+        assert message == "Bench deleted. Its runs remain in the Runs section."
+
+
+@pytest.mark.asyncio
+async def test_deep_worker_persists_sim_cell_evidence(
+    evals_app, evals_db, monkeypatch, tmp_path
+):
+    """F8: every simulation cell round-trips through ``save_artifact`` with
+    its prompt_index/repeat in ``input`` and activated/error in metrics --
+    the raw spread used to drop all of it (only sample_id/input/raw/parsed/
+    kind persist), leaving a graded deep run with 50 anonymous sim rows."""
+    from Tests.Evals.skill_eval.test_runner import _Chat
+    from tldw_chatbook.UI.Evals import skill_eval_launch as launch
+    from tldw_chatbook.UI.Screens import evals_screen as screen_mod
+
+    monkeypatch.setattr(launch, "get_user_data_dir", lambda: tmp_path)
+    skill_dir = _write_skill_dir(tmp_path)
+    gen_id = evals_db.create_model(name="gen", provider="llama_cpp", model_id="gen-m")
+    jud_id = evals_db.create_model(name="jud", provider="llama_cpp", model_id="jud-m")
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=skill_dir, subject_kind="directory",
+            depth=SkillEvalDepth.DEEP, generator_target_id=gen_id,
+            judge_target_id=jud_id,
+        ),
+    )
+    chat = _Chat()
+    monkeypatch.setattr(
+        screen_mod, "make_skill_eval_chat", lambda cfg, g, j: (chat, [])
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen._skill_eval_bench_id = bench_id
+        screen._skill_eval_depth = SkillEvalDepth.DEEP
+        screen._skill_eval_generator_target_id = gen_id
+        screen._skill_eval_judge_target_id = jud_id
+        await screen._run_skill_eval_worker()
+        await pilot.pause()
+
+        assert chat.calls == 67  # 16 judge + 1 sim-prompt gen + 50 cells
+        run_groups = screen._view_model.run_groups()
+        assert run_groups[0]["status"] == "completed"
+        runs = evals_db.list_runs(run_group_id=run_groups[0]["id"])
+        artifacts = list(iter_artifacts(evals_db, runs[0]["id"]))
+        # 16 judge artifacts + exactly 50 sim cells (10 prompts x 5).
+        sim_rows = [a for a in artifacts if a["metadata"]["kind"] == "sim"]
+        assert len(sim_rows) == 50
+        by_id = {a["sample_id"]: a for a in sim_rows}
+        assert set(by_id) == {
+            f"sim-{p}-{r}" for p in range(10) for r in range(5)
+        }
+        cell = by_id["sim-3-2"]
+        assert cell["input_data"] == {"prompt_index": 3, "repeat": 2}
+        assert cell["metrics"]["activated"] is True
+        assert cell["metrics"]["error"] is None

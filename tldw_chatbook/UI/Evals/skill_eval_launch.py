@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Tuple
 
-from ...Chat.Chat_Functions import chat_api_call
+from ...Chat.Chat_Functions import API_CALL_HANDLERS, chat_api_call
 from ...Chat.provider_readiness import get_provider_readiness
 from ...config import get_user_data_dir
 from ...Evals.skill_eval.models import EvalTarget
@@ -22,6 +22,12 @@ from ...Evals.skill_eval.models import EvalTarget
 _CHAT_REQUEST_TIMEOUT = 120.0
 _CHAT_RETRIES = 2
 _CHAT_RETRY_DELAY = 2.0
+
+#: Qodo F12: the local-store listing is paginated; these bound the drain
+#: loop (200 skills per page, hard-capped at 25 pages = 5,000 skills) so a
+#: pathological/lying response can never loop forever.
+_STORE_PAGE_LIMIT = 200
+_STORE_MAX_PAGES = 25
 
 
 def _reply_text(response: Any) -> str:
@@ -75,6 +81,18 @@ def make_skill_eval_chat(
     keys: Dict[str, str] = {}
     problems: List[str] = []
     for provider in dict.fromkeys([generator.provider, judge.provider]):
+        # Qodo F4 (defense in depth; the picker already filters these out):
+        # every call routes through ``chat_api_call``'s API_CALL_HANDLERS
+        # dispatch, so a provider without a handler -- e.g. a keyless
+        # local alias that still passes readiness -- must stop the run
+        # BEFORE any call is spent, with the same normalization dispatch
+        # itself applies (lowercased provider name).
+        if provider.lower() not in API_CALL_HANDLERS:
+            problems.append(
+                f"{provider} has no chat handler registered; pick a "
+                "supported provider for this run."
+            )
+            continue
         readiness = get_provider_readiness(provider, app_config)
         if not readiness.ready:
             problems.append(readiness.user_message)
@@ -170,8 +188,11 @@ async def store_skill_names(app_config: Mapping) -> Tuple[List[dict], FrozenSet[
         app_config: Unused today (see above); kept for interface parity.
 
     Returns:
-        ``([skill summary dicts], frozenset(names))`` -- empty list and
-        empty set when the store holds nothing, never an exception.
+        ``([skill summary dicts], frozenset(names))`` -- the listing is
+        drained page by page (200 per page, hard-capped at
+        ``_STORE_MAX_PAGES``) so stores beyond the first page are fully
+        collected; empty list and empty set when the store holds nothing,
+        never an exception.
     """
     from ...Skills_Interop.local_skills_service import (
         LocalSkillsService,
@@ -181,8 +202,24 @@ async def store_skill_names(app_config: Mapping) -> Tuple[List[dict], FrozenSet[
     service = LocalSkillsService(
         store_dir=default_local_skills_store_dir(get_user_data_dir())
     )
-    listing = await service.list_skills(limit=200)
-    skills = list(listing.get("skills", []))
+    # Qodo F12: paginate the listing to exhaustion -- one ``limit=200``
+    # page silently hid every skill past #200 from the decoy pool and the
+    # reserved-name set. The loop drains until the reported ``total`` is
+    # reached (or a page comes back empty), hard-capped at
+    # ``_STORE_MAX_PAGES`` pages so a lying/looping response cannot hang
+    # the launch worker.
+    skills: List[dict] = []
+    offset = 0
+    for _page in range(_STORE_MAX_PAGES):
+        listing = await service.list_skills(limit=_STORE_PAGE_LIMIT,
+                                            offset=offset)
+        page_rows = list(listing.get("skills", []))
+        if not page_rows:
+            break
+        skills.extend(page_rows)
+        offset += len(page_rows)
+        if offset >= int(listing.get("total") or 0):
+            break
     return skills, frozenset(
         str(s.get("name", "")) for s in skills if s.get("name")
     )

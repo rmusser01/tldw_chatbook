@@ -290,3 +290,59 @@ def test_skill_eval_targets_lists_models(evals_db):
 
     assert {row["id"] for row in rows} == {gen_id, judge_id}
     assert EvalsViewModel(None).skill_eval_targets() == []
+
+
+# ---------------------------------------------------------------------------
+# Qodo PR-review fixes: F1 (retry-aware estimate) + F4 (dispatchable targets)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_estimate_line_shows_the_retry_maximum():
+    """F1: the estimate line carries the nominal count AND the worst case
+    with judge retries (quick needs no parenthetical -- 0 max)."""
+    from tldw_chatbook.Evals.skill_eval.runner import max_estimate_calls
+
+    assert max_estimate_calls(SkillEvalDepth.STANDARD) == 32
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        from textual.widgets import Select
+
+        # STANDARD is the mounted default.
+        estimate = str(app.screen.query_one("#skill-eval-estimate").render())
+        assert "16" in estimate and "max 32" in estimate
+
+        app.screen.query_one("#skill-eval-depth", Select).value = (
+            SkillEvalDepth.DEEP
+        )
+        await pilot.pause()
+        estimate = str(app.screen.query_one("#skill-eval-estimate").render())
+        assert "67" in estimate and "max 84" in estimate
+
+        app.screen.query_one("#skill-eval-depth", Select).value = (
+            SkillEvalDepth.QUICK
+        )
+        await pilot.pause()
+        estimate = str(app.screen.query_one("#skill-eval-estimate").render())
+        assert "0" in estimate and "max" not in estimate
+
+
+def test_skill_eval_targets_excludes_undispatchable_providers(evals_db):
+    """F4: rows whose provider has no ``chat_api_call`` handler (e.g. the
+    keyless ``local_transformers`` alias, which passes readiness) never
+    reach the picker -- picking one doomed the run at its first call."""
+    dispatchable = evals_db.create_model(
+        name="gen", provider="llama_cpp", model_id="m"
+    )
+    evals_db.create_model(
+        name="local", provider="local_transformers", model_id="t5"
+    )
+    evals_db.create_model(
+        name="typo", provider="NoSuchProvider", model_id="x"
+    )
+
+    rows = EvalsViewModel(evals_db).skill_eval_targets()
+
+    assert [row["id"] for row in rows] == [dispatchable]
+    assert EvalsViewModel(None).skill_eval_targets() == []
