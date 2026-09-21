@@ -1,5 +1,26 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2716 merged; server-action review resumes — 2026-09-21
+
+[PR2716](https://github.com/rmusser01/tldw_chatbook/pull/2716) merged into dev
+as `9cf5ba67b2` after owner visual approval, all 3 resolved Qodo
+threads, and zero remaining Qodo bugs/rule violations on the final head.
+Current-head CI passed 1,152 main cases and 123 admission cases with one existing
+expected failure; artifact, CSS, backlog and performance guards passed. The
+actual merge tree matches the tested current-dev merge candidate exactly.
+
+TASK-32831 is Done. The bounded result-error repair has 87 distinct targeted MCP
+passes and the approved wide dark/light failure/retry evidence. Later changes
+repair CI startup/timing and add a client docstring/direct model tests; executable
+MCP behavior and all native evidence remain identical to the approved head.
+The compact Test Tool limitation remains explicitly unqualified.
+[Merge receipt](../qa/2026-09-18-mcp-tool-errors/current-dev/merge-closeout.json).
+
+Existing draft PR2712 is the next bounded slice: server-action target ownership
+and compact toolbar usability. Resume it from this merged dev on a fresh branch,
+with current regressions, native qualification and its own visual approval.
+Other inspector, Audit, permission and destination review limits stay open.
+
 ## PR2716 tool-error qualification — 2026-09-20
 
 PR2714 merged into dev as `e4096e2059` after owner approval and all CI/review gates;

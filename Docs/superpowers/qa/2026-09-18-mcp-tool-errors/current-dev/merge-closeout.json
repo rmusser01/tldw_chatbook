@@ -1,0 +1,63 @@
+{
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/2716",
+  "headRefOid": "94600e9d8be9518a59d0359bd2f454c514a39484",
+  "mergeCommit": {
+    "oid": "9cf5ba67b2396e67c16f3ad7157066b1f7bf740f"
+  },
+  "mergedAt": "2026-09-21T01:04:25Z",
+  "state": "MERGED",
+  "base_proof": {
+    "ci_candidate_merge": "b1a993b2f1e2d6bb6a8a3f41572d9eea3fe261db",
+    "base": "47cbda4ee6dcd61b5d6008a17339ee2837d0650b",
+    "head": "94600e9d8be9518a59d0359bd2f454c514a39484",
+    "parents": [
+      "47cbda4ee6dcd61b5d6008a17339ee2837d0650b",
+      "94600e9d8be9518a59d0359bd2f454c514a39484"
+    ],
+    "tree": "6e8fafc60cb55e4dabba7db9e0f46eccf72af703",
+    "matches_head_tree": true,
+    "conflicts": false
+  },
+  "actual_merge_tree": "6e8fafc60cb55e4dabba7db9e0f46eccf72af703",
+  "ci_run": 35548449004,
+  "ci_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35548449004",
+  "ci_conclusion": "success",
+  "ci_summaries": [
+    "2026-09-21T00:56:14.6832418Z ================= 1152 passed, 1 warning in 445.11s (0:07:25) ==================",
+    "2026-09-21T00:58:38.0132654Z ============ 123 passed, 1 xfailed, 9 warnings in 140.29s (0:02:20) ============"
+  ],
+  "fast_lane_passed": 1152,
+  "admission_passed": 123,
+  "admission_existing_xfail": 1,
+  "distinct_targeted_mcp_passed": 87,
+  "review_threads_resolved": 3,
+  "qodo_open_bugs": 0,
+  "qodo_open_rule_violations": 0,
+  "approval": {
+    "approved_head": "19ceab4dc39da5aca46088b9a77b7c932861128b",
+    "head": "94600e9d8be9518a59d0359bd2f454c514a39484",
+    "changed_production_files": [
+      "tldw_chatbook/MCP/client.py"
+    ],
+    "production_change": "Only an async method docstring; AST is otherwise identical.",
+    "native_files_unchanged": [
+      "native_check.py",
+      "native-result.json",
+      "native-lifecycle.json",
+      "compact-attempt.json",
+      "compact-lifecycle.json",
+      "textual-dark-170x48-recovered-feedback.svg",
+      "textual-light-170x48-failed.svg",
+      "textual-light-170x48-recovered-feedback.svg",
+      "textual-dark-170x48-failed.svg",
+      "textual-light-170x48-recovered.svg",
+      "compact-unreachable.svg",
+      "textual-light-170x48-failed-feedback.svg",
+      "textual-dark-170x48-recovered.svg",
+      "textual-dark-170x48-failed-feedback.svg"
+    ],
+    "approval_applies": true
+  },
+  "full_local_suite_run": false,
+  "next_pr": 2712
+}
