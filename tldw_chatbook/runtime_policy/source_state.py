@@ -15,6 +15,7 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     open_private_binary,
 )
+from tldw_chatbook.Utils.datetime_codec import datetime_to_iso, iso_to_datetime
 
 from .types import RuntimeSourceState
 from ..Backup_Recovery import raw_participants as raw
@@ -131,28 +132,11 @@ def runtime_source_state_from_dict(data) -> RuntimeSourceState:
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime_to_iso(value)
 
 
-def _iso_to_datetime(value) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        normalized = value.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(normalized)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return None
+def _iso_to_datetime(value: Any) -> datetime | None:
+    return iso_to_datetime(value)
 
 
 def _coerce_choice(value, *, valid_values: set[str], default: str) -> str:

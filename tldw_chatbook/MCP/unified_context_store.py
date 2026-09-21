@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+from tldw_chatbook.Utils.datetime_codec import datetime_to_iso
 
 from .unified_control_models import UnifiedMCPContext
 
@@ -76,8 +77,4 @@ class UnifiedMCPContextStore:
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime_to_iso(value)

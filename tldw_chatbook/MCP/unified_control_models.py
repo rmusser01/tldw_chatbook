@@ -7,33 +7,18 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 _VALID_AUTH_MODES = {"api_key", "bearer", "custom_token"}
+from tldw_chatbook.Utils.datetime_codec import datetime_to_iso, iso_to_datetime
 _VALID_REACHABILITY_STATES = {"unknown", "reachable", "unreachable"}
 _VALID_AUTH_STATES = {"unknown", "authenticated", "auth_required", "session_invalid"}
 _VALID_SCOPES = {"personal", "team", "org", "system_admin"}
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime_to_iso(value)
 
 
 def _iso_to_datetime(value: Any) -> datetime | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return None
+    return iso_to_datetime(value)
 
 
 def _coerce_choice(value: Any, *, valid_values: set[str], default: str) -> str:
