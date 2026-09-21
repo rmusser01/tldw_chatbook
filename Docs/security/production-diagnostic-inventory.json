@@ -1226,10 +1226,9 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-<<<<<<< HEAD
-<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
+<<<<<<< HEAD
 =======
 =======
 >>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -1322,6 +1321,8 @@
 >>>>>>> 1012426811 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 >>>>>>> 4dbb3bed6c (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 >>>>>>> 15cf5a05bc (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+=======
+>>>>>>> bb1a14bf43 (chore(diagnostic): re-pin for the summarize-c tree)
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11663,6 +11664,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -11738,5 +11740,9 @@
     "task_494_calls": 7760
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+    "task_492_calls": 1355,
+    "task_494_calls": 7770
+>>>>>>> bb1a14bf43 (chore(diagnostic): re-pin for the summarize-c tree)
   }
 }
