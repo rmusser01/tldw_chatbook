@@ -192,7 +192,6 @@ class SimpleRAGCache:
         """
         Create a cache key from search parameters.
 
-        Uses xxhash for better performance than MD5.
 
         Args:
             query: The search query
@@ -324,16 +323,10 @@ class SimpleRAGCache:
             # test, and it is deliberately NOT re-pointed at the new default.
             key_parts.append("fts:" + fts_match_construction)
 
-        # Use a faster hash function - fallback to md5 if xxhash not available
+        # MD5 is fine for cache keys -- not used for security, just a stable
+        # cross-process digest of the key parts.
         key_str = "|".join(key_parts)
-        try:
-            import xxhash
-
-            return xxhash.xxh64(key_str.encode()).hexdigest()
-        except ImportError:
-            # Fallback to MD5 for stable hashing across processes
-            # MD5 is fine for cache keys - we don't need cryptographic security
-            return hashlib.md5(key_str.encode()).hexdigest()
+        return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
     async def get_async(
         self,

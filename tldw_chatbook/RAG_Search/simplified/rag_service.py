@@ -1988,7 +1988,7 @@ class RAGService:
                         logger.warning(
                             f"FTS5 search attempt {retry_count} failed, retrying: {e}"
                         )
-                        await asyncio.sleep(0.1 * retry_count)  # Exponential backoff
+                        await asyncio.sleep(0.1 * retry_count)  # Linear backoff (delay grows with the retry count)
 
             # Process results in batches for better performance
             if include_citations:

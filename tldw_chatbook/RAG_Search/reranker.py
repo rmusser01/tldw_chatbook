@@ -318,7 +318,7 @@ class BaseReranker(ABC):
                 ):
                     raise
                 retries += 1
-                await asyncio.sleep(1 * retries)  # Exponential backoff
+                await asyncio.sleep(1 * retries)  # Linear backoff (delay grows with the retry count)
             except Exception as e:
                 logger.error(f"LLM call failed: {e}")
                 if (

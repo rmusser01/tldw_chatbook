@@ -1157,14 +1157,9 @@ def test_a_failing_fallback_degrades_the_sub_leg_like_the_primary(
 
 def _legacy_hash(key_str):
     """`_make_key`'s hashing tail, reproduced so "byte-identical" is checkable."""
-    try:
-        import xxhash
+    import hashlib
 
-        return xxhash.xxh64(key_str.encode()).hexdigest()
-    except ImportError:
-        import hashlib
-
-        return hashlib.md5(key_str.encode()).hexdigest()
+    return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
 
 def test_the_and_construction_keeps_the_hybrid_key_byte_identical():

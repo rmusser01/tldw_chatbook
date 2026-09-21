@@ -1380,14 +1380,3 @@ def reset_profile_manager_cache() -> None:
         _GLOBAL_PROFILE_MANAGER = None
 
 
-def quick_profile(use_case: ProfileType) -> ProfileConfig:
-    """Get a profile for a specific use case."""
-    manager = get_profile_manager()
-    profile = manager.get_profile(use_case)
-
-    if not profile:
-        # Fall back to balanced
-        logger.warning(f"Profile '{use_case}' not found, using 'balanced'")
-        profile = manager.get_profile("balanced")
-
-    return profile

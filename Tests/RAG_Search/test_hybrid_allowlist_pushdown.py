@@ -1088,14 +1088,9 @@ def test_the_allowlist_composes_with_the_fusion_and_selection_key_parts():
 
 def _legacy_hash(key_str):
     """`_make_key`'s hashing tail, reproduced so "byte-identical" is checkable."""
-    try:
-        import xxhash
+    import hashlib
 
-        return xxhash.xxh64(key_str.encode()).hexdigest()
-    except ImportError:
-        import hashlib
-
-        return hashlib.md5(key_str.encode()).hexdigest()
+    return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
 
 def test_no_allowlist_keeps_the_legacy_key_byte_identical():
