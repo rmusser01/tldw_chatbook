@@ -206,6 +206,164 @@ WIDE_VIEWPORT_COLUMNS = 150
 # review P3): production loads css/tldw_cli_modular.tcss, built from the css/
 # sources; nothing read Constants.css_content. Its own body documented this.
 #
+# NOTE: LLAMA_CPP_SERVER_ARGS_HELP_TEXT below is a SEPARATE live constant
+# (LLM_Management_Window._populate_help_text imports it); it lived just past
+# css_content and must NOT be removed with it.
+
+LLAMA_CPP_SERVER_ARGS_HELP_TEXT = """
+[bold cyan]--- Server & Model Params ---[/]
+
+[bold]Simple 'Just Get Me Up And Running': -ngl 99 -fa -c 8192[/]
+
+[bold]-ngl, --gpu-layers, --n-gpu-layers N[/]
+  Number of layers to store in VRAM (e.g., [italic]--n-gpu-layers 35[/])
+  (env: LLAMA_ARG_N_GPU_LAYERS)
+
+[bold]-fa, --flash-attn[/]
+  Enable Flash Attention (default: disabled)
+  (env: LLAMA_ARG_FLASH_ATTN)
+
+[bold]-c, --ctx-size N[/]
+  Size of the prompt context (default: 4096, 0 = loaded from model)
+  (e.g., [italic]-c 2048[/])
+  (env: LLAMA_ARG_CTX_SIZE)
+
+[bold]-n, --predict, --n-predict N[/]
+  Number of tokens to predict (default: -1, -1 = infinity)
+  (e.g., [italic]-n 512[/])
+  (env: LLAMA_ARG_N_PREDICT)
+
+[bold]-m, --model FNAME[/]
+  Model path (Set via 'Model Path' field above)
+  (env: LLAMA_ARG_MODEL)
+
+[bold]-mu, --model-url MODEL_URL[/]
+  Model download URL (default: unused)
+  (env: LLAMA_ARG_MODEL_URL)
+
+[bold]-hf, -hfr, --hf-repo <user>/<model>[:quant][/]
+  Hugging Face model repository.
+  (e.g., [italic]--hf-repo unsloth/phi-3-mini-4k-instruct-gguf:Q4_K_M[/])
+  (env: LLAMA_ARG_HF_REPO)
+
+[bold]-hfd, -hfrd, --hf-repo-draft <user>/<model>[:quant][/]
+  Same as --hf-repo, but for the draft model.
+  (env: LLAMA_ARG_HFD_REPO)
+
+[bold]-hft, --hf-token TOKEN[/]
+  Hugging Face access token.
+  (env: HF_TOKEN)
+
+[bold]-t, --threads N[/]
+  Number of threads for generation (default: system dependent)
+  (e.g., [italic]-t 8[/])
+  (env: LLAMA_ARG_THREADS)
+
+[bold]-b, --batch-size N[/]
+  Logical maximum batch size (default: 2048)
+  (env: LLAMA_ARG_BATCH)
+
+[bold]-tb, --threads-batch N[/]
+  Number of threads for batch/prompt processing (default: same as --threads)
+  (env: LLAMA_ARG_THREADS_BATCH)
+
+[bold]-ub, --ubatch-size N[/]
+  Physical maximum batch size (default: 512)
+  (env: LLAMA_ARG_UBATCH)
+
+[bold]--keep N[/]
+  Tokens to keep from initial prompt (default: 0, -1 = all)
+
+[bold]-e, --escape[/]
+  Process escape sequences (default: true)
+
+[bold]--no-escape[/]
+  Do not process escape sequences
+
+[bold]--lora FNAME[/]
+  Path to LoRA adapter (repeatable)
+
+[bold]--lora-scaled FNAME SCALE[/]
+  Path to LoRA adapter with scaling (repeatable)
+
+[bold]--control-vector FNAME[/]
+  Add a control vector (repeatable)
+
+[bold]--control-vector-scaled FNAME SCALE[/]
+  Add a scaled control vector (repeatable)
+
+[bold]--control-vector-layer-range START END[/]
+  Layer range for control vector(s)
+
+[bold cyan]--- Sampling Params ---[/]
+
+[bold]--samplers SAMPLERS[/]
+  Samplers order, separated by ';' (default: see llama.cpp help)
+
+[bold]-s, --seed SEED[/]
+  RNG seed (default: -1, random)
+  (e.g., [italic]-s 1234[/])
+
+[bold]--temp N[/]
+  Temperature (default: 0.8)
+  (e.g., [italic]--temp 0.7[/])
+
+[bold]--top-k N[/]
+  Top-k sampling (default: 40, 0 = disabled)
+  (e.g., [italic]--top-k 50[/])
+
+[bold]--top-p N[/]
+  Top-p sampling (default: 0.9, 1.0 = disabled)
+  (e.g., [italic]--top-p 0.95[/])
+
+[bold]--min-p N[/]
+  Min-p sampling (default: 0.1, 0.0 = disabled)
+  (e.g., [italic]--min-p 0.05[/])
+
+[bold]--typical N[/]
+  Locally typical sampling (default: 1.0, 1.0 = disabled)
+
+[bold]--repeat-last-n N[/]
+  Last N tokens for penalty (default: 64, 0 = disabled)
+
+[bold]--repeat-penalty N[/]
+  Repeat penalty (default: 1.0, 1.0 = disabled)
+  (e.g., [italic]--repeat-penalty 1.1[/])
+
+[bold]--presence-penalty N[/]
+  Presence penalty (default: 0.0, 0.0 = disabled)
+
+[bold]--frequency-penalty N[/]
+  Frequency penalty (default: 0.0, 0.0 = disabled)
+
+[bold]--mirostat N[/]
+  Mirostat sampling (0=disabled, 1=Mirostat, 2=Mirostat 2.0)
+
+[bold]--mirostat-lr N[/]
+  Mirostat learning rate (default: 0.1)
+
+[bold]--mirostat-ent N[/]
+  Mirostat target entropy (default: 5.0)
+
+[bold]-l, --logit-bias TOKEN_ID(+/-)BIAS[/]
+  Modify token likelihood (e.g., [italic]--logit-bias 15043+1[/])
+
+[bold]--grammar GRAMMAR[/]
+  BNF-like grammar constraint
+
+[bold]--grammar-file FNAME[/]
+  File for grammar
+
+[bold]-j, --json-schema SCHEMA[/]
+  JSON schema constraint
+
+[bold]-jf, --json-schema-file FILE[/]
+  File for JSON schema
+
+[italic]Obtained from: https://github.com/ggml-org/llama.cpp/tree/master/tools/server[/]
+"""
+
+#
 #
 #
 ##########################################################################################################################
