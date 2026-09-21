@@ -9849,7 +9849,7 @@
             "outcome": "deleted",
             "current": null,
             "navigation_line": 1171,
-            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt provider-labelled network log was superseded by the shared transport handling; the caller-visible exhaustion error string is preserved unchanged."
+            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt network log moved into the shared helper (whose generic statement serves all providers), so the provider-labelled variant is superseded; the caller-visible exhaustion error string is preserved unchanged."
         },
         {
             "site_id": "general-dd184c22fec5f90f",
