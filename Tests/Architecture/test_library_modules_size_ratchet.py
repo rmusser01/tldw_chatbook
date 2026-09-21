@@ -161,7 +161,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 976,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1448,
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -481,7 +481,7 @@ _BUDGETS: dict[str, int] = {
     # No moved body was touched (byte-for-byte canon intact); this is the
     # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
     # 4998.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5188,
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5199,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

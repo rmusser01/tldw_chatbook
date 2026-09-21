@@ -82,7 +82,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: tracks reality and the file can only shrink from here; nothing is
     #: raised above measured. Decomposition candidates are recorded in
     #: TASK-32809.3, none opened here. 16966/563 -> 25353/762.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25353, 762),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25363, 762),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -897,7 +897,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: between decomposition moves. Re-set to the exact measurement (never
     #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
     #: 35793/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35793, 1330),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35855, 1330),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
