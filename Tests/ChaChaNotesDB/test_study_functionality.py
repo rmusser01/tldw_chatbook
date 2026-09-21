@@ -271,6 +271,23 @@ class TestFlashcardOperations:
         assert len(results) == 1
         assert "Python" in results[0]["front"]
 
+    def test_search_flashcards_respects_limit(self, db_instance, sample_deck):
+        """search_flashcards caps its result set (it had no LIMIT before)."""
+        for i in range(5):
+            db_instance.create_flashcard(
+                create_flashcard_data(
+                    sample_deck, f"Widget number {i}", "answer", "shared keyword"
+                )
+            )
+        # All five match the token; the explicit limit caps the returned rows.
+        assert len(db_instance.search_flashcards("widget", limit=2)) == 2
+        assert len(db_instance.search_flashcards("widget", limit=100)) == 5
+        # Non-positive / non-int limits fall back to the default cap rather than
+        # reaching SQLite (where LIMIT -1 means "no limit" and a str would error).
+        assert len(db_instance.search_flashcards("widget", limit=-1)) == 5
+        assert len(db_instance.search_flashcards("widget", limit=0)) == 5
+        assert len(db_instance.search_flashcards("widget", limit="7")) == 5  # type: ignore[arg-type]
+
     def test_get_due_flashcards(self, db_instance, sample_deck):
         """Test getting flashcards due for review."""
         # Create cards with different review states

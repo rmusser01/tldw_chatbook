@@ -16374,6 +16374,8 @@ UPDATE db_schema_version
 
         except InputError:
             raise
+        except CharactersRAGDBError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error creating message variant: exception_type={type(e).__name__}"
@@ -16425,6 +16427,8 @@ UPDATE db_schema_version
 
                 return variants
 
+        except CharactersRAGDBError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error getting message variants: exception_type={type(e).__name__}"
@@ -16491,6 +16495,8 @@ UPDATE db_schema_version
                 return True
 
         except InputError:
+            raise
+        except CharactersRAGDBError:
             raise
         except Exception as e:
             logger.error(
@@ -22316,11 +22322,14 @@ UPDATE db_schema_version
             return None
         return bytes(row["content"])
 
+    #: Default row cap shared by the two flashcard search seams.
+    _DEFAULT_FLASHCARD_LIMIT = 100
+
     def list_flashcards(
         self,
         deck_id: Optional[str] = None,
         q: Optional[str] = None,
-        limit: int = 100,
+        limit: int = _DEFAULT_FLASHCARD_LIMIT,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List flashcards with optional deck filtering and FTS-backed search.
@@ -23596,12 +23605,21 @@ UPDATE db_schema_version
     # migration's job.
 
     def search_flashcards(
-        self, query: str, deck_id: Optional[str] = None
+        self,
+        query: str,
+        deck_id: Optional[str] = None,
+        limit: int = _DEFAULT_FLASHCARD_LIMIT,
     ) -> List[Dict[str, Any]]:
         """Search flashcards using FTS; every token of ``query`` must appear.
 
         See ``list_flashcards`` for the form and its rationale (task-19558).
+
+        ``limit`` caps the returned rows, most-recently-updated first. A
+        non-positive or non-integer ``limit`` falls back to the default instead
+        of reaching SQLite, where ``LIMIT -1`` would mean "no limit".
         """
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            limit = self._DEFAULT_FLASHCARD_LIMIT
         base_query = """
             SELECT f.* FROM flashcards f
             JOIN flashcards_fts fts ON f.rowid = fts.rowid
@@ -23615,6 +23633,9 @@ UPDATE db_schema_version
         if deck_id:
             base_query += " AND f.deck_id = ?"
             params.append(deck_id)
+
+        base_query += " ORDER BY f.updated_at DESC, f.created_at DESC LIMIT ?"
+        params.append(limit)
 
         conn = self.get_connection()
         cursor = conn.cursor()

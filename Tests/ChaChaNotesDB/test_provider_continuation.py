@@ -662,6 +662,21 @@ def test_clearing_attachment_only_owner_keeps_attachment_and_one_update_intent(
     assert entries[-1]["payload"]["provider_continuation_json"] is None
 
 
+def test_create_message_variant_preserves_conflict_error(tmp_path: Path) -> None:
+    """A ConflictError raised inside create_message_variant must propagate as a
+    ConflictError, not be re-wrapped into a generic CharactersRAGDBError (which
+    would lose the error's type and entity)."""
+    db, _conversation_id = _db_with_conversation(tmp_path)
+
+    def raise_conflict(*args, **kwargs):
+        raise ConflictError("simulated optimistic-lock conflict")
+
+    # create_message_variant opens `with self.transaction(immediate=True) as conn`.
+    db.transaction = raise_conflict
+    with pytest.raises(ConflictError):
+        db.create_message_variant("any-message-id", "variant content")
+
+
 def test_discard_and_variant_ownership_stay_on_exact_assistant_rows(
     tmp_path: Path,
 ) -> None:
