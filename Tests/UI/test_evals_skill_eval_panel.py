@@ -470,3 +470,65 @@ def test_skill_eval_targets_excludes_undispatchable_providers(evals_db):
 
     assert [row["id"] for row in rows] == [dispatchable]
     assert EvalsViewModel(None).skill_eval_targets() == []
+
+
+@pytest.mark.asyncio
+async def test_empty_model_pickers_show_bootstrap_guidance():
+    """TASK-32884: with no eval models configured the pickers must name
+    the problem and the way out, not render blank; picking the guidance
+    row posts nothing and leaves the picker unset."""
+    from textual.widgets import Select
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets([])
+        await pilot.pause()
+
+        for picker_id in ("skill-eval-generator", "skill-eval-judge"):
+            picker = panel.query_one(f"#{picker_id}", Select)
+            assert "no eval models" in str(picker.prompt)
+            labels = [str(label) for label, value in picker._options
+                      if value is not Select.NULL]
+            assert any("No eval models" in label for label in labels)
+
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        picker = panel.query_one("#skill-eval-generator", Select)
+        assert picker.value is Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_run_guard_toast_teaches_the_fix_when_no_models_exist():
+    """TASK-32884: the Run guard's warning must name where eval models
+    come from when none exist -- 'pick models first' alone strands a user
+    who has nowhere to pick from."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subject("csv-cleaner", "store")
+        panel.set_targets([])
+        await pilot.pause()
+
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        messages = [n.message for n in app._notifications]
+        assert any("No eval models" in m and "target" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_run_guard_toast_stays_plain_when_models_exist():
+    """TASK-32884 guard: the bootstrap teaching belongs only to the
+    zero-models case -- with models available the original message
+    stands."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subject("csv-cleaner", "store")
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        messages = [n.message for n in app._notifications]
+        assert any("Pick generator and judge models first" in m for m in messages)
+        assert not any("No eval models" in m for m in messages)

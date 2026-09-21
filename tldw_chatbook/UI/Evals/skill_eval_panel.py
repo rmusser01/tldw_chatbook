@@ -38,6 +38,22 @@ _EMPTY_STORE_SENTINEL = "__no_skills_in_store__"
 _EMPTY_STORE_PROMPT = "No skills installed — type a path below"
 _EMPTY_STORE_ROW = "No skills in your store — install one, or type a directory path below"
 
+#: TASK-32884: with zero eval models the pickers must bootstrap, not blank.
+#: The guidance row's sentinel is rejected by the change handler; the
+#: message names the two real creation paths (bench editor "+ New target",
+#: or the rail's "Create sample bench", which seeds a model in one step).
+_NO_TARGETS_SENTINEL = "__no_eval_models__"
+_NO_TARGETS_PROMPT = "no eval models configured"
+_NO_TARGETS_ROW = (
+    "No eval models — create one via '+ New target' in a bench editor, "
+    "or run 'Create sample bench' once"
+)
+_NO_TARGETS_RUN_TOAST = (
+    "No eval models configured — create one via '+ New target' in a bench "
+    "editor, or run 'Create sample bench' once, then pick generator and "
+    "judge here."
+)
+
 
 class _SkillDirectoryValidator(Validator):
     """Advisory validation for the directory-path subject (TASK-32883).
@@ -182,13 +198,30 @@ class SkillEvalPanel(Widget):
              f"({r.get('provider')}/{r.get('model_id')})", r["id"])
             for r in rows
         ]
-        self.query_one("#skill-eval-generator", Select).set_options(options)
-        self.query_one("#skill-eval-judge", Select).set_options(options)
+        for picker_id, prompt in (
+            ("skill-eval-generator", "generator model"),
+            ("skill-eval-judge", "judge model"),
+        ):
+            picker = self.query_one(f"#{picker_id}", Select)
+            if options:
+                picker.set_options(options)
+                picker.prompt = prompt
+            else:
+                # TASK-32884: a blank picker is a dead end; the guidance
+                # row is rejected on pick, the prompt names the state.
+                picker.set_options([(_NO_TARGETS_ROW, _NO_TARGETS_SENTINEL)])
+                picker.prompt = _NO_TARGETS_PROMPT
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "skill-eval-depth":
             self._depth = event.value
             self._refresh_estimate()
+        elif event.select.id in ("skill-eval-generator", "skill-eval-judge"):
+            # TASK-32884: the no-models guidance row is not a target.
+            if event.value == _NO_TARGETS_SENTINEL:
+                event.select.value = Select.NULL
+                self.notify(_NO_TARGETS_ROW, severity="information")
+                return
         elif event.select.id == "skill-eval-subject-picker":
             # TASK-32883: the empty-store guidance row is not a subject.
             # Reject it, stay unset, and say why -- a silently stuck picker
@@ -260,8 +293,19 @@ class SkillEvalPanel(Widget):
             # `not gen` guard lets an unpicked model through as
             # str(Select.NULL) -- check identity against the sentinel too.
             if gen is Select.NULL or jud is Select.NULL or not gen or not jud:
-                self.notify("Pick generator and judge models first.",
-                            severity="warning")
+                # TASK-32884: teach the way out when the pickers are empty
+                # because no eval models exist at all -- "pick one first"
+                # strands a user with nothing to pick from.
+                generator = self.query_one("#skill-eval-generator", Select)
+                has_real_options = any(
+                    value is not Select.NULL and value != _NO_TARGETS_SENTINEL
+                    for _label, value in generator._options
+                )
+                self.notify(
+                    _NO_TARGETS_RUN_TOAST if not has_real_options
+                    else "Pick generator and judge models first.",
+                    severity="warning",
+                )
                 return
             self.post_message(self.RunRequested(self._depth, str(gen), str(jud)))
         elif event.button.id == "skill-eval-cancel":
