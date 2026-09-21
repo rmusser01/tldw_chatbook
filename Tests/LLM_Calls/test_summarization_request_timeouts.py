@@ -44,9 +44,17 @@ def _find_post(path: pathlib.Path, url_fragment: str) -> ast.Call:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr == "post"):
+        # TASK-32853 Phase C: migrated providers pass the url to the shared
+        # _post_with_retry transport instead of posting directly, so the
+        # timeout contract is asserted at whichever seam carries the url.
+        is_post = isinstance(func, ast.Attribute) and func.attr == "post"
+        is_transport = isinstance(func, ast.Name) and func.id == "_post_with_retry"
+        if not (is_post or is_transport):
             continue
-        for arg in node.args:
+        candidates = list(node.args) + [
+            kw.value for kw in node.keywords if kw.arg == "url"
+        ]
+        for arg in candidates:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 if url_fragment in arg.value:
                     return node
