@@ -174,6 +174,22 @@ def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -
     return text
 
 
+def _redact_action_result(value: object) -> object:
+    """Redact secrets/paths in an advanced-action result of any shape.
+
+    TASK-32806.7: `redact_mapping` covers a dict; a list result, or a list
+    of dicts, reached the widget un-redacted. This walks lists and tuples so
+    every Mapping inside them is redacted too.
+    """
+    if isinstance(value, Mapping):
+        return redact_mapping(value)
+    if isinstance(value, list):
+        return [_redact_action_result(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_action_result(item) for item in value)
+    return value
+
+
 def _safe_exception_argument(value: object) -> object:
     """Sanitize nested exception data before its repr escapes path separators."""
     if isinstance(value, Mapping):
@@ -4103,7 +4119,7 @@ class MCPInspector(VerticalScroll):
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             self._advanced_confirm_key = None
-            result_widget.update(f"Invalid JSON payload: {exc}")
+            result_widget.update(f"Invalid JSON payload: {_safe_exception_text(exc)}")
             return
         if action_name == _ADVANCED_EXECUTE_ACTION:
             # `default=str` for the same reason the result dump below uses
@@ -4132,13 +4148,17 @@ class MCPInspector(VerticalScroll):
             MCPHubGateDeniedError,
             RawToolCallRefusedError,
         ) as exc:  # a refusal is not a failure
-            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{exc}")
+            result_widget.update(
+                f"{_ADVANCED_BLOCKED_HEADING}\n{_safe_exception_text(exc)}"
+            )
             return
         except Exception as exc:  # surface, never crash the inspector -- a
             # tool-body `PermissionError` (not one of the three typed
             # refusals above) lands here too, same as any other crash.
-            result_widget.update(f"Action failed: {exc}")
+            result_widget.update(f"Action failed: {_safe_exception_text(exc)}")
             return
-        if isinstance(result, dict):
-            result = redact_mapping(result)
+        # TASK-32806.7: the guard only redacted a Mapping result, so a
+        # list-shaped result (or a list of dicts) was dumped raw with any
+        # secret or absolute path in it. Redact mappings wherever they sit.
+        result = _redact_action_result(result)
         result_widget.update(json.dumps(result, default=str, indent=1)[:2000])

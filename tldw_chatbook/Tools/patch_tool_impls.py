@@ -46,7 +46,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from tldw_chatbook.Tools.local_tool_impls import LocalToolError, resolve_workspace_path
+from tldw_chatbook.Tools.local_tool_impls import (
+    LocalToolError,
+    _atomic_write_target,
+    resolve_workspace_path,
+)
 from tldw_chatbook.Tools.workspace_root_pin import (
     PinnedWorkspaceRoot,
     WorkspaceRootPinError,
@@ -503,4 +507,14 @@ def _patch_relative_file(
             f"(lone surrogate?): {exc}"
         ) from exc
     if not dry_run:
-        target.write_bytes(data)
+        # TASK-32806.6: same atomic path fs_write uses, rather than a plain
+        # in-place write. `add`/`create` actions require the target absent,
+        # `modify` requires it present -- the invariants already asserted
+        # above, restated here as the write precondition.
+        _atomic_write_target(
+            target,
+            data,
+            shown=str(rel_path),
+            expected_sha256=None,
+            expected_absent=patch_file.action != "modify",
+        )
