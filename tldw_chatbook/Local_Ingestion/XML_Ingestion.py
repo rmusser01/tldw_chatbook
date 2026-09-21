@@ -11,7 +11,7 @@ import time
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 from tldw_chatbook.Chunking.Chunk_Lib import chunk_xml
 from tldw_chatbook.DB.Client_Media_DB_v2 import add_media_to_database
-from tldw_chatbook.Utils.Utils import logging
+import logging
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################

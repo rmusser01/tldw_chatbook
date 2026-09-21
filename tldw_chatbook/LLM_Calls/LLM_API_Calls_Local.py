@@ -23,7 +23,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
 )
-from tldw_chatbook.Utils.Utils import logging
+import logging
 from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import create_default_session

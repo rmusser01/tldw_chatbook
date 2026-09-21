@@ -30,7 +30,9 @@ from urllib3 import Retry
 
 #
 # Import Local Libraries
-from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
+import logging
+
+from tldw_chatbook.Utils.Utils import extract_text_from_segments
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.config import get_cli_setting, load_settings
