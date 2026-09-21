@@ -275,6 +275,73 @@ async def test_emptying_directory_input_posts_nothing():
         assert len(app.subject_changed) == 1
 
 
+@pytest.mark.asyncio
+async def test_empty_store_picker_shows_guidance_not_a_blank_overlay():
+    """TASK-32883: an empty skills store must not render a blank dead-end
+    overlay -- the picker's prompt names the problem and the alternative,
+    the overlay holds one guidance row, and picking that row posts nothing
+    instead of silently selecting a fake subject."""
+    from textual.widgets import Select
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects([])
+        await pilot.pause()
+
+        picker = panel.query_one("#skill-eval-subject-picker", Select)
+        assert "No skills" in str(picker.prompt)
+        labels = [str(label) for label, value in picker._options
+                  if value is not Select.NULL]
+        assert any("No skills" in label for label in labels)
+
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        assert app.subject_changed == []
+        assert picker.value is Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_populated_store_picker_keeps_the_standard_prompt():
+    """TASK-32883 guard: the guidance prompt swap must only happen for an
+    actually-empty store -- populated pickers keep the neutral prompt."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects(_SUBJECTS)
+        await pilot.pause()
+
+        from textual.widgets import Select
+
+        picker = panel.query_one("#skill-eval-subject-picker", Select)
+        assert str(picker.prompt) == "subject skill (store)"
+
+
+@pytest.mark.asyncio
+async def test_directory_input_hint_and_inline_validation(tmp_path):
+    """TASK-32883: the path input names the expected layout inline, flags a
+    directory without SKILL.md immediately, and validates a real skill
+    directory clean -- no silent acceptance of unusable paths."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        directory = panel.query_one("#skill-eval-subject-dir")
+        hint = panel.query_one("#skill-eval-subject-dir-hint")
+        assert "SKILL.md" in str(hint.render())
+
+        directory.value = str(tmp_path)  # exists, but no SKILL.md inside
+        await pilot.pause()
+        assert not directory.is_valid
+        assert "No SKILL.md" in str(hint.render())
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
+        directory.value = str(skill_dir)
+        await pilot.pause()
+        assert directory.is_valid
+        assert "No SKILL.md" not in str(hint.render())
+
+
 # ---------------------------------------------------------------------------
 # EvalsViewModel: the three skill-eval reads
 # ---------------------------------------------------------------------------

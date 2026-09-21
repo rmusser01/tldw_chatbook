@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
+from textual.validation import ValidationResult, Validator
 from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
@@ -21,6 +23,38 @@ _DEPTH_OPTIONS = [
     (f"deep — + simulation ({estimate_calls(SkillEvalDepth.DEEP)} calls)",
      SkillEvalDepth.DEEP),
 ]
+
+#: What the directory-path input expects, shown inline beneath it.
+_DIR_HINT_DEFAULT = "A folder containing SKILL.md"
+
+#: The picker's neutral prompt (restored whenever the store holds skills).
+_STORE_PROMPT = "subject skill (store)"
+
+#: TASK-32883: with an empty store the picker swaps to a guidance prompt and
+#: its overlay holds one guidance ROW carrying this sentinel value -- picking
+#: it posts nothing (the handler rejects the sentinel), so a blank dead-end
+#: overlay can never masquerade as a broken control or a selectable subject.
+_EMPTY_STORE_SENTINEL = "__no_skills_in_store__"
+_EMPTY_STORE_PROMPT = "No skills installed — type a path below"
+_EMPTY_STORE_ROW = "No skills in your store — install one, or type a directory path below"
+
+
+class _SkillDirectoryValidator(Validator):
+    """Advisory validation for the directory-path subject (TASK-32883).
+
+    Mirrors ``subject_from_directory``'s contract (absolute directory
+    containing ``SKILL.md``) so feedback is immediate; the run's own
+    resolver stays authoritative.
+    """
+
+    def validate(self, value: str) -> ValidationResult:
+        stripped = value.strip()
+        if not stripped:
+            return self.success()
+        path = Path(stripped)
+        if path.is_absolute() and (path / "SKILL.md").is_file():
+            return self.success()
+        return self.failure("No SKILL.md found at that path")
 
 
 class SkillEvalPanel(Widget):
@@ -79,9 +113,12 @@ class SkillEvalPanel(Widget):
             yield Static("No subject selected.",
                          id="skill-eval-subject", markup=False)
             yield Select([], id="skill-eval-subject-picker",
-                         prompt="subject skill (store)")
+                         prompt=_STORE_PROMPT)
             yield Input(id="skill-eval-subject-dir",
-                        placeholder="or: skill directory path")
+                        placeholder="or: skill directory path",
+                        validators=[_SkillDirectoryValidator()])
+            yield Static(_DIR_HINT_DEFAULT, id="skill-eval-subject-dir-hint",
+                         markup=False)
             yield Select(_DEPTH_OPTIONS, id="skill-eval-depth",
                          value=self._depth)
             yield Select([], id="skill-eval-generator",
@@ -128,7 +165,16 @@ class SkillEvalPanel(Widget):
             seen.add(name)
             trust = str(row.get("trust_status") or "unknown")
             options.append((f"{name} ({trust})", name))
-        self.query_one("#skill-eval-subject-picker", Select).set_options(options)
+        picker = self.query_one("#skill-eval-subject-picker", Select)
+        if not options:
+            # TASK-32883: an empty store must not present a blank dead-end
+            # overlay -- one guidance row (rejected by the change handler)
+            # plus a prompt that names the alternative path input below.
+            picker.set_options([(_EMPTY_STORE_ROW, _EMPTY_STORE_SENTINEL)])
+            picker.prompt = _EMPTY_STORE_PROMPT
+        else:
+            picker.set_options(options)
+            picker.prompt = _STORE_PROMPT
 
     def set_targets(self, rows: List[dict]) -> None:
         options = [
@@ -144,12 +190,20 @@ class SkillEvalPanel(Widget):
             self._depth = event.value
             self._refresh_estimate()
         elif event.select.id == "skill-eval-subject-picker":
+            # TASK-32883: the empty-store guidance row is not a subject.
+            # Reject it, stay unset, and say why -- a silently stuck picker
+            # reads as a broken control.
+            if event.value == _EMPTY_STORE_SENTINEL:
+                event.select.value = Select.NULL
+                self.notify(_EMPTY_STORE_ROW, severity="information")
+                return
             # Select.NULL is a truthy sentinel (Textual 8) -- identity check,
             # the same discipline the Run guard below documents.
             if event.value is Select.NULL or not event.value:
                 return
             # Last-touched wins: a store pick clears the directory path.
-            self.query_one("#skill-eval-subject-dir", Input).value = ""
+            directory = self.query_one("#skill-eval-subject-dir", Input)
+            directory.value = ""
             self._subject_ref = str(event.value)
             self.post_message(self.SubjectChanged(str(event.value), "store"))
 
@@ -157,10 +211,18 @@ class SkillEvalPanel(Widget):
         if event.input.id != "skill-eval-subject-dir":
             return
         ref = event.value.strip()
+        hint = self.query_one("#skill-eval-subject-dir-hint", Static)
         if not ref:
             # Emptying the Input is not a subject choice (and must not
             # resurrect a cleared store pick -- re-pick explicitly).
+            hint.update(_DIR_HINT_DEFAULT)
             return
+        # TASK-32883: immediate inline feedback instead of a failed run
+        # later -- the validator mirrors subject_from_directory's contract.
+        if event.validation_result is not None and not event.validation_result.is_valid:
+            hint.update("No SKILL.md found at that path")
+        else:
+            hint.update("")
         # Last-touched wins: a typed path resets the store pick.
         self.query_one("#skill-eval-subject-picker", Select).value = Select.NULL
         self._subject_ref = ref
