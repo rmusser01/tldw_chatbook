@@ -1,0 +1,45 @@
+{
+  "qualified_head": "7c0c035de2eef3fd6592812f739cf59fd52b8da3",
+  "qualified_dev": "ea2d7b22a8af93e4a4856d350640f03af5cc4880",
+  "head_tree": "8267a573707f92244f44d85e8220c092a469f533",
+  "qodo_comment_id": 5763208982,
+  "qodo_current_head_zero_findings": true,
+  "resolved_threads": [
+    {
+      "id": "PRRT_kwDOOcyyl86kakCZ",
+      "isResolved": true,
+      "isOutdated": false
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kakCc",
+      "isResolved": true,
+      "isOutdated": true
+    },
+    {
+      "id": "PRRT_kwDOOcyyl86kakCj",
+      "isResolved": true,
+      "isOutdated": true
+    }
+  ],
+  "native_sources_still_match": true,
+  "CI_run": 35683319303,
+  "CI_status": "success",
+  "merge_status": "merged",
+  "actual_merge": {
+    "baseRefOid": "ea2d7b22a8af93e4a4856d350640f03af5cc4880",
+    "headRefOid": "7c0c035de2eef3fd6592812f739cf59fd52b8da3",
+    "mergeCommit": {
+      "oid": "3722a857480b94b30fd4755f3f8e3002bd163ec3"
+    },
+    "mergedAt": "2026-09-22T03:50:27Z",
+    "state": "MERGED"
+  },
+  "ci_candidate": "982e555926d441ea362eb91c48a8f7079b7f5ed0",
+  "actual_merge_tree": "8267a573707f92244f44d85e8220c092a469f533",
+  "actual_tree_matches_qualified_head_and_candidate": true,
+  "CI_contract_passed": 1152,
+  "CI_admission_passed": 123,
+  "CI_admission_xfailed": 1,
+  "CI_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35683319303",
+  "CI_original_log_sha256": "e0cc53a19af5b052fa89809f666a69b1e7644d58f0bb06446579d68871b9cc74"
+}

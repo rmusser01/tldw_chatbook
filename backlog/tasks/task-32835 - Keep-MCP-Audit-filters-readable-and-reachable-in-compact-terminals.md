@@ -1,11 +1,11 @@
 ---
 id: TASK-32835
 title: Keep MCP Audit filters readable and reachable in compact terminals
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 04:02'
-updated_date: '2026-09-22 03:28'
+updated_date: '2026-09-22 03:52'
 labels: []
 dependencies: []
 ---
@@ -61,4 +61,6 @@ Plan deviation for preceding PR2720 closeout: performance PR2739 landed eight se
 PR2721 requires its own fresh visual approval, current-head CI, accumulated Qodo review and final dev/conflict review before merging. TASK-32835 stays In Progress. PR2722 inspector guidance and wider component review remain separate. No full suite was run.
 
 Post-approval closeout: rebased conflict-free onto dev ea2d7b22a8; added callback Args docs, shared fixture count and a tested stdlib receipt exporter. All 25 affected added QA receipts now use stable host-path placeholders with source/export hashes preserved. Independent review caught and verified the fix for output aliases: new destinations only, all inputs validated before writes. 381 distinct current-source checks pass; six incoming MCP failures reproduce on untouched dev. Nine artifact guards pass. All 18 native Audit bodies match the approved layout after timestamp/style-ID normalization; nine whole frames differ only in top navigation scroll. Fresh private lifecycle/source checks pass. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/final-review/README.md. Current-head CI/Qodo and final dev/tree verification still gate merge; task remains In Progress.
+
+Approved PR2721 merged on 2026-09-22 at 3722a857480b94b30fd4755f3f8e3002bd163ec3. Actual tree 8267a573707f92244f44d85e8220c092a469f533 exactly equals qualified head and CI candidate982e5559. Current-head CI35683319303: 1152 contract passes, 123 admission passes and one expected failure; all artifact and performance checks pass. Qodo summary5763208982 is stamped7c0c035d and reports zero bugs/violations; all three threads resolved. Merge receipt accompanies PR2722 continuation. The six incoming MCP recovery failures reproduced on untouched dev remain inherited and do not qualify reviewed remote execution/lease retention.
 <!-- SECTION:NOTES:END -->

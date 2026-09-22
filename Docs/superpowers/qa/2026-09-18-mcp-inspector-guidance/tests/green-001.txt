@@ -1,0 +1,26 @@
+.........                                                                [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-8c949c5e-247d-4486-a6cd-246ca3236d45/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-8c949c5e-247d-4486-a6cd-246ca3236d45/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-8c949c5e-247d-4486-a6cd-246ca3236d45
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-8c949c5e-247d-4486-a6cd-246ca3236d45'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+9.90s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-light]
+8.99s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-light]
+8.85s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-dark]
+8.21s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-dark]
+2.38s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[finding]
+2.37s call     Tests/UI/test_mcp_inspector_guidance.py::test_guidance_returns_only_after_last_detail_clears
+2.36s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[audit]
+2.33s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]
+2.31s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[permission]
+
+(16 durations < 1s hidden.)
+9 passed, 2 warnings in 49.75s
