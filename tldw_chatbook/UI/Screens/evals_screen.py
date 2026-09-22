@@ -2041,6 +2041,20 @@ class EvalsScreen(LabScreen):
             self._skill_eval_run_running = False
             raise
 
+    @on(SkillEvalDetail.StopRequested)
+    def _on_skill_eval_detail_stop_requested(
+        self, event: SkillEvalDetail.StopRequested
+    ) -> None:
+        """Qodo review: stop a rerun launched from the report itself.
+
+        Same token semantics as the panel's Stop run -- a no-op press
+        when nothing is in flight (the button is disabled for exactly
+        that window, but the handler stays defensive).
+        """
+        event.stop()
+        if self._skill_eval_cancel is not None:
+            self._skill_eval_cancel.cancel()
+
     @on(SkillEvalPanel.CloseRequested)
     def _on_skill_eval_close_requested(
         self, event: SkillEvalPanel.CloseRequested
@@ -2391,12 +2405,15 @@ class EvalsScreen(LabScreen):
         caveat that method's own docstring gives). No-ops via ``QueryError``
         whenever the panel is not in the DOM (the user navigated away
         mid-run -- the worker itself keeps running regardless)."""
+        # Qodo review: no early return on a missing panel -- a rerun
+        # launched from a REPORT runs while only the detail is mounted,
+        # and its controls must reflect the same window.
         try:
             button = self.query_one("#skill-eval-run", Button)
+            button.disabled = True
+            button.label = f"Running… ({done}/{total})" if total else "Running…"
         except QueryError:
-            return
-        button.disabled = True
-        button.label = f"Running… ({done}/{total})" if total else "Running…"
+            pass
         # TASK-32889: "Stop run" is armed for exactly the in-flight window.
         try:
             stop = self.query_one("#skill-eval-cancel", Button)
@@ -2404,6 +2421,23 @@ class EvalsScreen(LabScreen):
             stop = None
         if stop is not None:
             stop.disabled = False
+        # Qodo review: runs launched from a REPORT (Run again) execute
+        # while the detail is mounted -- its controls reflect the same
+        # window (QueryError-guarded: the detail is only mounted for a
+        # run_group selection).
+        try:
+            again = self.query_one("#skill-eval-run-again", Button)
+        except QueryError:
+            again = None
+        if again is not None:
+            again.disabled = True
+            again.label = "Running…"
+        try:
+            detail_stop = self.query_one("#skill-eval-detail-stop", Button)
+        except QueryError:
+            detail_stop = None
+        if detail_stop is not None:
+            detail_stop.disabled = False
 
     def _reset_skill_eval_running_ui(self) -> None:
         """Restores the panel's Run button after a run ends -- only matters
@@ -2412,16 +2446,29 @@ class EvalsScreen(LabScreen):
         ``_reset_bench_run_running_ui``'s own QueryError-guarded shape."""
         try:
             button = self.query_one("#skill-eval-run", Button)
+            button.disabled = False
+            button.label = "Run"
         except QueryError:
-            return
-        button.disabled = False
-        button.label = "Run"
+            pass
         try:
             stop = self.query_one("#skill-eval-cancel", Button)
         except QueryError:
             stop = None
         if stop is not None:
             stop.disabled = True
+        try:
+            again = self.query_one("#skill-eval-run-again", Button)
+        except QueryError:
+            again = None
+        if again is not None:
+            again.disabled = False
+            again.label = "Run again"
+        try:
+            detail_stop = self.query_one("#skill-eval-detail-stop", Button)
+        except QueryError:
+            detail_stop = None
+        if detail_stop is not None:
+            detail_stop.disabled = True
 
     async def _run_skill_eval_worker(self) -> None:
         """Runs ``self._skill_eval_bench_id`` -- the skill-eval sibling of

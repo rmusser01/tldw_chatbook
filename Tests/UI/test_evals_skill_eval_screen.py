@@ -1410,7 +1410,7 @@ async def test_tab_traversal_never_navigates_away(evals_app, evals_db):
 
 
 def _seed_run_group(evals_db, tmp_path, bench_id, subject, generator, judge,
-                    composite, dim_value, depth="standard"):
+                    composite, dim_value, depth="standard", minutes_ago=0):
     """Seed one completed run group with a one-dimension report."""
     from tldw_chatbook.Evals.skill_eval.models import (
         DimensionScore,
@@ -1431,6 +1431,20 @@ def _seed_run_group(evals_db, tmp_path, bench_id, subject, generator, judge,
         evals_db, bench_id, config, subject, generator, judge,
         call_estimate=16,
     )
+    if minutes_ago:
+        # created_at is second-precision: back-to-back seeds would tie and
+        # leave chronology to the deterministic group-id tiebreak -- pin
+        # real times instead so comparisons test real ordering.
+        from datetime import datetime, timedelta, timezone
+
+        when = (
+            datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with evals_db.connection() as cursor:
+            cursor.execute(
+                "UPDATE eval_runs SET created_at = ? WHERE run_group_id = ?",
+                (when, group_id),
+            )
     save_report(
         evals_db, run_id,
         SkillEvalReport(
@@ -1540,7 +1554,7 @@ async def test_compare_with_previous_run_group(evals_db, tmp_path):
     )
     _seed_run_group(
         evals_db, tmp_path, bench_id, subject, generator, judge,
-        composite=80.0, dim_value=0.72,
+        composite=80.0, dim_value=0.72, minutes_ago=30,
     )
     newer_group, _run = _seed_run_group(
         evals_db, tmp_path, bench_id, subject, generator, judge,
@@ -1567,3 +1581,209 @@ async def test_compare_with_previous_run_group(evals_db, tmp_path):
         assert any("+2.8" in line for line in lines), text
         assert any("triggering_accuracy" in line and "+0.08" in line
                    for line in lines), text
+
+
+# ---------------------------------------------------------------------------
+# PR #2791 review fixes: chronology, artifact expansion, report Stop run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_middle_report_compares_against_the_older_sibling(evals_db, tmp_path):
+    """Qodo review #1: opening a NON-latest report must baseline against
+    the run strictly older than it -- never a newer run (which reversed
+    chronology and every delta)."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    oldest, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=70.0, dim_value=0.60, minutes_ago=60,
+    )
+    middle, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.70, minutes_ago=30,
+    )
+    newest, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=90.0, dim_value=0.90,
+    )
+    assert oldest != middle != newest
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), middle)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#skill-eval-compare", Button).press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        # Baseline is the OLDER sibling (70.0), never the newer (90.0).
+        assert any("older: 70.0" in line for line in lines), lines
+        assert not any("older: 90.0" in line for line in lines)
+        # Delta is middle - oldest: +10.0 composite, +0.10 dimension.
+        assert any("+10.0" in line for line in lines), lines
+        assert any("triggering_accuracy" in line and "+0.10" in line
+                   for line in lines), lines
+
+
+@pytest.mark.asyncio
+async def test_artifact_listing_expands_beyond_the_first_page(evals_db, tmp_path):
+    """Qodo review #5: the artifact cap must be expandable -- a report
+    with more artifacts than the preview page still exposes every one."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import save_artifact
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    _group, run_id = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+    total = 15
+    for i in range(total):
+        save_artifact(evals_db, run_id, {
+            "sample_id": f"judge-task-{i}", "kind": "task", "input": {},
+            "raw": "{}", "parsed": {"i": i},
+        })
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), _group)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "judge-task-11" in text
+        assert "judge-task-14" not in text  # still on the first page
+        app.screen.query_one("#skill-eval-artifacts-more", Button).press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "judge-task-14" in text  # expanded: every artifact reachable
+
+
+@pytest.mark.asyncio
+async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path):
+    """Qodo review #2: a rerun launched from a report shows its running
+    state on the report's own controls and is stoppable there."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    group_id, _run = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="run_group", id=group_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalDetail)))
+
+        # Simulate the in-flight window: the running-UI helper is what the
+        # dispatch and progress callbacks drive (worker dispatch itself is
+        # covered by the Run-again test).
+        screen._set_skill_eval_running_ui()
+        await pilot.pause()
+        again = screen.query_one("#skill-eval-run-again", Button)
+        stop = screen.query_one("#skill-eval-detail-stop", Button)
+        assert again.disabled and "Running" in str(again.label)
+        assert not stop.disabled
+
+        # A wired fake token: pressing Stop cancels through it.
+        class _Token:
+            def __init__(self):
+                self.cancelled = False
+            def cancel(self):
+                self.cancelled = True
+
+        token = _Token()
+        screen._skill_eval_cancel = token
+        stop.press()
+        await pilot.pause()
+        assert token.cancelled
+
+        screen._reset_skill_eval_running_ui()
+        await pilot.pause()
+        assert not screen.query_one("#skill-eval-run-again", Button).disabled
+        assert screen.query_one("#skill-eval-detail-stop", Button).disabled

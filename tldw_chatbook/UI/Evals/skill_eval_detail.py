@@ -58,6 +58,14 @@ class SkillEvalDetail(Widget):
     SkillEvalDetail { padding: 1; }
     """
 
+    class StopRequested(Message, namespace="skill_eval_detail"):
+        """TASK-32889/Qodo review: "Stop run" on the report itself.
+
+        Runs launched from a report (Run again) execute while THIS detail
+        is mounted -- without a stop control here they were uncancellable
+        from the interface.
+        """
+
     class RunAgainRequested(Message, namespace="skill_eval_detail"):
         """TASK-32889: "Run again" on a completed report -- the panel that
         configured this run was swapped out for the report, so without
@@ -70,9 +78,11 @@ class SkillEvalDetail(Widget):
             super().__init__()
             self.bench_id = bench_id
 
-    #: TASK-32890/32891 caps: artifact lines rendered before the "and N
-    #: more" ellipsis, and the compact-payload width per artifact line.
-    _ARTIFACT_LINES_MAX = 12
+    #: TASK-32890/32891 caps: artifact lines rendered per page (Qodo
+    #: review: the cap must be expandable, never a hard truncation), the
+    #: expansion step per press, and the compact-payload width per line.
+    _ARTIFACT_LINES_INITIAL = 12
+    _ARTIFACT_LINES_STEP = 24
     _ARTIFACT_PAYLOAD_CHARS = 48
 
     def __init__(self, view_model: Any, run_group_id: str, **kwargs: Any) -> None:
@@ -81,6 +91,10 @@ class SkillEvalDetail(Widget):
         self._run_group_id = run_group_id
         #: TASK-32890: comparison section toggle (button-driven).
         self._show_comparison = False
+        #: TASK-32891 (Qodo review): how many artifact lines to render;
+        #: raised by the "show more" button so no persisted evidence is
+        #: permanently unreachable.
+        self._artifact_lines = self._ARTIFACT_LINES_INITIAL
 
     def _bench_id_for_group(self) -> str:
         """The owning bench id: the first run row's task_id, or ''."""
@@ -88,7 +102,10 @@ class SkillEvalDetail(Widget):
         if db is None:
             return ""
         try:
-            rows = db.list_runs(run_group_id=self._run_group_id)
+            # Bounded (Qodo review): only the first usable row matters and
+            # this runs on every recompose -- never materialize a whole
+            # large group.
+            rows = db.list_runs(run_group_id=self._run_group_id, limit=8)
         except Exception:
             return ""
         for row in rows:
@@ -146,7 +163,7 @@ class SkillEvalDetail(Widget):
                 # TASK-32891 MVP: the evidence behind the scores, read
                 # only -- one line per captured artifact (sample id,
                 # kind, compact parsed payload) instead of only a count.
-                for artifact in artifacts[: self._ARTIFACT_LINES_MAX]:
+                for artifact in artifacts[: self._artifact_lines]:
                     # Rows are raw ``eval_results`` columns: the parsed
                     # payload lives in ``metrics`` and the kind inside
                     # ``metadata`` (``save_artifact``'s own mapping).
@@ -160,11 +177,14 @@ class SkillEvalDetail(Widget):
                         f"· {artifact.get('sample_id')} · {kind} · {payload}",
                         markup=False,
                     )
-                if len(artifacts) > self._ARTIFACT_LINES_MAX:
-                    yield Static(
-                        f"… and {len(artifacts) - self._ARTIFACT_LINES_MAX} "
-                        "more artifacts",
-                        markup=False,
+                if len(artifacts) > self._artifact_lines:
+                    # Qodo review: the remainder affordance is interactive
+                    # -- every persisted artifact stays reachable.
+                    yield Button(
+                        f"Show {min(self._ARTIFACT_LINES_STEP, len(artifacts) - self._artifact_lines)} more artifacts "
+                        f"({len(artifacts) - self._artifact_lines} hidden)",
+                        id="skill-eval-artifacts-more",
+                        compact=True,
                     )
             # TASK-32890 MVP: compare against the previous run group of
             # the same bench when one exists.
@@ -184,23 +204,44 @@ class SkillEvalDetail(Widget):
             if self._bench_id_for_group():
                 yield Button("Run again", id="skill-eval-run-again",
                              compact=True)
+            # Qodo review: a rerun launched from here is stoppable from
+            # here too (the screen's running-UI helpers arm it exactly
+            # while a run is in flight).
+            yield Button("Stop run", id="skill-eval-detail-stop",
+                         disabled=True, compact=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch the report's three actions upward; toggle its two.
+
+        Args:
+            event: The button press; routed by widget id -- Run again and
+                Stop run post to the owning screen, Compare and the
+                artifact expander toggle local state and recompose.
+        """
         if event.button.id == "skill-eval-run-again":
             bench_id = self._bench_id_for_group()
             if bench_id:
                 self.post_message(self.RunAgainRequested(bench_id))
+        elif event.button.id == "skill-eval-detail-stop":
+            self.post_message(self.StopRequested())
         elif event.button.id == "skill-eval-compare":
             # TASK-32890: toggle the comparison section and recompose.
             self._show_comparison = not self._show_comparison
             self.refresh(recompose=True)
+        elif event.button.id == "skill-eval-artifacts-more":
+            # TASK-32891 (Qodo review): expand the artifact listing.
+            self._artifact_lines += self._ARTIFACT_LINES_STEP
+            self.refresh(recompose=True)
 
     def _previous_group_report(self) -> Optional[dict]:
-        """The most recent OTHER run group's report on the same bench.
+        """The newest report-bearing run group STRICTLY OLDER than this one.
 
-        TASK-32890: ``list_runs(task_id=bench)`` is newest-first; the
-        first group that is neither this one nor report-less is the
-        comparison baseline.
+        Qodo review: the first cut returned the newest other group from a
+        newest-first query, so opening a NON-latest report compared it
+        against a NEWER run -- chronology and every delta reversed. The
+        baseline is now the newest candidate whose latest row predates
+        this group's latest row (created_at, then group id, breaks
+        timestamp ties deterministically).
         """
         db = getattr(self._view_model, "db", None)
         bench_id = self._bench_id_for_group()
@@ -210,13 +251,34 @@ class SkillEvalDetail(Widget):
             runs = db.list_runs(task_id=bench_id, limit=200)
         except Exception:
             return None
-        seen_groups: set[str] = set()
+        # Each group's recency key: its newest row's created_at, with the
+        # group id as the deterministic tiebreak (rapid back-to-back runs
+        # can share a timestamp to its precision, and the listing's row
+        # order is not a reliable recency signal on ties). The baseline is
+        # the newest candidate whose key is strictly less than this
+        # group's -- never a newer run.
+        latest_by_group: dict[str, str] = {}
         for row in runs:
             group = row.get("run_group_id")
-            if not group or group == self._run_group_id or group in seen_groups:
+            created = str(row.get("created_at") or "")
+            if group and created > latest_by_group.get(group, ""):
+                latest_by_group[group] = created
+        own_key = (
+            latest_by_group.get(self._run_group_id, ""),
+            self._run_group_id,
+        )
+        candidates = sorted(
+            (
+                (latest, group)
+                for group, latest in latest_by_group.items()
+                if group != self._run_group_id
+            ),
+            reverse=True,
+        )
+        for key in candidates:
+            if key >= own_key:
                 continue
-            seen_groups.add(group)
-            report = load_report(db, group)
+            report = load_report(db, key[1])
             if report is not None:
                 return report
         return None
