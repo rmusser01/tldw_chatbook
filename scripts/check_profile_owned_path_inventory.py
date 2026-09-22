@@ -724,6 +724,14 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "shared custom tokenizer artifact directory",
     ),
     ExceptionRule(
+        "tldw_chatbook/Utils/startup_errors.py",
+        "function:_ambiguous_roots_guidance",
+        "literal:~/.local/share/tldw_cli",
+        1,
+        Disposition.READ_ONLY_LEGACY_PROBE,
+        "read-only diagnostic naming both default data roots in the ambiguous-roots startup refusal; never opened",
+    ),
+    ExceptionRule(
         "tldw_chatbook/config.py",
         "module:BASE_DATA_DIR_CLI",
         "join:.local/share/tldw_cli",
