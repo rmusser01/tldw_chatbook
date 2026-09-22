@@ -43,7 +43,6 @@ from Tests.UI.app_factory import _build_test_app
 # an active Textual app. See
 # test_llm_screen_composes_destination_header_in_the_lab_frame below.
 _SIMPLE_SCREEN_ROUTES = (
-    ("media", "Media"),
     ("writing", "Writing"),
     # "stts" removed with the Speech Lab-frame adoption: STTSScreen extends
     # LabScreen, whose compose_content() enters
@@ -57,10 +56,6 @@ _SIMPLE_SCREEN_ROUTES = (
 
 
 def _screen_for_route(route: str, app):
-    if route == "media":
-        from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-
-        return MediaScreen(app)
     if route == "writing":
         from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 

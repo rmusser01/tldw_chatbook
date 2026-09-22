@@ -1135,7 +1135,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("UI/MCP_Modules/mcp_profile_form.py", "MCPProfileForm", "DEFAULT_CSS"),
     ("UI/MCP_Modules/mcp_schema_form.py", "MCPSchemaForm", "DEFAULT_CSS"),
     ("UI/MCP_Modules/mcp_server_mutations.py", "MCPServerMutationsPanel", "DEFAULT_CSS"),
-    ("UI/MediaWindow_v2.py", "MediaWindow", "DEFAULT_CSS"),
     ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
     ("UI/Outputs_Panel.py", "OutputsPanel", "DEFAULT_CSS"),
     ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
