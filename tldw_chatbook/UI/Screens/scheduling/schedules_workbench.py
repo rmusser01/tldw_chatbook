@@ -1099,8 +1099,12 @@ class SchedulesWorkbench(BaseAppScreen):
             while True:
                 service = self._service()
                 if service is not None:
+                    # TASK-32892 P0-2: the SYNC scope, not the view toggle.
+                    # `_pull_results` mirrors the server's results under the
+                    # owner it is given, and a non-`"server:"` owner is what
+                    # the local queue treats as its own to execute.
                     await service.sync_engine._run_phase(
-                        service.owner_id,
+                        service.sync_target_owner_id(),
                         "Automation results pull (notification)",
                         service.sync_engine._pull_results,
                     )
@@ -5427,7 +5431,25 @@ class SchedulesWorkbench(BaseAppScreen):
             logger.exception("Sync failed")
             self.post_message(SyncFailed(service.owner_id, str(exc)))
         finally:
-            for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
-                self.query_one(btn_id, Button).disabled = False
-            self._refresh_owner_select()
+            # TASK-32892: a `finally:` body is NOT covered by its own
+            # statement's `except`. A sync can outlive the screen (the user
+            # navigates away mid-await), and then every lookup below raises
+            # `NoMatches` straight out of the worker -- whose `exit_on_error`
+            # defaults to True -- while `_sync_running` is left set, wedging
+            # the Sync action for the rest of the session. State first, DOM
+            # behind a mount check.
             self._sync_running = False
+            if self.is_mounted:
+                try:
+                    for btn_id in (
+                        "#scheduling-owner-local",
+                        "#scheduling-owner-server",
+                    ):
+                        self.query_one(btn_id, Button).disabled = False
+                    self._refresh_owner_select()
+                except Exception:  # noqa: BLE001 -- teardown races only
+                    # loguru ignores stdlib's `exc_info=`; `opt(exception=True)`
+                    # is this file's own idiom for attaching the traceback.
+                    logger.opt(exception=True).debug(
+                        "Sync teardown skipped: the workbench is gone"
+                    )

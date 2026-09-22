@@ -289,6 +289,10 @@ class ChatterboxTTSBackend(TTSBackendBase):
             stderr=asyncio.subprocess.DEVNULL,
             limit=10 * 1024 * 1024,  # Allow base64-encoded audio responses.
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            # TASK-32892 P0-3: session leader, so this managed child is
+            # never collateral of a process-group signal aimed at the
+            # app's own group (the six in-repo precedents do the same).
+            start_new_session=(os.name == "posix"),
         )
 
     async def _send_command(self, command: Dict[str, Any]):

@@ -486,6 +486,10 @@ async def _default_process_launcher(
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # TASK-32892 P0-3: session leader, so this managed child is
+            # never collateral of a process-group signal aimed at the
+            # app's own group (the six in-repo precedents do the same).
+            start_new_session=(os.name == "posix"),
         )
     finally:
         _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)

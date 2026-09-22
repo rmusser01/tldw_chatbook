@@ -979,7 +979,7 @@ class SchedulingService:
         with execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed:
             if not allowed:
                 return
-            target_owner = owner_id if owner_id is not None else self.owner_id
+            target_owner = self.sync_target_owner_id(owner_id)
             outcome = await self.sync_engine.sync_now(target_owner)
             self._notify_queue_changed()
             return outcome
@@ -1158,6 +1158,40 @@ class SchedulingService:
     # ------------------------------------------------------------------
     # Transfer machine facade (schedules-handoff PR-5, Task 6, spec §6)
     # ------------------------------------------------------------------
+
+    def sync_target_owner_id(self, owner_id: str | None = None) -> str:
+        """The owner scope a sync writes under: the CONNECTED SERVER's.
+
+        TASK-32892 P0-2. The Schedules view toggle ("This device" /
+        "<server>") and the sync target are different things, and only this
+        class can tell them apart -- `SyncEngine` stores server rows under
+        whatever scope it is handed, and every ADR-077 execution guard keys
+        on the ``"server:"`` PREFIX (`scheduler/queue.py`
+        `is_server_scoped_owner`). Handing it the view meant a sync taken
+        while the user was on "This device" mirrored the server's own
+        reminders and automation definitions under ``owner_id="local"``,
+        where they read as NOT server-scoped and the local queue armed them
+        -- a second, unattended run of every occurrence alongside the
+        server's own, which is ADR-077's explicitly rejected alternative.
+
+        With no server connected there is nothing to re-scope, so the view's
+        own owner is returned unchanged and the sync stays a local no-op.
+
+        Args:
+            owner_id: Caller-supplied scope, or ``None`` for the current view.
+
+        Returns:
+            The server-scoped owner when a server is connected, else the
+            caller's own scope.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import (
+            is_server_scoped_owner,
+        )
+
+        candidate = owner_id if owner_id is not None else self.owner_id
+        if is_server_scoped_owner(candidate):
+            return candidate
+        return self._active_server_owner_id() or candidate
 
     def _active_server_owner_id(self) -> str | None:
         """The single connected server's owner scope (``"server:<id>"``), or

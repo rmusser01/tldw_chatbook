@@ -552,23 +552,22 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         if not self.selected_profile:
             return
 
-        # Confirm deletion
-        from textual.widgets import Button as ConfirmButton
-        from textual.containers import Container as ConfirmContainer
-        from textual.screen import ModalScreen
+        # TASK-32892: this used to define a throwaway `ModalScreen` here whose
+        # `compose` read `self.selected_profile` -- `self` being the MODAL, not
+        # this window, so the dialog raised `AttributeError` in compose and the
+        # Delete action could never show its confirmation. The shared dialog
+        # takes the name as a constructed value (and renders it with markup
+        # OFF, so a profile called `[old] voice` names itself correctly).
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
-        class ConfirmDialog(ModalScreen):
-            def compose(self) -> ComposeResult:
-                with ConfirmContainer(id="confirm-dialog"):
-                    yield Label(f"Delete profile '{self.selected_profile}'?")
-                    with Horizontal():
-                        yield ConfirmButton("Delete", id="confirm-yes", variant="error")
-                        yield ConfirmButton("Cancel", id="confirm-no")
-
-            def on_button_pressed(self, event: ConfirmButton.Pressed) -> None:
-                self.dismiss(event.button.id == "confirm-yes")
-
-        if await self.app.push_screen_wait(ConfirmDialog()):
+        confirmed = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Delete Profile",
+                message=f"Delete profile '{self.selected_profile}'?",
+                confirm_label="Delete",
+            )
+        )
+        if confirmed:
             # Delete the profile
             manager = self.backend_managers.get(self.current_backend)
             if manager:
