@@ -1,0 +1,719 @@
+﻿2026-09-22T16:25:22.4179340Z Current runner version: '2.337.0'
+2026-09-22T16:25:22.4205622Z ##[group]Runner Image Provisioner
+2026-09-22T16:25:22.4206539Z Hosted Compute Agent
+2026-09-22T16:25:22.4207113Z Version: 20260828.587
+2026-09-22T16:25:22.4207725Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-22T16:25:22.4208567Z Build Date: 2026-08-28T16:44:25Z
+2026-09-22T16:25:22.4209281Z Worker ID: {a720742b-bad6-479c-b2d1-cdcfe67ba70e}
+2026-09-22T16:25:22.4210070Z Azure Region: eastus
+2026-09-22T16:25:22.4211030Z ##[endgroup]
+2026-09-22T16:25:22.4212608Z ##[group]Operating System
+2026-09-22T16:25:22.4213390Z Ubuntu
+2026-09-22T16:25:22.4213903Z 24.04.5
+2026-09-22T16:25:22.4214466Z LTS
+2026-09-22T16:25:22.4214994Z ##[endgroup]
+2026-09-22T16:25:22.4215544Z ##[group]Runner Image
+2026-09-22T16:25:22.4216256Z Image: ubuntu-24.04
+2026-09-22T16:25:22.4216816Z Version: 20260920.314.1
+2026-09-22T16:25:22.4218124Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-22T16:25:22.4219677Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-22T16:25:22.4220977Z ##[endgroup]
+2026-09-22T16:25:22.4222049Z ##[group]GITHUB_TOKEN Permissions
+2026-09-22T16:25:22.4224292Z Contents: read
+2026-09-22T16:25:22.4224894Z Metadata: read
+2026-09-22T16:25:22.4225543Z ##[endgroup]
+2026-09-22T16:25:22.4227743Z Secret source: Actions
+2026-09-22T16:25:22.4228745Z Cache mode: write
+2026-09-22T16:25:22.4229755Z Prepare workflow directory
+2026-09-22T16:25:22.4573805Z Prepare all required actions
+2026-09-22T16:25:22.4622811Z Getting action download info
+2026-09-22T16:25:22.7537827Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-22T16:25:22.8759124Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-09-22T16:25:23.0657492Z Complete job name: PR Fast Lane
+2026-09-22T16:25:23.1475101Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:25:23.1484874Z ##[group]Run actions/checkout@v4
+2026-09-22T16:25:23.1485648Z with:
+2026-09-22T16:25:23.1486107Z   repository: rmusser01/tldw_chatbook
+2026-09-22T16:25:23.1489909Z   token: ***
+2026-09-22T16:25:23.1490342Z   ssh-strict: true
+2026-09-22T16:25:23.1491036Z   ssh-user: git
+2026-09-22T16:25:23.1491486Z   persist-credentials: true
+2026-09-22T16:25:23.1491967Z   clean: true
+2026-09-22T16:25:23.1492414Z   sparse-checkout-cone-mode: true
+2026-09-22T16:25:23.1492926Z   fetch-depth: 1
+2026-09-22T16:25:23.1493349Z   fetch-tags: false
+2026-09-22T16:25:23.1493781Z   show-progress: true
+2026-09-22T16:25:23.1494223Z   lfs: false
+2026-09-22T16:25:23.1494682Z   submodules: false
+2026-09-22T16:25:23.1495132Z   set-safe-directory: true
+2026-09-22T16:25:23.1495652Z   allow-unsafe-pr-checkout: false
+2026-09-22T16:25:23.1496440Z ##[endgroup]
+2026-09-22T16:25:23.2564283Z Syncing repository: rmusser01/tldw_chatbook
+2026-09-22T16:25:23.2566738Z ##[group]Getting Git version info
+2026-09-22T16:25:23.2567668Z Working directory is '<home>/work/tldw_chatbook/tldw_chatbook'
+2026-09-22T16:25:23.2568756Z [command]/usr/bin/git version
+2026-09-22T16:25:23.2629929Z git version 2.55.0
+2026-09-22T16:25:23.2652123Z ##[endgroup]
+2026-09-22T16:25:23.2667518Z Temporarily overriding HOME='<home>/work/_temp/553c7ed9-e266-465e-82f2-2456a3ca12f3' before making global git config changes
+2026-09-22T16:25:23.2669811Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T16:25:23.2673796Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:25:23.2727908Z Deleting the contents of '<home>/work/tldw_chatbook/tldw_chatbook'
+2026-09-22T16:25:23.2733023Z ##[group]Initializing the repository
+2026-09-22T16:25:23.2737019Z [command]/usr/bin/git init <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:25:23.2866615Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-22T16:25:23.2868429Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-22T16:25:23.2869979Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-22T16:25:23.2871261Z hint: call:
+2026-09-22T16:25:23.2871700Z hint:
+2026-09-22T16:25:23.2872224Z hint: 	git config --global init.defaultBranch <name>
+2026-09-22T16:25:23.2872836Z hint:
+2026-09-22T16:25:23.2873613Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-22T16:25:23.2874600Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-22T16:25:23.2875351Z hint:
+2026-09-22T16:25:23.2875826Z hint: 	git branch -m <name>
+2026-09-22T16:25:23.2876304Z hint:
+2026-09-22T16:25:23.2876982Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-22T16:25:23.2878019Z Initialized empty Git repository in <home>/work/tldw_chatbook/tldw_chatbook/.git/
+2026-09-22T16:25:23.2881380Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-09-22T16:25:23.2931847Z ##[endgroup]
+2026-09-22T16:25:23.2932725Z ##[group]Disabling automatic garbage collection
+2026-09-22T16:25:23.2937738Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-22T16:25:23.2972950Z ##[endgroup]
+2026-09-22T16:25:23.2974295Z ##[group]Setting up auth
+2026-09-22T16:25:23.2981310Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T16:25:23.3016295Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T16:25:23.3406780Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T16:25:23.3441657Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T16:25:23.3677655Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T16:25:23.3716397Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T16:25:23.3970244Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-22T16:25:23.4012146Z ##[endgroup]
+2026-09-22T16:25:23.4013015Z ##[group]Fetching the repository
+2026-09-22T16:25:23.4023548Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2f2ec4b4c48086c1431da3e66d41fbba047bb1ef:refs/remotes/pull/2722/merge
+2026-09-22T16:25:36.5278479Z From https://github.com/rmusser01/tldw_chatbook
+2026-09-22T16:25:36.5281205Z  * [new ref]           2f2ec4b4c48086c1431da3e66d41fbba047bb1ef -> pull/2722/merge
+2026-09-22T16:25:36.5286748Z ##[endgroup]
+2026-09-22T16:25:36.5288881Z ##[group]Determining the checkout info
+2026-09-22T16:25:36.5291580Z ##[endgroup]
+2026-09-22T16:25:36.5293312Z [command]/usr/bin/git sparse-checkout disable
+2026-09-22T16:25:36.5349897Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-22T16:25:36.5387567Z ##[group]Checking out the ref
+2026-09-22T16:25:36.5390909Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2722/merge
+2026-09-22T16:25:37.6004008Z Updating files:  37% (8826/23746)
+2026-09-22T16:25:37.7400092Z Updating files:  38% (9024/23746)
+2026-09-22T16:25:37.8383192Z Updating files:  39% (9261/23746)
+2026-09-22T16:25:37.9601668Z Updating files:  40% (9499/23746)
+2026-09-22T16:25:37.9937630Z Updating files:  41% (9736/23746)
+2026-09-22T16:25:38.0404262Z Updating files:  42% (9974/23746)
+2026-09-22T16:25:38.0710738Z Updating files:  43% (10211/23746)
+2026-09-22T16:25:38.1001891Z Updating files:  44% (10449/23746)
+2026-09-22T16:25:38.1315602Z Updating files:  45% (10686/23746)
+2026-09-22T16:25:38.1562460Z Updating files:  46% (10924/23746)
+2026-09-22T16:25:38.1797016Z Updating files:  47% (11161/23746)
+2026-09-22T16:25:38.2208057Z Updating files:  48% (11399/23746)
+2026-09-22T16:25:38.2477731Z Updating files:  49% (11636/23746)
+2026-09-22T16:25:38.2759732Z Updating files:  50% (11873/23746)
+2026-09-22T16:25:38.2981974Z Updating files:  51% (12111/23746)
+2026-09-22T16:25:38.3205796Z Updating files:  52% (12348/23746)
+2026-09-22T16:25:38.3438210Z Updating files:  53% (12586/23746)
+2026-09-22T16:25:38.3722146Z Updating files:  54% (12823/23746)
+2026-09-22T16:25:38.3979262Z Updating files:  55% (13061/23746)
+2026-09-22T16:25:38.4223981Z Updating files:  56% (13298/23746)
+2026-09-22T16:25:38.4523946Z Updating files:  57% (13536/23746)
+2026-09-22T16:25:38.4808977Z Updating files:  58% (13773/23746)
+2026-09-22T16:25:38.5114725Z Updating files:  59% (14011/23746)
+2026-09-22T16:25:38.5461886Z Updating files:  60% (14248/23746)
+2026-09-22T16:25:38.5621832Z Updating files:  61% (14486/23746)
+2026-09-22T16:25:38.5794574Z Updating files:  61% (14602/23746)
+2026-09-22T16:25:38.6042438Z Updating files:  62% (14723/23746)
+2026-09-22T16:25:38.6277725Z Updating files:  63% (14960/23746)
+2026-09-22T16:25:38.6484468Z Updating files:  64% (15198/23746)
+2026-09-22T16:25:38.6664494Z Updating files:  65% (15435/23746)
+2026-09-22T16:25:38.6949099Z Updating files:  66% (15673/23746)
+2026-09-22T16:25:38.7131474Z Updating files:  67% (15910/23746)
+2026-09-22T16:25:38.7292956Z Updating files:  68% (16148/23746)
+2026-09-22T16:25:38.7426024Z Updating files:  69% (16385/23746)
+2026-09-22T16:25:38.7576283Z Updating files:  70% (16623/23746)
+2026-09-22T16:25:38.7739833Z Updating files:  71% (16860/23746)
+2026-09-22T16:25:38.7893936Z Updating files:  72% (17098/23746)
+2026-09-22T16:25:38.8047693Z Updating files:  73% (17335/23746)
+2026-09-22T16:25:38.8201579Z Updating files:  74% (17573/23746)
+2026-09-22T16:25:38.8336218Z Updating files:  75% (17810/23746)
+2026-09-22T16:25:38.8480180Z Updating files:  76% (18047/23746)
+2026-09-22T16:25:38.8619835Z Updating files:  77% (18285/23746)
+2026-09-22T16:25:38.8788286Z Updating files:  78% (18522/23746)
+2026-09-22T16:25:38.8926078Z Updating files:  79% (18760/23746)
+2026-09-22T16:25:38.9077650Z Updating files:  80% (18997/23746)
+2026-09-22T16:25:38.9265698Z Updating files:  81% (19235/23746)
+2026-09-22T16:25:38.9397962Z Updating files:  82% (19472/23746)
+2026-09-22T16:25:38.9536014Z Updating files:  83% (19710/23746)
+2026-09-22T16:25:38.9681571Z Updating files:  84% (19947/23746)
+2026-09-22T16:25:38.9827719Z Updating files:  85% (20185/23746)
+2026-09-22T16:25:38.9972459Z Updating files:  86% (20422/23746)
+2026-09-22T16:25:39.0361766Z Updating files:  87% (20660/23746)
+2026-09-22T16:25:39.0689282Z Updating files:  88% (20897/23746)
+2026-09-22T16:25:39.1041837Z Updating files:  89% (21134/23746)
+2026-09-22T16:25:39.1299563Z Updating files:  90% (21372/23746)
+2026-09-22T16:25:39.1601090Z Updating files:  91% (21609/23746)
+2026-09-22T16:25:39.1868592Z Updating files:  92% (21847/23746)
+2026-09-22T16:25:39.2157835Z Updating files:  93% (22084/23746)
+2026-09-22T16:25:39.2506565Z Updating files:  94% (22322/23746)
+2026-09-22T16:25:39.3098226Z Updating files:  95% (22559/23746)
+2026-09-22T16:25:39.3305153Z Updating files:  96% (22797/23746)
+2026-09-22T16:25:39.3588124Z Updating files:  97% (23034/23746)
+2026-09-22T16:25:39.3849651Z Updating files:  98% (23272/23746)
+2026-09-22T16:25:39.4429860Z Updating files:  99% (23509/23746)
+2026-09-22T16:25:39.4430829Z Updating files: 100% (23746/23746)
+2026-09-22T16:25:39.4431446Z Updating files: 100% (23746/23746), done.
+2026-09-22T16:25:39.6052902Z Note: switching to 'refs/remotes/pull/2722/merge'.
+2026-09-22T16:25:39.6053707Z
+2026-09-22T16:25:39.6054397Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-22T16:25:39.6055702Z changes and commit them, and you can discard any commits you make in this
+2026-09-22T16:25:39.6057532Z state without impacting any branches by switching back to a branch.
+2026-09-22T16:25:39.6058186Z
+2026-09-22T16:25:39.6058675Z If you want to create a new branch to retain commits you create, you may
+2026-09-22T16:25:39.6059802Z do so (now or later) by using -c with the switch command. Example:
+2026-09-22T16:25:39.6060769Z
+2026-09-22T16:25:39.6061044Z   git switch -c <new-branch-name>
+2026-09-22T16:25:39.6061453Z
+2026-09-22T16:25:39.6061675Z Or undo this operation with:
+2026-09-22T16:25:39.6062047Z
+2026-09-22T16:25:39.6062245Z   git switch -
+2026-09-22T16:25:39.6062511Z
+2026-09-22T16:25:39.6062986Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-22T16:25:39.6063702Z
+2026-09-22T16:25:39.6064586Z HEAD is now at 2f2ec4b4 Merge 30a65af171a15a2a0d0a74d003f5be6ad8d5c857 into 5cdc9ddda00a4112ec06cf8b81fd23bd31d9edb7
+2026-09-22T16:25:39.6157045Z ##[endgroup]
+2026-09-22T16:25:39.6201755Z [command]/usr/bin/git log -1 --format=%H
+2026-09-22T16:25:39.6227081Z 2f2ec4b4c48086c1431da3e66d41fbba047bb1ef
+2026-09-22T16:25:39.9673058Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:25:39.9674851Z ##[group]Run actions/setup-python@v5
+2026-09-22T16:25:39.9675123Z with:
+2026-09-22T16:25:39.9675325Z   python-version: 3.12
+2026-09-22T16:25:39.9675548Z   cache: pip
+2026-09-22T16:25:39.9675747Z   check-latest: false
+2026-09-22T16:25:39.9678090Z   token: ***
+2026-09-22T16:25:39.9678310Z   update-environment: true
+2026-09-22T16:25:39.9678559Z   allow-prereleases: false
+2026-09-22T16:25:39.9678787Z   freethreaded: false
+2026-09-22T16:25:39.9678997Z ##[endgroup]
+2026-09-22T16:25:40.1117022Z ##[group]Installed versions
+2026-09-22T16:25:40.3142736Z (node:2246) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T16:25:40.3144310Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T16:25:40.3145212Z Successfully set up CPython (3.12.14)
+2026-09-22T16:25:40.3146389Z ##[endgroup]
+2026-09-22T16:25:42.0007482Z [command]/opt/hostedtoolcache/Python/3.12.14/x64/bin/pip cache dir
+2026-09-22T16:25:42.3271118Z <home>/.cache/pip
+2026-09-22T16:25:42.4154930Z Cache hit for: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-09-22T16:25:42.4264687Z (node:2246) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-09-22T16:25:43.4691660Z Received 213909504 of 3484503135 (6.1%), 201.6 MBs/sec
+2026-09-22T16:25:44.4773469Z Received 473956352 of 3484503135 (13.6%), 223.7 MBs/sec
+2026-09-22T16:25:45.4912713Z Received 721420288 of 3484503135 (20.7%), 226.6 MBs/sec
+2026-09-22T16:25:46.4933890Z Received 964689920 of 3484503135 (27.7%), 227.8 MBs/sec
+2026-09-22T16:25:47.5081968Z Received 1212153856 of 3484503135 (34.8%), 228.8 MBs/sec
+2026-09-22T16:25:48.5488227Z Received 1476395008 of 3484503135 (42.4%), 231.2 MBs/sec
+2026-09-22T16:25:49.5437945Z Received 1740636160 of 3484503135 (50.0%), 234.2 MBs/sec
+2026-09-22T16:25:50.5529363Z Received 1962934272 of 3484503135 (56.3%), 231.2 MBs/sec
+2026-09-22T16:25:51.5634705Z Received 2197815296 of 3484503135 (63.1%), 230.1 MBs/sec
+2026-09-22T16:25:52.5654330Z Received 2466250752 of 3484503135 (70.8%), 232.6 MBs/sec
+2026-09-22T16:25:53.5690577Z Received 2726297600 of 3484503135 (78.2%), 233.9 MBs/sec
+2026-09-22T16:25:54.5716006Z Received 2986344448 of 3484503135 (85.7%), 235.1 MBs/sec
+2026-09-22T16:25:55.5745942Z Received 3263168512 of 3484503135 (93.6%), 237.2 MBs/sec
+2026-09-22T16:25:56.4019115Z Received 3484503135 of 3484503135 (100.0%), 238.3 MBs/sec
+2026-09-22T16:25:56.4020306Z Cache Size: ~3323 MB (3484503135 B)
+2026-09-22T16:25:56.4158656Z [command]/usr/bin/tar -xf <home>/work/_temp/a759b568-10a5-4cf3-884b-4bb800f32be2/cache.tzst -P -C <home>/work/tldw_chatbook/tldw_chatbook --use-compress-program unzstd
+2026-09-22T16:26:03.2193811Z Cache restored successfully
+2026-09-22T16:26:04.0175705Z Cache restored from key: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-09-22T16:26:04.0459972Z ##[group]Run python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+2026-09-22T16:26:04.0461065Z [36;1mpython -m pip install -e . pytest pytest-asyncio pytest-timeout packaging[0m
+2026-09-22T16:26:04.6265704Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:26:04.6266093Z env:
+2026-09-22T16:26:04.6266496Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:04.6267164Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-09-22T16:26:04.6267819Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:04.6268367Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:04.6268932Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:04.6269497Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-09-22T16:26:04.6269928Z ##[endgroup]
+2026-09-22T16:26:05.3249974Z Obtaining file:///home/runner/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:26:05.3292909Z   Installing build dependencies: started
+2026-09-22T16:26:06.0027472Z   Installing build dependencies: finished with status 'done'
+2026-09-22T16:26:06.0034121Z   Checking if build backend supports build_editable: started
+2026-09-22T16:26:06.5168868Z   Checking if build backend supports build_editable: finished with status 'done'
+2026-09-22T16:26:06.5177236Z   Getting requirements to build editable: started
+2026-09-22T16:26:07.1021201Z   Getting requirements to build editable: finished with status 'done'
+2026-09-22T16:26:07.1030677Z   Preparing editable metadata (pyproject.toml): started
+2026-09-22T16:26:07.5117723Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+2026-09-22T16:26:07.6388525Z Collecting pytest
+2026-09-22T16:26:07.6404446Z   Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+2026-09-22T16:26:07.6602228Z Collecting pytest-asyncio
+2026-09-22T16:26:07.6618071Z   Using cached pytest_asyncio-1.4.0-py3-none-any.whl.metadata (4.1 kB)
+2026-09-22T16:26:07.6744314Z Collecting pytest-timeout
+2026-09-22T16:26:07.6759301Z   Using cached pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+2026-09-22T16:26:07.6926847Z Collecting packaging
+2026-09-22T16:26:07.6940718Z   Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-09-22T16:26:07.7247931Z Collecting chardet<6,>=3.0.2 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.7261473Z   Using cached chardet-5.2.0-py3-none-any.whl.metadata (3.4 kB)
+2026-09-22T16:26:07.7422489Z Collecting httpx (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.7435294Z   Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-09-22T16:26:07.7557681Z Collecting loguru (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.7571146Z   Using cached loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+2026-09-22T16:26:07.8046811Z Collecting textual==8.2.8 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.8060802Z   Using cached textual-8.2.8-py3-none-any.whl.metadata (9.1 kB)
+2026-09-22T16:26:07.8229775Z Collecting textual-diff-view==0.1.5 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.8242840Z   Using cached textual_diff_view-0.1.5-py3-none-any.whl.metadata (48 kB)
+2026-09-22T16:26:07.8696857Z Collecting requests (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.8711184Z   Using cached requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-09-22T16:26:07.9040276Z Collecting rich (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.9055361Z   Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+2026-09-22T16:26:07.9171428Z Collecting pyte==0.8.2 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:07.9184099Z   Using cached pyte-0.8.2-py3-none-any.whl.metadata (3.0 kB)
+2026-09-22T16:26:08.2956186Z Collecting regex==2026.4.4 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.2971102Z   Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+2026-09-22T16:26:08.3131741Z Collecting wcwidth<1,>=0.2.14 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.3643755Z   Downloading wcwidth-0.8.4-py3-none-any.whl.metadata (23 kB)
+2026-09-22T16:26:08.3856983Z Collecting rich-pixels>=3.0.0 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.3869375Z   Using cached rich_pixels-3.0.1-py3-none-any.whl.metadata (2.2 kB)
+2026-09-22T16:26:08.5502064Z Collecting pillow>=10.4 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.5516749Z   Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+2026-09-22T16:26:08.6084187Z Collecting PyYAML (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.6098949Z   Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+2026-09-22T16:26:08.7100969Z Collecting pydantic<3,>=2.4 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.7114818Z   Using cached pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+2026-09-22T16:26:08.7241448Z Collecting rfc8785==0.1.4 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.7255987Z   Using cached rfc8785-0.1.4-py3-none-any.whl.metadata (3.4 kB)
+2026-09-22T16:26:08.9023423Z Collecting cryptography (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.9038012Z   Using cached cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (4.3 kB)
+2026-09-22T16:26:08.9180078Z Collecting portalocker==3.2.0 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.9194339Z   Using cached portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+2026-09-22T16:26:08.9841941Z Collecting psutil (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:08.9856886Z   Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+2026-09-22T16:26:08.9990846Z Collecting toml (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.0005129Z   Using cached toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)
+2026-09-22T16:26:09.0110688Z Collecting pyperclip (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.0124289Z   Using cached pyperclip-1.11.0-py3-none-any.whl.metadata (2.4 kB)
+2026-09-22T16:26:09.0254360Z Collecting emoji (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.0308604Z   Downloading emoji-2.16.0-py3-none-any.whl.metadata (5.7 kB)
+2026-09-22T16:26:09.0468265Z Collecting jinja2 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.0482148Z   Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-09-22T16:26:09.1166832Z Collecting pycryptodomex (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.1183042Z   Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.4 kB)
+2026-09-22T16:26:09.1461833Z Collecting keyring (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.1478295Z   Using cached keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+2026-09-22T16:26:09.1651077Z Collecting markdownify (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.1665040Z   Using cached markdownify-1.2.3-py3-none-any.whl.metadata (9.9 kB)
+2026-09-22T16:26:09.1768766Z Collecting aiofiles (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.1781181Z   Using cached aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+2026-09-22T16:26:09.1948823Z Collecting croniter>=1.4.0 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.1963720Z   Using cached croniter-6.2.4-py3-none-any.whl.metadata (23 kB)
+2026-09-22T16:26:09.2112609Z Collecting textual-image (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.2175218Z   Downloading textual_image-0.14.0-py3-none-any.whl.metadata (14 kB)
+2026-09-22T16:26:09.2572920Z Collecting tiktoken==0.14.0 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.2587658Z   Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (6.7 kB)
+2026-09-22T16:26:09.2726270Z Collecting defusedxml (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.2739491Z   Using cached defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+2026-09-22T16:26:09.2868392Z Collecting html5lib<2,>=1.1 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.2882736Z   Using cached html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+2026-09-22T16:26:09.3007504Z Collecting tinycss2<2,>=1.4 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.3021555Z   Using cached tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+2026-09-22T16:26:09.8061701Z Collecting aiohttp<4,>=3.9 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.8075852Z   Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+2026-09-22T16:26:09.8904165Z Collecting sherpa-onnx<2,>=1.13 (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:09.8952168Z   Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (53 kB)
+2026-09-22T16:26:10.1021714Z Collecting numpy (from tldw_chatbook==0.2.2)
+2026-09-22T16:26:10.1058722Z   Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+2026-09-22T16:26:10.9722777Z Collecting markdown-it-py>=2.1.0 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:10.9736926Z   Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+2026-09-22T16:26:11.0155653Z Collecting mdit-py-plugins (from textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.0169339Z   Using cached mdit_py_plugins-0.6.1-py3-none-any.whl.metadata (2.9 kB)
+2026-09-22T16:26:11.2225740Z Collecting platformdirs<5,>=3.6.0 (from textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.2264272Z   Downloading platformdirs-4.11.12-py3-none-any.whl.metadata (5.5 kB)
+2026-09-22T16:26:11.2455874Z Collecting pygments<3.0.0,>=2.19.2 (from textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.2470767Z   Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-09-22T16:26:11.3082258Z Collecting typing-extensions<5.0.0,>=4.4.0 (from textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.3097563Z   Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-09-22T16:26:11.3264036Z Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.3279017Z   Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+2026-09-22T16:26:11.3422172Z Collecting aiosignal>=1.4.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.3435308Z   Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+2026-09-22T16:26:11.3564296Z Collecting attrs>=17.3.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.3577724Z   Using cached attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+2026-09-22T16:26:11.4210226Z Collecting frozenlist>=1.1.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.4224741Z   Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+2026-09-22T16:26:11.6572187Z Collecting multidict<7.0,>=4.5 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.6612102Z   Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+2026-09-22T16:26:11.7303217Z Collecting propcache>=0.2.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.7342091Z   Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (25 kB)
+2026-09-22T16:26:11.9797378Z Collecting yarl<2.0,>=1.17.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:11.9838771Z   Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (111 kB)
+2026-09-22T16:26:12.0069614Z Collecting six>=1.9 (from html5lib<2,>=1.1->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.0083039Z   Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-09-22T16:26:12.0175308Z Collecting webencodings (from html5lib<2,>=1.1->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.0189851Z   Using cached webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+2026-09-22T16:26:12.0304811Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.0317925Z   Using cached annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+2026-09-22T16:26:12.6977854Z Collecting pydantic-core==2.46.5 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.6992800Z   Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+2026-09-22T16:26:12.7104365Z Collecting typing-inspection>=0.4.2 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.7117994Z   Using cached typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+2026-09-22T16:26:12.7389918Z Collecting sherpa-onnx-core==1.13.8 (from sherpa-onnx<2,>=1.13->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.7440727Z   Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl.metadata (628 bytes)
+2026-09-22T16:26:12.7626154Z Collecting idna>=2.0 (from yarl<2.0,>=1.17.0->aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.7666700Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-09-22T16:26:12.7844027Z Collecting iniconfig>=1.0.1 (from pytest)
+2026-09-22T16:26:12.7858309Z   Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+2026-09-22T16:26:12.7981607Z Collecting pluggy<2,>=1.5 (from pytest)
+2026-09-22T16:26:12.7995947Z   Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+2026-09-22T16:26:12.8380959Z Collecting python-dateutil (from croniter>=1.4.0->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.8395144Z   Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+2026-09-22T16:26:12.8515047Z Collecting mdurl~=0.1 (from markdown-it-py>=2.1.0->markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.8528150Z   Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+2026-09-22T16:26:12.8645732Z Collecting linkify-it-py<3,>=1 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+2026-09-22T16:26:12.8659319Z   Using cached linkify_it_py-2.2.0-py3-none-any.whl.metadata (8.6 kB)
+2026-09-22T16:26:13.0344570Z Collecting cffi>=2.0.0 (from cryptography->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.0360186Z   Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+2026-09-22T16:26:13.0467257Z Collecting pycparser (from cffi>=2.0.0->cryptography->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.0480471Z   Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+2026-09-22T16:26:13.0675194Z Collecting anyio (from httpx->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.0689118Z   Using cached anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+2026-09-22T16:26:13.0858138Z Collecting certifi (from httpx->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.0871870Z   Using cached certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+2026-09-22T16:26:13.1011196Z Collecting httpcore==1.* (from httpx->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.1025115Z   Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-09-22T16:26:13.1151000Z Collecting h11>=0.16 (from httpcore==1.*->httpx->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.1164211Z   Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-09-22T16:26:13.1681817Z Collecting MarkupSafe>=2.0 (from jinja2->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.1695762Z   Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-09-22T16:26:13.1809938Z Collecting SecretStorage>=3.2 (from keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.1821893Z   Using cached secretstorage-3.5.0-py3-none-any.whl.metadata (4.0 kB)
+2026-09-22T16:26:13.1929822Z Collecting jeepney>=0.4.2 (from keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.1943197Z   Using cached jeepney-0.9.0-py3-none-any.whl.metadata (1.2 kB)
+2026-09-22T16:26:13.2054908Z Collecting jaraco.classes (from keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.2068059Z   Using cached jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+2026-09-22T16:26:13.2219363Z Collecting jaraco.functools (from keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.2233505Z   Using cached jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+2026-09-22T16:26:13.2354309Z Collecting jaraco.context (from keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.2366628Z   Using cached jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+2026-09-22T16:26:13.2678442Z Collecting more-itertools (from jaraco.classes->keyring->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.2692632Z   Using cached more_itertools-11.1.0-py3-none-any.whl.metadata (41 kB)
+2026-09-22T16:26:13.2880829Z Collecting beautifulsoup4<5,>=4.9 (from markdownify->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.2896454Z   Using cached beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+2026-09-22T16:26:13.3073485Z Collecting soupsieve>=1.6.1 (from beautifulsoup4<5,>=4.9->markdownify->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.3087625Z   Using cached soupsieve-2.9.2-py3-none-any.whl.metadata (4.6 kB)
+2026-09-22T16:26:13.4284991Z Collecting charset_normalizer<4,>=2 (from requests->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.4300919Z   Using cached charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (45 kB)
+2026-09-22T16:26:13.4570063Z Collecting urllib3<3,>=1.26 (from requests->tldw_chatbook==0.2.2)
+2026-09-22T16:26:13.4608818Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-09-22T16:26:13.4757210Z Using cached portalocker-3.2.0-py3-none-any.whl (22 kB)
+2026-09-22T16:26:13.4769448Z Using cached pyte-0.8.2-py3-none-any.whl (31 kB)
+2026-09-22T16:26:13.4782896Z Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (801 kB)
+2026-09-22T16:26:13.4797524Z Using cached rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+2026-09-22T16:26:13.4809305Z Using cached textual-8.2.8-py3-none-any.whl (731 kB)
+2026-09-22T16:26:13.4824057Z Using cached textual_diff_view-0.1.5-py3-none-any.whl (25 kB)
+2026-09-22T16:26:13.4836171Z Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl (1.2 MB)
+2026-09-22T16:26:13.4852889Z Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
+2026-09-22T16:26:13.4870506Z Using cached chardet-5.2.0-py3-none-any.whl (199 kB)
+2026-09-22T16:26:13.4884019Z Using cached html5lib-1.1-py2.py3-none-any.whl (112 kB)
+2026-09-22T16:26:13.4919196Z Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (336 kB)
+2026-09-22T16:26:13.5006450Z Downloading platformdirs-4.11.12-py3-none-any.whl (24 kB)
+2026-09-22T16:26:13.5036230Z Using cached pydantic-2.13.5-py3-none-any.whl (472 kB)
+2026-09-22T16:26:13.5050444Z Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+2026-09-22T16:26:13.5070648Z Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-09-22T16:26:13.5114392Z Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.4 MB)
+2026-09-22T16:26:13.5390227Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 180.8 MB/s  0:00:00
+2026-09-22T16:26:13.5440169Z Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl (10.6 MB)
+2026-09-22T16:26:13.6047070Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.6/10.6 MB 180.6 MB/s  0:00:00
+2026-09-22T16:26:13.6060538Z Using cached tinycss2-1.5.1-py3-none-any.whl (28 kB)
+2026-09-22T16:26:13.6073518Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-09-22T16:26:13.6109686Z Downloading wcwidth-0.8.4-py3-none-any.whl (299 kB)
+2026-09-22T16:26:13.6177163Z Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (117 kB)
+2026-09-22T16:26:13.6213616Z Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+2026-09-22T16:26:13.6227230Z Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+2026-09-22T16:26:13.6239322Z Using cached pytest_asyncio-1.4.0-py3-none-any.whl (16 kB)
+2026-09-22T16:26:13.6250982Z Using cached pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+2026-09-22T16:26:13.6262612Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+2026-09-22T16:26:13.6274779Z Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+2026-09-22T16:26:13.6286754Z Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+2026-09-22T16:26:13.6298058Z Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+2026-09-22T16:26:13.6309727Z Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+2026-09-22T16:26:13.6321272Z Using cached croniter-6.2.4-py3-none-any.whl (46 kB)
+2026-09-22T16:26:13.6333413Z Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (242 kB)
+2026-09-22T16:26:13.6374066Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-09-22T16:26:13.6409131Z Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+2026-09-22T16:26:13.6420727Z Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+2026-09-22T16:26:13.6433155Z Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+2026-09-22T16:26:13.6444750Z Using cached linkify_it_py-2.2.0-py3-none-any.whl (21 kB)
+2026-09-22T16:26:13.6457390Z Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+2026-09-22T16:26:13.6521406Z Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (250 kB)
+2026-09-22T16:26:13.6560013Z Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+2026-09-22T16:26:13.6573077Z Using cached rich_pixels-3.0.1-py3-none-any.whl (6.0 kB)
+2026-09-22T16:26:13.6584921Z Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-09-22T16:26:13.6596656Z Using cached typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+2026-09-22T16:26:13.6608237Z Using cached webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+2026-09-22T16:26:13.6620075Z Using cached aiofiles-25.1.0-py3-none-any.whl (14 kB)
+2026-09-22T16:26:13.6632073Z Using cached cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl (4.7 MB)
+2026-09-22T16:26:13.6663593Z Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (221 kB)
+2026-09-22T16:26:13.6675790Z Using cached defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+2026-09-22T16:26:13.6716893Z Downloading emoji-2.16.0-py3-none-any.whl (610 kB)
+2026-09-22T16:26:13.6817280Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 610.9/610.9 kB 66.3 MB/s  0:00:00
+2026-09-22T16:26:13.6831576Z Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-09-22T16:26:13.6844351Z Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-09-22T16:26:13.6856964Z Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+2026-09-22T16:26:13.6869062Z Using cached anyio-4.15.1-py3-none-any.whl (132 kB)
+2026-09-22T16:26:13.6881725Z Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+2026-09-22T16:26:13.6894071Z Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-09-22T16:26:13.6906969Z Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-09-22T16:26:13.6919409Z Using cached keyring-25.7.0-py3-none-any.whl (39 kB)
+2026-09-22T16:26:13.6931493Z Using cached jeepney-0.9.0-py3-none-any.whl (49 kB)
+2026-09-22T16:26:13.6943834Z Using cached secretstorage-3.5.0-py3-none-any.whl (15 kB)
+2026-09-22T16:26:13.6955858Z Using cached jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+2026-09-22T16:26:13.6967859Z Using cached jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+2026-09-22T16:26:13.6979724Z Using cached jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+2026-09-22T16:26:13.6991741Z Using cached loguru-0.7.3-py3-none-any.whl (61 kB)
+2026-09-22T16:26:13.7004007Z Using cached markdownify-1.2.3-py3-none-any.whl (15 kB)
+2026-09-22T16:26:13.7016043Z Using cached beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+2026-09-22T16:26:13.7028503Z Using cached soupsieve-2.9.2-py3-none-any.whl (37 kB)
+2026-09-22T16:26:13.7040547Z Using cached mdit_py_plugins-0.6.1-py3-none-any.whl (66 kB)
+2026-09-22T16:26:13.7052742Z Using cached more_itertools-11.1.0-py3-none-any.whl (72 kB)
+2026-09-22T16:26:13.7090847Z Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+2026-09-22T16:26:13.7590924Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 349.1 MB/s  0:00:00
+2026-09-22T16:26:13.7605672Z Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+2026-09-22T16:26:13.7618726Z Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+2026-09-22T16:26:13.7631530Z Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+2026-09-22T16:26:13.7652824Z Using cached pyperclip-1.11.0-py3-none-any.whl (11 kB)
+2026-09-22T16:26:13.7665244Z Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+2026-09-22T16:26:13.7679188Z Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+2026-09-22T16:26:13.7694325Z Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+2026-09-22T16:26:13.7707232Z Using cached charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (248 kB)
+2026-09-22T16:26:13.7743979Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-09-22T16:26:13.7818233Z Downloading textual_image-0.14.0-py3-none-any.whl (180 kB)
+2026-09-22T16:26:13.7854731Z Using cached toml-0.10.2-py2.py3-none-any.whl (16 kB)
+2026-09-22T16:26:14.0483658Z Building wheels for collected packages: tldw_chatbook
+2026-09-22T16:26:14.0492052Z   Building editable for tldw_chatbook (pyproject.toml): started
+2026-09-22T16:26:14.6626053Z   Building editable for tldw_chatbook (pyproject.toml): finished with status 'done'
+2026-09-22T16:26:14.6632579Z   Created wheel for tldw_chatbook: filename=tldw_chatbook-0.2.2-0.editable-py3-none-any.whl size=28485 sha256=71a0f072e6893b896808d116ea094dfa07d231df58cf1f5058b86e5308f4e116
+2026-09-22T16:26:14.6634388Z   Stored in directory: <tmp>/pip-ephem-wheel-cache-bo1huy1_/wheels/24/4b/39/86b9fd25be7c432a62d8b220df51cdb18f8f5b9d989fcea420
+2026-09-22T16:26:14.6691705Z Successfully built tldw_chatbook
+2026-09-22T16:26:14.8243339Z Installing collected packages: sherpa-onnx-core, pyperclip, webencodings, wcwidth, urllib3, typing-extensions, toml, soupsieve, six, sherpa-onnx, rfc8785, regex, PyYAML, pygments, pycryptodomex, pycparser, psutil, propcache, portalocker, pluggy, platformdirs, pillow, packaging, numpy, multidict, more-itertools, mdurl, MarkupSafe, loguru, linkify-it-py, jeepney, jaraco.context, iniconfig, idna, h11, frozenlist, emoji, defusedxml, charset_normalizer, chardet, certifi, attrs, annotated-types, aiohappyeyeballs, aiofiles, yarl, typing-inspection, tinycss2, requests, python-dateutil, pytest, pyte, pydantic-core, markdown-it-py, jinja2, jaraco.functools, jaraco.classes, httpcore, html5lib, cffi, beautifulsoup4, anyio, aiosignal, tiktoken, rich, pytest-timeout, pytest-asyncio, pydantic, mdit-py-plugins, markdownify, httpx, cryptography, croniter, aiohttp, textual-image, textual, SecretStorage, rich-pixels, textual-diff-view, keyring, tldw_chatbook
+2026-09-22T16:26:23.7214429Z
+2026-09-22T16:26:23.7283708Z Successfully installed MarkupSafe-3.0.3 PyYAML-6.0.3 SecretStorage-3.5.0 aiofiles-25.1.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.3 aiosignal-1.4.0 annotated-types-0.8.0 anyio-4.15.1 attrs-26.1.0 beautifulsoup4-4.15.0 certifi-2026.7.22 cffi-2.1.1 chardet-5.2.0 charset_normalizer-3.5.1 croniter-6.2.4 cryptography-50.0.1 defusedxml-0.7.1 emoji-2.16.0 frozenlist-1.8.0 h11-0.16.0 html5lib-1.1 httpcore-1.0.9 httpx-0.28.1 idna-3.20 iniconfig-2.3.0 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 jinja2-3.1.6 keyring-25.7.0 linkify-it-py-2.2.0 loguru-0.7.3 markdown-it-py-4.2.0 markdownify-1.2.3 mdit-py-plugins-0.6.1 mdurl-0.1.2 more-itertools-11.1.0 multidict-6.9.1 numpy-2.5.3 packaging-26.3 pillow-12.3.0 platformdirs-4.11.12 pluggy-1.6.0 portalocker-3.2.0 propcache-0.5.4 psutil-7.2.2 pycparser-3.0 pycryptodomex-3.23.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyperclip-1.11.0 pyte-0.8.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-timeout-2.4.0 python-dateutil-2.9.0.post0 regex-2026.4.4 requests-2.34.2 rfc8785-0.1.4 rich-15.0.0 rich-pixels-3.0.1 sherpa-onnx-1.13.8 sherpa-onnx-core-1.13.8 six-1.17.0 soupsieve-2.9.2 textual-8.2.8 textual-diff-view-0.1.5 textual-image-0.14.0 tiktoken-0.14.0 tinycss2-1.5.1 tldw_chatbook-0.2.2 toml-0.10.2 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 wcwidth-0.8.4 webencodings-0.6.1 yarl-1.25.1
+2026-09-22T16:26:24.1014609Z ##[group]Run pytest \
+2026-09-22T16:26:24.1014947Z [36;1mpytest \[0m
+2026-09-22T16:26:24.1015168Z [36;1m  Tests/CI \[0m
+2026-09-22T16:26:24.1015408Z [36;1m  Tests/test_smoke.py \[0m
+2026-09-22T16:26:24.1015723Z [36;1m  Tests/Agents/test_execution_capacity.py \[0m
+2026-09-22T16:26:24.1016089Z [36;1m  Tests/Agents/test_fleet_messages.py \[0m
+2026-09-22T16:26:24.1016429Z [36;1m  Tests/Agents/test_session_todo_store.py \[0m
+2026-09-22T16:26:24.1016809Z [36;1m  Tests/DB/test_agent_orchestration_dev_migration.py \[0m
+2026-09-22T16:26:24.1017207Z [36;1m  Tests/DB/test_agent_run_budget_accounting.py \[0m
+2026-09-22T16:26:24.1017580Z [36;1m  Tests/DB/test_automatic_work_budget.py \[0m
+2026-09-22T16:26:24.1017943Z [36;1m  Tests/DB/test_automatic_runtime_owner.py \[0m
+2026-09-22T16:26:24.1018294Z [36;1m  Tests/DB/test_automatic_wake_attempts.py \[0m
+2026-09-22T16:26:24.1018661Z [36;1m  Tests/Model_Artifacts/test_operation_leases.py \[0m
+2026-09-22T16:26:24.1019125Z [36;1m  Tests/Model_Artifacts/test_operation_leases_process.py \[0m
+2026-09-22T16:26:24.1019523Z [36;1m  Tests/UI/test_mcp_workbench.py \[0m
+2026-09-22T16:26:24.1019834Z [36;1m  Tests/UI/test_mcp_tools_mode.py \[0m
+2026-09-22T16:26:24.1020134Z [36;1m  --timeout=180 \[0m
+2026-09-22T16:26:24.1020573Z [36;1m  --tb=short[0m
+2026-09-22T16:26:24.1084275Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:26:24.1084555Z env:
+2026-09-22T16:26:24.1084847Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:24.1085311Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-09-22T16:26:24.1085752Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:24.1086149Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:24.1086542Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:26:24.1086958Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-09-22T16:26:24.1087302Z ##[endgroup]
+2026-09-22T16:26:33.9557471Z ============================= test session starts ==============================
+2026-09-22T16:26:33.9558590Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+2026-09-22T16:26:33.9559434Z rootdir: <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:26:33.9560086Z configfile: pyproject.toml
+2026-09-22T16:26:33.9560913Z plugins: asyncio-1.4.0, timeout-2.4.0, anyio-4.15.1
+2026-09-22T16:26:33.9562024Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+2026-09-22T16:26:33.9563130Z timeout: 180.0s
+2026-09-22T16:26:33.9563556Z timeout method: signal
+2026-09-22T16:26:33.9564016Z timeout func_only: False
+2026-09-22T16:26:33.9564478Z collected 1152 items
+2026-09-22T16:26:33.9564754Z
+2026-09-22T16:26:34.9004458Z Tests/CI/test_backlog_task_id_uniqueness.py ...                          [  0%]
+2026-09-22T16:26:34.9584843Z Tests/CI/test_canvas_mermaid_asset_checker.py ..........                 [  1%]
+2026-09-22T16:26:35.3545529Z Tests/CI/test_ci_queue_pressure_contract.py .................            [  2%]
+2026-09-22T16:26:35.4590012Z Tests/CI/test_derived_artifacts_workflow.py .........                    [  3%]
+2026-09-22T16:26:35.6114159Z Tests/CI/test_github_actions_test_workflow.py ...................        [  5%]
+2026-09-22T16:26:35.6534147Z Tests/CI/test_task19637_platform_evidence.py ....                        [  5%]
+2026-09-22T16:26:35.7172303Z Tests/CI/test_task2062_1_gguf_import_evidence.py ....                    [  5%]
+2026-09-22T16:26:35.9572263Z Tests/CI/test_task2062_2_gguf_source_evidence.py .....                   [  6%]
+2026-09-22T16:26:36.5976422Z Tests/CI/test_task31942_macos_concurrency_evidence.py ...............    [  7%]
+2026-09-22T16:26:38.0751574Z Tests/CI/test_task598_external_parakeet_evidence.py .................... [  9%]
+2026-09-22T16:26:38.3151196Z ................................                                         [ 11%]
+2026-09-22T16:26:38.5146628Z Tests/CI/test_task601_process_tree_evidence.py ......................... [ 14%]
+2026-09-22T16:26:39.2806810Z ................................................................         [ 19%]
+2026-09-22T16:26:39.5029165Z Tests/CI/test_task602_platform_evidence.py ............................. [ 22%]
+2026-09-22T16:26:39.7570934Z .......................................                                  [ 25%]
+2026-09-22T16:26:39.9689672Z Tests/CI/test_task603_dictation_evidence.py ............................ [ 28%]
+2026-09-22T16:26:40.3826340Z .........................                                                [ 30%]
+2026-09-22T16:26:40.4940107Z Tests/CI/test_textual_runtime_contract.py ..                             [ 30%]
+2026-09-22T16:27:08.2763397Z Tests/test_smoke.py ................                                     [ 31%]
+2026-09-22T16:27:08.6043554Z Tests/Agents/test_execution_capacity.py .......................          [ 33%]
+2026-09-22T16:27:08.9157560Z Tests/Agents/test_fleet_messages.py .................................... [ 36%]
+2026-09-22T16:27:09.1425689Z .....                                                                    [ 37%]
+2026-09-22T16:27:09.3571678Z Tests/Agents/test_session_todo_store.py ................................ [ 40%]
+2026-09-22T16:27:09.9105047Z ........................................................................ [ 46%]
+2026-09-22T16:27:12.3021814Z ........................................................................ [ 52%]
+2026-09-22T16:27:12.6744418Z .........                                                                [ 53%]
+2026-09-22T16:27:14.3698041Z Tests/DB/test_agent_orchestration_dev_migration.py ....                  [ 53%]
+2026-09-22T16:27:16.6596547Z Tests/DB/test_agent_run_budget_accounting.py ...............             [ 55%]
+2026-09-22T16:27:22.1463210Z Tests/DB/test_automatic_work_budget.py ..............................    [ 57%]
+2026-09-22T16:27:24.1782491Z Tests/DB/test_automatic_runtime_owner.py .........                       [ 58%]
+2026-09-22T16:27:27.3920118Z Tests/DB/test_automatic_wake_attempts.py ...............                 [ 59%]
+2026-09-22T16:27:27.8821125Z Tests/Model_Artifacts/test_operation_leases.py ......................... [ 61%]
+2026-09-22T16:27:28.2669772Z .........................                                                [ 64%]
+2026-09-22T16:27:31.7263575Z Tests/Model_Artifacts/test_operation_leases_process.py ......            [ 64%]
+2026-09-22T16:28:37.9662999Z Tests/UI/test_mcp_workbench.py ......................................... [ 68%]
+2026-09-22T16:30:33.9723724Z ........................................................................ [ 74%]
+2026-09-22T16:32:22.5398916Z ........................................................................ [ 80%]
+2026-09-22T16:34:38.2074784Z ........................................................................ [ 86%]
+2026-09-22T16:36:53.4348456Z ........................................................................ [ 93%]
+2026-09-22T16:37:42.0023733Z .....................                                                    [ 94%]
+2026-09-22T16:38:08.2728388Z Tests/UI/test_mcp_tools_mode.py ........................................ [ 98%]
+2026-09-22T16:38:24.6735733Z ..................                                                       [100%]
+2026-09-22T16:38:24.6736705Z
+2026-09-22T16:38:24.6737743Z =============================== warnings summary ===============================
+2026-09-22T16:38:24.6738922Z Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+2026-09-22T16:38:24.6740929Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Tools/patch_tool_impls.py:32: SyntaxWarning: invalid escape sequence '\ '
+2026-09-22T16:38:24.6742119Z     satisfied (accepting only the ``\ No newline at end of file`` marker
+2026-09-22T16:38:24.6742567Z
+2026-09-22T16:38:24.6742917Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-09-22T16:38:24.6743656Z ============================= slowest 25 durations =============================
+2026-09-22T16:38:24.6744826Z 11.83s call     Tests/test_smoke.py::TestUIComponents::test_app_initialization
+2026-09-22T16:38:24.6745840Z 6.82s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2026-09-22T16:38:24.6746940Z 5.91s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2026-09-22T16:38:24.6747937Z 5.85s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2026-09-22T16:38:24.6749104Z 4.55s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+2026-09-22T16:38:24.6750267Z 3.62s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+2026-09-22T16:38:24.6751561Z 3.37s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+2026-09-22T16:38:24.6752553Z 3.31s call     Tests/test_smoke.py::TestDatabaseSmoke::test_media_database_initialization
+2026-09-22T16:38:24.6753518Z 3.09s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+2026-09-22T16:38:24.6754634Z 2.85s call     Tests/UI/test_mcp_workbench.py::test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_resync
+2026-09-22T16:38:24.6755780Z 2.85s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+2026-09-22T16:38:24.6756723Z 2.80s call     Tests/test_smoke.py::TestRAGFunctionality::test_rag_service_initialization
+2026-09-22T16:38:24.6757695Z 2.75s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+2026-09-22T16:38:24.6758602Z 2.68s call     Tests/test_smoke.py::TestConfiguration::test_paths_exist
+2026-09-22T16:38:24.6759328Z 2.49s call     Tests/test_smoke.py::TestRAGFunctionality::test_chunking_service
+2026-09-22T16:38:24.6760086Z 2.48s call     Tests/test_smoke.py::TestConfiguration::test_config_loading
+2026-09-22T16:38:24.6761186Z 2.47s call     Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key
+2026-09-22T16:38:24.6762297Z 2.46s call     Tests/UI/test_mcp_workbench.py::test_test_tool_profile_changed_never_arms_refreshed_stale_authority
+2026-09-22T16:38:24.6763460Z 2.45s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+2026-09-22T16:38:24.6764725Z 2.45s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed
+2026-09-22T16:38:24.6765857Z 2.42s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_in_error_shaped_result_note
+2026-09-22T16:38:24.6766884Z 2.38s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_with_dict_shaped_args_is_redacted
+2026-09-22T16:38:24.6768000Z 2.37s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+2026-09-22T16:38:24.6769123Z 2.37s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_permission_error_renders_blocked_not_failed
+2026-09-22T16:38:24.6770111Z 2.36s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_renders_failed_with_message
+2026-09-22T16:38:24.6771412Z ================= 1152 passed, 1 warning in 715.57s (0:11:55) ==================
+2026-09-22T16:38:26.7734837Z ##[group]Run pytest \
+2026-09-22T16:38:26.7735146Z [36;1mpytest \[0m
+2026-09-22T16:38:26.7735433Z [36;1m  Tests/UI/test_console_runtime_ownership.py \[0m
+2026-09-22T16:38:26.7735826Z [36;1m  Tests/Chat/test_console_viewless_hooks.py \[0m
+2026-09-22T16:38:26.7736202Z [36;1m  Tests/Agents/test_install_skill_runtime_tool.py \[0m
+2026-09-22T16:38:26.7736603Z [36;1m  Tests/Chat/test_console_chat_create_integration.py \[0m
+2026-09-22T16:38:26.7736948Z [36;1m  --timeout=300 \[0m
+2026-09-22T16:38:26.7737198Z [36;1m  --tb=short[0m
+2026-09-22T16:38:26.7799018Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:38:26.7799284Z env:
+2026-09-22T16:38:26.7799561Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:38:26.7800021Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-09-22T16:38:26.7800820Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:38:26.7801331Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:38:26.7801729Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-09-22T16:38:26.7802126Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-09-22T16:38:26.7802464Z ##[endgroup]
+2026-09-22T16:38:40.1116705Z ============================= test session starts ==============================
+2026-09-22T16:38:40.1117595Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+2026-09-22T16:38:40.1118339Z rootdir: <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:38:40.1118955Z configfile: pyproject.toml
+2026-09-22T16:38:40.1119502Z plugins: asyncio-1.4.0, timeout-2.4.0, anyio-4.15.1
+2026-09-22T16:38:40.1120967Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+2026-09-22T16:38:40.1121940Z timeout: 300.0s
+2026-09-22T16:38:40.1122373Z timeout method: signal
+2026-09-22T16:38:40.1122796Z timeout func_only: False
+2026-09-22T16:38:40.1123191Z collected 124 items
+2026-09-22T16:38:40.1123447Z
+2026-09-22T16:39:24.8144326Z Tests/UI/test_console_runtime_ownership.py ............................. [ 23%]
+2026-09-22T16:41:08.1444338Z .............x................--- _setup_logging START (from Logging_Config.py) ---
+2026-09-22T16:41:08.1444974Z Loguru: All pre-existing sinks removed.
+2026-09-22T16:41:08.1445486Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-09-22T16:41:18.1839569Z ..........                                 [ 55%]
+2026-09-22T16:41:43.3795406Z Tests/Chat/test_console_viewless_hooks.py ..................             [ 70%]
+2026-09-22T16:41:47.3252942Z Tests/Agents/test_install_skill_runtime_tool.py ......                   [ 75%]
+2026-09-22T16:42:08.7490220Z Tests/Chat/test_console_chat_create_integration.py ..................... [ 91%]
+2026-09-22T16:42:21.2521268Z ..........                                                               [100%]
+2026-09-22T16:42:21.2523206Z
+2026-09-22T16:42:21.2524049Z =============================== warnings summary ===============================
+2026-09-22T16:42:21.2525299Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2526495Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2527599Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2528565Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2529204Z   <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+2026-09-22T16:42:21.2529498Z
+2026-09-22T16:42:21.2529828Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2530948Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2532093Z   <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+2026-09-22T16:42:21.2532602Z
+2026-09-22T16:42:21.2532926Z Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+2026-09-22T16:42:21.2533989Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+2026-09-22T16:42:21.2534815Z     "  /|___|\  ",
+2026-09-22T16:42:21.2534964Z
+2026-09-22T16:42:21.2535270Z Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+2026-09-22T16:42:21.2536318Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+2026-09-22T16:42:21.2537133Z     " /_|_O_|_\ ",
+2026-09-22T16:42:21.2537275Z
+2026-09-22T16:42:21.2537678Z Tests/Chat/test_console_chat_create_integration.py::test_fork_from_child_run_context_copies_parent_conversation
+2026-09-22T16:42:21.2539574Z   <home>/work/tldw_chatbook/tldw_chatbook/Tests/conftest.py:529: UserWarning: open file descriptors grew by 238 over the test session (start=16, end=254, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+2026-09-22T16:42:21.2541163Z     warnings.warn(message, UserWarning, stacklevel=0)
+2026-09-22T16:42:21.2541394Z
+2026-09-22T16:42:21.2541616Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-09-22T16:42:21.2542078Z ============================= slowest 25 durations =============================
+2026-09-22T16:42:21.2542646Z 39.26s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-09-22T16:42:21.2543463Z 21.61s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+2026-09-22T16:42:21.2544184Z 21.08s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+2026-09-22T16:42:21.2544921Z 18.28s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+2026-09-22T16:42:21.2545694Z 17.90s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+2026-09-22T16:42:21.2546514Z 11.53s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+2026-09-22T16:42:21.2547343Z 3.56s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+2026-09-22T16:42:21.2548101Z 2.00s call     Tests/Agents/test_install_skill_runtime_tool.py::test_subagent_cannot_call_install_skill
+2026-09-22T16:42:21.2548796Z 1.97s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_with_no_view_keeps_the_unseen_mark
+2026-09-22T16:42:21.2549505Z 1.92s call     Tests/Agents/test_install_skill_runtime_tool.py::test_top_level_agent_dispatches_install_skill
+2026-09-22T16:42:21.2550240Z 1.64s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_to_the_attached_view_still_clears_the_mark
+2026-09-22T16:42:21.2551635Z 1.62s call     Tests/Chat/test_console_viewless_hooks.py::test_a_delivery_started_with_no_view_re_arms_at_the_next_attach
+2026-09-22T16:42:21.2552511Z 1.58s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone
+2026-09-22T16:42:21.2553316Z 1.55s call     Tests/UI/test_console_runtime_ownership.py::test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements
+2026-09-22T16:42:21.2554145Z 1.53s call     Tests/UI/test_console_runtime_ownership.py::test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements
+2026-09-22T16:42:21.2554917Z 1.43s call     Tests/Chat/test_console_viewless_hooks.py::test_a_viewless_turn_calls_none_of_the_departed_views_hooks
+2026-09-22T16:42:21.2555512Z
+2026-09-22T16:42:21.2555609Z (9 durations < 1s hidden.)
+2026-09-22T16:42:21.2556048Z =========================== short test summary info ============================
+2026-09-22T16:42:21.2557572Z XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+2026-09-22T16:42:21.2559093Z ============ 123 passed, 1 xfailed, 9 warnings in 230.93s (0:03:50) ============
+2026-09-22T16:42:24.2045820Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:42:24.2047132Z Post job cleanup.
+2026-09-22T16:42:24.3362268Z Cache hit occurred on the primary key setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089, not saving cache.
+2026-09-22T16:42:24.3364387Z (node:3960) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T16:42:24.3365761Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T16:42:24.3528503Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:42:24.3529772Z Post job cleanup.
+2026-09-22T16:42:24.4410253Z [command]/usr/bin/git version
+2026-09-22T16:42:24.4449530Z git version 2.55.0
+2026-09-22T16:42:24.4488041Z Temporarily overriding HOME='<home>/work/_temp/30f734fb-be0c-46f2-a551-43ae81dd7e87' before making global git config changes
+2026-09-22T16:42:24.4489489Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T16:42:24.4494807Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:42:24.4533683Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T16:42:24.4571013Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T16:42:24.4822135Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T16:42:24.4847102Z http.https://github.com/.extraheader
+2026-09-22T16:42:24.4857990Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-22T16:42:24.4893747Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T16:42:24.5157877Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T16:42:24.5200179Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T16:42:24.5611968Z Cleaning up orphan processes
+2026-09-22T16:42:24.5929775Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
