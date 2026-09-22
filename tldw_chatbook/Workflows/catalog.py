@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 
 CONTRACT_REVISION = "local-file-to-note/1"
 
@@ -343,6 +344,7 @@ _LABELS = {
 }
 
 
+@lru_cache(maxsize=None)
 def discover(*, show_all: bool = False, query: str = "") -> tuple[DiscoveryEntry, ...]:
     """Read bundled pinned inventory without performing I/O or admission.
 
@@ -354,6 +356,9 @@ def discover(*, show_all: bool = False, query: str = "") -> tuple[DiscoveryEntry
     Returns:
         Immutable discovery entries ordered by availability, family and label.
         Listing a type does not admit a definition or authorize execution.
+
+    Memoized: the inventory is built from module constants, and ``step_label``
+    calls this once per step on two surfaces per refresh (TASK-32901).
     """
     entries = []
     for step_type, family, disposition in DISCOVERY:
