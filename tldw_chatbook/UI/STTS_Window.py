@@ -2493,46 +2493,19 @@ class STTSWindow(Container):
             self._playground_axis_values.clear()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle sidebar button presses and delegate to content widgets"""
-        # Handle sidebar buttons
+        """Handle the back action and delegate everything else downward.
+
+        The ``#view-*-btn`` sidebar branches that used to live here are
+        gone: the rail rows are ``STTSScreen``'s children now (see
+        ``Screens/stts_screen.py::_handle_rail_press``), so none of those
+        ids is composed anywhere and no press could reach this handler.
+        One of them also pushed ``VoiceCloningWindow`` -- a ``Vertical``,
+        not a ``Screen`` -- through ``push_screen``: an armed
+        ``TypeError`` behind a dead id.
+        """
         if event.button.id == "speech-destination-back":
             event.stop()
             self.post_message(SpeechDestinationBackRequested())
-        elif event.button.id == "view-playground-btn":
-            self.run_worker(
-                self.request_view("playground"),
-                exclusive=True,
-                group="stts-request-view",
-            )
-        elif event.button.id == "view-profiles-btn":
-            self.run_worker(
-                self.request_view("profiles"),
-                exclusive=True,
-                group="stts-request-view",
-            )
-        elif event.button.id == "view-settings-btn":
-            self.run_worker(
-                self.request_view("settings"),
-                exclusive=True,
-                group="stts-request-view",
-            )
-        elif event.button.id == "view-audiobook-btn":
-            self.run_worker(
-                self.request_view("audiobook"),
-                exclusive=True,
-                group="stts-request-view",
-            )
-        elif event.button.id == "view-voice-cloning-btn":
-            # Import and push the Voice Cloning window
-            from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
-
-            self.app.push_screen(VoiceCloningWindow())
-        elif event.button.id == "view-stt-btn":
-            self.run_worker(
-                self.request_view("dictation"),
-                exclusive=True,
-                group="stts-request-view",
-            )
         else:
             # Try to delegate to the active content widget
             try:
