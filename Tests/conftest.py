@@ -1072,6 +1072,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kobold_tabby_config.py",
             "test_custom_openai_credential_resolution.py",
             "test_summarization_request_timeouts.py",
+            # TASK-32864: the Console/Library modal dismissal inventories
+            # import every modal module under Widgets/Console and
+            # UI/Library_Modules (real config participants on their import
+            # path); same admission signature as the suites above.
+            "test_console_modal_dismissal.py",
+            "test_library_modal_dismissal.py",
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
