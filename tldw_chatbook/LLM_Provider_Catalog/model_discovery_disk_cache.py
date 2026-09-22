@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +10,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_bytes
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 
@@ -372,16 +372,13 @@ class ModelCatalogDiskStore:
             )
 
     def save(self) -> None:
-        """Atomically write the store (pid-scoped temp file + rename).
+        """Atomically and durably write the store.
 
         Raises:
-            OSError: if the write or rename fails (a leftover .tmp file may remain).
+            OSError: if the write or rename fails (the temp file is removed).
             ValueError: if internal state exceeds the serialized byte bound.
         """
         encoded = _encode_cache_state(self._model_ids, self._fetched_at)
         if len(encoded) > MODEL_CATALOG_DISK_MAX_BYTES:
             raise ValueError("model catalog cache exceeds disk bounds")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        tmp_path.write_bytes(encoded)
-        os.replace(tmp_path, self.path)
+        atomic_write_bytes(self.path, encoded)

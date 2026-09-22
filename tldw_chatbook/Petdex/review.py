@@ -12,6 +12,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
 
+from ..Utils.file_durability import fsync_parent_directory
+
 
 @dataclass(frozen=True)
 class PetdexReviewedArchive:
@@ -187,6 +189,10 @@ def write_native_export(
         if not authority_guard() or export_target_identity(target) != expected_identity:
             raise ValueError("Export destination changed.")
         os.replace(temporary, target)
+        # task-32896: not Utils.atomic_file_ops -- the identity/authority
+        # recheck has to sit between the write and the rename, which the
+        # helper's single-call shape cannot express.
+        fsync_parent_directory(target.parent)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

@@ -38,6 +38,10 @@ import portalocker
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.generated_media_lifetime import participant
+from tldw_chatbook.Utils.file_durability import (
+    flush_file,
+    fsync_parent_directory,
+)
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
     get_video_store_policy,
@@ -720,6 +724,11 @@ class VideoStore:
                 else:
                     shutil.copyfileobj(source, staged)
                 staged.flush()
+                # task-32896: not Utils.atomic_file_ops -- this streams from a
+                # BinaryIO, verifies the staged size against the caller's
+                # expectation, and commits inside a publication gate. The
+                # barriers go in place instead.
+                flush_file(staged.fileno())
                 actual_size = os.fstat(staged.fileno()).st_size
                 if actual_size != expected_size:
                     raise VideoStoreSaveError("managed video source size changed")
@@ -732,7 +741,11 @@ class VideoStore:
                             "managed video publication cancelled"
                         )
                     self._commit_sibling(sibling, target)
+            # Cleared first: the sibling name is consumed by the rename, so
+            # the finally below must not treat it as an unpublished leftover
+            # if the durability barrier then fails.
             sibling = None
+            fsync_parent_directory(target.parent)
         finally:
             if sibling is not None:
                 try:

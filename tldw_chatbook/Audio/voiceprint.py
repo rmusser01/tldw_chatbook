@@ -18,10 +18,8 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import secrets
 import stat
-import tempfile
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -29,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 
 _FORMAT_VERSION = 1
@@ -233,26 +232,19 @@ def unit_normalise(v: Sequence[float]) -> list[float]:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write `content` to `path` atomically, owner-only (0o600).
+    """Write `content` to `path` atomically and durably, owner-only (0o600).
 
-    The temp file is `tempfile.mkstemp`-unique, not `path.with_suffix(".tmp")`
-    (final review Minor 1): `export()` writes to a path the USER typed, and a
-    `<name>.tmp` of their own next to it was created and then replaced away.
-    mkstemp also opens at 0o600, so neither the key file nor the record --
-    both biometric-derived -- is ever briefly world-readable under a
-    permissive umask (Minor 2), which is what the separate `_write_restricted`
-    used to buy for the key file alone.
+    Delegates to the shared helper (task-32896), which keeps every property
+    this used to hand-roll -- an `mkstemp`-unique temp file rather than
+    `path.with_suffix(".tmp")` (final review Minor 1: `export()` writes to a
+    path the USER typed, and a `<name>.tmp` of their own next to it was
+    created and then replaced away), owner-only at open so neither the key
+    file nor the record -- both biometric-derived -- is ever briefly
+    world-readable under a permissive umask (Minor 2), and temp-file cleanup
+    on failure -- and adds the file and parent-directory barriers this had
+    none of.
     """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            handle.write(content)
-        os.replace(tmp_name, path)
-    except Exception:
-        Path(tmp_name).unlink(missing_ok=True)
-        raise
+    atomic_write_text(path, content, private=True)
 
 
 def _read_envelope(path: Path) -> dict:
