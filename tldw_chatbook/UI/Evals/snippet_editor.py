@@ -464,6 +464,11 @@ _IMPORT_PARSERS = {
     ".json": parse_json_snippets,
 }
 
+#: Ceiling for a user-picked snippet import, matching
+#: `UI/Chunking_Lab_Modules/sample_region.SAMPLE_BYTES` -- the repo's existing
+#: bound for "a text file a user chose from a picker, read on the UI thread".
+_IMPORT_MAX_BYTES = 2 * 1024 * 1024
+
 
 class SnippetEditor(NotifyMixin, Vertical):
     """Detail-pane content for a selected dataset: a read-only snippet
@@ -631,7 +636,25 @@ class SnippetEditor(NotifyMixin, Vertical):
             self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
             return
         try:
-            content = file_path.read_text(encoding="utf-8")
+            # Bounded read (tier-2 review S22): this runs inside a
+            # `push_screen` callback, i.e. ON THE UI THREAD, and the path is
+            # whatever the user picked -- a multi-GB log would have been read
+            # whole into memory with the app frozen behind it. The sibling
+            # importer in this repo, `UI/Chunking_Lab_Modules/sample_region.
+            # read_sample_file`, already caps at 2 MiB with exactly this
+            # read-one-byte-past-the-cap shape; it is not reused directly
+            # because it returns sample-provenance metadata this path has no
+            # use for and raises where this path notifies.
+            with file_path.open("rb") as stream:
+                payload = stream.read(_IMPORT_MAX_BYTES + 1)
+            if len(payload) > _IMPORT_MAX_BYTES:
+                self._notify(
+                    f"{file_path.name} is larger than 2 MiB. Split it, or "
+                    f"import a smaller snippet file.",
+                    severity="error",
+                )
+                return
+            content = payload.decode("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             # UnicodeDecodeError is a ValueError, not an OSError -- a file
             # that can be opened but isn't valid UTF-8 (e.g. a CSV Excel
