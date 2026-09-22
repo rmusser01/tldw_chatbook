@@ -99,7 +99,6 @@ from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_mess
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
-from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
     WizardNavigation,
@@ -108,6 +107,7 @@ from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardStep,
     WizardStepConfig,
 )
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.ModelArtifacts import (
     ActivationRequested,
     DeletionRequested,
