@@ -28,13 +28,19 @@ W001 (hard gate, zero tolerance)
 
 W002 (census ratchet, not a gate)
     A ``query_one``/``query_exactly_one`` that is reached after an ``await``
-    inside an ``async def``, with no enclosing ``try``. Whether this crashes
-    depends on whether the awaited work can remove the subtree, which is not
-    statically decidable -- there are 279 such sites today and the vast
-    majority are fine. Failing on all of them would be exactly the guard that
-    cries wolf and gets muted, which ``scripts/preflight.sh`` warns about in
-    its own header. So the existing sites are recorded in a census and the
-    check fails only when a site appears that is not in it. Shrinking the
+    inside an ``async def``, with no enclosing ``try`` **body**. "Body" is
+    load-bearing: this check shipped treating any ``ast.Try`` ancestor as
+    protection, but a lookup in an ``except``/``else``/``finally`` clause is a
+    child of the same ``Try`` node while sitting outside the region its own
+    handlers cover -- an exception there propagates straight out. That hid 50
+    sites across 21 functions (269 reported vs 319 real) behind a green check.
+    Whether this crashes depends on whether the awaited work can remove the
+    subtree, which is not statically decidable -- there are 319 such sites
+    today and the vast majority are fine. Failing on all of them would be
+    exactly the guard that cries wolf and gets muted, which
+    ``scripts/preflight.sh`` warns about in its own header. So the existing
+    sites are recorded in a census and the check fails only when a site
+    appears that is not in it. Shrinking the
     census is always allowed; growing it is a deliberate act.
 
     The census rows are a *baseline*, not an endorsement: they were captured
@@ -215,11 +221,22 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
             if node.lineno <= first_await:
                 continue
             guarded = False
-            cursor = parents.get(node)
+            child: ast.AST = node
+            cursor = parents.get(child)
             while cursor is not None and cursor is not func:
-                if isinstance(cursor, ast.Try):
+                # Only `Try.body` is covered by that `Try`'s own handlers. A
+                # lookup in its `except`/`else`/`finally` is a *child* of the
+                # same node but sits OUTSIDE the protected region -- an
+                # exception there propagates straight out. Treating any `Try`
+                # ancestor as protection hid 50 sites across 21 functions.
+                # Keep ascending when it is not `body`: an OUTER try may still
+                # legitimately cover this lookup.
+                if isinstance(cursor, (ast.Try, ast.TryStar)) and any(
+                    child is stmt for stmt in cursor.body
+                ):
                     guarded = True
                     break
+                child = cursor
                 cursor = parents.get(cursor)
             if guarded:
                 continue
