@@ -26,6 +26,12 @@ from tldw_chatbook.Evals.skill_eval.runner import estimate_calls
 from tldw_chatbook.Evals.skill_eval.storage import save_skill_eval_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
+#: The suite imports UI.Evals (config getters bind at collection);
+#: the per-test env redirect trips config-participant admission
+#: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
+#: opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: Same realistic default as the sibling Evals workbench tests -- plenty of
 #: room for every panel row without scrolling.
@@ -48,6 +54,7 @@ class _PanelHarness(App):
         self.run_requested: list[SkillEvalPanel.RunRequested] = []
         self.cancel_requested: list[SkillEvalPanel.CancelRequested] = []
         self.subject_changed: list[SkillEvalPanel.SubjectChanged] = []
+        self.close_requested: list[SkillEvalPanel.CloseRequested] = []
 
     def compose(self) -> ComposeResult:
         yield SkillEvalPanel()
@@ -66,6 +73,11 @@ class _PanelHarness(App):
         self, event: SkillEvalPanel.SubjectChanged
     ) -> None:
         self.subject_changed.append(event)
+
+    def on_skill_eval_panel_close_requested(
+        self, event: SkillEvalPanel.CloseRequested
+    ) -> None:
+        self.close_requested.append(event)
 
 
 async def _pick_via_overlay(pilot, select_id: str, downs: int) -> None:
@@ -134,12 +146,133 @@ async def test_run_without_both_models_picks_posts_nothing():
 
 
 @pytest.mark.asyncio
-async def test_cancel_button_posts_cancel_requested():
+async def test_run_without_subject_posts_nothing():
+    """TASK-32885: Run with both models picked but no subject set must warn
+    and post nothing -- a subjectless RunRequested previously became a real
+    run that failed in the worker and left a failed row in the rail."""
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+
+        # The screen's remount sentinel must NOT count as a subject.
+        panel.set_subject("(no subject set)", "store")
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+
+        # A persisted subject remount makes Run dispatchable again.
+        panel.set_subject("csv-cleaner", "store")
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert len(app.run_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_directory_path_subject_enables_run(tmp_path):
+    """TASK-32885: a typed directory path is as valid a subject as a store
+    pick -- the guard must accept it without a picker choice. An INVALID
+    path must not arm the guard (Qodo review)."""
+    skill_dir = tmp_path / "csv"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# csv\n", encoding="utf-8")
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        # Invalid first: no SKILL.md -> no subject, Run posts nothing.
+        directory = panel.query_one("#skill-eval-subject-dir")
+        directory.value = str(tmp_path)
+        await pilot.pause()
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+        # The guard's warning toast renders over the button for ~5s and
+        # would swallow the second Run click -- clear it first.
+        app.clear_notifications()
+        await pilot.pause()
+        directory.value = ""
+        await pilot.pause()
+
+        directory.value = str(skill_dir)
+        await pilot.pause()
+        # Models were picked during the invalid-path phase above and are
+        # still held (a set Select's Enter no longer re-opens -- re-picking
+        # through the overlay here would strand an open overlay that
+        # swallows the Run click).
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert len(app.run_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_run_button_posts_cancel_requested_only_when_enabled():
+    """TASK-32889: the panel's second action is 'Stop run', DISABLED while
+    idle -- the old always-enabled 'Cancel' read as 'close this form' and
+    silently no-opped when no run existed."""
+    from textual.widgets import Button
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        stop = app.screen.query_one("#skill-eval-cancel", Button)
+        assert stop.disabled
+        assert "Stop run" in str(stop.label)
+        await pilot.click("#skill-eval-cancel")
+        await pilot.pause()
+        assert app.cancel_requested == []
+
+        # Enabled by the screen while a run is in flight: press stops it.
+        stop.disabled = False
         await pilot.click("#skill-eval-cancel")
         await pilot.pause()
         assert len(app.cancel_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_escape_on_panel_posts_close_requested():
+    """TASK-32889: Escape on the launch panel asks the screen to close it
+    (selection-level, never popping the Lab screen) -- previously there
+    was no keyboard way to leave the panel at all."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-subject-dir").focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert len(app.close_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_enter_on_a_set_select_no_ops_instead_of_reopening():
+    """TASK-32889: Enter on a Select that already holds a value is a
+    no-op -- it used to silently re-open the overlay, stranding keyboard
+    users who pressed Enter to confirm/advance. Space still opens."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        from textual.widgets import Select
+
+        # The depth select mounts with STANDARD set.
+        depth = app.screen.query_one("#skill-eval-depth", Select)
+        depth.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not depth.expanded
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert depth.expanded
 
 
 _SUBJECTS = [
@@ -176,11 +309,16 @@ async def test_subject_picker_lists_store_skills_and_posts_store_change():
 
 
 @pytest.mark.asyncio
-async def test_last_touched_wins_between_picker_and_directory_input():
-    """A store pick clears the directory Input; typing a path afterwards
-    resets the Select to NULL and posts a ``directory`` change -- the
-    documented last-touched-wins rule (one effective choice at a time)."""
+async def test_last_touched_wins_between_picker_and_directory_input(tmp_path):
+    """A store pick clears the directory Input; typing a VALID path
+    afterwards resets the Select to NULL and posts a ``directory``
+    change -- the documented last-touched-wins rule (one effective
+    choice at a time)."""
     from textual.widgets import Input, Select
+
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
 
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
@@ -192,30 +330,104 @@ async def test_last_touched_wins_between_picker_and_directory_input():
         await pilot.pause()
         assert panel.query_one("#skill-eval-subject-dir", Input).value == ""
 
-        panel.query_one("#skill-eval-subject-dir", Input).value = "/tmp/skill"
+        panel.query_one("#skill-eval-subject-dir", Input).value = str(skill_dir)
         await pilot.pause()
         assert panel.query_one("#skill-eval-subject-picker", Select).value is Select.NULL
         assert [(m.subject_ref, m.subject_kind) for m in app.subject_changed] == [
             ("csv-cleaner", "store"),
-            ("/tmp/skill", "directory"),
+            (str(skill_dir), "directory"),
         ]
 
 
 @pytest.mark.asyncio
-async def test_emptying_directory_input_posts_nothing():
+async def test_emptying_directory_input_posts_nothing(tmp_path):
     """Emptying the Input is not a subject choice (and resurrects no cleared
     store pick) -- the screen must never receive an empty-subject persist."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
+
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         panel = app.screen.query_one(SkillEvalPanel)
         directory = panel.query_one("#skill-eval-subject-dir")
-        directory.value = "/tmp/skill"
+        directory.value = str(skill_dir)
         await pilot.pause()
         assert len(app.subject_changed) == 1
 
         directory.value = ""
         await pilot.pause()
         assert len(app.subject_changed) == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_store_picker_shows_guidance_not_a_blank_overlay():
+    """TASK-32883: an empty skills store must not render a blank dead-end
+    overlay -- the picker's prompt names the problem and the alternative,
+    the overlay holds one guidance row, and picking that row posts nothing
+    instead of silently selecting a fake subject."""
+    from textual.widgets import Select
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects([])
+        await pilot.pause()
+
+        picker = panel.query_one("#skill-eval-subject-picker", Select)
+        assert "No skills" in str(picker.prompt)
+        labels = [str(label) for label, value in picker._options
+                  if value is not Select.NULL]
+        assert any("No skills" in label for label in labels)
+
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        assert app.subject_changed == []
+        assert picker.value is Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_populated_store_picker_keeps_the_standard_prompt():
+    """TASK-32883 guard: the guidance prompt swap must only happen for an
+    actually-empty store -- populated pickers keep the neutral prompt."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subjects(_SUBJECTS)
+        await pilot.pause()
+
+        from textual.widgets import Select
+
+        picker = panel.query_one("#skill-eval-subject-picker", Select)
+        assert str(picker.prompt) == "subject skill (store)"
+
+
+@pytest.mark.asyncio
+async def test_directory_input_hint_and_inline_validation(tmp_path):
+    """TASK-32883: the path input names the expected layout inline, flags a
+    directory without SKILL.md immediately, and validates a real skill
+    directory clean -- no silent acceptance of unusable paths."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        directory = panel.query_one("#skill-eval-subject-dir")
+        hint = panel.query_one("#skill-eval-subject-dir-hint")
+        assert "SKILL.md" in str(hint.render())
+
+        directory.value = str(tmp_path)  # exists, but no SKILL.md inside
+        await pilot.pause()
+        assert not directory.is_valid
+        assert "No SKILL.md" in str(hint.render())
+        # Qodo review: an invalid path is not a subject choice -- nothing
+        # posts and the (empty) effective subject does not arm Run.
+        assert app.subject_changed == []
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
+        directory.value = str(skill_dir)
+        await pilot.pause()
+        assert directory.is_valid
+        assert "No SKILL.md" not in str(hint.render())
 
 
 # ---------------------------------------------------------------------------
@@ -346,3 +558,67 @@ def test_skill_eval_targets_excludes_undispatchable_providers(evals_db):
 
     assert [row["id"] for row in rows] == [dispatchable]
     assert EvalsViewModel(None).skill_eval_targets() == []
+
+
+@pytest.mark.asyncio
+async def test_empty_model_pickers_show_bootstrap_guidance():
+    """TASK-32884: with no eval models configured the pickers must name
+    the problem and the way out, not render blank; picking the guidance
+    row posts nothing and leaves the picker unset."""
+    from textual.widgets import Select
+
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_targets([])
+        await pilot.pause()
+
+        for picker_id in ("skill-eval-generator", "skill-eval-judge"):
+            picker = panel.query_one(f"#{picker_id}", Select)
+            assert "no eval models" in str(picker.prompt)
+            labels = [str(label) for label, value in picker._options
+                      if value is not Select.NULL]
+            assert any("No eval models" in label for label in labels)
+
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        picker = panel.query_one("#skill-eval-generator", Select)
+        assert picker.value is Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_run_guard_toast_teaches_the_fix_when_no_models_exist():
+    """TASK-32884: the Run guard's warning must name where eval models
+    come from when none exist -- 'pick models first' alone strands a user
+    who has nowhere to pick from."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subject("csv-cleaner", "store")
+        panel.set_targets([])
+        await pilot.pause()
+
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        messages = [n.message for n in app._notifications]
+        assert any("No eval models" in m and "target" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_run_guard_toast_stays_plain_when_models_exist():
+    """TASK-32884 guard: the bootstrap teaching belongs only to the
+    zero-models case -- with models available the original message
+    stands."""
+    app = _PanelHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        panel = app.screen.query_one(SkillEvalPanel)
+        panel.set_subject("csv-cleaner", "store")
+        panel.set_targets(_TARGETS)
+        await pilot.pause()
+
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        messages = [n.message for n in app._notifications]
+        assert any("Pick generator and judge models first" in m for m in messages)
+        assert not any("No eval models" in m for m in messages)
+
+

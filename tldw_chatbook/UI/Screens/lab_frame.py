@@ -95,6 +95,15 @@ class LabScreen(BaseAppScreen):
     BINDINGS = [
         Binding("left_square_bracket", "lab_mode_focus(-1)", "Prev mode", show=False),
         Binding("right_square_bracket", "lab_mode_focus(1)", "Next mode", show=False),
+        # TASK-32887: arrows as aliases for the bracket walk. Screen-level
+        # fallbacks only -- widgets that bind arrows for their own
+        # navigation (Select dropdowns, DataTables, inputs) take priority
+        # in Textual's key dispatch, so this never steals arrow behavior
+        # from a focused list; it gives chip focus the keys users try
+        # first when focus sits on non-arrow-consuming widgets (buttons,
+        # the rail). show=False: the footer advertises the combined form.
+        Binding("left", "lab_mode_focus(-1)", "Prev mode", show=False),
+        Binding("right", "lab_mode_focus(1)", "Next mode", show=False),
     ]
 
     #: Rail collapse state for a first run only -- once the user toggles
@@ -109,7 +118,7 @@ class LabScreen(BaseAppScreen):
     #: half that actually navigates. The old "Switch mode" copy promised a
     #: keypress that never switched anything.
     LAB_FOOTER_SHORTCUTS: tuple[tuple[str, str], ...] = (
-        ("[ / ]", "Move mode focus"),
+        ("←/→ [ ]", "Move mode focus"),
         ("Enter", "Go"),
     )
 

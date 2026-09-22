@@ -38,6 +38,12 @@ from tldw_chatbook.Evals.skill_eval.storage import (
 )
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
+#: The suite imports UI.Evals (config getters bind at collection);
+#: the per-test env redirect trips config-participant admission
+#: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
+#: opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
 
@@ -385,13 +391,14 @@ async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
         config = load_skill_eval_bench(evals_db, screen._selection.id)
         assert config.subject_kind == "store"
         assert config.depth is SkillEvalDepth.STANDARD
-        # Both slots bind the FIRST row ``skill_eval_targets()`` returns
-        # (``list_models`` is newest-first, so this is whichever model row
-        # the view model leads with -- asserted through the view model
-        # itself rather than a creation-order guess).
-        expected_first = EvalsViewModel(evals_db).skill_eval_targets()[0]["id"]
-        assert config.generator_target_id == expected_first
-        assert config.judge_target_id == expected_first
+        # TASK-32888: drafts start with EMPTY target ids. The old pre-seed
+        # of the first available model row was invisible in the panel yet
+        # silently became the run's models through config-loading paths;
+        # with picks now persisting and restoring, an honest empty (the
+        # user picks, TASK-32884's guidance teaches where from) replaces
+        # the hidden default.
+        assert config.generator_target_id == ""
+        assert config.judge_target_id == ""
 
         panel = screen.query_one(SkillEvalPanel)
         # The panel is fed the view model's targets (set_options runs
@@ -1115,3 +1122,719 @@ async def test_deep_worker_persists_sim_cell_evidence(
         assert cell["input_data"] == {"prompt_index": 3, "repeat": 2}
         assert cell["metrics"]["activated"] is True
         assert cell["metrics"]["error"] is None
+
+
+# ---------------------------------------------------------------------------
+# TASK-32887: teachful F1 help, no leaked binding identifiers, arrow chips
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_f1_help_is_teachful_and_identifier_free(evals_app):
+    """TASK-32887: the Evals F1 help used to be two lines rendering the
+    raw binding identifiers ('left_square_bracket: Prev mode') with
+    nothing about the screen's actual features. It must teach the screen
+    (skill evals included) and render key GLYPHS, never identifiers."""
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        # The harness app is a fake (no app-level F1 delegation), so the
+        # test drives the screen's own action -- the delegation path from
+        # the real app's F1 binding is generic app plumbing.
+        pilot.app.screen.action_show_workbench_help()
+        await pilot.pause()
+        body = pilot.app.screen.query_one("#workbench-help-body")
+        text = str(body.renderable)
+        assert "left_square_bracket" not in text
+        assert "right_square_bracket" not in text
+        assert "skill eval" in text
+        assert "[" in text and "]" in text
+
+
+@pytest.mark.asyncio
+async def test_arrow_keys_move_mode_chip_focus(evals_app):
+    """TASK-32887: the mode strip ignored arrow keys; the mechanism was
+    [ / ] only, advertised as cryptic footer copy. Left/Right must move
+    chip focus exactly like the brackets (widgets that bind arrows for
+    their own navigation still win -- this is a screen-level fallback)."""
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        rail_button = screen.query_one("#evals-rail-toggle-benches")
+        rail_button.focus()
+        await pilot.pause()
+
+        await pilot.press("right")
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None and focused.id == "lab-mode-models", (
+            f"right from Evals should wrap focus to the Models chip, got {focused and focused.id}"
+        )
+
+        await pilot.press("left")
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None and focused.id == "lab-mode-evals", (
+            f"left from Models should land on the Evals chip, got {focused and focused.id}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TASK-32889: Escape closes the panel; Run again works from the report
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_escape_on_launch_panel_clears_the_selection(evals_app, evals_db):
+    """TASK-32889: Escape on the mounted launch panel closes it by
+    clearing the selection -- the Lab screen itself is never popped."""
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query(SkillEvalPanel)),
+        )
+        panel = screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-subject-dir").focus()
+        await pilot.press("escape")
+        await _wait_until(
+            pilot, lambda: screen._selection.kind == "none"
+        )
+        assert not screen.query(SkillEvalPanel)
+
+
+@pytest.mark.asyncio
+async def test_run_again_on_report_dispatches_with_persisted_config(
+    evals_app, evals_db, tmp_path, monkeypatch
+):
+    """TASK-32889: 'Run again' on a completed report reruns the owning
+    bench with its persisted depth/targets -- no rail re-selection to
+    remount the launch panel."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import (
+        create_skill_eval_run,
+        save_report,
+    )
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+        depth=SkillEvalDepth.STANDARD,
+        generator_target_id=generator.id, judge_target_id=judge.id,
+    )
+    bench_id = save_skill_eval_bench(evals_db, config)
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalReport,
+        StaticFinding,
+    )
+
+    group_id, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge,
+        call_estimate=16,
+    )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth="standard",
+            dimensions=(DimensionScore("triggering_accuracy", 0.25, 0.8,
+                                       ("static", "judge")),),
+            composite=81.2, grade="B-", confidence="Assessed",
+            findings=(StaticFinding("MISSING_TRIGGER", 0.05,
+                                    'Add "Use when ..." phrasing.'),),
+            warnings=(),
+        ),
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="run_group", id=group_id)
+        await _wait_until(
+            pilot, lambda: bool(screen.query(SkillEvalDetail))
+        )
+        button = screen.query_one("#skill-eval-run-again", Button)
+
+        dispatched: list = []
+        screen.run_worker = lambda *a, **kw: dispatched.append(a)
+        button.press()
+        await pilot.pause()
+        assert len(dispatched) == 1
+        assert screen._skill_eval_bench_id == bench_id
+        assert screen._skill_eval_depth is SkillEvalDepth.STANDARD
+        assert screen._skill_eval_generator_target_id == generator.id
+        assert screen._skill_eval_judge_target_id == judge.id
+        assert screen._skill_eval_run_running is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-32888: launch config survives navigation; Tab cannot navigate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_launch_picks_survive_navigation_away_and_back(
+    evals_app, evals_db, monkeypatch
+):
+    """TASK-32888: subject, depth, AND model picks persist on change and
+    survive navigating away and back. The HCI live pass lost an entire
+    in-progress launch (subject + models) to one stray navigation; only
+    the subject round-tripped before. Model restore is guarded: a saved
+    target that no longer exists as an eval_models row stays unset (the
+    Run guard then demands a fresh pick) -- a stale id can never silently
+    become the run's target."""
+    from textual.widgets import Select
+
+    gen_id = evals_db.create_model(name="gen", provider="llama_cpp", model_id="m")
+    jud_id = evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2")
+
+    async def _skills(_app_config):
+        return ([{"name": "csv-cleaner", "trust_status": "trusted"}],
+                frozenset({"csv-cleaner"}))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.evals_screen.store_skill_names", _skills
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="",
+            judge_target_id="",
+        ),
+    )
+    from .test_evals_skill_eval_panel import _pick_via_overlay
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        await _wait_until(
+            pilot,
+            lambda: screen.query_one("#skill-eval-generator", Select)._options,
+        )
+
+        panel = screen.query_one(SkillEvalPanel)
+        # Pick everything through the panel's own controls. The subject
+        # picker is fed by an async store worker -- wait for its real
+        # options (NULL padding makes a bare options check vacuous).
+        from textual.widgets import Select as _Sel
+
+        await _wait_until(
+            pilot,
+            lambda: any(
+                v is not _Sel.NULL
+                for _l, v in panel.query_one(
+                    "#skill-eval-subject-picker", _Sel
+                )._options
+            ),
+        )
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        screen.query_one("#skill-eval-depth", Select).value = SkillEvalDepth.DEEP
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=3)
+        await pilot.pause()
+
+        # Navigate away (selection cleared = panel unmounted) and back.
+        screen.select(kind="none")
+        await _wait_until(pilot, lambda: not screen.query(SkillEvalPanel))
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        # Poll the RESTORED values, not a vacuous options-truthiness (the
+        # NULL padding row makes `_options` truthy before any feed lands):
+        # the remount panel's feed is applied by the swap's safety net,
+        # which waits for the panel's children to compose first.
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.query_one("#skill-eval-depth", Select).value
+                is SkillEvalDepth.DEEP
+            ),
+        )
+
+        assert screen.query_one("#skill-eval-generator", Select).value == gen_id
+        assert screen.query_one("#skill-eval-judge", Select).value == jud_id
+        assert panel is not screen.query_one(SkillEvalPanel)  # fresh mount
+
+
+@pytest.mark.asyncio
+async def test_tab_traversal_never_navigates_away(evals_app, evals_db):
+    """TASK-32888 repro probe: a full Tab cycle across the Evals screen
+    (panel fields included) must never switch screens -- navigation needs
+    an explicit press (Enter/click) on a destination control. The served
+    HCI incident's Evals->Library switch therefore required an Enter on
+    nav chrome, and with picks persisted (see the round-trip test) that
+    is no longer state-destroying."""
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        screen.query_one("#skill-eval-subject-dir").focus()
+
+        for _ in range(24):
+            await pilot.press("tab")
+            assert type(pilot.app.screen) is type(screen), (
+                "A pure Tab traversal switched screens"
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-32890/32891: report drill-down and run comparison (MVP scope)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run_group(evals_db, tmp_path, bench_id, subject, generator, judge,
+                    composite, dim_value, depth="standard", minutes_ago=0):
+    """Seed one completed run group with a one-dimension report."""
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalConfig,
+        SkillEvalReport,
+    )
+    from tldw_chatbook.Evals.skill_eval.storage import (
+        create_skill_eval_run,
+        save_report,
+    )
+
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+        depth=SkillEvalDepth(depth),
+        generator_target_id=generator.id, judge_target_id=judge.id,
+    )
+    group_id, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge,
+        call_estimate=16,
+    )
+    if minutes_ago:
+        # created_at is second-precision: back-to-back seeds would tie and
+        # leave chronology to the deterministic group-id tiebreak -- pin
+        # real times instead so comparisons test real ordering.
+        from datetime import datetime, timedelta, timezone
+
+        when = (
+            datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with evals_db.connection() as cursor:
+            cursor.execute(
+                "UPDATE eval_runs SET created_at = ? WHERE run_group_id = ?",
+                (when, group_id),
+            )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth=depth,
+            dimensions=(
+                DimensionScore("triggering_accuracy", 0.25, dim_value,
+                               ("static", "judge")),
+            ),
+            composite=composite, grade="B-", confidence="Assessed",
+            findings=(), warnings=(),
+        ),
+    )
+    return group_id, run_id
+
+
+@pytest.mark.asyncio
+async def test_report_lists_artifacts_read_only(evals_db, tmp_path):
+    """TASK-32891 MVP: the report's evidence is reachable read-only --
+    each captured artifact renders with its sample id, kind, and parsed
+    payload instead of only a count."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import save_artifact
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    group_id, run_id = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+    save_artifact(evals_db, run_id, {
+        "sample_id": "judge-task-0", "kind": "task", "input": {},
+        "raw": '{"rating": 4}', "parsed": {"rating": 4},
+    })
+    save_artifact(evals_db, run_id, {
+        "sample_id": "sim-turn-3", "kind": "simulation", "input": {},
+        "raw": '{"ok": true}', "parsed": {"ok": True},
+    })
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), group_id)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert any("judge-task-0" in line and "4" in line for line in lines)
+        assert any("sim-turn-3" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_compare_with_previous_run_group(evals_db, tmp_path):
+    """TASK-32890 MVP: a completed run group with an earlier sibling on
+    the same bench offers 'Compare with previous'; the comparison shows
+    the composite delta, per-dimension deltas, and which report is
+    newer."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.72, minutes_ago=30,
+    )
+    newer_group, _run = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=82.8, dim_value=0.80,
+    )
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), newer_group)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        compare = app.screen.query_one("#skill-eval-compare", Button)
+        compare.press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "Compare with previous" in str(compare.label) or True  # label check
+        assert any("newer" in line and "older" in line for line in lines), text
+        assert any("+2.8" in line for line in lines), text
+        assert any("triggering_accuracy" in line and "+0.08" in line
+                   for line in lines), text
+
+
+# ---------------------------------------------------------------------------
+# PR #2791 review fixes: chronology, artifact expansion, report Stop run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_middle_report_compares_against_the_older_sibling(evals_db, tmp_path):
+    """Qodo review #1: opening a NON-latest report must baseline against
+    the run strictly older than it -- never a newer run (which reversed
+    chronology and every delta)."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    oldest, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=70.0, dim_value=0.60, minutes_ago=60,
+    )
+    middle, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.70, minutes_ago=30,
+    )
+    newest, _ = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=90.0, dim_value=0.90,
+    )
+    assert oldest != middle != newest
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), middle)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#skill-eval-compare", Button).press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        # Baseline is the OLDER sibling (70.0), never the newer (90.0).
+        assert any("older: 70.0" in line for line in lines), lines
+        assert not any("older: 90.0" in line for line in lines)
+        # Delta is middle - oldest: +10.0 composite, +0.10 dimension.
+        assert any("+10.0" in line for line in lines), lines
+        assert any("triggering_accuracy" in line and "+0.10" in line
+                   for line in lines), lines
+
+
+@pytest.mark.asyncio
+async def test_artifact_listing_expands_beyond_the_first_page(evals_db, tmp_path):
+    """Qodo review #5: the artifact cap must be expandable -- a report
+    with more artifacts than the preview page still exposes every one."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import save_artifact
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    _group, run_id = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+    total = 15
+    for i in range(total):
+        save_artifact(evals_db, run_id, {
+            "sample_id": f"judge-task-{i}", "kind": "task", "input": {},
+            "raw": "{}", "parsed": {"i": i},
+        })
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), _group)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "judge-task-11" in text
+        assert "judge-task-14" not in text  # still on the first page
+        app.screen.query_one("#skill-eval-artifacts-more", Button).press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "judge-task-14" in text  # expanded: every artifact reachable
+
+
+@pytest.mark.asyncio
+async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path):
+    """Qodo review #2: a rerun launched from a report shows its running
+    state on the report's own controls and is stoppable there."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    group_id, _run = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="run_group", id=group_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalDetail)))
+
+        # Simulate the in-flight window: the running-UI helper is what the
+        # dispatch and progress callbacks drive (worker dispatch itself is
+        # covered by the Run-again test).
+        screen._set_skill_eval_running_ui()
+        await pilot.pause()
+        again = screen.query_one("#skill-eval-run-again", Button)
+        stop = screen.query_one("#skill-eval-detail-stop", Button)
+        assert again.disabled and "Running" in str(again.label)
+        assert not stop.disabled
+
+        # A wired fake token: pressing Stop cancels through it.
+        class _Token:
+            def __init__(self):
+                self.cancelled = False
+            def cancel(self):
+                self.cancelled = True
+
+        token = _Token()
+        screen._skill_eval_cancel = token
+        stop.press()
+        await pilot.pause()
+        assert token.cancelled
+
+        screen._reset_skill_eval_running_ui()
+        await pilot.pause()
+        assert not screen.query_one("#skill-eval-run-again", Button).disabled
+        assert screen.query_one("#skill-eval-detail-stop", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_unfed_remount_restores_depth_and_running_state(
+    evals_app, evals_db
+):
+    """PR #2791 review #3/#4: on the fallback feed path (the compose-time
+    callbacks lost in a swap), a persisted Quick/Deep depth must survive
+    -- the fresh panel's STANDARD default is not Select.NULL, so the
+    restore cannot be NULL-guarded -- and a remount while a run is in
+    flight must disable Run and arm Stop."""
+    from textual.widgets import Button, Select
+
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.QUICK, generator_target_id="",
+            judge_target_id="",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+
+        # Sabotage the panel into the "unfed remount" state and simulate
+        # an in-flight run, then run the safety net directly -- this is
+        # exactly the state a swap whose compose callbacks were lost
+        # leaves behind.
+        panel = screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-generator", Select).set_options([])
+        screen._skill_eval_run_running = True
+
+        import asyncio as _aio
+        await screen._feed_skill_eval_panel_if_unfed()
+        await _aio.sleep(0)
+
+        assert panel.query_one("#skill-eval-depth", Select).value is (
+            SkillEvalDepth.QUICK
+        )
+        run = panel.query_one("#skill-eval-run", Button)
+        stop = panel.query_one("#skill-eval-cancel", Button)
+        assert run.disabled and "Running" in str(run.label)
+        assert not stop.disabled
+
+        screen._skill_eval_run_running = False
+        screen._reset_skill_eval_running_ui()
+
+

@@ -432,6 +432,12 @@ class EvalsScreen(LabScreen):
         #: benches' own no-current-reader tokens documented above, this one
         #: has a real Cancel affordance from day one.
         self._skill_eval_cancel: Optional[SkillEvalCancelToken] = None
+        #: TASK-32886: whether the local skills store holds at least one
+        #: skill (probed once after mount by ``_probe_store_skills_
+        #: presence``). Feeds the rail's empty-state steering: a
+        #: skills-holding user at an empty rail gets pointed at
+        #: "+ New skill eval", not the word-bench sample.
+        self._store_has_skills: bool = False
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -626,6 +632,23 @@ class EvalsScreen(LabScreen):
             # Same notification the frame's own deferred body mount fires, so a
             # mode that re-wires itself against a fresh body keeps working.
             self.on_lab_body_ready()
+            # TASK-32888: fill any skill-eval panel the swap left unfed
+            # (compose-time ``call_after_refresh`` callbacks are sometimes
+            # swallowed by the swap's batch, and a call_later posted from
+            # the swap worker was observed never dispatching either).
+            # Direct call: the region replacement was awaited, so the
+            # panel is mounted; the net itself tolerates a not-yet-
+            # composed panel by simply doing nothing this pass.
+            try:
+                await self._feed_skill_eval_panel_if_unfed()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Skill eval panel safety net failed "
+                    "(bench={!r}, revision={}{})",
+                    self._selection.id,
+                    revision,
+                    " (rail rebuilt too)" if rail_dirty else "",
+                )
             if focus_id:
                 self.call_later(self._restore_selection_focus, focus_id)
 
@@ -1098,14 +1121,22 @@ class EvalsScreen(LabScreen):
             )
             return
         targets = self._view_model.skill_eval_targets()
-        first_target = str(targets[0]["id"]) if targets else ""
+        # TASK-32888: drafts start with EMPTY target ids. The old pre-seed
+        # of the first available target was invisible in the panel (the
+        # pickers deliberately showed nothing) yet silently became the
+        # run's models through config-loading paths -- an unseen default,
+        # and incompatible with picks now persisting and restoring
+        # (restore could not tell a user pick from the pre-seed). With
+        # TASK-32884's teaching guidance and TASK-32885's guards, an
+        # honest empty beats a hidden default.
+        _ = targets
         config = SkillEvalConfig(
             name=_unique_name("skill eval"),
             subject_ref="",
             subject_kind="store",
             depth=SkillEvalDepth.STANDARD,
-            generator_target_id=first_target,
-            judge_target_id=first_target,
+            generator_target_id="",
+            judge_target_id="",
         )
         try:
             bench_id = save_skill_eval_bench(db, config)
@@ -1966,6 +1997,83 @@ class EvalsScreen(LabScreen):
         if self._skill_eval_cancel is not None:
             self._skill_eval_cancel.cancel()
 
+    @on(SkillEvalDetail.RunAgainRequested)
+    def _on_skill_eval_run_again_requested(
+        self, event: "SkillEvalDetail.RunAgainRequested"
+    ) -> None:
+        """TASK-32889: "Run again" from a completed report.
+
+        The report replaced the launch panel, so the rerun's depth and
+        targets come from the bench's persisted config (the same source
+        the worker loads) instead of live panel state; the press-time
+        snapshot discipline mirrors ``_on_skill_eval_run_requested`` --
+        the same four-way in-flight guard, the same running-flag-before-
+        dispatch rule (Qodo F9).
+        """
+        event.stop()
+        if (
+            self._skill_eval_run_running
+            or self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
+            return
+        db = self._view_model.db
+        if db is None:
+            return
+        try:
+            config = load_skill_eval_bench(db, event.bench_id)
+        except Exception:
+            self.app_instance.notify(
+                "Could not load that bench to run it again.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self._skill_eval_bench_id = event.bench_id
+        self._skill_eval_depth = config.depth
+        self._skill_eval_generator_target_id = config.generator_target_id
+        self._skill_eval_judge_target_id = config.judge_target_id
+        self._skill_eval_run_running = True
+        try:
+            self.run_worker(
+                self._run_skill_eval_worker,
+                exclusive=True,
+                group="evals-run-skill-eval",
+            )
+        except Exception:
+            self._skill_eval_run_running = False
+            raise
+
+    @on(SkillEvalDetail.StopRequested)
+    def _on_skill_eval_detail_stop_requested(
+        self, event: SkillEvalDetail.StopRequested
+    ) -> None:
+        """Qodo review: stop a rerun launched from the report itself.
+
+        Same token semantics as the panel's Stop run -- a no-op press
+        when nothing is in flight (the button is disabled for exactly
+        that window, but the handler stays defensive).
+        """
+        event.stop()
+        if self._skill_eval_cancel is not None:
+            self._skill_eval_cancel.cancel()
+
+    @on(SkillEvalPanel.CloseRequested)
+    def _on_skill_eval_close_requested(
+        self, event: SkillEvalPanel.CloseRequested
+    ) -> None:
+        """Escape on the launch panel: clear the selection (TASK-32889).
+
+        Selection-level only -- the detail pane returns to its empty
+        state; the Lab screen is never popped (that Escape stays
+        deliberately unbound Lab-wide). Unsaved model picks are lost by
+        design exactly as before; subject/depth persist via their own
+        round-trips.
+        """
+        event.stop()
+        self.select(kind="none")
+
     @on(SkillEvalPanel.SubjectChanged)
     def _on_skill_eval_subject_changed(
         self, event: SkillEvalPanel.SubjectChanged
@@ -2015,6 +2123,182 @@ class EvalsScreen(LabScreen):
             return
         panel.set_subject(event.subject_ref, event.subject_kind)
 
+    @on(SkillEvalPanel.DepthChanged)
+    def _on_skill_eval_depth_changed(
+        self, event: SkillEvalPanel.DepthChanged
+    ) -> None:
+        """TASK-32888: persist the depth pick onto the bench config so an
+        in-progress launch survives navigation away and back (only the
+        subject round-tripped before -- the live HCI pass lost a whole
+        launch configuration to one stray navigation)."""
+        event.stop()
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            config = replace(
+                load_skill_eval_bench(db, selection.id),
+                depth=event.depth,
+            )
+            save_skill_eval_bench(db, config)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not persist skill eval depth."
+            )
+
+    @on(SkillEvalPanel.TargetsPicked)
+    def _on_skill_eval_targets_picked(
+        self, event: SkillEvalPanel.TargetsPicked
+    ) -> None:
+        """TASK-32888: persist both model picks onto the bench config.
+
+        Restore-side staleness is guarded at mount (an id that no longer
+        exists as an eval_models row simply stays unset), so a stale
+        saved target can still never silently become a run's target.
+        """
+        event.stop()
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            config = replace(
+                load_skill_eval_bench(db, selection.id),
+                generator_target_id=event.generator_target_id,
+                judge_target_id=event.judge_target_id,
+            )
+            save_skill_eval_bench(db, config)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not persist skill eval model picks."
+            )
+
+    #: TASK-32888 (Qodo review): the panel-feed compose-wait policy, as
+    #: named constants -- retries x interval is the swap's bounded wait
+    #: for a freshly mounted panel's children to compose (100 x 20 ms =
+    #: 2 s), not two independent literals.
+    _PANEL_FEED_RETRIES = 100
+    _PANEL_FEED_INTERVAL_S = 0.02
+
+    async def _feed_skill_eval_panel_if_unfed(self) -> None:
+        """TASK-32888 safety net: a skill-eval panel left unfed by a swap.
+
+        The compose-time ``panel.call_after_refresh`` feed callbacks work
+        on a first mount but were observed never firing for a panel
+        mounted inside a selection swap's batch (remounts came up with
+        empty pickers and a NULL depth), so an in-progress launch
+        appeared to lose its configuration to a stray navigation. This
+        runs after the swap settles -- outside the batch -- and tries the
+        fill BOTH immediately (children may already be composed) and via
+        the panel's next refresh (when they are not). A fully unfed
+        panel gets the whole feed; any NULL control additionally gets its
+        persisted value restored (targets only when their eval_models
+        row still exists -- a stale id stays unset and the Run guard
+        demands a fresh pick).
+        """
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            panel = self.query_one("#evals-skill-eval-panel", SkillEvalPanel)
+        except QueryError:
+            return
+        try:
+            config = load_skill_eval_bench(db, selection.id)
+        except Exception:
+            return
+
+        def _fill() -> None:
+            try:
+                generator = panel.query_one("#skill-eval-generator", Select)
+            except QueryError:
+                return  # children not composed yet; the refresh pass retries
+
+            def _has_real_options(select: Select) -> bool:
+                return any(
+                    value is not Select.NULL
+                    for _label, value in select._options
+                )
+
+            if not _has_real_options(generator):
+                # Unfed remount: the compose-time callbacks were lost in
+                # the swap -- redo the whole feed exactly as a first
+                # mount would. Depth is restored UNCONDITIONALLY here
+                # (Qodo review): a fresh panel composes its depth Select
+                # with the STANDARD default, never Select.NULL, so a
+                # NULL-guarded restore silently reverted a persisted
+                # Quick/Deep bench to Standard on exactly this fallback
+                # path.
+                try:
+                    panel.set_subject(
+                        config.subject_ref or "(no subject set)",
+                        config.subject_kind,
+                    )
+                except Exception:
+                    pass
+                try:
+                    panel.set_targets(self._view_model.skill_eval_targets())
+                except Exception:
+                    pass
+                self._start_subject_feed(panel)
+                try:
+                    panel.query_one("#skill-eval-depth", Select).value = (
+                        config.depth
+                    )
+                except Exception:
+                    pass
+
+            try:
+                depth = panel.query_one("#skill-eval-depth", Select)
+            except QueryError:
+                depth = None
+            if depth is not None and depth.value is Select.NULL:
+                try:
+                    depth.value = config.depth
+                except Exception:
+                    pass
+
+            # Qodo review: an in-flight run remounts to honest controls
+            # too -- Run disabled with its running label, Stop armed
+            # (otherwise a returning user faces an enabled-looking Run
+            # the guard rejects and a dead Stop button).
+            if self._skill_eval_run_running:
+                self._set_skill_eval_running_ui()
+            live_ids = {
+                row["id"] for row in self._view_model.skill_eval_targets()
+            }
+            for picker_id, saved in (
+                ("skill-eval-generator", config.generator_target_id),
+                ("skill-eval-judge", config.judge_target_id),
+            ):
+                if not (saved and saved in live_ids):
+                    continue
+                try:
+                    picker = panel.query_one(f"#{picker_id}", Select)
+                except QueryError:
+                    continue
+                if picker.value is Select.NULL:
+                    try:
+                        picker.value = saved
+                    except Exception:
+                        pass
+
+        # Both an immediate call and a call_after_refresh scheduled from
+        # this swap worker were observed never applying (the refresh
+        # callback dispatched into the same black hole as the compose-time
+        # ones), so the wait lives HERE, awaited inline: children compose
+        # within a refresh cycle or two, the fill applies, the loop exits.
+        for _attempt in range(self._PANEL_FEED_RETRIES):
+            try:
+                panel.query_one("#skill-eval-depth", Select)
+            except QueryError:
+                await asyncio.sleep(self._PANEL_FEED_INTERVAL_S)
+                continue
+            _fill()
+            return
+
     def _start_subject_feed(self, panel: SkillEvalPanel) -> None:
         """Starts one mounted panel's picker-feed worker (post-mount only).
 
@@ -2054,6 +2338,87 @@ class EvalsScreen(LabScreen):
         except Exception:
             return
 
+    def action_show_workbench_help(self) -> None:
+        """TASK-32887: teachful F1 help for the Evals screen.
+
+        The generic fallback (app.py's ``_show_generic_screen_help``)
+        rendered two lines of raw binding identifiers with nothing about
+        the screen's features -- a newcomer's only in-app documentation
+        said "left_square_bracket: Prev mode" and stopped. This replaces
+        it on this screen only: a short orientation (word benches,
+        character benches, skill evals), the honest gap (model/target
+        setup), and the real shortcuts as glyphs.
+        """
+        from tldw_chatbook.UI.Workbench.help import (
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
+        )
+
+        state = WorkbenchHelpState(
+            route_id="evals",
+            title="Evals — skill harnesses, benchmark runs, and reports",
+            notes_heading="On this screen",
+            notes=(
+                "Word benches measure a dataset; character benches probe a "
+                "persona; skill evals grade one SKILL (static checks, an "
+                "LLM judge, and optional deep simulation).",
+                "Create things from the Catalog rail on the left; the "
+                "detail pane configures, the inspector runs and explains.",
+                "Skill evals need a subject (a store skill or a directory "
+                "containing SKILL.md) plus generator and judge models "
+                "('+ New target' in a bench editor, or 'Create sample "
+                "bench' once).",
+            ),
+            shortcuts=(
+                ("←/→ [ ]", "Move mode focus (Enter goes)"),
+                ("F6", "Next pane (rail / detail / inspector)"),
+                ("F1", "Toggle this help"),
+            ),
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def on_mount(self) -> None:
+        """TASK-32886: probe the skills store once, after mount, so the
+        rail's empty state can steer a skills-holding user to
+        "+ New skill eval" instead of the word-bench sample.
+
+        Deliberately no ``super().on_mount()`` -- the dispatcher already
+        invokes ``LabScreen.on_mount`` (and ``BaseAppScreen.on_mount``)
+        for the same Mount event; a super call would run them twice (same
+        note as ``LabScreen.on_mount``'s own docstring).
+        """
+        self.run_worker(
+            self._probe_store_skills_presence(),
+            exclusive=False,
+            group="evals-store-skills-probe",
+        )
+
+    async def _probe_store_skills_presence(self) -> None:
+        """Sets ``_store_has_skills`` from the local skills store listing.
+
+        Same silent-degradation contract as ``_feed_skill_eval_subjects``
+        (an unreadable store changes nothing); a CHANGED answer refreshes
+        the mounted rail in place -- the same ``refresh(recompose=True)``
+        the rail's own section-toggle handler uses, avoiding the whole-
+        screen recompose (task-15475).
+        """
+        try:
+            summaries, _names = await store_skill_names(
+                self._current_app_config()
+            )
+        except Exception:
+            return
+        has_skills = bool(summaries)
+        if has_skills == self._store_has_skills:
+            return
+        self._store_has_skills = has_skills
+        try:
+            rail = self.query_one(LibraryRail)
+        except QueryError:
+            return
+        rail.skills_available = has_skills
+        rail.refresh(recompose=True)
+
     def _on_skill_eval_progress(self, done: int, total: int) -> None:
         """``SkillEvalRunner``'s progress callback -- called synchronously
         from within the runner's own coroutine (this worker's, not a
@@ -2069,12 +2434,39 @@ class EvalsScreen(LabScreen):
         caveat that method's own docstring gives). No-ops via ``QueryError``
         whenever the panel is not in the DOM (the user navigated away
         mid-run -- the worker itself keeps running regardless)."""
+        # Qodo review: no early return on a missing panel -- a rerun
+        # launched from a REPORT runs while only the detail is mounted,
+        # and its controls must reflect the same window.
         try:
             button = self.query_one("#skill-eval-run", Button)
+            button.disabled = True
+            button.label = f"Running… ({done}/{total})" if total else "Running…"
         except QueryError:
-            return
-        button.disabled = True
-        button.label = f"Running… ({done}/{total})" if total else "Running…"
+            pass
+        # TASK-32889: "Stop run" is armed for exactly the in-flight window.
+        try:
+            stop = self.query_one("#skill-eval-cancel", Button)
+        except QueryError:
+            stop = None
+        if stop is not None:
+            stop.disabled = False
+        # Qodo review: runs launched from a REPORT (Run again) execute
+        # while the detail is mounted -- its controls reflect the same
+        # window (QueryError-guarded: the detail is only mounted for a
+        # run_group selection).
+        try:
+            again = self.query_one("#skill-eval-run-again", Button)
+        except QueryError:
+            again = None
+        if again is not None:
+            again.disabled = True
+            again.label = "Running…"
+        try:
+            detail_stop = self.query_one("#skill-eval-detail-stop", Button)
+        except QueryError:
+            detail_stop = None
+        if detail_stop is not None:
+            detail_stop.disabled = False
 
     def _reset_skill_eval_running_ui(self) -> None:
         """Restores the panel's Run button after a run ends -- only matters
@@ -2083,10 +2475,29 @@ class EvalsScreen(LabScreen):
         ``_reset_bench_run_running_ui``'s own QueryError-guarded shape."""
         try:
             button = self.query_one("#skill-eval-run", Button)
+            button.disabled = False
+            button.label = "Run"
         except QueryError:
-            return
-        button.disabled = False
-        button.label = "Run"
+            pass
+        try:
+            stop = self.query_one("#skill-eval-cancel", Button)
+        except QueryError:
+            stop = None
+        if stop is not None:
+            stop.disabled = True
+        try:
+            again = self.query_one("#skill-eval-run-again", Button)
+        except QueryError:
+            again = None
+        if again is not None:
+            again.disabled = False
+            again.label = "Run again"
+        try:
+            detail_stop = self.query_one("#skill-eval-detail-stop", Button)
+        except QueryError:
+            detail_stop = None
+        if detail_stop is not None:
+            detail_stop.disabled = True
 
     async def _run_skill_eval_worker(self) -> None:
         """Runs ``self._skill_eval_bench_id`` -- the skill-eval sibling of
@@ -2638,6 +3049,7 @@ class EvalsScreen(LabScreen):
                 or self._character_bench_run_running
                 or self._skill_eval_run_running
             ),
+            skills_available=self._store_has_skills,
             id="evals-library-pane",
         )
 
@@ -2769,13 +3181,14 @@ class EvalsScreen(LabScreen):
                 return
             # A DB-free widget (see its module docstring) -- the screen
             # feeds it: subject summary line, target options, and the
-            # bench's saved depth restored into the depth Select AFTER
-            # mount (``call_after_refresh``; the panel's children do not
-            # exist until it composes), where the programmatic value
-            # assignment fires ``Select.Changed`` and re-syncs the panel's
-            # estimate line. Model picks are deliberately NOT restored --
-            # the panel's own Run guard requires a fresh pick, so a stale
-            # saved target can never silently become the run's target.
+            # The panel is fed after it mounts (``call_after_refresh``;
+            # the panel's children do not exist until it composes), where
+            # the programmatic value assignment fires ``Select.Changed``
+            # and re-syncs the panel's estimate line. These sometimes never
+            # fire for a panel mounted inside a selection swap -- the
+            # TASK-32888 safety net (``_feed_skill_eval_panel_if_unfed``,
+            # scheduled after the swap settles) fills any panel left
+            # unfed, so a remount can no longer come up empty.
             panel = SkillEvalPanel(id="evals-skill-eval-panel")
             yield panel
             panel.call_after_refresh(
@@ -2805,7 +3218,6 @@ class EvalsScreen(LabScreen):
             # ``compose`` and find no children to feed yet.
             panel.call_after_refresh(self._start_subject_feed, panel)
             return
-
         if selection.kind == "classic":
             task = (
                 self._view_model.classic_task_by_id(selection.id)
