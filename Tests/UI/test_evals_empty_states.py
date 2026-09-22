@@ -19,10 +19,6 @@ from pathlib import Path
 
 import pytest
 
-#: The suite imports UI.Evals (config getters bind at collection); the
-#: per-test env redirect trips config-participant admission (TASK-32628).
-#: Keep the hermetic bootstrap profile (TASK-32873 opt-in).
-pytestmark = pytest.mark.bootstrap_profile
 from textual import on
 from textual.widgets import Button, DataTable, Input
 
@@ -50,6 +46,11 @@ from .test_evals_screen import seeded_bench as seeded_bench  # noqa: F401 -- fix
 from .test_evals_results_grid import _select_run_group
 from .test_evals_results_grid import evals_db as evals_db  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import mixed_run_group as mixed_run_group  # noqa: F401
+#: The suite imports UI.Evals (config getters bind at collection);
+#: the per-test env redirect trips config-participant admission
+#: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
+#: opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 # ---------------------------------------------------------------------------
@@ -2395,3 +2396,5 @@ async def test_skills_steering_survives_without_a_provider(evals_db):
         hint = pilot.app.screen.query_one("#evals-rail-skill-eval-hint")
         assert "skills installed" in str(hint.renderable)
         assert not pilot.app.screen.query("#evals-rail-first-run-hint")
+
+

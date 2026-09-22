@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import pytest
 
-#: TASK-32628 admission / TASK-32873 opt-in (same as the other Lab/Evals suites).
-pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
@@ -15,6 +13,10 @@ from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from Tests.UI.app_factory import _build_test_app
+
+#: TASK-32628 admission / TASK-32873 opt-in (same as the other
+#: Lab/Evals suites: config getters bind at collection).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.fixture(autouse=True)
@@ -154,3 +156,5 @@ async def test_the_footer_advertises_the_mode_keys():
         # the half that commits. The footer must not promise otherwise.
         assert "Move mode focus" in footer.shortcut_text
         assert "Switch mode" not in footer.shortcut_text
+
+

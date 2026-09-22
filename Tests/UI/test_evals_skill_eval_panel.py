@@ -26,14 +26,12 @@ from tldw_chatbook.Evals.skill_eval.runner import estimate_calls
 from tldw_chatbook.Evals.skill_eval.storage import save_skill_eval_bench
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
-
-#: This module's import graph (UI.Evals -> config getters) binds config
-#: participants at collection, so the per-test env redirect trips the
-#: config-participant admission (TASK-32628) and every node errors at setup
-#: with RecoveryRequired("raw_source_selection_changed"). The sanctioned
-#: per-file opt-in (TASK-32873) keeps the collection-time bootstrap profile
-#: -- itself a hermetic conftest temp root -- for these DB-free panel tests.
+#: The suite imports UI.Evals (config getters bind at collection);
+#: the per-test env redirect trips config-participant admission
+#: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
+#: opt-in).
 pytestmark = pytest.mark.bootstrap_profile
+
 
 #: Same realistic default as the sibling Evals workbench tests -- plenty of
 #: room for every panel row without scrolling.
@@ -622,3 +620,5 @@ async def test_run_guard_toast_stays_plain_when_models_exist():
         messages = [n.message for n in app._notifications]
         assert any("Pick generator and judge models first" in m for m in messages)
         assert not any("No eval models" in m for m in messages)
+
+

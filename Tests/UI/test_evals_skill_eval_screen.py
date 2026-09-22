@@ -38,11 +38,12 @@ from tldw_chatbook.Evals.skill_eval.storage import (
 )
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.skill_eval_panel import SkillEvalPanel
-
-#: Same collection-time config binding as the panel suite -- the
-#: per-test env redirect trips config-participant admission (TASK-32628);
-#: keep the hermetic bootstrap profile (TASK-32873 opt-in).
+#: The suite imports UI.Evals (config getters bind at collection);
+#: the per-test env redirect trips config-participant admission
+#: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
+#: opt-in).
 pytestmark = pytest.mark.bootstrap_profile
+
 
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
 
@@ -1835,3 +1836,5 @@ async def test_unfed_remount_restores_depth_and_running_state(
 
         screen._skill_eval_run_running = False
         screen._reset_skill_eval_running_ui()
+
+
