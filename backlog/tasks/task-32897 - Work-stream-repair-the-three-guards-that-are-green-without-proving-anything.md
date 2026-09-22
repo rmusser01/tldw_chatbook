@@ -49,3 +49,42 @@ Source: tier-2 code review 2026-09-21 -- `qa/tier2-code-review-2026-09-21/report
 - [ ] #4 Each repaired guard has a negative control: a deliberately bad sample that makes it fail
 - [ ] #5 `./scripts/preflight.sh` is green after the re-pin, with the newly-visible sites recorded as baseline
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on branch `fix/tier2-guards` as `f3bb728761` (8 files, +730/-74). Not pushed.
+
+All three were real. **Guard 3 was understated, not overstated**: a naive tamper of either self-certifying
+file was already caught as manifest drift, so they were not simply unprotected. The real hole is a
+laundering path -- `vendor_canvas_mermaid.py --output-dir` defaults to `STATIC`, so re-running the
+documented `reproducible_command` regenerates a self-consistent manifest **from the tampered bytes**.
+Reproduced end to end: the pre-repair checker returned green on an 85 KB browser runtime with
+`/*backdoor*/` appended. Fixed by pinning digests in `VENDORED_OUTPUTS` inside the checker -- deliberately
+in `scripts/`, which the vendor script never writes to, so the pin is outside the laundering path.
+
+Guard 1's predicate is now the emitted format, not naivety: new kinds `offset_now_iso` and `strftime_iso`.
+Census **0 -> 117 occurrences across 109 rows** (99 + 18). The AST count is 99, not the 101 quoted in the
+task description above -- that figure was grep-derived and counted lines, not call sites. Notably, the
+suite's own `test_does_not_flag_aware_now_isoformat` **asserted the whitelisting**; it has been inverted.
+
+Guard 2: only `Try.body` guards, and the ascent continues past a non-guarding `Try` so an outer one still
+counts (also matches `ast.TryStar`). **269 -> 319 sites across 157 functions**, matching the pre-repair
+measurement exactly.
+
+Deliberately out of scope: `isoformat().replace("+00:00","Z")` at microsecond precision is treated as
+conforming though it is variable-width; widening costs 40+ census rows and belongs with the writer
+migration (TASK-32901). Recorded in the guard's docstring.
+
+Verified independently of the implementing agent: preflight GREEN and now reporting real numbers; size
+ratchet unchanged at exactly 5 failed / 58 passed; the timestamp ratchet bites when a writer is injected
+into a scanned module (99 -> 100, exit 1); the Canvas pin rejects an appended `/*backdoor*/`.
+
+One process note: the first negative-control attempt was invalid -- the probe writer was injected into
+`Utils/timestamps.py`, which the guard exempts by design as ADR-173's one sanctioned producer. A negative
+control aimed at an exempt path proves nothing. Re-run against a scanned module, it behaved correctly.
+
+Follow-up filed as TASK-32897.1: `canvas_shell.js`/`.css`/`.html` (51 KB + 10 KB + 8 KB, served by
+`gateway.py:126-130`) are under no integrity check at all, and `canvas_shell.js` is the code that reads the
+gateway's bootstrap **token** from the URL fragment. Larger exposure than the hole just closed.
+<!-- SECTION:NOTES:END -->
