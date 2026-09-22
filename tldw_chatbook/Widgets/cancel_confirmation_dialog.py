@@ -49,7 +49,7 @@ class CancelConfirmationDialog(ConfirmationDialog):
         message: str = "Are you sure you want to cancel the transcription?\nAlready processed files will be kept.",
         confirm_text: str = "Yes, Cancel",
         cancel_text: str = "Continue Processing",
-        **kwargs,
+        **kwargs: object,
     ) -> None:
         """Initialize the cancel confirmation dialog.
 
