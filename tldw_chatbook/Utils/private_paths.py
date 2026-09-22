@@ -50,9 +50,30 @@ class PrivatePathStatus(StrEnum):
 
 @dataclass(frozen=True)
 class PrivatePathResult:
+    """Outcome of a private-path lifecycle check.
+
+    Attributes:
+        lexical_path: The normalized absolute path the caller selected. It is
+            lexical on purpose: nothing here resolves symlinks.
+        status: The posture decision (see ``PrivatePathStatus``).
+        reason: Machine-stable refusal identifier, or ``None`` on success.
+        offender_path: Diagnostics only (task-32900) -- best-effort path of
+            the existing directory whose mode/owner failed a walk check.
+            Never consulted by trust decisions, and absent when the walk
+            could not attribute the refusal to a component.
+        offender_detail: Diagnostics-only human-readable mode/owner summary
+            of ``offender_path``, when the refusing entry was stat'd.
+        offender_mode: Diagnostics-only ``stat.S_IMODE`` value of the
+            refusing entry, when it was stat'd; lets callers reason about
+            the write bits without parsing ``offender_detail``.
+    """
+
     lexical_path: Path
     status: PrivatePathStatus
     reason: str | None = None
+    offender_path: Path | None = None
+    offender_detail: str | None = None
+    offender_mode: int | None = None
 
     @property
     def verified_private(self) -> bool:
@@ -71,10 +92,22 @@ class PrivatePathResult:
 
 
 class PrivatePathError(OSError):
+    """Raised when a private-path lifecycle check refuses or fails.
+
+    Attributes:
+        result: The bounded ``PrivatePathResult`` decision. It carries the
+            status, refusal reason, and any diagnostics-only offender
+            information; there is no chained exception state to inspect.
+    """
+
     def __init__(self, result: PrivatePathResult) -> None:
         self.result = result
         reason = f": {result.reason}" if result.reason else ""
-        super().__init__(f"{result.status.value}{reason}")
+        offender = ""
+        if result.offender_path is not None:
+            detail = f" ({result.offender_detail})" if result.offender_detail else ""
+            offender = f" [{result.offender_path}{detail}]"
+        super().__init__(f"{result.status.value}{reason}{offender}")
 
 
 @dataclass
@@ -204,22 +237,36 @@ def _read_trusted_symlink(
     component: str,
     selected: Path,
     exc: OSError,
+    traversed: list[str],
 ) -> str:
     """Return a trusted symlink component's target, or re-raise the open error.
 
     Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
     never re-derived from a path string that an attacker could repoint between
-    the two calls.
+    the two calls. Refusals carry the component as `offender_path` (plus its
+    lstat detail when the link itself was the problem) so symlink rejections
+    name their blocker like every other refusal (task-32900).
     """
 
+    offender = _offender_path(traversed, component)
     if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
-        raise _private_path_error_from_oserror(selected, exc) from None
+        raise _private_path_error_from_oserror(
+            selected, exc, offender_path=offender
+        ) from None
     try:
         link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
     except OSError:
-        raise _private_path_error_from_oserror(selected, exc) from None
+        raise _private_path_error_from_oserror(
+            selected, exc, offender_path=offender
+        ) from None
     if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
-        raise _private_path_error_from_oserror(selected, exc) from None
+        raise _private_path_error_from_oserror(
+            selected,
+            exc,
+            offender_path=offender,
+            offender_detail=_describe_stat(link_stat),
+            offender_mode=_offender_mode(link_stat),
+        ) from None
     # `TypeError` as well as `OSError`: `os.readlink` raises TypeError, not
     # OSError, on a build where it does not accept `dir_fd`. The probe above
     # should stop us reaching here on such a platform, but a guard that
@@ -227,7 +274,9 @@ def _read_trusted_symlink(
     try:
         return os.readlink(component, dir_fd=parent_fd)
     except (OSError, TypeError):
-        raise _private_path_error_from_oserror(selected, exc) from None
+        raise _private_path_error_from_oserror(
+            selected, exc, offender_path=offender
+        ) from None
 
 
 def _symlink_walk_components(target: str) -> tuple[bool, list[str]]:
@@ -238,6 +287,46 @@ def _symlink_walk_components(target: str) -> tuple[bool, list[str]]:
     return absolute, components or [os.curdir]
 
 
+def _describe_stat(entry_stat: os.stat_result | None) -> str | None:
+    """Best-effort human-readable mode/owner for refusal diagnostics."""
+
+    if entry_stat is None:
+        return None
+    mode = stat.S_IMODE(entry_stat.st_mode)
+    owner = f"uid={entry_stat.st_uid}"
+    group = f"gid={entry_stat.st_gid}"
+    try:  # Names are a display nicety; unknown ids must not break the refusal.
+        import pwd
+
+        owner = f"{pwd.getpwuid(entry_stat.st_uid).pw_name} ({owner})"
+    except Exception:
+        pass
+    try:
+        import grp
+
+        group = f"{grp.getgrgid(entry_stat.st_gid).gr_name} ({group})"
+    except Exception:
+        pass
+    return (
+        f"mode {stat.filemode(entry_stat.st_mode)} ({oct(mode)}), "
+        f"owner {owner}, group {group}"
+    )
+
+
+def _offender_mode(entry_stat: os.stat_result | None) -> int | None:
+    """Diagnostics-only permission bits of a refusing entry."""
+
+    if entry_stat is None:
+        return None
+    return stat.S_IMODE(entry_stat.st_mode)
+
+
+def _offender_path(traversed: list[str], *extra: str) -> Path:
+    """Best-effort lexical path of the directory a walk refused."""
+
+    return Path(os.sep, *traversed, *extra)
+
+
 def _follow_trusted_symlink(
     *,
     current_fd: int,
@@ -246,6 +335,7 @@ def _follow_trusted_symlink(
     hops: int,
     selected: Path,
     exc: OSError,
+    traversed: list[str],
     _close: Callable[[int], None] | None = None,
     _open: Callable[..., int] | None = None,
 ) -> tuple[int, int]:
@@ -253,24 +343,28 @@ def _follow_trusted_symlink(
 
     Returns the descriptor the walk should continue from and the new hop count.
     `current_fd` is only replaced once its successor is open, so the caller
-    always has exactly one descriptor to close on failure.
+    always has exactly one descriptor to close on failure. `traversed` is the
+    caller's diagnostics breadcrumb; an absolute splice restarts the walk at
+    the root, so it is cleared to keep the reported path honest.
     """
 
     # Classify first, so an unrelated open failure keeps reporting its own cause
     # even once symlinks have been followed.
-    target = _read_trusted_symlink(current_fd, component, selected, exc)
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
     if hops >= _MAX_TRUSTED_SYMLINK_HOPS:
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
                 PrivatePathStatus.LINK_OR_NON_REGULAR,
                 reason="symlink_hop_limit_exceeded",
+                offender_path=_offender_path(traversed, component),
             )
         )
     absolute, components = _symlink_walk_components(target)
     pending[:0] = components
     if not absolute:
         return current_fd, hops + 1
+    traversed.clear()
     root_fd = (_open or _native_open)(
         selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
     )
@@ -362,6 +456,7 @@ def _open_verified_parent(
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:-1])
+        traversed: list[str] = []
         symlink_hops = 0
         while pending:
             component = pending.pop(0)
@@ -371,6 +466,9 @@ def _open_verified_parent(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="untrusted_directory_owner",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
             current_mode = stat.S_IMODE(current_stat.st_mode)
@@ -382,6 +480,9 @@ def _open_verified_parent(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="shared_writable_parent",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
             try:
@@ -396,6 +497,7 @@ def _open_verified_parent(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="missing_parent",
+                        offender_path=_offender_path(traversed),
                     )
                 ) from None
             except OSError as exc:
@@ -406,6 +508,7 @@ def _open_verified_parent(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    traversed=traversed,
                     _close=_close,
                     _open=_open,
                 )
@@ -421,6 +524,7 @@ def _open_verified_parent(
                             selected,
                             PrivatePathStatus.LINK_OR_NON_REGULAR,
                             reason="non_directory_parent",
+                            offender_path=_offender_path(traversed, component),
                         )
                     )
                 if not _trusted_directory_owner(next_stat, euid):
@@ -429,6 +533,9 @@ def _open_verified_parent(
                             selected,
                             PrivatePathStatus.UNSAFE_PARENT,
                             reason="untrusted_directory_owner",
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
                 old_fd = current_fd
@@ -436,6 +543,7 @@ def _open_verified_parent(
                 transferred = True
                 close(old_fd)
                 current_stat = next_stat
+                traversed.append(component)
             finally:
                 if not transferred:
                     close(next_fd)
@@ -446,6 +554,9 @@ def _open_verified_parent(
                     selected,
                     PrivatePathStatus.UNSAFE_PARENT,
                     reason="untrusted_directory_owner",
+                    offender_path=_offender_path(traversed),
+                    offender_detail=_describe_stat(current_stat),
+                    offender_mode=_offender_mode(current_stat),
                 )
             )
         final_parent_mode = stat.S_IMODE(current_stat.st_mode)
@@ -461,6 +572,9 @@ def _open_verified_parent(
                         if final_parent_sticky and missing_leaf_allowed
                         else "shared_writable_parent"
                     ),
+                    offender_path=_offender_path(traversed),
+                    offender_detail=_describe_stat(current_stat),
+                    offender_mode=_offender_mode(current_stat),
                 )
             )
         return current_fd, parts[-1]
@@ -472,6 +586,10 @@ def _open_verified_parent(
 def _private_path_error_from_oserror(
     selected: Path,
     exc: OSError,
+    *,
+    offender_path: Path | None = None,
+    offender_detail: str | None = None,
+    offender_mode: int | None = None,
 ) -> PrivatePathError:
     status = (
         PrivatePathStatus.LINK_OR_NON_REGULAR
@@ -483,6 +601,9 @@ def _private_path_error_from_oserror(
             selected,
             status,
             reason=type(exc).__name__,
+            offender_path=offender_path,
+            offender_detail=offender_detail,
+            offender_mode=offender_mode,
         )
     )
 
@@ -1655,6 +1776,7 @@ def secure_private_directory(
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:])
+        traversed: list[str] = []
         symlink_hops = 0
         while pending:
             component = pending.pop(0)
@@ -1665,6 +1787,9 @@ def secure_private_directory(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="untrusted_directory_owner",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
             current_mode = stat.S_IMODE(current_stat.st_mode)
@@ -1676,6 +1801,9 @@ def secure_private_directory(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="shared_writable_parent",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
 
@@ -1693,6 +1821,9 @@ def secure_private_directory(
                             selected,
                             PrivatePathStatus.UNSAFE_PARENT,
                             reason="missing_component_in_shared_sticky_parent",
+                            offender_path=_offender_path(traversed),
+                            offender_detail=_describe_stat(current_stat),
+                            offender_mode=_offender_mode(current_stat),
                         )
                     ) from None
                 try:
@@ -1716,6 +1847,7 @@ def secure_private_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    traversed=traversed,
                     **observer_options,
                 )
                 current_stat = os.fstat(current_fd)
@@ -1730,6 +1862,7 @@ def secure_private_directory(
                             selected,
                             PrivatePathStatus.LINK_OR_NON_REGULAR,
                             reason="non_directory_component",
+                            offender_path=_offender_path(traversed, component),
                         )
                     )
                 if next_stat.st_uid != euid and (created_component or is_final):
@@ -1738,6 +1871,9 @@ def secure_private_directory(
                             selected,
                             PrivatePathStatus.WRONG_OWNER,
                             reason="application_directory_wrong_owner",
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
                 if not _trusted_directory_owner(next_stat, euid):
@@ -1746,6 +1882,9 @@ def secure_private_directory(
                             selected,
                             PrivatePathStatus.UNSAFE_PARENT,
                             reason="untrusted_directory_owner",
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
                 if shared_writable and next_stat.st_uid not in {0, euid}:
@@ -1754,6 +1893,9 @@ def secure_private_directory(
                             selected,
                             PrivatePathStatus.UNSAFE_PARENT,
                             reason="sticky_child_wrong_owner",
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
 
@@ -1784,6 +1926,7 @@ def secure_private_directory(
                 transferred = True
                 close(old_fd)
                 current_stat = os.fstat(current_fd)
+                traversed.append(component)
             finally:
                 if not transferred:
                     close(next_fd)
@@ -1887,6 +2030,7 @@ def verify_trusted_directory(
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:])
+        traversed: list[str] = []
         symlink_hops = 0
         while pending:
             component = pending.pop(0)
@@ -1897,6 +2041,9 @@ def verify_trusted_directory(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="untrusted_directory_owner",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
             current_mode = stat.S_IMODE(current_stat.st_mode)
@@ -1908,6 +2055,9 @@ def verify_trusted_directory(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="shared_writable_parent",
+                        offender_path=_offender_path(traversed),
+                        offender_detail=_describe_stat(current_stat),
+                        offender_mode=_offender_mode(current_stat),
                     )
                 )
 
@@ -1923,6 +2073,7 @@ def verify_trusted_directory(
                         selected,
                         PrivatePathStatus.UNSAFE_PARENT,
                         reason="missing_directory",
+                        offender_path=_offender_path(traversed, component),
                     )
                 ) from None
             except OSError as exc:
@@ -1933,6 +2084,7 @@ def verify_trusted_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    traversed=traversed,
                     _close=_close,
                     _open=_open,
                 )
@@ -1948,6 +2100,7 @@ def verify_trusted_directory(
                             selected,
                             PrivatePathStatus.LINK_OR_NON_REGULAR,
                             reason="non_directory_component",
+                            offender_path=_offender_path(traversed, component),
                         )
                     )
                 if not _trusted_directory_owner(next_stat, euid):
@@ -1960,6 +2113,9 @@ def verify_trusted_directory(
                                 else PrivatePathStatus.UNSAFE_PARENT
                             ),
                             reason="untrusted_directory_owner",
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
                 if not _trusted_directory_postcondition_holds(
@@ -1991,6 +2147,9 @@ def verify_trusted_directory(
                                 if next_sticky and is_final
                                 else "shared_writable_parent"
                             ),
+                            offender_path=_offender_path(traversed, component),
+                            offender_detail=_describe_stat(next_stat),
+                            offender_mode=_offender_mode(next_stat),
                         )
                     )
 
@@ -1999,6 +2158,7 @@ def verify_trusted_directory(
                 transferred = True
                 close(old_fd)
                 current_stat = next_stat
+                traversed.append(component)
             finally:
                 if not transferred:
                     close(next_fd)

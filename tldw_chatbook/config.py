@@ -9832,7 +9832,19 @@ if (
 # --- Global default_api_endpoint (example of using the new settings) ---
 
 # --- Global Settings Object ---
-load_cli_config_and_ensure_existence()
+# task-32900: a private-path refusal here (e.g. a group-writable ~/.config on
+# a fresh install) used to surface as a bare `unsafe_parent:
+# shared_writable_parent` traceback. Emit the plain-language diagnostic once,
+# then keep failing closed exactly as before (ADR-029/ADR-127 posture).
+try:
+    load_cli_config_and_ensure_existence()
+except PrivatePathError as _private_path_startup_error:
+    from tldw_chatbook.Utils.startup_errors import (
+        emit_private_path_startup_error,
+    )
+
+    emit_private_path_startup_error(_private_path_startup_error)
+    raise
 settings = load_settings()
 if _CONFIG_GENERATION == 0:
     _CONFIG_GENERATION = 1
