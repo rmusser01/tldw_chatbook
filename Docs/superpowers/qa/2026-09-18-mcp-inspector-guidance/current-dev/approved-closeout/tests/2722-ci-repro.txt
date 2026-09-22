@@ -1,0 +1,22 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+1.30s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_renders_failed_with_message
+1.21s call     Tests/UI/test_mcp_workbench.py::test_test_tool_typed_failure_outcome_is_redacted_and_bounded
+1.19s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+1.16s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+1.03s call     Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_builtin_uses_prepared_entry_point
+
+(10 durations < 1s hidden.)
+5 passed in 7.89s
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-c9b4a086-1c6b-49e0-8c52-55a9ebcea8a4/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-c9b4a086-1c6b-49e0-8c52-55a9ebcea8a4/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-c9b4a086-1c6b-49e0-8c52-55a9ebcea8a4
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-c9b4a086-1c6b-49e0-8c52-55a9ebcea8a4'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-3346e60f-1921-44ed-b144-558c2c548a85/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-3346e60f-1921-44ed-b144-558c2c548a85/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-3346e60f-1921-44ed-b144-558c2c548a85
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-3346e60f-1921-44ed-b144-558c2c548a85'
+  warnings.warn(

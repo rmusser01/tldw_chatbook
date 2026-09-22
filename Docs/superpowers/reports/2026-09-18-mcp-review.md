@@ -1,5 +1,12 @@
 # MCP component review
 
+## Current continuation — PR2722 inspector guidance
+
+Approved PR2721 merged at `3722a857480b94b30fd4755f3f8e3002bd163ec3` with passing current-head CI, zero Qodo findings and an actual tree identical to its qualified candidate. TASK-32835 is Done; [closeout](../qa/2026-09-18-mcp-audit-filters/merge-closeout/README.md).
+
+PR2722 / TASK-32836 resumes from that actual merge. Readiness badge, explanation and actions now share the existing detail visibility owner. [201 targeted passes and 16 current native captures](../qa/2026-09-18-mcp-inspector-guidance/current-dev/README.md) qualify the bounded slice. One inherited dimension ratchet is documented; no allowances changed. Both ledger conflict histories were retained, with the saved inspector checkpoint labeled historical; no product conflict occurred. The owner has approved the gallery. [Closeout qualification](../qa/2026-09-18-mcp-inspector-guidance/current-dev/approved-closeout/README.md) records a conflict-free rebase onto dev5cdc9ddd, a test-only CI mouse-scroll repair, 590 targeted passes and unchanged inspector captures. This slice remains In Progress pending current-head CI/Qodo and final dev review. No full suite ran; the wider workstream remains open and the old heartbeat remains paused.
+
+
 ## PR2721 current-dev Audit filters ready for visual review — 2026-09-21
 
 The saved compact-filter slice now includes merged PR2720 dev `7a758b8196`.
@@ -607,6 +614,32 @@ This branch does not include the separate Audit selection repair saved in
 Next bounded review: inspector guidance ownership, where built-in readiness
 guidance appears above unrelated local Audit/tool details. Remaining connected
 runtime, server lifecycle, permission and destination work is still open.
+
+
+## Saved inspector integration history (historical)
+
+## Saved inspector checkpoint — 2026-09-18 (historical)
+
+PR #2707 merged at `149acda36be8939fe8cd5e589bf77d13462257e7` on 2026-09-18.
+Its closeout notes below are historical; post-merge work is underway and the
+backup heartbeat remains paused. Follow-ups keep their own visual approval gate.
+
+TASK-32836 extends the inspector's existing visibility owner to the complete
+server readiness block. The badge, explanation and actions hide together while
+tool, permission, Audit or finding detail is present; clearing the last detail
+reveals current server guidance. [62 targeted checks and 16 native captures](../qa/2026-09-18-mcp-inspector-guidance/README.md)
+verify that boundary on fresh `dev` (`cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`).
+The native gallery still shows the baseline compact Audit filter and inspector
+layout; those independent repairs remain in their own follow-ups.
+
+Audit selection and filter layout are saved separately in
+[PR #2720](https://github.com/rmusser01/tldw_chatbook/pull/2720) and
+[PR #2721](https://github.com/rmusser01/tldw_chatbook/pull/2721), with green
+checks at `4c5cfaebe9696780908219b6d5cd023a44fe0909` and
+`8ba5f72f0b6c045756e6b1761e83bbf819410744`. They remain drafts awaiting visual
+approval. Next bounded review: Audit's Open tool / Adjust permission drilldowns,
+including missing or stale tool context. Remaining connected-runtime and
+permission workflows, and the wider destination review, remain open.
 
 ## Qualified
 
