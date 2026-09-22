@@ -2542,6 +2542,14 @@ class EvalsScreen(LabScreen):
         finished_ok = False
         db: Optional[EvalsDB] = None
         run_id: Optional[str] = None
+        #: Set the instant the persistence thread is handed the work. Moving
+        #: persistence onto `asyncio.to_thread` introduced an await point
+        #: where there was none, so a worker cancellation (screen teardown)
+        #: can now land WHILE the thread is writing -- and that thread cannot
+        #: be stopped, so `save_report`'s own status stamp still lands. The
+        #: `except asyncio.CancelledError` stamp below must not race it with
+        #: a contradictory "cancelled".
+        persist_started = False
         try:
             db = self._view_model.db
             if db is None:
@@ -2652,15 +2660,20 @@ class EvalsScreen(LabScreen):
                         )
                 save_report(db, run_id, report, status=status)
 
+            persist_started = True
             await asyncio.to_thread(_persist)
             finished_ok = True
         except asyncio.CancelledError:
             # Re-raised, never swallowed -- Textual's worker bookkeeping
             # needs to observe the real cancellation (the character
             # worker's identical clause's own rule). Stamping is
-            # best-effort first: no report exists on this path, so the
-            # stamp is the bare run-status update.
-            if run_id is not None and db is not None:
+            # best-effort first: on this path no report has been written, so
+            # the stamp is the bare run-status update -- UNLESS the
+            # cancellation landed on the persistence await, in which case the
+            # thread is still running and `save_report` writes the real
+            # status itself. Stamping "cancelled" over it would be a second,
+            # unordered writer contradicting a run that did complete.
+            if run_id is not None and db is not None and not persist_started:
                 try:
                     db.update_run(run_id, {"status": "cancelled"})
                 except Exception:
