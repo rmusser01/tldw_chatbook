@@ -179,6 +179,9 @@ class AppFooterStatus(Widget):
         #: TASK-451: last known footer width, so a content change (new shortcut
         #: context / DB stats) can re-run the priority reflow without a resize.
         self._last_footer_width = 0
+        #: The opt-in footer pet, or ``None`` while the feature is off (the
+        #: default). See `_build_tamagotchi`.
+        self._tamagotchi: Widget | None = None
 
     def compose(self) -> ComposeResult:
         yield self._shortcut_display
@@ -186,6 +189,84 @@ class AppFooterStatus(Widget):
         yield self._word_count_display  # Word count display
         yield self._token_count_display  # Token count display
         yield self._db_status_display  # This is the existing DB size display
+        self._tamagotchi = self._build_tamagotchi()
+        if self._tamagotchi is not None:
+            yield self._tamagotchi
+
+    def _build_tamagotchi(self) -> Widget | None:
+        """Build the opt-in footer pet, or ``None`` when it is switched off.
+
+        ``[tamagotchi] enabled`` defaults to **false**: a pet that appeared in
+        someone's terminal unbidden would not be a neutral change, so nothing
+        is constructed, mounted, or ticked until it is turned on.
+
+        This is the integration the widget was written for -- "Status Bar
+        Integration" is example #1 in ``Docs/Development/Textual-Tamagotchis.md``
+        and ``CompactTamagotchi`` is documented as "optimized for status bars".
+
+        Every import stays inside the enabled branch, mirroring
+        ``UI/Navigation/persona_buddy_overlay.py``'s rule for Buddy: the
+        Tamagotchi package pulls in the private-SQLite and backup/recovery
+        stack, and EVERY screen composes one of these footers.
+        """
+        from ..config import get_cli_setting
+
+        if not get_cli_setting("tamagotchi", "enabled", False):
+            return None
+
+        from .Tamagotchi.base_tamagotchi import CompactTamagotchi
+
+        storage = None  # falls back to MemoryStorage inside the widget
+        try:
+            # ConfigFileStorage, specifically: `Widgets/Tamagotchi/recovery.py`
+            # registers ITS path (`~/.config/tldw_chatbook/tamagotchi_pets.json`
+            # plus that file's dated backups) as the `tamagotchi.config` backup
+            # owner. Any other adapter writes somewhere backup/recovery has no
+            # locator for, so the pet's state would not be captured.
+            from .Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+            storage = ConfigFileStorage()
+        except Exception as exc:
+            # Construction creates the config dir and seeds the file, so it can
+            # fail on a read-only home or while backup/recovery holds write
+            # admission closed. A pet is not worth taking a screen down for.
+            from loguru import logger
+
+            logger.warning(f"Footer tamagotchi falling back to memory state: {exc}")
+        from .Tamagotchi.validators import ValidationError
+
+        try:
+            return CompactTamagotchi(
+                name=get_cli_setting("tamagotchi", "name", "Bit"),
+                personality=get_cli_setting("tamagotchi", "personality", "balanced"),
+                storage=storage,
+                id="footer-tamagotchi",
+            )
+        except ValidationError as exc:
+            # The only config-driven failure: a hand-edited name or an unknown
+            # personality. Skip the pet, keep the footer.
+            from loguru import logger
+
+            logger.warning(f"Footer tamagotchi disabled, invalid settings: {exc}")
+            return None
+
+    def on_tamagotchi_death(self, event) -> None:
+        """Tell the user their pet died -- the one event they cannot miss."""
+        self.app.notify(
+            f"{event.pet_name} has died ({event.cause}) at "
+            f"{event.age:.1f}h. Set [tamagotchi] enabled = false to stop.",
+            title="Tamagotchi",
+            severity="error",
+            timeout=10,
+        )
+
+    def on_tamagotchi_stat_critical(self, event) -> None:
+        """Surface a stat crossing into the danger zone, once per crossing."""
+        self.app.notify(
+            f"{event.pet_name}: {event.stat_name} is {event.value:.0f}.",
+            title="Tamagotchi",
+            severity=event.severity,
+        )
 
     def on_resize(self, event: Resize) -> None:
         """Reprioritise the footer when its width changes (TASK-451).
@@ -229,6 +310,7 @@ class AppFooterStatus(Widget):
             + cell_len(str(self._word_count_display.renderable))
             + cell_len(str(self._token_count_display.renderable))
             + cell_len(stats_text)
+            + self._tamagotchi_cells()
             + _FOOTER_STATS_HEADROOM
         )
         self._db_status_display.display = bool(stats_text) and width >= needed
@@ -342,9 +424,24 @@ class AppFooterStatus(Widget):
     # ------------------------------------------------------------------
     # Responsive behavior
     # ------------------------------------------------------------------
+    def _tamagotchi_cells(self) -> int:
+        """Cells the opt-in footer pet occupies; 0 while it is switched off.
+
+        TASK-451's contract is that the right cluster yields so the left key
+        hints keep their columns. A pet whose cells nobody counted would take
+        them from the hints instead of from the stats, so it is measured here
+        and charged to the right cluster like everything else.
+        """
+        if self._tamagotchi is None:
+            return 0
+        try:
+            return cell_len(str(self._tamagotchi.render()))
+        except Exception:
+            return 0
+
     def _right_cluster_text_len(self) -> int:
         """Rendered width of the visible right-cluster displays."""
-        total = 0
+        total = self._tamagotchi_cells()
         for display in (
             self._word_count_display,
             self._token_count_display,
