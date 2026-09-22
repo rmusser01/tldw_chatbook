@@ -590,6 +590,38 @@ class TestStandaloneFunctions(BaseTestCase):
         # A more thorough test could unzip and verify content, but file creation is a good start.
         os.remove(file_path)
 
+    def test_export_prompts_formatted_markdown_disambiguates_colliding_names(self):
+        """Two prompt names that sanitise to the same filename ("a:b" and "a?b"
+        both -> "a_b.md") must BOTH survive the export -- the old code overwrote
+        the staging file and wrote duplicate zip entries, so extractors yielded
+        one prompt while the status still claimed both."""
+        import zipfile
+
+        file_db = self._get_file_db()
+        file_db.add_prompt(
+            name="a:b", author="A", details="", system_prompt="", user_prompt="",
+            keywords=[], overwrite=True,
+        )
+        file_db.add_prompt(
+            name="a?b", author="A", details="", system_prompt="", user_prompt="",
+            keywords=[], overwrite=True,
+        )
+
+        status, file_path = export_prompts_formatted(file_db, export_format="markdown")
+        self.assertIn("Successfully exported 2 prompts to Markdown", status)
+        try:
+            with zipfile.ZipFile(file_path) as zf:
+                names = zf.namelist()
+                self.assertEqual(len(names), 2, names)
+                self.assertEqual(len(set(names)), 2, f"duplicate arcnames: {names}")
+                bodies = "\n".join(zf.read(n).decode("utf-8") for n in names)
+            # Each prompt's own name is in its markdown body; both must be present
+            # (i.e. neither was overwritten by the other on the colliding name).
+            self.assertIn("a:b", bodies)
+            self.assertIn("a?b", bodies)
+        finally:
+            os.remove(file_path)
+
 
 class TestDatabaseIntegrityAndSchema(BaseTestCase):
     """

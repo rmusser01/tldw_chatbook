@@ -5003,10 +5003,8 @@ def export_prompts_formatted(
             status_msg = f"Successfully exported {len(prompts_data)} prompts to CSV."
 
         elif export_format == "markdown":
-            temp_zip_dir = tempfile.mkdtemp()
-            # TASK-32806.7: the staging dir above is already 0700; the zip
-            # itself went to a guessable world-readable temp name. mkstemp
-            # makes it unique and 0600 too.
+            # TASK-32806.7: the zip previously went to a guessable world-readable
+            # temp name; mkstemp makes it unique and 0600.
             _zip_fd, zip_file_path = tempfile.mkstemp(
                 prefix="prompts_export_markdown_", suffix=".zip"
             )
@@ -5048,6 +5046,7 @@ def export_prompts_formatted(
             )
 
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                used_arcnames: set[str] = set()
                 for p_data in prompts_data:
                     author_sec = (
                         f"**Author**: {p_data['author']}"
@@ -5091,13 +5090,23 @@ def export_prompts_formatted(
                         keywords_section=keywords_sec,
                     ).strip()  # Clean up extra newlines if sections are empty
 
-                    safe_filename = re.sub(r"[^\w\-_ \.]", "_", p_data["name"]) + ".md"
-                    md_file_path_in_zip_dir = os.path.join(temp_zip_dir, safe_filename)
-                    with open(
-                        md_file_path_in_zip_dir, "w", encoding="utf-8"
-                    ) as md_file:
-                        md_file.write(md_content)
-                    zipf.write(md_file_path_in_zip_dir, arcname=safe_filename)
+                    # Distinct prompts can sanitise to the same filename
+                    # ("a:b" and "a?b" both -> "a_b.md"), and duplicate names
+                    # collide outright; either way the old code overwrote the
+                    # staging file and wrote duplicate zip entries, so extractors
+                    # yielded fewer prompts than the "Successfully exported N"
+                    # status claimed. Disambiguate with the prompt id and write
+                    # straight into the archive (no leaking on-disk staging copy).
+                    base = re.sub(r"[^\w\-_ \.]", "_", p_data["name"]).strip() or "prompt"
+                    arcname = f"{base}.md"
+                    if arcname in used_arcnames:
+                        arcname = f"{base}-{p_data['id']}.md"
+                        suffix = 2
+                        while arcname in used_arcnames:
+                            arcname = f"{base}-{p_data['id']}-{suffix}.md"
+                            suffix += 1
+                    used_arcnames.add(arcname)
+                    zipf.writestr(arcname, md_content)
 
             output_file_path = zip_file_path
             status_msg = f"Successfully exported {len(prompts_data)} prompts to Markdown in a ZIP file."
