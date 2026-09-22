@@ -34,6 +34,20 @@ reported `Tests/TTS/` and `Tests/Subscriptions/`+`Tests/Utils/` each stalling wi
 **17 and 20 minutes**, which is consistent with a resolver that blackholes rather than refuses. That is why
 those directories could not be run whole, and why that stream had to fall back to diffing individual files.
 
+## A second, distinct stall mode — reported but NOT reproduced
+
+Separately from the DNS timeouts above, the agent implementing TASK-32892 reported a whole-suite sweep
+**wedging at 97% on a TTS lock test**, which it killed. That is a different failure mode from a DNS timeout
+(a deadlock does not resolve on its own), and if real it is the more serious of the two.
+
+**I could not reproduce it in a bounded run and am not asserting it.** An attempt to isolate it with
+`pytest Tests/TTS/ --timeout=20 --timeout-method=thread` exceeded a 600 s budget without printing a summary
+line, so the result is inconclusive — not evidence of a hang, and not evidence against one. Anyone picking
+this up should start by reproducing it rather than trusting this paragraph.
+
+Note `--timeout-method=thread` cannot interrupt a thread blocked on a lock; `--timeout-method=signal` can,
+and is the right instrument if a deadlock is suspected.
+
 ## Fix
 
 Stub the transport. The repo already has the idiom in several places (`httpx.MockTransport`, and
