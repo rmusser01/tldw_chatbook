@@ -1,0 +1,16 @@
+[
+  {
+    "source": "<tmp>/32913-gallery-check.txt",
+    "export": "32913-gallery-check.txt",
+    "source_sha256": "4b1c5b1df26f2f4444e9e0f60249fc658c76227891b6dcbe0495a79b7d92abcd",
+    "export_sha256": "4b1c5b1df26f2f4444e9e0f60249fc658c76227891b6dcbe0495a79b7d92abcd",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-rebase-visual-bounds.json",
+    "export": "32913-rebase-visual-bounds.json",
+    "source_sha256": "d9c8a56e3d8f2c278f44c74583d164fd1f042eaa8a34b2ee52225f0f1c7db707",
+    "export_sha256": "d9c8a56e3d8f2c278f44c74583d164fd1f042eaa8a34b2ee52225f0f1c7db707",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

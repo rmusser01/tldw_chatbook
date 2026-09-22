@@ -1,0 +1,23 @@
+[
+  {
+    "source": "<tmp>/32913-dev-integration-tests.txt",
+    "export": "32913-dev-integration-tests.txt",
+    "source_sha256": "b2d2c7b1f11cfca5ed555c3a14aa396fbfed09309fb20e878f7e3fb74ff8366f",
+    "export_sha256": "208c8c9bb7243908cfb1591f2f23e99378b0e3cfd8762450f5b98828ff87c9d0",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-dev-integration-preflight.txt",
+    "export": "32913-dev-integration-preflight.txt",
+    "source_sha256": "6273a7106d57cc64ae5bc0e59c325cdfaa4420a54bda3ce6cbc5bc397201f90a",
+    "export_sha256": "047de69fe6f401c8e8a595c42428c25e1c0ca03fe4b60785fe668ceee2ce6c13",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-rebase-visual-comparison.json",
+    "export": "32913-rebase-visual-comparison.json",
+    "source_sha256": "135790cb88771c5f62a15f4999ef076fdd282ea43e29082f65744dd895734f49",
+    "export_sha256": "135790cb88771c5f62a15f4999ef076fdd282ea43e29082f65744dd895734f49",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

@@ -1,0 +1,169 @@
+{
+  "base": "9e33252708",
+  "captures": [
+    {
+      "capture": "textual-dark-170x48-corrected-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-dark-170x48-invalid.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-dark-170x48-previous-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-dark-170x48-reopened.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-dark-80x24-corrected-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-dark-80x24-invalid.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-dark-80x24-previous-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-dark-80x24-reopened.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-light-170x48-corrected-raw.png",
+      "pixels_equal": false,
+      "changed_pixel_bounds": [
+        5,
+        24,
+        1195,
+        53
+      ],
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-light-170x48-invalid.png",
+      "pixels_equal": false,
+      "changed_pixel_bounds": [
+        5,
+        24,
+        1195,
+        53
+      ],
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-light-170x48-previous-raw.png",
+      "pixels_equal": false,
+      "changed_pixel_bounds": [
+        5,
+        24,
+        1195,
+        53
+      ],
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-light-170x48-reopened.png",
+      "pixels_equal": false,
+      "changed_pixel_bounds": [
+        5,
+        24,
+        1195,
+        53
+      ],
+      "image_size": [
+        1200,
+        700
+      ]
+    },
+    {
+      "capture": "textual-light-80x24-corrected-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-light-80x24-invalid.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-light-80x24-previous-raw.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    },
+    {
+      "capture": "textual-light-80x24-reopened.png",
+      "pixels_equal": true,
+      "changed_pixel_bounds": null,
+      "image_size": [
+        1198,
+        766
+      ]
+    }
+  ]
+}

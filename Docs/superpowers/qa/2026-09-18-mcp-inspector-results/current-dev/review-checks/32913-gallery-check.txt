@@ -1,0 +1,1 @@
+Gallery: all 12 image states, captions, event handlers and saved selection verified; no browser inspection claimed.
