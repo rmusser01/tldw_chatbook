@@ -564,14 +564,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "exact discovery of existing reusable Higgs voice source; baseline ownership is unchanged",
     ),
     ExceptionRule(
-        "tldw_chatbook/TTS/utils/download_models.py",
-        "function:__init__",
-        "join:.config/tldw_cli",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "shared downloadable TTS model artifact root",
-    ),
-    ExceptionRule(
         "tldw_chatbook/UI/Screens/settings_speech_tts.py",
         "module:_PROVIDER_NON_SECRET_DEFAULTS",
         "literal:~/.config/tldw_cli/chatterbox_voices",

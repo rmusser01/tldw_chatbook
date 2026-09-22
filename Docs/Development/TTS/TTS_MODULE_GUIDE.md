@@ -74,11 +74,6 @@ tldw_chatbook/TTS/
 │   ├── chatterbox.py       # Chatterbox TTS (voice cloning)
 │   ├── higgs.py            # Higgs Audio V2 (advanced voice cloning)
 │   └── higgs_voice_manager.py # Voice profile management for Higgs
-└── utils/                   # Utility modules
-    ├── __init__.py
-    ├── download_models.py   # Model download utilities
-    ├── voice_utils.py       # Voice mixing utilities
-    └── performance.py       # Performance tracking
 ```
 
 ### Core Components
@@ -1041,11 +1036,11 @@ Local TTS installs:
    - Model: `kokoro-v0_19.onnx` (~300MB)
    - Voices: `voices.json`
 
-2. Place them in your configured paths or use the download utility:
-   ```python
-   from tldw_chatbook.TTS.utils.download_models import download_kokoro_model
-   await download_kokoro_model()
-   ```
+2. Point the Kokoro model/voices path settings at them (Settings ▸ Speech ▸
+   TTS, or `KOKORO_ONNX_MODEL_PATH_DEFAULT` /
+   `KOKORO_ONNX_VOICES_JSON_DEFAULT` in config.toml). There is no in-app
+   downloader: the never-wired `TTS/utils/download_models.py` was deleted
+   in TASK-32899.
 
 ## Usage
 
