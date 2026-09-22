@@ -1,6 +1,6 @@
 ---
 id: TASK-32906
-title: The test suite pins at least seven defects in place
+title: The test suite pins at least eight defects in place, and is still adding them
 status: To Do
 assignee: []
 created_date: '2026-09-21 23:55'
@@ -22,7 +22,7 @@ code gets a red test and, reasonably, assumes they broke something.
 This is why the defects survived contact with a green CI for as long as they did, and it is the single
 highest-leverage thing in the whole review: every other stream is slower while these tests stand.
 
-## The seven
+## The eight
 
 Two were found by *fixing* the code and watching the wrong test go red:
 
@@ -49,6 +49,35 @@ Five more were recorded by the review's per-finding `Pinning test` field and are
 7. **`test_slot_string_is_canonical_utc_iso`** (`Tests/Scheduling/test_schedule_compute.py:58`) -- asserts a
    canonical UTC ISO shape that does not match ADR-173's mandated `Z` form. Needs reconciling with the
    repaired `check_timestamp_writers.py`.
+
+## 8. The pattern is not historical -- it is still being created
+
+Found after this task was filed, and it changes the urgency.
+
+**`Tests/TTS/test_chatterbox_voice_profile_crud.py:80 test_no_backup_directory_unless_enabled`**
+```python
+def test_no_backup_directory_unless_enabled(manager, sample):
+    manager.create_profile("voice", str(sample))
+    manager.create_profile("voice2", str(sample))
+    assert not (manager.voice_samples_dir / "backups").exists()
+```
+It asserts that `ChatterboxVoiceManager` writes **no pre-write backup** -- which is precisely the data-loss
+defect TASK-32893 found (its Higgs sibling has had that backup all along; Chatterbox overwrites a profile
+store it merely failed to read).
+
+It was introduced by **`51abc0dc9a` "refactor(tts): HiggsVoiceProfileManager adopts VoiceManagerBase
+(TASK-32863)"**, which merged to `dev` on 2026-09-21 -- *during* this review. A consolidation refactor
+brought two implementations under one base and wrote a test asserting the **weaker** of the two behaviours
+was correct.
+
+**Be fair about the nuance**: the name says "unless enabled", so read charitably it pins a *configuration*
+contract -- no backups unless a flag turns them on -- which is defensible. The defect is that Chatterbox had
+no way to turn them on, so the "unless" clause described nothing. It has been inverted (kept, renamed,
+documented) in TASK-32893's merge, with `keep_backups = True` on the class.
+
+The consequence for this task is that items 1-7 are not a backlog of old mistakes to clear. The mechanism is
+live, and a rule that only fixes the existing eight will be overtaken. That is the argument for AC#2 -- the
+written rule -- mattering more than the individual inversions.
 
 ## The generalisable rule
 
@@ -78,7 +107,7 @@ TASK-32893; items 3-7 from the review's per-finding `Pinning test` fields in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the seven is inverted, re-grounded, or recorded as deliberate with a reason
+- [ ] #1 Each of the eight is inverted, re-grounded, or recorded as deliberate with a reason
 - [ ] #2 A written rule exists where contributors will meet it, covering the three mechanisms
 - [ ] #3 Any check added is honest about what it can and cannot detect, with a negative control
 - [ ] #4 No check is added for a mechanism it cannot actually decide
