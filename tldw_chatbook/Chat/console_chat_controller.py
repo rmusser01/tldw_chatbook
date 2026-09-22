@@ -598,6 +598,14 @@ class ConsoleSelectionCore:
     the llama.cpp base-url chain) was written twice -- here and as the
     screen's superset copy -- and the PR-2668 fix had to be applied in
     both. This is now the only copy.
+
+    Args:
+        provider: Resolved provider identity; PR-2668 keeps it a gateway
+            slug (dashed), never the underscore config-table key.
+        explicit_model: Model named for this one request, if any.
+        configured_model: Model persisted in console session settings, if any.
+        base_url: Resolved endpoint override; for llama.cpp this is the
+            server base-url chain, otherwise None.
     """
 
     provider: str
@@ -612,7 +620,20 @@ def resolve_console_selection_core(
     app_config: Mapping[str, Any],
     legacy_model: Any = None,
 ) -> ConsoleSelectionCore:
-    """Resolve the provider-selection core once, for every caller."""
+    """Resolve the provider-selection core once, for every caller.
+
+    Args:
+        settings: Console session settings owning the configured model and
+            provider/api_model/default_model chain.
+        app_config: Raw application config mapping used for provider-section
+            and base-url fallbacks.
+        legacy_model: Optional pre-settings model override from legacy
+            callers.
+
+    Returns:
+        The frozen selection core consumed by every selection builder
+        (controller and screen alike).
+    """
 
     def section(value: Any, key: str) -> Mapping[str, Any]:
         child = value.get(key, {}) if isinstance(value, Mapping) else {}
