@@ -17,8 +17,10 @@
     "source": "<tmp>/2722-native-lifecycle.py",
     "export": "2722-native-lifecycle.py",
     "source_sha256": "54789fa871edea9f35394ea2b2fcb59f681a4bb595c07d85190692a856fbb0de",
-    "export_sha256": "511a910d7e65873429b3230d4c631028098492277fb6a9bb9e3b708cf5339ca7",
-    "normalization": "host paths and trailing whitespace"
+    "export_sha256": "0263c4c3503b04b0eef5d5b790b21549406ae4e4a2ba4876206f5be66d7f4178",
+    "normalization": "host paths and trailing whitespace",
+    "initial_export_sha256": "511a910d7e65873429b3230d4c631028098492277fb6a9bb9e3b708cf5339ca7",
+    "review_followup": "Google-style helper docstrings and import/format cleanup; probe also replaces environment delay with fixed 35ms. Original raw source hash and initial export hash retained; see PR2722 review follow-up. Explicit check=False preserves subprocess default while making nonzero ps evidence intentional."
   },
   {
     "source": "<tmp>/2722-capture-comparison.json",
@@ -31,7 +33,9 @@
     "source": "<tmp>/2722-compare-captures.py",
     "export": "2722-compare-captures.py",
     "source_sha256": "be2248a1df6d837fe19a8b97132a6fe92f8a276baea4067e7de735cde13fd8c6",
-    "export_sha256": "66ddffacba6afd5205bdca5e4bcc3d203239ca6fcd146ad03c787ca611211098",
-    "normalization": "host paths and trailing whitespace"
+    "export_sha256": "0cdc9d2ee0d9c6f2dc767e12e53530393b11555aa590dc9233c01167f13e7189",
+    "normalization": "host paths and trailing whitespace",
+    "initial_export_sha256": "66ddffacba6afd5205bdca5e4bcc3d203239ca6fcd146ad03c787ca611211098",
+    "review_followup": "Google-style helper docstrings and import/format cleanup; probe also replaces environment delay with fixed 35ms. Original raw source hash and initial export hash retained; see PR2722 review follow-up."
   }
 ]

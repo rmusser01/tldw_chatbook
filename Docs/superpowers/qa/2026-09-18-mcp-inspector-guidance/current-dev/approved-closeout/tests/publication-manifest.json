@@ -66,8 +66,10 @@
     "source": "<tmp>/2722_click_probe.py",
     "export": "2722_click_probe.py",
     "source_sha256": "5ddb1c34f634b1c44dbcb4a6021270f3af926250ec74563cfa9107b9f5eeb352",
-    "export_sha256": "2c1255b1bc9886fbb4d7fe71acdf62233cfbd743749b89af1ed0f7998cb04b61",
-    "normalization": "host paths and trailing whitespace"
+    "export_sha256": "daab8d604b51da031f7677260af6cabc656c0772f57136f5c6ff218027e9574c",
+    "normalization": "host paths and trailing whitespace",
+    "initial_export_sha256": "2c1255b1bc9886fbb4d7fe71acdf62233cfbd743749b89af1ed0f7998cb04b61",
+    "review_followup": "Google-style helper docstrings and import/format cleanup; probe also replaces environment delay with fixed 35ms. Original raw source hash and initial export hash retained; see PR2722 review follow-up."
   },
   {
     "source": "<tmp>/2722-click-probe.jsonl",

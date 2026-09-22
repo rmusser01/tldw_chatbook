@@ -21,6 +21,14 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 
 
 def guidance(inspector):
+    """Return the mounted server guidance widgets in display order.
+
+    Args:
+        inspector: Mounted inspector with state, message and action containers.
+
+    Returns:
+        The readiness badge, explanation and actions widgets.
+    """
     return [
         inspector.query_one(f"#mcp-inspector-{name}")
         for name in ("state", "message", "actions")
@@ -28,6 +36,15 @@ def guidance(inspector):
 
 
 def assert_hidden(app, inspector):
+    """Check that server guidance is neither painted nor keyboard reachable.
+
+    Args:
+        app: Running app whose current screen owns the inspector.
+        inspector: Mounted inspector after pending layout work has settled.
+
+    Raises:
+        AssertionError: Guidance is displayed, painted or in the focus chain.
+    """
     for widget in guidance(inspector):
         assert not widget.display, widget.id
         assert widget not in app.screen._compositor.visible_widgets, widget.id
@@ -37,6 +54,12 @@ def assert_hidden(app, inspector):
 
 
 async def show_detail(inspector, kind):
+    """Await rendering one fixture detail in the mounted inspector.
+
+    Args:
+        inspector: Inspector receiving the fixture detail.
+        kind: One of tool, permission, audit or finding from the test matrix.
+    """
     if kind == "tool":
         await inspector.show_tool(_tool())
     elif kind == "permission":
@@ -50,6 +73,12 @@ async def show_detail(inspector, kind):
 
 
 async def clear_detail(inspector, kind):
+    """Await clearing the specified detail through its existing display owner.
+
+    Args:
+        inspector: Inspector containing the fixture detail.
+        kind: One of tool, permission, audit or finding from the test matrix.
+    """
     if kind in ("tool", "permission"):
         await inspector.show_tool(None)
     elif kind == "audit":
