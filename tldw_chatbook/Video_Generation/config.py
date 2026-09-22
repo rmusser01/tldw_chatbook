@@ -330,18 +330,6 @@ def _coerce_float(value: Any, default: float) -> float:
         return default
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "off"}:
-            return False
-    return default
-
-
 def _coerce_choice(
     value: Any,
     *,
@@ -385,6 +373,14 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
     if _config_cache is not None and not reload:
         return _config_cache
 
+    # TASK-32808.4's one flag vocabulary. The local copy this replaced matched
+    # `isinstance(value, str)` only, so a TOML integer (`allow_uploads = 1`)
+    # fell through to the default -- the user set an outbound-upload gate and
+    # nothing happened. `Image_Generation/config.py` adopted the shared helper;
+    # this sibling, into which four of its private helpers are duplicated
+    # verbatim, was not swept. Lazy import matches that sibling (ADR-097).
+    from tldw_chatbook.Utils.Utils import coerce_bool_flag
+
     section, key_sources = _load_video_generation_section()
 
     config = VideoGenerationConfig(
@@ -404,7 +400,7 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
         ),
         retention_ttl_hours=max(1, _coerce_int(section.get("retention_ttl_hours"), DEFAULT_RETENTION_TTL_HOURS)),
         max_store_mb=max(1, _coerce_int(section.get("max_store_mb"), DEFAULT_MAX_STORE_MB)),
-        confirm_cost_estimate=_coerce_bool(section.get("confirm_cost_estimate"), DEFAULT_CONFIRM_COST_ESTIMATE),
+        confirm_cost_estimate=coerce_bool_flag(section.get("confirm_cost_estimate"), DEFAULT_CONFIRM_COST_ESTIMATE),
         minimax_video_base_url=_get_config_value(section, "minimax_video_base_url")
         or DEFAULT_MINIMAX_VIDEO_BASE_URL,
         minimax_video_api_key=_get_config_value(section, "minimax_video_api_key"),
@@ -421,7 +417,7 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
             section.get("minimax_video_timeout_seconds"),
             DEFAULT_MINIMAX_VIDEO_TIMEOUT_SECONDS,
         ),
-        minimax_video_allow_uploads=_coerce_bool(section.get("minimax_video_allow_uploads"), False),
+        minimax_video_allow_uploads=coerce_bool_flag(section.get("minimax_video_allow_uploads"), False),
         minimax_video_allowed_extra_params=_parse_list(section.get("minimax_video_allowed_extra_params")),
         comfyui_base_url=_get_config_value(section, "comfyui_base_url") or DEFAULT_COMFYUI_BASE_URL,
         comfyui_default_model=_get_config_value(section, "comfyui_default_model"),

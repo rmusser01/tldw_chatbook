@@ -720,6 +720,15 @@ class VideoStore:
                 else:
                     shutil.copyfileobj(source, staged)
                 staged.flush()
+                # `flush()` reaches the page cache only. This store's model is
+                # "the file IS the artefact", so a crash between the rename
+                # below and writeback leaves a published video of zero or
+                # partial length. Declining `Utils/atomic_file_ops` here is
+                # deliberate (this site needs the root lease, the expected_size
+                # re-check and the publication gate) -- the fsync went with it.
+                # ponytail: file fsync only; a missing parent-directory fsync
+                # costs at most the newest publish, not the bytes.
+                os.fsync(staged.fileno())
                 actual_size = os.fstat(staged.fileno()).st_size
                 if actual_size != expected_size:
                     raise VideoStoreSaveError("managed video source size changed")

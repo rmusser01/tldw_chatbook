@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
@@ -3132,3 +3133,64 @@ def test_save_reading_item_restores_trashed_match(tmp_path):
     cursor = db.execute_query("SELECT COUNT(*) FROM Media")
     assert cursor.fetchone()[0] == 1
     db.close_connection()
+
+
+class _BareConnectionDB:
+    """Only the two seams `_purge_expired_reading_digest_outputs` touches.
+
+    Deliberately not a real `MediaDatabase`: the recovery-profile gate blocks
+    constructing one in a clean worktree, and the purge's defect is pure SQL
+    shape, so a bare connection pins it without the gate.
+    """
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def get_connection(self):
+        return self._connection
+
+    @contextmanager
+    def transaction(self):
+        try:
+            yield self._connection
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+
+
+def test_digest_retention_purge_survives_more_rows_than_sqlite_variables():
+    """Retention must not wedge once one schedule outgrows the variable limit.
+
+    The purge built a single `DELETE ... WHERE id IN (...)` from every expired
+    id. Past `SQLITE_MAX_VARIABLE_NUMBER` that raises `OperationalError`, and
+    because nothing is then deleted the next run hits the same wall: the
+    schedule is permanently wedged and its output table never shrinks again.
+    """
+    from datetime import datetime, timezone
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute(
+        "CREATE TABLE local_reading_digest_outputs ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id TEXT NOT NULL,"
+        " created_at TEXT NOT NULL)"
+    )
+    over_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) + 10
+    connection.executemany(
+        "INSERT INTO local_reading_digest_outputs (schedule_id, created_at)"
+        " VALUES (?, ?)",
+        [("sched-1", "2020-01-01T00:00:00+00:00") for _ in range(over_limit)],
+    )
+    connection.commit()
+    service = LocalMediaReadingService(_BareConnectionDB(connection))
+
+    service._purge_expired_reading_digest_outputs(
+        {"id": "sched-1", "retention_days": 1},
+        run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    remaining = connection.execute(
+        "SELECT COUNT(*) FROM local_reading_digest_outputs"
+    ).fetchone()[0]
+    assert remaining == 0

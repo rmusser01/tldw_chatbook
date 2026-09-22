@@ -131,6 +131,20 @@ def test_allow_uploads_defaults_off_and_parses(monkeypatch):
     assert cfg2.minimax_video_allow_uploads is True
 
 
+def test_allow_uploads_accepts_a_toml_integer(monkeypatch):
+    """`allow_uploads = 1` must set the gate, as it does for image generation.
+
+    The local `_coerce_bool` this module used matched strings only, so a TOML
+    integer silently fell through to the default -- the user set an
+    outbound-upload gate and nothing happened. The shared
+    `Utils.Utils.coerce_bool_flag` accepts `(str, int)`.
+    """
+    cfg = _load_config_with_section(monkeypatch, {"minimax": {"allow_uploads": 1}})
+    assert cfg.minimax_video_allow_uploads is True
+    off = _load_config_with_section(monkeypatch, {"minimax": {"allow_uploads": 0}})
+    assert off.minimax_video_allow_uploads is False
+
+
 def test_retention_choice_and_clamps(monkeypatch):
     from tldw_chatbook.Video_Generation import config as c
     cfg = _load_config_with_section(monkeypatch, {"retention": "bogus", "max_store_mb": 0})
