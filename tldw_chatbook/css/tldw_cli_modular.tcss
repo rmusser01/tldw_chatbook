@@ -3449,6 +3449,22 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+#mcp-inspector-test-result-raw > CollapsibleTitle {
+    width: $ds-width-full;
+    height: auto;
+    min-width: $ds-size-0;
+}
+
+#mcp-inspector-test-result-raw > Contents {
+    padding: $ds-space-0;
+}
+
+
+.mcp-compact #mcp-inspector-test-result-raw-scroll {
+    height: $ds-size-8;
+}
+
+
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
     width: $ds-fr-2;
     min-width: $ds-size-16;

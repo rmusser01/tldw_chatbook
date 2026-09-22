@@ -1,0 +1,30 @@
+{
+  "base": "ed2a57906269c453d1bbf823dbb2e011b9fc5faf",
+  "files": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": {
+      "baseline": 13,
+      "current": 13,
+      "introduced": []
+    },
+    "Tests/UI/test_mcp_inspector.py": {
+      "baseline": 9,
+      "current": 9,
+      "introduced": []
+    },
+    "Tests/UI/test_mcp_inspector_results.py": {
+      "baseline": 0,
+      "current": 0,
+      "introduced": []
+    },
+    "Tests/Utils/test_mcp_native_qa_args.py": {
+      "baseline": 0,
+      "current": 0,
+      "introduced": []
+    },
+    "Docs/superpowers/qa/2026-09-18-mcp-inspector-results/current-dev/native_check.py": {
+      "baseline": 0,
+      "current": 0,
+      "introduced": []
+    }
+  }
+}

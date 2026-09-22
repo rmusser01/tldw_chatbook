@@ -38,6 +38,11 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import PermissionProfileContext
 
 
+# Like the Workbench harness, inspector cases retain the collection-time config
+# source so recovery admission survives the UI autouse fixture importing app.py.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @private_profile_test
 def test_profile_scoped_inspector_requests_preserve_captured_context(request):
     context = PermissionProfileContext("research", 7, "b" * 64, 3)

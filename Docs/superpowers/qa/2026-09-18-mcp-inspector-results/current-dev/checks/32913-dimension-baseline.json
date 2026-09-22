@@ -1,0 +1,27 @@
+{
+  "base": "ed2a57906269c453d1bbf823dbb2e011b9fc5faf",
+  "sheets": {
+    "components/_agentic_terminal.tcss": {
+      "matches": [
+        "width: 1"
+      ],
+      "unchanged_from_base": true
+    },
+    "features/_workflows.tcss": {
+      "matches": [
+        "height: 45",
+        "height: 8",
+        "height: 1",
+        "height: 1",
+        "height: 1",
+        "height: 6",
+        "width: 90",
+        "width: 100",
+        "height: 90",
+        "height: 1",
+        "height: 6"
+      ],
+      "unchanged_from_base": true
+    }
+  }
+}
