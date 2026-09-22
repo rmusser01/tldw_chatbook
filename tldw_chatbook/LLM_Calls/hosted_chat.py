@@ -793,18 +793,17 @@ class ProviderPayloadValidators:
         return normalized
 
     def positive_integer(self, name: str, value: object) -> int:
-        """Coerce a positive integer setting.
+        """Coerce a positive integer payload value.
 
         Args:
-            settings: Provider settings mapping.
-            name: Setting key.
-            default: Value used when the key is absent.
+            name: Setting name, for the error message.
+            value: The candidate integer.
 
         Returns:
             The validated integer.
 
         Raises:
-            ChatConfigurationError: On a zero, negative, or non-integer value.
+            ChatBadRequestError: On a zero, negative, or non-integer value.
         """
         if type(value) is not int or value <= 0:
             raise self.bad_request(f"{self._label} {name} is invalid.")

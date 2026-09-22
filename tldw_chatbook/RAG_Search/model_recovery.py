@@ -32,7 +32,6 @@ from tldw_chatbook.Backup_Recovery.activation import (
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-
 from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
 from .activation import RAGActivationRequired
 

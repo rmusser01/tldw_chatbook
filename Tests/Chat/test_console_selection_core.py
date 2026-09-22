@@ -7,6 +7,8 @@ the (partially pre-existing-red) console suites.
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleSelectionCore,
     resolve_console_selection_core,
@@ -20,8 +22,12 @@ def _settings(**overrides):
 
 
 def test_core_shape_is_frozen() -> None:
+    import dataclasses
+
     core = resolve_console_selection_core(_settings(), app_config={})
     assert isinstance(core, ConsoleSelectionCore)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        core.provider = "anthropic"
     assert core.provider == "openai"
     assert core.explicit_model is None
     assert core.configured_model is None
