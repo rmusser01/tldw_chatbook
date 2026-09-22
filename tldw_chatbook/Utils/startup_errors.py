@@ -41,6 +41,51 @@ _DATA_ROOT_REASONS = frozenset({"ambiguous_default_data_roots"})
 _emitted = False
 
 
+#: Refusal reasons a single `chmod` can mechanically repair.
+_CHMOD_REPAIR_REASONS = frozenset(
+    {
+        "shared_writable_parent",
+        "missing_leaf_in_shared_sticky_parent",
+        "shared_sticky_directory_not_allowed",
+    }
+)
+
+#: Refusal reasons a single ownership change can mechanically repair.
+_OWNERSHIP_REPAIR_REASONS = frozenset(
+    {
+        "untrusted_directory_owner",
+        "application_directory_wrong_owner",
+        "sticky_child_wrong_owner",
+        "wrong_owner",
+    }
+)
+
+
+def private_path_repair_hint(exc: PrivatePathError) -> str | None:
+    """One-line, shell-safe repair command for a refusal, when one exists.
+
+    Args:
+        exc: The refusal to hint a repair for.
+
+    Returns:
+        A single copy-pasteable shell command whose operands are safely
+        quoted, or ``None`` when the refusal reason has no mechanical
+        single-command repair (the refusal text itself carries the detail).
+        The command is only emitted for reasons it can actually fix; a
+        chmod suggestion for an ownership refusal would not repair it.
+    """
+
+    result = exc.result
+    if result.offender_path is None:
+        return None
+    if result.reason in _CHMOD_REPAIR_REASONS:
+        return shlex.join(["chmod", "g-w,o-w", "--", str(result.offender_path)])
+    if result.reason in _OWNERSHIP_REPAIR_REASONS:
+        # "$USER" must stay unquoted so the shell expands it; the path does not.
+        return f'sudo chown "$USER" -- {_shell_path(result.offender_path)}'
+    return None
+
+
 def _shell_path(path: Path | str) -> str:
     """Quote a filesystem path for safe copy-paste into a POSIX shell.
 
@@ -250,6 +295,7 @@ def reset_emit_guard_for_tests() -> None:
 
 __all__: Sequence[str] = (
     "emit_private_path_startup_error",
+    "private_path_repair_hint",
     "format_private_path_error",
     "reset_emit_guard_for_tests",
 )

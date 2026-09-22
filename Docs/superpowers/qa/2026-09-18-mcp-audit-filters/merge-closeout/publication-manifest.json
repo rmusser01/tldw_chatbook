@@ -1,0 +1,30 @@
+[
+  {
+    "source": "<tmp>/2721-closeout-receipt.json",
+    "export": "2721-closeout-receipt.json",
+    "source_sha256": "a8be03b85a61b416e086bf7927dd417de65e11aa7c107e89694fae610e7f8235",
+    "export_sha256": "a8be03b85a61b416e086bf7927dd417de65e11aa7c107e89694fae610e7f8235",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-ci-summary.txt",
+    "export": "2721-ci-summary.txt",
+    "source_sha256": "e7968a31c4a1a7f0d4ad1f1c17020a84737ce45979f0bfbbaf662d3ecf4d0923",
+    "export_sha256": "e7968a31c4a1a7f0d4ad1f1c17020a84737ce45979f0bfbbaf662d3ecf4d0923",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-baseline-review.txt",
+    "export": "2721-baseline-review.txt",
+    "source_sha256": "b29725493ad547cdca7869779bb96cc7bea5a47cfa2cdcc7216a8c95fd467e48",
+    "export_sha256": "b29725493ad547cdca7869779bb96cc7bea5a47cfa2cdcc7216a8c95fd467e48",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-merge-threads.json",
+    "export": "2721-merge-threads.json",
+    "source_sha256": "d8748a55079aaca5593f73634864202f3cd306f5a68a865060526f15b508b7f4",
+    "export_sha256": "665e5247013f876893d46420a8cfb81def69d6d04f43c0b0eb112b0015cc6f2a",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

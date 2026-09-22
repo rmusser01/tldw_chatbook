@@ -1,0 +1,23 @@
+[
+  {
+    "source": "<tmp>/tldw-32836-current-001/lifecycle.json",
+    "export": "lifecycle.json",
+    "source_sha256": "f696d4dffbfbf3940a0a175173721bd67bc5ad15eb6247a155f5f48bb17d2e7f",
+    "export_sha256": "597c233d7bb4fdac4a629cf11a897fd3f7a23cdcfb0b51db25188fa0ffddada3",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-current-001/launch.json",
+    "export": "launch.json",
+    "source_sha256": "1bad0e883abb58563b42a224c386bf52f16cb9b3f3471e9e92b062849a198791",
+    "export_sha256": "46c17edf47b1c9a04ea27a61361d1493a98023e35cbf7d394345b0737dddbdd7",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-current-001/launch-command.txt",
+    "export": "launch-command.txt",
+    "source_sha256": "f15d95a73b512035ec78fe20bc8efd0c7a9eb7ff68335547fe7c014545077a36",
+    "export_sha256": "5ba0fee7247a1091c56e13300f7dd7497afadf6cf7f84e346f45816c28da7db8",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

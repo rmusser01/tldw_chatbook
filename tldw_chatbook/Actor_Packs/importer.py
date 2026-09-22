@@ -219,8 +219,8 @@ class ActorPackImportService:
             raise ActorPackImportError("actor_pack_import_invalid")
         self.repository = repository
         self._local_service = local_service
-        self._staging_root = _absolute_path(staging_root)
-        self._profile_root = _absolute_path(profile_root)
+        self._staging_root = _absolute_path(staging_root, allow_hidden=True)
+        self._profile_root = _absolute_path(profile_root, allow_hidden=True)
         # task-22216: construction is pure — it records paths only. The
         # crash-recovery staging sweep used to run here, which put a
         # per-component privacy walk + scandir on ``TldwCli.__init__``
@@ -772,7 +772,18 @@ class ActorPackImportService:
         return candidate
 
 
-def _absolute_path(value: os.PathLike[str] | str) -> Path:
+def _absolute_path(
+    value: os.PathLike[str] | str, *, allow_hidden: bool = False
+) -> Path:
+    """Validate and normalize a service path without following symlinks.
+
+    ``allow_hidden`` is for the two app-owned service roots (staging_root,
+    profile_root) only: the ADR-127 fallback data root is a dotted directory
+    (``~/.tldw_cli-data``), which the hidden-base anti-bypass rule otherwise
+    rejects (task-32901). User-supplied archive paths keep the strict
+    hidden-path rejection.
+    """
+
     raw = os.fspath(value)
     if type(raw) is not str or not raw or "\x00" in raw:
         raise ActorPackImportError("actor_pack_import_invalid")
@@ -780,7 +791,9 @@ def _absolute_path(value: os.PathLike[str] | str) -> Path:
     if not path.is_absolute() or str(path) != raw:
         raise ActorPackImportError("actor_pack_import_invalid")
     try:
-        return validate_path(path, path.parent, redact_paths=True)
+        return validate_path(
+            path, path.parent, redact_paths=True, allow_hidden=allow_hidden
+        )
     except ValueError:
         raise ActorPackImportError("actor_pack_import_invalid") from None
 

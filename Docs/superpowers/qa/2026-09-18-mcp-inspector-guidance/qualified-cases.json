@@ -1,0 +1,253 @@
+{
+  "distinct_cases": 62,
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[audit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[finding]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_guidance_returns_only_after_last_detail_clears",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size0-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size0-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size1-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size1-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_readiness_block_shows_state_message_and_action_buttons",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_readiness_badge_carries_and_swaps_state_css_class",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_readiness_message_leads_with_humanized_reason_not_raw_code",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_readiness_message_ready_state_shows_tool_count_not_raw_message",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_readiness_message_ready_state_without_tool_count_omits_count",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_wired_action_posts_hub_action_requested",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_second_update_readiness_does_not_duplicate_action_ids",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_concurrent_refreshes_serialize_and_last_writer_wins",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_finding_action_button_posts_hub_action_requested_with_given_server_key",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_hidden_when_tool_shown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_returns_when_detail_cleared",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_update_readiness_does_not_resurrect_badge_over_displayed_tool",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_hidden_when_permission_row_shown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_hidden_when_audit_entry_shown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_hidden_when_finding_shown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_empty_state_badge_stays_hidden_while_any_detail_remains",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_update_readiness_does_not_resurrect_badge_over_other_detail_views",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_rail_selection_drives_detail_and_view_state",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_in_flight_shows_checking_and_cancel_then_completes",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_cancel_requested_cancels_worker",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tool_row_selection_shows_tool_detail_with_test_button",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_switching_mode_clears_tool_detail",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tools_mode_selection_shows_permission_block_via_gate_tool_test",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_tool_row_selection_shows_permission_block",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_finding_selection_shows_read_only_detail_with_remediation_in_inspector",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_both_sub_view_selections_do_not_stack_visible_detail_panels",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_classes_defined_only_in_owning_sheet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_owning_sheets_are_bundled",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_deprecated_names_ratchet_down",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_catalog_and_gallery_sync",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_no_new_local_ds_fallbacks",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_literal_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_python_style_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_sheet_size_ceiling",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_ratchet_regexes_match_pin_script",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_ignores_tokens_and_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_active_css_extension_is_in_dimension_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_pin_rejects_active_css_extension_without_writing_baseline",
+      "status": "passed"
+    }
+  ]
+}
