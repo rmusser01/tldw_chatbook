@@ -1,7 +1,7 @@
 """Read-only capacity checks, summed independently on each actual volume."""
 
 import shutil
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
@@ -21,6 +21,49 @@ def _volume(path: Path) -> tuple[int, Path]:
         return os.fstat(descriptor).st_dev, selected
 
 
+def _require(path: Path, required: int) -> None:
+    if (
+        not isinstance(path, Path)
+        or not path.is_absolute()
+        or type(required) is not int
+        or required < 0
+    ):
+        raise ValueError("invalid_capacity_requirement")
+
+
+def held_capacity(path: Path) -> Callable[[int], None]:
+    """Resolve one destination's volume once, for a loop that re-checks per chunk.
+
+    ``require_capacity`` calls ``_volume``, which enters ``pinned_directory``
+    and opens EVERY path component from ``/`` with
+    ``O_RDONLY|O_DIRECTORY|O_NOFOLLOW`` plus an ``fstat`` on each, before the
+    ``shutil.disk_usage`` it exists to guard -- measured at 51-89x that call's
+    cost. The chunked copy paths called it once per 64 KiB, so a 1 GiB payload
+    paid ~1.3 s in path walking alone and a 20 GiB restore ~27 s, on the
+    wall-clock path the user watches. A destination held open for writing
+    cannot change volume mid-copy, so resolve once here and keep only the
+    free-space read in the loop: same margin, same errors, same per-chunk
+    cadence, so a volume that fills mid-copy is still caught.
+
+    Args:
+        path: The destination whose volume is checked. Resolved once.
+
+    Returns:
+        A callable taking the bytes about to be written, raising
+        ``ValueError("insufficient_space")`` on the same predicate
+        ``require_capacity`` uses.
+    """
+    _require(path, 0)
+    _, ancestor = _volume(path)
+
+    def check(required: int) -> None:
+        _require(path, required)
+        if shutil.disk_usage(ancestor).free < required + _MARGIN:
+            raise ValueError("insufficient_space")
+
+    return check
+
+
 def require_capacity(requirements: Mapping[Path, int]) -> None:
     """Sum simultaneously retained bytes by device, including a free-space margin.
 
@@ -30,13 +73,7 @@ def require_capacity(requirements: Mapping[Path, int]) -> None:
     """
     volumes = {}
     for path, required in requirements.items():
-        if (
-            not isinstance(path, Path)
-            or not path.is_absolute()
-            or type(required) is not int
-            or required < 0
-        ):
-            raise ValueError("invalid_capacity_requirement")
+        _require(path, required)
         device, ancestor = _volume(path)
         prior, _ = volumes.get(device, (0, ancestor))
         volumes[device] = prior + required, ancestor

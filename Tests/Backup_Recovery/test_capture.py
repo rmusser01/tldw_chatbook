@@ -459,3 +459,81 @@ def test_mixed_recovered_owner_does_not_claim_payload_sidecars(tmp_path):
         "recovered.media", "profile:test:recovered.media:asset", payload, "included", ()
     )
     assert _sqlite_sidecars((item,), recovery_adapters()) == ()
+
+
+def _private_root(tmp_path):
+    import os
+
+    # `pinned_directory` opens every component O_NOFOLLOW, and /var is a
+    # symlink on macOS, so the root must already be resolved.
+    root = tmp_path.resolve()
+    os.chmod(root, 0o700)
+    return root
+
+
+def test_chunked_copy_resolves_its_volume_once_not_once_per_chunk(tmp_path):
+    """Restore staging paid a full path walk per 64 KiB chunk.
+
+    Tier-2 review S25 (measured): `require_capacity` calls `_volume`, which
+    enters `pinned_directory` and opens EVERY path component from `/` with
+    O_RDONLY|O_DIRECTORY|O_NOFOLLOW and fstats each, before the
+    `shutil.disk_usage` it exists to guard -- 51-89x that call's cost. Both
+    `staging._copy` and the payload-extraction loop did it once per chunk, so a
+    20 GiB restore paid ~27 s of pure re-walking on the wall-clock path the
+    user watches. A destination held open for writing cannot change volume
+    mid-copy. The per-chunk free-space CHECK is kept; only the resolution is
+    hoisted.
+    """
+    import os
+    import threading
+
+    from tldw_chatbook.Backup_Recovery import native_files, space, staging
+
+    root = _private_root(tmp_path)
+    source = root / "src.bin"
+    source.write_bytes(b"x" * (64 * 1024 * 40 + 7))  # 41 chunks
+    os.chmod(source, 0o600)
+    destination_dir = root / "out"
+    native_files.create_private_directory(destination_dir)
+
+    calls = {"n": 0}
+    original = space.pinned_directory
+
+    def counting(path):
+        calls["n"] += 1
+        return original(path)
+
+    space.pinned_directory = counting
+    try:
+        total, _digest = staging._copy(
+            source, destination_dir / "copy.bin", threading.Event()
+        )
+    finally:
+        space.pinned_directory = original
+
+    assert total == source.stat().st_size
+    # One for the source pin, one for the destination volume. Never 41.
+    assert calls["n"] <= 3, f"{calls['n']} path walks for 41 chunks"
+
+
+def test_held_capacity_still_refuses_a_volume_that_fills_mid_copy(tmp_path):
+    """Hoisting the resolution must not weaken the check itself."""
+    import shutil
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import space
+
+    check = space.held_capacity(_private_root(tmp_path))
+
+    free = {"value": space._MARGIN + 100}
+    original = shutil.disk_usage
+    shutil.disk_usage = lambda _: SimpleNamespace(free=free["value"])
+    try:
+        check(60)
+        free["value"] = space._MARGIN + 10
+        with pytest.raises(ValueError, match="insufficient_space"):
+            check(60)
+        with pytest.raises(ValueError, match="invalid_capacity_requirement"):
+            check(-1)
+    finally:
+        shutil.disk_usage = original
