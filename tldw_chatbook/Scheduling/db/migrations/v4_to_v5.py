@@ -69,5 +69,5 @@ def rollback(db: _MigrationCapableDB) -> None:
         current_version = int(row[0]) if row and row[0] is not None else 0
         if current_version >= 4:
             conn.execute("DELETE FROM schema_version")
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (3,))
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (4,))
         conn.commit()

@@ -114,6 +114,14 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(payload)
+                # os.replace publishes the NAME immediately; without this the
+                # CONTENTS may still be in page cache. A power loss between the
+                # two leaves a truncated file, read_heartbeat maps the
+                # ValueError to None, and the surface reports "never started"
+                # for a scheduler that had been ticking -- the confusion
+                # TASK-26025 exists to remove. Once per poll interval.
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, path)
         except Exception:
             with open(os.devnull, "w"):

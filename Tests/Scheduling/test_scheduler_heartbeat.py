@@ -278,3 +278,41 @@ async def test_cancelled_tick_still_completes_the_started_heartbeat_write(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert write_completed.is_set()
+
+
+def test_heartbeat_contents_are_fsynced_before_the_rename(tmp_path, monkeypatch):
+    """The module docstring promises "durable"; atomic alone is not durable.
+
+    Tier-2 review S08: ``write_heartbeat`` hand-rolled mkstemp -> write ->
+    ``os.replace`` with no ``fsync``, so ``os.replace`` publishes the *name*
+    while the *contents* may still be in page cache. After a power loss the
+    file comes back truncated, ``read_heartbeat`` maps the ``ValueError`` to
+    ``None``, and the surface reports "never started" for a scheduler that
+    had been ticking -- the exact confusion TASK-26025 removed.
+    """
+    import os as real_os
+
+    from tldw_chatbook.Scheduling import scheduler_heartbeat
+
+    events: list[str] = []
+    original_fsync = real_os.fsync
+    original_replace = real_os.replace
+
+    def recording_fsync(fd):
+        events.append("fsync")
+        return original_fsync(fd)
+
+    def recording_replace(src, dst, **kwargs):
+        events.append("replace")
+        return original_replace(src, dst, **kwargs)
+
+    monkeypatch.setattr(scheduler_heartbeat.os, "fsync", recording_fsync)
+    monkeypatch.setattr(scheduler_heartbeat.os, "replace", recording_replace)
+
+    write_heartbeat(
+        tmp_path / "heartbeat.json",
+        SchedulerHeartbeat(last_tick_at=_t(0), last_success_at=_t(0), tick_count=3),
+    )
+
+    assert events == ["fsync", "replace"], events
+    assert read_heartbeat(tmp_path / "heartbeat.json").tick_count == 3

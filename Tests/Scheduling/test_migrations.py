@@ -408,3 +408,49 @@ def test_warm_reopen_skips_migration_module_imports(tmp_path):
         "warm reopen re-imported migration modules despite the recorded "
         f"schema version proving the chain already ran: {reimported}"
     )
+
+
+def test_v5_migrate_then_rollback_round_trips_to_v4(tmp_path):
+    """The stamp must match the schema the rollback leaves behind.
+
+    Tier-2 review S08: ``v4_to_v5.rollback`` drops ``scheduled_task_runs``
+    (the v5 table) and so leaves a v4 schema, but stamped 3. ``recovery.py``'s
+    ``_ScheduledTasksAdapter`` validates a restore candidate with
+    ``SELECT MAX(version) FROM schema_version``, so the stamp is not cosmetic.
+    """
+    from tldw_chatbook.Scheduling.db.migrations.v4_to_v5 import migrate, rollback
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    migrate(db)  # already applied by construction; idempotent no-op
+
+    rollback(db)
+
+    assert db.get_schema_version() == 4
+    with closing(db._get_connection()) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert "scheduled_task_runs" not in tables
+    # The v4 tables the rollback must NOT have touched.
+    assert {"automation_runs", "automation_results"} <= tables
+
+
+def test_v6_migrate_then_rollback_round_trips_to_v5(tmp_path):
+    """Same defect, one migration later: drops the v6 table, stamped 4."""
+    from tldw_chatbook.Scheduling.db.migrations.v5_to_v6 import migrate, rollback
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    migrate(db)  # already applied by construction; idempotent no-op
+
+    rollback(db)
+
+    assert db.get_schema_version() == 5
+    with closing(db._get_connection()) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert "task_incidents" not in tables
+    # The v5 table the rollback must NOT have touched.
+    assert "scheduled_task_runs" in tables
