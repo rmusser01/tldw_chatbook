@@ -5758,7 +5758,7 @@ class AgentService:
                                 discard=admission_refused,
                             )
                         except Exception:
-                            logger.warning(
+                            logger.opt(exception=True).warning(
                                 "could not retire agent worktree routing for handle {}",
                                 handle.handle_id,
                             )
@@ -5839,7 +5839,7 @@ class AgentService:
                         try:
                             self._retire_agent_worktree(child_run_id, handle.handle_id, discard=True)
                         except Exception:
-                            logger.warning(
+                            logger.opt(exception=True).warning(
                                 "could not retire agent worktree routing for handle {}",
                                 handle.handle_id,
                             )

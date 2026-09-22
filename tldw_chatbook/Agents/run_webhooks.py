@@ -35,7 +35,6 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 from ..Utils.egress import EgressBlockedError, check_url_or_raise_async
-
 from ..Metrics.metrics_logger import log_counter
 
 
