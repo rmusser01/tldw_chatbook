@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "manifest_boundary": {
-        "checked_normalized_inventory_sha256": "3035bfcba19e3fa56b54f13a1abdd8d3906856ab4ad81a3bb84e9cdcc02ca88a",
-        "origin_dev_generated_normalized_inventory_sha256": "3035bfcba19e3fa56b54f13a1abdd8d3906856ab4ad81a3bb84e9cdcc02ca88a",
+        "checked_normalized_inventory_sha256": "3b7649d0c0c611a744990b410bb7c3aef1836a1f890675f50022e085b151f92d",
+        "origin_dev_generated_normalized_inventory_sha256": "3b7649d0c0c611a744990b410bb7c3aef1836a1f890675f50022e085b151f92d",
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",

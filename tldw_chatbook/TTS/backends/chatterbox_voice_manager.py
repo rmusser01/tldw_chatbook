@@ -27,50 +27,17 @@ class ChatterboxVoiceManager(VoiceManagerBase):
     This manager provides a consistent interface for managing these voice references.
     """
 
+    profiles_filename = "chatterbox_profiles.json"
+    store_log_label = "Chatterbox voice"
+    action_log_label = "Chatterbox "
+
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):
-        """
-        Initialize the Chatterbox voice manager.
-
-        Args:
-            voice_samples_dir: Directory for storing voice samples and profiles
-        """
         super().__init__(voice_samples_dir)
-        self.profiles_file = self.voice_samples_dir / "chatterbox_profiles.json"
-        self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
     @voice_files.call
-    def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk"""
-        if self._profiles_cache is not None:
-            return self._profiles_cache
-
-        if self.profiles_file.exists():
-            try:
-                with voice_files.open_text(self, self.profiles_file, "r") as f:
-                    self._profiles_cache = json.load(f)
-                    return self._profiles_cache
-            except Exception as e:
-                logger.error(f"Failed to load Chatterbox voice profiles: {e}")
-                self._profiles_cache = {}
-        else:
-            self._profiles_cache = {}
-
-        return self._profiles_cache
-
     @voice_files.call
-    def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
-        """Save voice profiles to disk"""
-        try:
-            with voice_files.open_text(self, self.profiles_file, "w") as f:
-                json.dump(profiles, f, indent=2)
-
-            self._profiles_cache = profiles
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save Chatterbox voice profiles: {e}")
-            return False
-
+    @voice_files.call
     @voice_files.call
     def create_profile(
         self,
@@ -194,74 +161,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
         return profile
 
     @voice_files.call
-    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """Delete a Chatterbox voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            # Remove profile directory
-            profile_dir = self.voice_samples_dir / profile_name
-            if profile_dir.exists():
-                voice_files.remove_tree(self, profile_dir)
-
-            # Remove from profiles
-            del profiles[profile_name]
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                logger.info(f"Deleted Chatterbox voice profile '{profile_name}'")
-                return True, f"Successfully deleted profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile deletion"
-
-        except Exception as e:
-            logger.error(f"Error deleting Chatterbox profile: {e}")
-            return False, f"Error: {str(e)}"
-
     @voice_files.call
-    def update_profile(
-        self,
-        profile_name: str,
-        display_name: Optional[str] = None,
-        language: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata_update: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """Update an existing Chatterbox voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            profile = profiles[profile_name]
-
-            # Update fields if provided
-            if display_name is not None:
-                profile["display_name"] = display_name
-            if language is not None:
-                profile["language"] = language
-            if description is not None:
-                profile["description"] = description
-            if tags is not None:
-                profile["tags"] = tags
-            if metadata_update:
-                profile["metadata"].update(metadata_update)
-
-            profile["updated_at"] = utc_now_iso()
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                return True, f"Successfully updated profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile updates"
-
-        except Exception as e:
-            logger.error(f"Error updating Chatterbox profile: {e}")
-            return False, f"Error: {str(e)}"
-
     @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """Export a Chatterbox voice profile"""

@@ -3,9 +3,14 @@ from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # Description: Base class for TTS voice profile managers
 #
 # Imports
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+
+from loguru import logger
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
 #
@@ -19,7 +24,24 @@ class VoiceManagerBase(ABC):
 
     Provides a common interface for managing voice profiles across different TTS backends.
     Each backend (Higgs, Chatterbox, GPT-SoVITS, etc.) should implement this interface.
+
+    The base also owns the shared single-JSON profile store mechanics (TASK-32863):
+    the records file name, the load/save cache, and the update/delete/get CRUD
+    that every backend implements identically. Subclasses customize storage via
+    ``profiles_filename`` and log wording via the label attributes, keep
+    timestamped backups by setting ``keep_backups`` and overriding
+    ``_backup_before_save``, and implement the engine-specific
+    create/list/export/import profile methods.
     """
+
+    #: Records file name inside ``voice_samples_dir``.
+    profiles_filename = "voice_profiles.json"
+    #: Wording for store-level logs, e.g. "Failed to load {label} profiles".
+    store_log_label = "voice"
+    #: Prefix for CRUD error logs, e.g. "Error updating {label}profile".
+    action_log_label = ""
+    #: Create a ``backups`` directory and call ``_backup_before_save`` on save.
+    keep_backups = False
 
     def __init__(self, voice_samples_dir: Path):
         """
@@ -33,6 +55,123 @@ class VoiceManagerBase(ABC):
         self.backend_name = self.__class__.__name__.replace("VoiceManager", "").replace(
             "VoiceProfileManager", ""
         )
+        self.profiles_file = self.voice_samples_dir / self.profiles_filename
+        self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        if self.keep_backups:
+            self.backup_dir = self.voice_samples_dir / "backups"
+            voice_files.mkdir(self, self.backup_dir, exist_ok=True)
+
+    def _backup_before_save(self) -> None:
+        """Hook: retain the previous records file before saving (no-op)."""
+
+    @voice_files.call
+    def load_profiles(self) -> Dict[str, Dict[str, Any]]:
+        """Load voice profiles from disk"""
+        if self._profiles_cache is not None:
+            return self._profiles_cache
+
+        if self.profiles_file.exists():
+            try:
+                with voice_files.open_text(self, self.profiles_file, "r") as f:
+                    self._profiles_cache = json.load(f)
+                    return self._profiles_cache
+            except Exception as e:
+                logger.error(f"Failed to load {self.store_log_label} profiles: {e}")
+                self._profiles_cache = {}
+        else:
+            self._profiles_cache = {}
+
+        return self._profiles_cache
+
+    @voice_files.call
+    def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
+        """Save voice profiles to disk"""
+        try:
+            self._backup_before_save()
+
+            with voice_files.open_text(self, self.profiles_file, "w") as f:
+                json.dump(profiles, f, indent=2)
+
+            self._profiles_cache = profiles
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save {self.store_log_label} profiles: {e}")
+            return False
+
+    @voice_files.call
+    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        """Get a specific voice profile"""
+        profiles = self.load_profiles()
+        return profiles.get(profile_name)
+
+    @voice_files.call
+    def update_profile(
+        self,
+        profile_name: str,
+        display_name: Optional[str] = None,
+        language: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata_update: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Update an existing voice profile"""
+        try:
+            profiles = self.load_profiles()
+            if profile_name not in profiles:
+                return False, f"Profile '{profile_name}' not found"
+
+            profile = profiles[profile_name]
+
+            # Update fields if provided
+            if display_name is not None:
+                profile["display_name"] = display_name
+            if language is not None:
+                profile["language"] = language
+            if description is not None:
+                profile["description"] = description
+            if tags is not None:
+                profile["tags"] = tags
+            if metadata_update:
+                profile["metadata"].update(metadata_update)
+
+            profile["updated_at"] = utc_now_iso()
+
+            # Save updated profiles
+            if self.save_profiles(profiles):
+                return True, f"Successfully updated profile '{profile_name}'"
+            else:
+                return False, "Failed to save profile updates"
+
+        except Exception as e:
+            logger.error(f"Error updating {self.action_log_label}profile: {e}")
+            return False, f"Error: {str(e)}"
+
+    @voice_files.call
+    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
+        """Delete a voice profile"""
+        try:
+            profiles = self.load_profiles()
+            if profile_name not in profiles:
+                return False, f"Profile '{profile_name}' not found"
+
+            # Remove profile directory
+            profile_dir = self.voice_samples_dir / profile_name
+            if profile_dir.exists():
+                voice_files.remove_tree(self, profile_dir)
+
+            # Remove from profiles
+            del profiles[profile_name]
+
+            # Save updated profiles
+            if self.save_profiles(profiles):
+                logger.info(f"Deleted {self.store_log_label} profile '{profile_name}'")
+                return True, f"Successfully deleted profile '{profile_name}'"
+            else:
+                return False, "Failed to save profile deletion"
+
+        except Exception as e:
+            logger.error(f"Error deleting {self.action_log_label}profile: {e}")
+            return False, f"Error: {str(e)}"
 
     @abstractmethod
     def create_profile(
@@ -83,57 +222,8 @@ class VoiceManagerBase(ABC):
         pass
 
     @abstractmethod
-    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific voice profile.
-
-        Args:
-            profile_name: Profile identifier
-
-        Returns:
-            Profile data or None if not found
-        """
-        pass
-
     @abstractmethod
-    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """
-        Delete a voice profile.
-
-        Args:
-            profile_name: Profile identifier
-
-        Returns:
-            (success, message) tuple
-        """
-        pass
-
     @abstractmethod
-    def update_profile(
-        self,
-        profile_name: str,
-        display_name: Optional[str] = None,
-        language: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata_update: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """
-        Update an existing voice profile.
-
-        Args:
-            profile_name: Profile identifier
-            display_name: New display name (optional)
-            language: New language code (optional)
-            description: New description (optional)
-            tags: New tags list (optional)
-            metadata_update: Metadata fields to update (optional)
-
-        Returns:
-            (success, message) tuple
-        """
-        pass
-
     @abstractmethod
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """
