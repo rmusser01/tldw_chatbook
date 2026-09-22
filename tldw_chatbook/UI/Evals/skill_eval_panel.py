@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, List
 
 from textual.app import ComposeResult
@@ -15,6 +14,7 @@ from textual.widgets import Button, Input, Select, Static
 
 from ...Evals.skill_eval.models import SkillEvalDepth
 from ...Evals.skill_eval.runner import estimate_calls, max_estimate_calls
+from ...Utils.path_validation import validate_existing_absolute_directory
 
 _DEPTH_OPTIONS = [
     (f"quick — static only ({estimate_calls(SkillEvalDepth.QUICK)} calls)",
@@ -56,25 +56,32 @@ _NO_TARGETS_RUN_TOAST = (
 )
 
 
-class _SkillDirectoryValidator(Validator):
+class SkillDirectoryValidator(Validator):
     """Advisory validation for the directory-path subject (TASK-32883).
 
     Mirrors ``subject_from_directory``'s contract (absolute directory
     containing ``SKILL.md``) so feedback is immediate; the run's own
-    resolver stays authoritative.
+    resolver stays authoritative. The path itself goes through the
+    central ``validate_existing_absolute_directory`` (Qodo review: no
+    raw ``Path``/``is_file`` on user input -- traversal spellings, NUL
+    bytes, and relative paths are rejected there before any filesystem
+    read, exactly as the run-time resolver does).
     """
 
     def validate(self, value: str) -> ValidationResult:
         stripped = value.strip()
         if not stripped:
             return self.success()
-        path = Path(stripped)
-        if path.is_absolute() and (path / "SKILL.md").is_file():
+        try:
+            path = validate_existing_absolute_directory(stripped)
+        except ValueError:
+            return self.failure("Not an absolute, existing directory")
+        if (path / "SKILL.md").is_file():
             return self.success()
         return self.failure("No SKILL.md found at that path")
 
 
-class _SetSelect(Select):
+class SetSelect(Select):
     """A Select whose Enter key no-ops once a value is held (TASK-32889).
 
     Textual's stock Select binds Enter (with down/space/up) to opening
@@ -189,18 +196,18 @@ class SkillEvalPanel(Widget):
         with Vertical():
             yield Static("No subject selected.",
                          id="skill-eval-subject", markup=False)
-            yield _SetSelect([], id="skill-eval-subject-picker",
+            yield SetSelect([], id="skill-eval-subject-picker",
                              prompt=_STORE_PROMPT)
             yield Input(id="skill-eval-subject-dir",
                         placeholder="or: skill directory path",
-                        validators=[_SkillDirectoryValidator()])
+                        validators=[SkillDirectoryValidator()])
             yield Static(_DIR_HINT_DEFAULT, id="skill-eval-subject-dir-hint",
                          markup=False)
-            yield _SetSelect(_DEPTH_OPTIONS, id="skill-eval-depth",
+            yield SetSelect(_DEPTH_OPTIONS, id="skill-eval-depth",
                              value=self._depth)
-            yield _SetSelect([], id="skill-eval-generator",
+            yield SetSelect([], id="skill-eval-generator",
                              prompt="generator model")
-            yield _SetSelect([], id="skill-eval-judge", prompt="judge model")
+            yield SetSelect([], id="skill-eval-judge", prompt="judge model")
             yield Static("", id="skill-eval-estimate", markup=False)
             yield Button("Run", id="skill-eval-run")
             # TASK-32889: "Stop run", not "Cancel" -- the old label read as
@@ -333,10 +340,18 @@ class SkillEvalPanel(Widget):
         # TASK-32883: immediate inline feedback instead of a failed run
         # later -- the validator mirrors subject_from_directory's contract.
         if event.validation_result is not None and not event.validation_result.is_valid:
-            hint.update("No SKILL.md found at that path")
-        else:
-            hint.update("")
-        # Last-touched wins: a typed path resets the store pick.
+            # Qodo review: a path that already failed validation is not a
+            # subject choice -- it neither arms the Run guard nor
+            # clobbers the effective/persisted subject (the last VALID
+            # choice stands until a valid path or a store pick replaces
+            # it). The hint carries the reason; the run's own resolver
+            # stays the authoritative second gate.
+            descriptions = event.validation_result.failure_descriptions
+            hint.update(descriptions[0] if descriptions
+                        else "Path validation failed")
+            return
+        hint.update("")
+        # Last-touched wins: a (valid) typed path resets the store pick.
         self.query_one("#skill-eval-subject-picker", Select).value = Select.NULL
         self._subject_ref = ref
         self.post_message(self.SubjectChanged(ref, "directory"))

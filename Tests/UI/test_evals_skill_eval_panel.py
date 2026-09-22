@@ -178,19 +178,38 @@ async def test_run_without_subject_posts_nothing():
 
 
 @pytest.mark.asyncio
-async def test_directory_path_subject_enables_run():
+async def test_directory_path_subject_enables_run(tmp_path):
     """TASK-32885: a typed directory path is as valid a subject as a store
-    pick -- the guard must accept it without a picker choice."""
+    pick -- the guard must accept it without a picker choice. An INVALID
+    path must not arm the guard (Qodo review)."""
+    skill_dir = tmp_path / "csv"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# csv\n", encoding="utf-8")
+
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         panel = app.screen.query_one(SkillEvalPanel)
         panel.set_targets(_TARGETS)
         await pilot.pause()
 
-        panel.query_one("#skill-eval-subject-dir").value = "/tmp/skills/csv"
+        # Invalid first: no SKILL.md -> no subject, Run posts nothing.
+        directory = panel.query_one("#skill-eval-subject-dir")
+        directory.value = str(tmp_path)
         await pilot.pause()
         await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
         await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
+        await pilot.click("#skill-eval-run")
+        await pilot.pause()
+        assert app.run_requested == []
+        directory.value = ""
+        await pilot.pause()
+
+        directory.value = str(skill_dir)
+        await pilot.pause()
+        # Models were picked during the invalid-path phase above and are
+        # still held (a set Select's Enter no longer re-opens -- re-picking
+        # through the overlay here would strand an open overlay that
+        # swallows the Run click).
         await pilot.click("#skill-eval-run")
         await pilot.pause()
         assert len(app.run_requested) == 1
@@ -288,11 +307,16 @@ async def test_subject_picker_lists_store_skills_and_posts_store_change():
 
 
 @pytest.mark.asyncio
-async def test_last_touched_wins_between_picker_and_directory_input():
-    """A store pick clears the directory Input; typing a path afterwards
-    resets the Select to NULL and posts a ``directory`` change -- the
-    documented last-touched-wins rule (one effective choice at a time)."""
+async def test_last_touched_wins_between_picker_and_directory_input(tmp_path):
+    """A store pick clears the directory Input; typing a VALID path
+    afterwards resets the Select to NULL and posts a ``directory``
+    change -- the documented last-touched-wins rule (one effective
+    choice at a time)."""
     from textual.widgets import Input, Select
+
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
 
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
@@ -304,24 +328,28 @@ async def test_last_touched_wins_between_picker_and_directory_input():
         await pilot.pause()
         assert panel.query_one("#skill-eval-subject-dir", Input).value == ""
 
-        panel.query_one("#skill-eval-subject-dir", Input).value = "/tmp/skill"
+        panel.query_one("#skill-eval-subject-dir", Input).value = str(skill_dir)
         await pilot.pause()
         assert panel.query_one("#skill-eval-subject-picker", Select).value is Select.NULL
         assert [(m.subject_ref, m.subject_kind) for m in app.subject_changed] == [
             ("csv-cleaner", "store"),
-            ("/tmp/skill", "directory"),
+            (str(skill_dir), "directory"),
         ]
 
 
 @pytest.mark.asyncio
-async def test_emptying_directory_input_posts_nothing():
+async def test_emptying_directory_input_posts_nothing(tmp_path):
     """Emptying the Input is not a subject choice (and resurrects no cleared
     store pick) -- the screen must never receive an empty-subject persist."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# my skill\n", encoding="utf-8")
+
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         panel = app.screen.query_one(SkillEvalPanel)
         directory = panel.query_one("#skill-eval-subject-dir")
-        directory.value = "/tmp/skill"
+        directory.value = str(skill_dir)
         await pilot.pause()
         assert len(app.subject_changed) == 1
 
@@ -387,6 +415,9 @@ async def test_directory_input_hint_and_inline_validation(tmp_path):
         await pilot.pause()
         assert not directory.is_valid
         assert "No SKILL.md" in str(hint.render())
+        # Qodo review: an invalid path is not a subject choice -- nothing
+        # posts and the (empty) effective subject does not arm Run.
+        assert app.subject_changed == []
 
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
