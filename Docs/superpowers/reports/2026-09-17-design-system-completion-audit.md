@@ -1,5 +1,11 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2719 results ready for visual review — 2026-09-22
+
+The saved result slice now targets dev `9e33252708`, including merged PR2722 and the incoming startup fix, with no conflicts. Invalid arguments replace all prior result details without execution, and Raw response remains keyboard readable in compact inspectors. [Current qualification](../qa/2026-09-18-mcp-inspector-results/current-dev/README.md): 362 distinct targeted passes, the same inherited dimension-ratchet failure, nine artifact guards, no introduced static diagnostics and independent review clear. Sixteen post-rebase native captures and clean private-profile lifecycle qualify both themes/sizes.
+
+TASK-32913 replaces the saved task32833 ID, which now belongs to landed Workspace exclusions. PR2719 remains a separate draft pending its own owner visual approval, current-head CI/Qodo and final dev/merge checks. PR2770 already merged its scrolling prerequisite; PR2718 is historical. PR2722 is merged and TASK-32836 is Done. Remaining screens stay separate and the old heartbeat remains paused. Earlier checkpoints below are historical.
+
 ## PR2722 merged; saved raw-response review next — 2026-09-22
 
 [PR2722](https://github.com/rmusser01/tldw_chatbook/pull/2722) merged as `ed2a579062` after owner visual approval, all six Qodo findings resolved and final-head Qodo zero findings. CI passed1,152 contract and123 admission cases with one expected failure; all remaining checks pass. Its actual tree exactly matches the qualified head/candidate and native source hashes. TASK-32836 is Done. [Closeout](../qa/2026-09-18-mcp-inspector-guidance/merge-closeout/README.md).

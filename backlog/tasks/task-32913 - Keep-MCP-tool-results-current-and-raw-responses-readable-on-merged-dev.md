@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-22 16:50'
-updated_date: '2026-09-22 17:11'
+updated_date: '2026-09-22 17:15'
 labels:
   - mcp
   - ui
@@ -25,7 +25,7 @@ Users need the Test Tool outcome to describe their latest attempt, and raw respo
 - [x] #1 Raw response label and body remain keyboard reachable and readable at compact and wide sizes in both themes.
 - [x] #2 Local argument validation replaces every previous result detail without execution, while preserving the argument draft and exact displayed permission context.
 - [x] #3 Corrected execution restores current output; close/reopen and stale-result identity guards retain their behavior.
-- [ ] #4 Targeted checks and private real-stdio native evidence qualify the repair without raising CSS budgets or changing permission/runtime authority.
+- [x] #4 Targeted checks and private real-stdio native evidence qualify the repair without raising CSS budgets or changing permission/runtime authority.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,4 +48,6 @@ Reason: bounded repair of existing result replacement and token-backed disclosur
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented full result replacement after argument validation failure and token-backed compact raw disclosure sizing. Reuses existing server/tool/profile guards and preserves drafts. Eight regressions reproduced on merged dev and pass with the repair; 281 related inspector/Workbench cases, 43 layout/governance cases and 21 runner-admission cases pass. The dimension ratchet still flags the same twelve inherited declarations; no allowances changed. Inspector harness now retains its collection-time config source via the existing bootstrap_profile marker after an isolated run exposed recovery admission errors. Independent review found no product issues; its native cleanup finding was fixed. Four real-stdio native theme/size journeys and private lifecycle checks pass. Requalifying incoming dev startup changes before publication; owner visual approval, CI/review and merge remain pending. Existing ADRs 150, 161 and 031 apply; no new ADR.
+
+Conflict-free rebase onto dev9e33252708 is qualified: 17 post-rebase cases pass (eight repeated regressions plus nine incoming cases), all nine artifact guards pass again, and sixteen new native captures preserve the inspector appearance. Final native lifecycle is clean with fixture deletion/teardown postconditions verified. Total 362 distinct targeted passes; one inherited dimension-ratchet failure remains unchanged. Independent integration review is clear. Evidence and limitations: Docs/superpowers/qa/2026-09-18-mcp-inspector-results/current-dev/README.md. Remains In Progress for owner visual approval and final PR gates.
 <!-- SECTION:NOTES:END -->
