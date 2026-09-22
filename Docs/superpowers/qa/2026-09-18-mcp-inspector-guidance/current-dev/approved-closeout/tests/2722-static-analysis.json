@@ -1,0 +1,277 @@
+{
+  "base": "5cdc9ddda00a4112ec06cf8b81fd23bd31d9edb7",
+  "base_diagnostics": 5,
+  "current_diagnostics": 5,
+  "introduced": [],
+  "formats": [
+    {
+      "range": "4125-4131",
+      "returncode": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "5020-5026",
+      "returncode": 0,
+      "output": "1 file already formatted\n"
+    }
+  ],
+  "normalization": "Referenced source line numbers in F811 messages only; diagnostics preserved.",
+  "baseline": [
+    {
+      "cell": null,
+      "code": "I001",
+      "end_location": {
+        "column": 58,
+        "row": 82
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport threading\nfrom dataclasses import replace\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom typing import Any\n\nimport pytest\nfrom textual.app import App, ComposeResult\nfrom textual.containers import Vertical\nfrom textual.widget import Widget\nfrom textual.widgets import (\n    Button,\n    Checkbox,\n    ContentSwitcher,\n    DataTable,\n    Input,\n    Select,\n    Static,\n    TextArea,\n)\n\nimport tldw_chatbook\nimport tldw_chatbook.MCP.local_server_tools as local_server_tools_module\nimport tldw_chatbook.MCP.unified_control_plane_service as unified_service_module\nimport tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module\nimport tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module\nfrom Tests.private_profile import private_profile_test\n\n# Harness apps load the consolidated widget CSS the real app loads\n# (TASK-15450); without it the widgets under test mount unstyled.\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom tldw_chatbook.Agents.agent_models import ToolResult\nfrom tldw_chatbook.Agents.raw_shell_tool_provider import (\n    RAW_SHELL_SERVER_KEY,\n    RAW_SHELL_TOOL_NAME,\n)\nfrom tldw_chatbook.config import ConfigMutationResult\nfrom tldw_chatbook.MCP.hub_test_execution import (\n    LocalHubExecutionOutcome,\n    ToolTestAdmissionBlocked,\n    ToolTestAdmissionPreview,\n    ToolTestAdmissionStale,\n)\nfrom tldw_chatbook.MCP.hub_tool_catalog import HubTool\nfrom tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied\nfrom tldw_chatbook.MCP.permission_store import (\n    BUILTIN_TOOL_SERVER_KEY,\n    HASH_FREE_SERVER_KEYS,\n    EffectiveToolState,\n    MCPPermissionStore,\n    definition_hash,\n    profile_policy_digest,\n    resolve_effective_state,\n)\nfrom tldw_chatbook.MCP.readiness import HubAction\nfrom tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext\nfrom tldw_chatbook.MCP.unified_control_plane_service import (\n    MCPServerSourceDisplayOnlyError,\n    UnifiedMCPControlPlaneService,\n)\nfrom tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator\nfrom tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_inspector import (\n    MCPInspector,\n    audit_entry_detail_payload,\n)\nfrom tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (\n    MCPPermissionsMode,\n    PermissionProfileContext,\n)\nfrom tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm\nfrom tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail\nfrom tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel\nfrom tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench\nfrom tldw_chatbook.UI.Screens.mcp_screen import MCPScreen\n\n\n",
+            "end_location": {
+              "column": 1,
+              "row": 85
+            },
+            "location": {
+              "column": 1,
+              "row": 2
+            }
+          }
+        ],
+        "message": "Organize imports"
+      },
+      "location": {
+        "column": 1,
+        "row": 2
+      },
+      "message": "Import block is un-sorted or un-formatted",
+      "name": "unsorted-imports",
+      "noqa_row": 2,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+    },
+    {
+      "cell": null,
+      "code": "RUF100",
+      "end_location": {
+        "column": 52,
+        "row": 90
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "",
+            "end_location": {
+              "column": 52,
+              "row": 90
+            },
+            "location": {
+              "column": 38,
+              "row": 90
+            }
+          }
+        ],
+        "message": "Remove unused `noqa` directive"
+      },
+      "location": {
+        "column": 40,
+        "row": 90
+      },
+      "message": "Unused `noqa` directive (non-enabled: `D102`)",
+      "name": "unused-noqa",
+      "noqa_row": 90,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11550
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11550
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11550,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11551
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11551
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11551,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    },
+    {
+      "cell": null,
+      "code": "F811",
+      "end_location": {
+        "column": 60,
+        "row": 11616
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 11,
+        "row": 11616
+      },
+      "message": "Redefinition of unused `test_entering_permissions_mode_focuses_the_matrix` from line 11511: `test_entering_permissions_mode_focuses_the_matrix` redefined here",
+      "name": "redefined-while-unused",
+      "noqa_row": 11616,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+    }
+  ],
+  "current": [
+    {
+      "cell": null,
+      "code": "I001",
+      "end_location": {
+        "column": 58,
+        "row": 82
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport threading\nfrom dataclasses import replace\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom typing import Any\n\nimport pytest\nfrom textual.app import App, ComposeResult\nfrom textual.containers import Vertical\nfrom textual.widget import Widget\nfrom textual.widgets import (\n    Button,\n    Checkbox,\n    ContentSwitcher,\n    DataTable,\n    Input,\n    Select,\n    Static,\n    TextArea,\n)\n\nimport tldw_chatbook\nimport tldw_chatbook.MCP.local_server_tools as local_server_tools_module\nimport tldw_chatbook.MCP.unified_control_plane_service as unified_service_module\nimport tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module\nimport tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module\nfrom Tests.private_profile import private_profile_test\n\n# Harness apps load the consolidated widget CSS the real app loads\n# (TASK-15450); without it the widgets under test mount unstyled.\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom tldw_chatbook.Agents.agent_models import ToolResult\nfrom tldw_chatbook.Agents.raw_shell_tool_provider import (\n    RAW_SHELL_SERVER_KEY,\n    RAW_SHELL_TOOL_NAME,\n)\nfrom tldw_chatbook.config import ConfigMutationResult\nfrom tldw_chatbook.MCP.hub_test_execution import (\n    LocalHubExecutionOutcome,\n    ToolTestAdmissionBlocked,\n    ToolTestAdmissionPreview,\n    ToolTestAdmissionStale,\n)\nfrom tldw_chatbook.MCP.hub_tool_catalog import HubTool\nfrom tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied\nfrom tldw_chatbook.MCP.permission_store import (\n    BUILTIN_TOOL_SERVER_KEY,\n    HASH_FREE_SERVER_KEYS,\n    EffectiveToolState,\n    MCPPermissionStore,\n    definition_hash,\n    profile_policy_digest,\n    resolve_effective_state,\n)\nfrom tldw_chatbook.MCP.readiness import HubAction\nfrom tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext\nfrom tldw_chatbook.MCP.unified_control_plane_service import (\n    MCPServerSourceDisplayOnlyError,\n    UnifiedMCPControlPlaneService,\n)\nfrom tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator\nfrom tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_inspector import (\n    MCPInspector,\n    audit_entry_detail_payload,\n)\nfrom tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (\n    MCPPermissionsMode,\n    PermissionProfileContext,\n)\nfrom tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm\nfrom tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail\nfrom tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel\nfrom tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode\nfrom tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench\nfrom tldw_chatbook.UI.Screens.mcp_screen import MCPScreen\n\n\n",
+            "end_location": {
+              "column": 1,
+              "row": 85
+            },
+            "location": {
+              "column": 1,
+              "row": 2
+            }
+          }
+        ],
+        "message": "Organize imports"
+      },
+      "location": {
+        "column": 1,
+        "row": 2
+      },
+      "message": "Import block is un-sorted or un-formatted",
+      "name": "unsorted-imports",
+      "noqa_row": 2,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+    },
+    {
+      "cell": null,
+      "code": "RUF100",
+      "end_location": {
+        "column": 52,
+        "row": 90
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "",
+            "end_location": {
+              "column": 52,
+              "row": 90
+            },
+            "location": {
+              "column": 38,
+              "row": 90
+            }
+          }
+        ],
+        "message": "Remove unused `noqa` directive"
+      },
+      "location": {
+        "column": 40,
+        "row": 90
+      },
+      "message": "Unused `noqa` directive (non-enabled: `D102`)",
+      "name": "unused-noqa",
+      "noqa_row": 90,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11558
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11558
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11558,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    },
+    {
+      "cell": null,
+      "code": "F821",
+      "end_location": {
+        "column": 23,
+        "row": 11559
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 16,
+        "row": 11559
+      },
+      "message": "Undefined name `service`",
+      "name": "undefined-name",
+      "noqa_row": 11559,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+    },
+    {
+      "cell": null,
+      "code": "F811",
+      "end_location": {
+        "column": 60,
+        "row": 11624
+      },
+      "filename": "<repo>/Tests/UI/test_mcp_workbench.py",
+      "fix": null,
+      "location": {
+        "column": 11,
+        "row": 11624
+      },
+      "message": "Redefinition of unused `test_entering_permissions_mode_focuses_the_matrix` from line 11519: `test_entering_permissions_mode_focuses_the_matrix` redefined here",
+      "name": "redefined-while-unused",
+      "noqa_row": 11624,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+    }
+  ]
+}

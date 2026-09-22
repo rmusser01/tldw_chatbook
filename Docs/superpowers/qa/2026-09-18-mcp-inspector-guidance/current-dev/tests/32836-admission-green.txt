@@ -1,0 +1,18 @@
+........................................................................ [ 51%]
+....................................................................     [100%]
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+140 passed in 10.55s
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-2174b9d0-eb4a-45b1-a43c-d7a5eb623e43/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-2174b9d0-eb4a-45b1-a43c-d7a5eb623e43/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-2174b9d0-eb4a-45b1-a43c-d7a5eb623e43
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-2174b9d0-eb4a-45b1-a43c-d7a5eb623e43'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-08c11bb0-d9d8-4b20-ad8c-e96f8a7361e9/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-08c11bb0-d9d8-4b20-ad8c-e96f8a7361e9/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-08c11bb0-d9d8-4b20-ad8c-e96f8a7361e9
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-08c11bb0-d9d8-4b20-ad8c-e96f8a7361e9'
+  warnings.warn(

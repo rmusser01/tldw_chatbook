@@ -1,0 +1,21 @@
+{
+  "allowed_changes": "Helper docstrings, imports and formatting; fixed35ms diagnostic delay replaces env input, explicit check=False preserves subprocess default.",
+  "files": [
+    {
+      "path": "Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/current-dev/approved-closeout/lifecycle/2722-compare-captures.py",
+      "logic_ast_preserved": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/current-dev/approved-closeout/lifecycle/2722-native-lifecycle.py",
+      "logic_ast_preserved": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/current-dev/approved-closeout/tests/2722_click_probe.py",
+      "logic_ast_preserved": true
+    },
+    {
+      "path": "Tests/UI/test_mcp_inspector_guidance.py",
+      "logic_ast_preserved": true
+    }
+  ]
+}
