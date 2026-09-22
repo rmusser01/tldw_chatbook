@@ -10,11 +10,7 @@ from datetime import datetime
 from loguru import logger
 
 # Local imports
-from .voice_manager_base import (
-    VoiceManagerBase,
-    create_profiles_backup,
-    load_profiles_file,
-)
+from .voice_manager_base import VoiceManagerBase
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
@@ -31,55 +27,21 @@ class ChatterboxVoiceManager(VoiceManagerBase):
     This manager provides a consistent interface for managing these voice references.
     """
 
+    profiles_filename = "chatterbox_profiles.json"
+    store_log_label = "Chatterbox voice"
+    action_log_label = "Chatterbox "
+    # (TASK-32893) Chatterbox had no pre-write backup at all, while every save
+    # replaces the whole store -- one bad edit took every profile with it.
+    keep_backups = True
+
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):
-        """
-        Initialize the Chatterbox voice manager.
+        """Initialize the manager and its profile store.
 
         Args:
-            voice_samples_dir: Directory for storing voice samples and profiles
+            voice_samples_dir: Directory for storing voice samples and profiles.
         """
         super().__init__(voice_samples_dir)
-        self.profiles_file = self.voice_samples_dir / "chatterbox_profiles.json"
-        self.backup_dir = self.voice_samples_dir / "backups"
-        self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
-
-    @voice_files.call
-    def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk.
-
-        Returns:
-            The stored profiles, or ``{}`` when the store does not exist yet.
-
-        Raises:
-            Exception: (TASK-32893) When the store EXISTS but cannot be read.
-                It used to be swallowed into ``{}`` -- indistinguishable from
-                "no profiles" -- and the next ``save_profiles`` then wrote that
-                empty mapping over a file that was merely locked or corrupt.
-        """
-        if self._profiles_cache is not None:
-            return self._profiles_cache
-
-        self._profiles_cache = load_profiles_file(self, self.profiles_file)
-        return self._profiles_cache
-
-    @voice_files.call
-    def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
-        """Save voice profiles to disk, keeping a copy of what was there."""
-        try:
-            # (TASK-32893) Back up first, as the Higgs manager already did:
-            # this write is the only thing standing between a bad profile edit
-            # and every profile the user has.
-            create_profiles_backup(self, self.profiles_file, self.backup_dir)
-
-            with voice_files.open_text(self, self.profiles_file, "w") as f:
-                json.dump(profiles, f, indent=2)
-
-            self._profiles_cache = profiles
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save Chatterbox voice profiles: {e}")
-            return False
 
     @voice_files.call
     def create_profile(
@@ -202,75 +164,6 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             # Ensure backend field is present
             profile["backend"] = "chatterbox"
         return profile
-
-    @voice_files.call
-    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """Delete a Chatterbox voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            # Remove profile directory
-            profile_dir = self.voice_samples_dir / profile_name
-            if profile_dir.exists():
-                voice_files.remove_tree(self, profile_dir)
-
-            # Remove from profiles
-            del profiles[profile_name]
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                logger.info(f"Deleted Chatterbox voice profile '{profile_name}'")
-                return True, f"Successfully deleted profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile deletion"
-
-        except Exception as e:
-            logger.error(f"Error deleting Chatterbox profile: {e}")
-            return False, f"Error: {str(e)}"
-
-    @voice_files.call
-    def update_profile(
-        self,
-        profile_name: str,
-        display_name: Optional[str] = None,
-        language: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata_update: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """Update an existing Chatterbox voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            profile = profiles[profile_name]
-
-            # Update fields if provided
-            if display_name is not None:
-                profile["display_name"] = display_name
-            if language is not None:
-                profile["language"] = language
-            if description is not None:
-                profile["description"] = description
-            if tags is not None:
-                profile["tags"] = tags
-            if metadata_update:
-                profile["metadata"].update(metadata_update)
-
-            profile["updated_at"] = utc_now_iso()
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                return True, f"Successfully updated profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile updates"
-
-        except Exception as e:
-            logger.error(f"Error updating Chatterbox profile: {e}")
-            return False, f"Error: {str(e)}"
 
     @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:

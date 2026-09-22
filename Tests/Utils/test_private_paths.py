@@ -75,6 +75,101 @@ def test_lexical_path_rejects_nul():
         lexical_path("bad\x00path")
 
 
+# --- Offender diagnostics (task-32900) ---------------------------------------
+
+
+def test_private_path_error_includes_offender_when_present():
+    """The error string carries the blocking directory for support triage."""
+
+    result = PrivatePathResult(
+        Path("/home/ubuntu/.config/tldw_cli"),
+        PrivatePathStatus.UNSAFE_PARENT,
+        reason="shared_writable_parent",
+        offender_path=Path("/home/ubuntu/.config"),
+        offender_detail="mode drwxrwxr-x (0o775), owner uid=1000, group gid=1000",
+    )
+
+    error = PrivatePathError(result)
+
+    assert error.result is result
+    assert "shared_writable_parent" in str(error)
+    assert "/home/ubuntu/.config" in str(error)
+    assert "drwxrwxr-x" in str(error)
+
+
+def test_private_path_error_omits_offender_when_absent():
+    """Synthetic results without offender data keep the historical string."""
+
+    result = PrivatePathResult(
+        Path("/tmp/config.toml"),
+        PrivatePathStatus.UNSAFE_PARENT,
+        reason="shared_writable_parent",
+    )
+
+    assert str(PrivatePathError(result)) == "unsafe_parent: shared_writable_parent"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+def test_shared_writable_parent_refusal_names_offender_and_mode(tmp_path):
+    """A group-writable ancestor refusal names that ancestor and its mode."""
+
+    home = tmp_path / "home"
+    (home / ".config").mkdir(parents=True)
+    (home / ".config").chmod(0o775)
+
+    with pytest.raises(PrivatePathError) as caught:
+        secure_private_directory(
+            home / ".config" / "tldw_cli", create=True, application_owned=True
+        )
+
+    message = str(caught.value)
+    assert caught.value.result.reason == "shared_writable_parent"
+    assert str(home / ".config") in message
+    assert "drwxrwxr-x" in message
+    assert caught.value.result.offender_path == home / ".config"
+    assert caught.value.result.offender_detail is not None
+    assert caught.value.result.offender_mode == 0o775
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+def test_verify_trusted_directory_refusal_names_offender(tmp_path):
+    """The verify walk names the group-writable component it rejected."""
+
+    home = tmp_path / "home"
+    (home / ".local" / "share").mkdir(parents=True)
+    (home / ".local" / "share").chmod(0o775)
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(
+            home / ".local" / "share" / "tldw_cli", allow_shared_sticky=False
+        )
+
+    message = str(caught.value)
+    assert caught.value.result.reason == "shared_writable_parent"
+    assert str(home / ".local" / "share") in message
+    assert caught.value.result.offender_path == home / ".local" / "share"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink refusal contract")
+def test_rejected_symlink_component_names_offender(tmp_path):
+    """A caller-owned symlink component refusal names that symlink."""
+
+    home = tmp_path / "home"
+    real = home / "real-config"
+    real.mkdir(parents=True)
+    (home / ".config").symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(PrivatePathError) as caught:
+        secure_private_directory(
+            home / ".config" / "tldw_cli", create=True, application_owned=True
+        )
+
+    # A caller-owned symlink is never traversed; the refusal must still name
+    # the component that blocked the walk.
+    assert caught.value.result.offender_path == home / ".config"
+    assert str(home / ".config") in str(caught.value)
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
 def test_create_private_text_is_0600_under_0022_umask(tmp_path):
     target = tmp_path / "config.toml"

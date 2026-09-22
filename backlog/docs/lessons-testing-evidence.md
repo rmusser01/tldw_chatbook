@@ -16222,3 +16222,25 @@ not against the screen class's declaration. And a "pre-existing failures"
 baseline earns one root-cause pass before it is treated as noise: a number
 you inherited and never explained is a standing assumption that every future
 triage will be measured against.
+
+### A uv-created venv has no `pip` module, and 16 packaging tests fail with a misleading assert (task-32900, 2026-09-21)
+
+Verifying task-32900 in a throwaway `uv venv` + `uv pip install -e ".[dev]"`
+environment, `Tests/Packaging/test_installed_distribution.py` reported 176
+ERRORs and then 16 FAILs. The visible assert was `returncode == 1` on a
+`python -m pip install --target ...` call inside the tests, and before pip was
+present at all, `python -m build --no-isolation` died with `Backend
+'setuptools.build_meta' is not available`. Root cause: uv-created venvs do not
+ship the `pip` (or `setuptools`/`build`) module, and the packaging suite
+shells out to all three. `uv pip install pip build setuptools` into the venv
+turned every one of those failures green — the code under test was never
+broken.
+
+Rule: before diagnosing packaging-suite failures in a fresh environment, check
+`python -m pip --version` works in that interpreter. Treat `uv venv` +
+`uv pip install` as incomplete for this repo's Packaging tests by construction.
+The same session also produced one `ScreenStackError: No screens on stack`
+flake in `test_installed_wheel_loaders_entry_points_and_assets_are_immutable`
+(passed with and without the change under test on re-run): a single red run of
+a Textual `run_test` teardown is not evidence of causality — stash-and-rerun
+both ways before believing it.

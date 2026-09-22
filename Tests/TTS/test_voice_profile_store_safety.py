@@ -1,13 +1,18 @@
 """Voice-profile stores must not destroy profiles they merely failed to read.
 
-TASK-32893. Two independent managers (``ChatterboxVoiceManager`` and
-``HiggsVoiceProfileManager``) each kept their profiles in one JSON file and
-each answered a READ ERROR with ``{}`` -- the same answer as "this user has no
-profiles". The next write then replaced a file that was only locked, permission
--denied, or truncated, and every profile in it was gone. Chatterbox also had no
-pre-write backup at all, and the Higgs backups that did exist were named with
-naive LOCAL time and selected by ``sorted(glob(...))``, i.e. by filename bytes,
-so "restore the most recent backup" could restore an older one.
+TASK-32893. Both managers (``ChatterboxVoiceManager`` and
+``HiggsVoiceProfileManager``) keep their profiles in one JSON file, and the
+shared store answered a READ ERROR with ``{}`` -- the same answer as "this
+user has no profiles". The next write then replaced a file that was only
+locked, permission-denied, or truncated, and every profile in it was gone.
+Chatterbox also had no pre-write backup at all, and the Higgs backups that did
+exist were named with naive LOCAL time and selected by ``sorted(glob(...))``,
+i.e. by filename bytes, so "restore the most recent backup" could restore an
+older one.
+
+Since TASK-32863 both managers subclass ``VoiceManagerBase``, so all four
+properties are pinned on the one shared implementation -- the parametrized
+fixture proves each backend really inherits it.
 """
 
 from __future__ import annotations
@@ -22,7 +27,6 @@ import pytest
 
 from tldw_chatbook.TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
 from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
-from tldw_chatbook.TTS.backends.voice_manager_base import list_profile_backups
 
 _PROFILES = {"keeper": {"display_name": "Keeper", "reference_audio": "keeper.wav"}}
 
@@ -85,11 +89,11 @@ def test_a_failed_read_does_not_let_the_next_write_destroy_the_store(
 
 
 def test_saving_profiles_keeps_a_backup_of_what_was_there(manager) -> None:
-    """Chatterbox had no ``_create_backup`` at all; now both backends do."""
+    """Chatterbox kept no backup at all; now both backends inherit one."""
     assert manager.save_profiles(dict(_PROFILES)) is True
     assert manager.save_profiles({"replacement": {"display_name": "Replacement"}})
 
-    backups = list_profile_backups(manager.backup_dir, manager.profiles_file)
+    backups = manager._list_backups()
     assert backups, "the overwriting save must have left a backup behind"
     assert json.loads(backups[-1].read_text(encoding="utf-8")) == _PROFILES
 
@@ -99,7 +103,7 @@ def test_backup_names_are_utc_with_a_z_suffix(manager) -> None:
     assert manager.save_profiles(dict(_PROFILES)) is True
     assert manager.save_profiles({"replacement": {}}) is True
 
-    backups = list_profile_backups(manager.backup_dir, manager.profiles_file)
+    backups = manager._list_backups()
     assert backups
     for path in backups:
         assert _UTC_BACKUP_NAME.search(path.name), path.name

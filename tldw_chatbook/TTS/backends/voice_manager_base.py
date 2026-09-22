@@ -1,4 +1,3 @@
-from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # voice_manager_base.py
 # Description: Base class for TTS voice profile managers
 #
@@ -9,34 +8,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
-from tldw_chatbook.Utils.timestamps import utc_now
+from loguru import logger
+
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
+from tldw_chatbook.Utils.timestamps import utc_now, utc_now_iso
 
 #######################################################################################################################
 #
-# Voice-profile store I/O, shared by every backend's profile manager
+# Profile-store backup naming and ordering
 #
 
-#: Backup filename stamp: UTC, ``Z``-suffixed, and filename-safe on Windows
-#: (ADR-173's canonical stored shape carries ``:``, which a path cannot).
+#: Backup filename stamp: UTC, ``Z``-suffixed, and filename-safe -- ADR-173's
+#: canonical stored shape carries ``:``, which a path component cannot.
 BACKUP_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
-#: How many rotated backups each profile store keeps.
+#: How many rotated backups a profile store keeps.
 BACKUP_KEEP = 10
-
-
-def _backup_glob(profiles_file: Path) -> str:
-    return f"{profiles_file.stem}_backup_*.json"
 
 
 def _backup_moment(path: Path) -> datetime:
     """When this backup was taken, as an aware UTC ``datetime``.
 
     (TASK-32893) Backups used to be named with ``datetime.now()`` -- naive
-    LOCAL time -- and selected by ``sorted(glob(...))``, i.e. by filename
+    LOCAL time -- and selected with ``sorted(glob(...))``, i.e. by filename
     bytes. Across a DST fall-back, or on a machine that changed timezone, the
     lexically-last name is not the most recent backup, so "restore the latest"
-    restored the wrong file and the newest profiles were silently replaced by
-    older ones.
+    restored an older file over the user's newer profiles.
+
+    Args:
+        path: A backup file named ``<stem>_backup_<stamp>.json``.
+
+    Returns:
+        The instant the backup was taken, as an aware UTC ``datetime``.
     """
     stamp = path.stem.rsplit("_backup_", 1)[-1]
     try:
@@ -44,88 +47,11 @@ def _backup_moment(path: Path) -> datetime:
             tzinfo=timezone.utc
         )
     except ValueError:
-        # A pre-TASK-32893 backup carries a naive LOCAL stamp that cannot be
+        # A pre-TASK-32893 name carries a naive LOCAL stamp that cannot be
         # placed on a timeline without the writer's offset. The file's own
-        # mtime can: ``shutil.copy`` does not preserve mtime, so it IS the
-        # moment the backup was taken.
+        # mtime can: ``shutil.copy`` does not preserve mtime, so the mtime IS
+        # the moment the backup was taken.
         return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-
-
-def list_profile_backups(backup_dir: Path, profiles_file: Path) -> List[Path]:
-    """This store's backups, OLDEST FIRST, ordered by parsed timestamp.
-
-    Args:
-        backup_dir: Directory holding the rotated copies.
-        profiles_file: The live profile store the backups are of.
-
-    Returns:
-        Chronologically ordered paths; empty when there are none.
-    """
-    if not backup_dir.is_dir():
-        return []
-    return sorted(backup_dir.glob(_backup_glob(profiles_file)), key=_backup_moment)
-
-
-def create_profiles_backup(
-    receiver: Any,
-    profiles_file: Path,
-    backup_dir: Path,
-    *,
-    keep: int = BACKUP_KEEP,
-) -> Optional[Path]:
-    """Copy the live profile store aside, then prune to the newest ``keep``.
-
-    Args:
-        receiver: The manager the loose-voice-file admission is scoped to.
-        profiles_file: The live profile store to copy.
-        backup_dir: Directory to write the copy into (created if absent).
-        keep: How many backups to retain, newest first.
-
-    Returns:
-        The backup path, or ``None`` when there was nothing to back up.
-    """
-    if not profiles_file.exists():
-        return None
-    voice_files.mkdir(receiver, backup_dir, parents=True, exist_ok=True)
-    stamp = utc_now().strftime(BACKUP_STAMP_FORMAT)
-    backup_file = backup_dir / f"{profiles_file.stem}_backup_{stamp}.json"
-    voice_files.copy(receiver, profiles_file, backup_file)
-    for stale in list_profile_backups(backup_dir, profiles_file)[:-keep]:
-        voice_files.unlink(receiver, stale)
-    return backup_file
-
-
-def load_profiles_file(receiver: Any, profiles_file: Path) -> Dict[str, Any]:
-    """Read a profile store, distinguishing ABSENT from UNREADABLE.
-
-    (TASK-32893) Both backends used to answer a read error with ``{}`` -- the
-    same answer as "this user has no profiles" -- so the next save wrote an
-    empty store over a file that was merely locked, permission-denied, or
-    truncated, and every profile in it was gone. A file that exists but cannot
-    be read is an error, and callers must see it.
-
-    Args:
-        receiver: The manager the loose-voice-file admission is scoped to.
-        profiles_file: The store to read.
-
-    Returns:
-        The stored mapping, or ``{}`` when the file genuinely does not exist.
-
-    Raises:
-        OSError: The file exists but could not be read.
-        json.JSONDecodeError: The file exists but is not valid JSON.
-        ValueError: The file exists but does not hold a JSON object.
-    """
-    if not profiles_file.exists():
-        return {}
-    with voice_files.open_text(receiver, profiles_file, "r") as handle:
-        profiles = json.load(handle)
-    if not isinstance(profiles, dict):
-        raise ValueError(
-            f"Voice profile store {profiles_file} does not hold a JSON object "
-            f"(found {type(profiles).__name__}); refusing to treat it as empty."
-        )
-    return profiles
 
 
 #######################################################################################################################
@@ -140,20 +66,261 @@ class VoiceManagerBase(ABC):
 
     Provides a common interface for managing voice profiles across different TTS backends.
     Each backend (Higgs, Chatterbox, GPT-SoVITS, etc.) should implement this interface.
+
+    The base also owns the shared single-JSON profile store mechanics (TASK-32863):
+    the records file name, the load/save cache, and the update/delete/get CRUD
+    that every backend implements identically. Subclasses customize storage via
+    ``profiles_filename`` and log wording via the label attributes, keep
+    timestamped backups by setting ``keep_backups``, and implement the
+    engine-specific create/list/export/import profile methods.
     """
+
+    #: Records file name inside ``voice_samples_dir``.
+    profiles_filename = "voice_profiles.json"
+    #: Wording for store-level logs, e.g. "Failed to load {label} profiles".
+    store_log_label = "voice"
+    #: Prefix for CRUD error logs, e.g. "Error updating {label}profile".
+    action_log_label = ""
+    #: Create a ``backups`` directory and call ``_backup_before_save`` on save.
+    keep_backups = False
 
     def __init__(self, voice_samples_dir: Path):
         """
-        Initialize the voice manager.
+        Initialize the voice manager and its profile store.
 
         Args:
-            voice_samples_dir: Directory for storing voice samples and profiles
+            voice_samples_dir: Directory for storing voice samples and profiles;
+                the records file, cache, and optional backups directory live
+                inside it.
         """
         self.voice_samples_dir = Path(voice_samples_dir)
         voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
         self.backend_name = self.__class__.__name__.replace("VoiceManager", "").replace(
             "VoiceProfileManager", ""
         )
+        self.profiles_file = self.voice_samples_dir / self.profiles_filename
+        self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        if self.keep_backups:
+            self.backup_dir = self.voice_samples_dir / "backups"
+            voice_files.mkdir(self, self.backup_dir, exist_ok=True)
+
+    def _list_backups(self) -> List[Path]:
+        """This store's backups, OLDEST FIRST, ordered by parsed timestamp.
+
+        Returns:
+            Chronologically ordered paths; empty when there are none, or when
+            this backend does not keep backups.
+        """
+        if not self.keep_backups or not self.backup_dir.is_dir():
+            return []
+        return sorted(
+            self.backup_dir.glob(f"{self.profiles_file.stem}_backup_*.json"),
+            # The name breaks mtime ties so the prune order is deterministic.
+            key=lambda path: (_backup_moment(path), path.name),
+        )
+
+    def _backup_before_save(self) -> None:
+        """Copy the live records file aside before it is overwritten.
+
+        (TASK-32893) Every save replaces the whole store, so this copy is the
+        only thing between one bad profile edit and all of the user's
+        profiles. Higgs had it; Chatterbox did not, and now both do via
+        ``keep_backups``.
+
+        A failure is logged and swallowed: an absent backup is not a reason to
+        refuse the save the caller actually asked for.
+        """
+        if not self.keep_backups:
+            return
+        try:
+            if not self.profiles_file.exists():
+                return  # nothing stored yet, so nothing to preserve
+            stamp = utc_now().strftime(BACKUP_STAMP_FORMAT)
+            voice_files.copy(
+                self,
+                self.profiles_file,
+                self.backup_dir / f"{self.profiles_file.stem}_backup_{stamp}.json",
+            )
+            # Prune by parsed timestamp, not by filename bytes.
+            for stale in self._list_backups()[:-BACKUP_KEEP]:
+                voice_files.unlink(self, stale)
+        except Exception as e:
+            logger.warning(f"Failed to create backup: {e}")
+
+    @voice_files.call
+    def load_profiles(self) -> Dict[str, Dict[str, Any]]:
+        """Load the profile records from the store file.
+
+        (TASK-32893) A read error used to be logged and answered with ``{}``
+        -- the very same answer as "this user has no profiles" -- so the next
+        ``save_profiles`` wrote an empty store over a file that was merely
+        locked, permission-denied, or truncated, and every profile in it was
+        gone. ABSENT and UNREADABLE are now different answers; the CRUD
+        methods turn the raise into a refusal, which leaves the bytes on disk
+        exactly as they were found.
+
+        Returns:
+            The cached-or-loaded ``{name: record}`` mapping; ``{}`` when the
+            store does not exist yet.
+
+        Raises:
+            OSError: The store exists but could not be read.
+            json.JSONDecodeError: The store exists but is not valid JSON.
+            ValueError: The store exists but does not hold a JSON object.
+        """
+        if self._profiles_cache is not None:
+            return self._profiles_cache
+
+        if not self.profiles_file.exists():
+            self._profiles_cache = {}
+            return self._profiles_cache
+
+        with voice_files.open_text(self, self.profiles_file, "r") as f:
+            profiles = json.load(f)
+        if not isinstance(profiles, dict):
+            raise ValueError(
+                f"Voice profile store {self.profiles_file} does not hold a JSON "
+                f"object (found {type(profiles).__name__}); refusing to treat "
+                f"it as empty."
+            )
+        self._profiles_cache = profiles
+        return self._profiles_cache
+
+    @voice_files.call
+    def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
+        """Persist the profile records, backing up first when enabled.
+
+        Args:
+            profiles: The complete ``{name: record}`` mapping to store.
+
+        Returns:
+            True on success; False (logged) on a write failure.
+        """
+        try:
+            self._backup_before_save()
+
+            with voice_files.open_text(self, self.profiles_file, "w") as f:
+                json.dump(profiles, f, indent=2)
+
+            self._profiles_cache = profiles
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save {self.store_log_label} profiles: {e}")
+            return False
+
+    @voice_files.call
+    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        """Get one profile record.
+
+        Args:
+            profile_name: Profile identifier.
+
+        Returns:
+            The record, or None when absent.
+        """
+        profiles = self.load_profiles()
+        return profiles.get(profile_name)
+
+    @voice_files.call
+    def update_profile(
+        self,
+        profile_name: str,
+        display_name: Optional[str] = None,
+        language: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata_update: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Update an existing voice profile.
+
+        Args:
+            profile_name: Profile identifier.
+            display_name: New display name (optional).
+            language: New language code (optional).
+            description: New description (optional).
+            tags: New tags list (optional).
+            metadata_update: Metadata fields to merge (optional).
+
+        Returns:
+            ``(success, message)``.
+        """
+        try:
+            profiles = self.load_profiles()
+            if profile_name not in profiles:
+                return False, f"Profile '{profile_name}' not found"
+
+            profile = profiles[profile_name]
+
+            # Update fields if provided
+            if display_name is not None:
+                profile["display_name"] = display_name
+            if language is not None:
+                profile["language"] = language
+            if description is not None:
+                profile["description"] = description
+            if tags is not None:
+                profile["tags"] = tags
+            if metadata_update:
+                profile["metadata"].update(metadata_update)
+
+            profile["updated_at"] = utc_now_iso()
+
+            # Save updated profiles
+            if self.save_profiles(profiles):
+                return True, f"Successfully updated profile '{profile_name}'"
+            else:
+                return False, "Failed to save profile updates"
+
+        except Exception as e:
+            logger.error(
+                f"Error updating {self.action_log_label}profile '{profile_name}': {e}"
+            )
+            return False, f"Error: {str(e)}"
+
+    @voice_files.call
+    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
+        """Delete a voice profile and its reference directory.
+
+        Args:
+            profile_name: Profile identifier; validated to stay inside the
+                samples root before any filesystem removal.
+
+        Returns:
+            ``(success, message)``.
+        """
+        try:
+            profiles = self.load_profiles()
+            if profile_name not in profiles:
+                return False, f"Profile '{profile_name}' not found"
+
+            # Remove profile directory. Profile names are path components:
+            # the loose-voice wrapper refuses path-component characters in
+            # profile_name before this call, and this resolution-free check
+            # (validating via resolve() would desynchronize from the
+            # admission layer's registered, unresolved roots) is the second
+            # containment layer -- a traversal-shaped name never reaches
+            # the filesystem.
+            profile_dir = self.voice_samples_dir / profile_name
+            if Path(profile_name).name != profile_name:
+                return False, "Error: invalid profile name"
+            if profile_dir.exists():
+                voice_files.remove_tree(self, profile_dir)
+
+            # Remove from profiles
+            del profiles[profile_name]
+
+            # Save updated profiles
+            if self.save_profiles(profiles):
+                logger.info(f"Deleted {self.store_log_label} profile '{profile_name}'")
+                return True, f"Successfully deleted profile '{profile_name}'"
+            else:
+                return False, "Failed to save profile deletion"
+
+        except Exception as e:
+            logger.error(
+                f"Error deleting {self.action_log_label}profile '{profile_name}': {e}"
+            )
+            return False, f"Error: {str(e)}"
 
     @abstractmethod
     def create_profile(
@@ -204,57 +371,8 @@ class VoiceManagerBase(ABC):
         pass
 
     @abstractmethod
-    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific voice profile.
-
-        Args:
-            profile_name: Profile identifier
-
-        Returns:
-            Profile data or None if not found
-        """
-        pass
-
     @abstractmethod
-    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """
-        Delete a voice profile.
-
-        Args:
-            profile_name: Profile identifier
-
-        Returns:
-            (success, message) tuple
-        """
-        pass
-
     @abstractmethod
-    def update_profile(
-        self,
-        profile_name: str,
-        display_name: Optional[str] = None,
-        language: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata_update: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """
-        Update an existing voice profile.
-
-        Args:
-            profile_name: Profile identifier
-            display_name: New display name (optional)
-            language: New language code (optional)
-            description: New description (optional)
-            tags: New tags list (optional)
-            metadata_update: Metadata fields to update (optional)
-
-        Returns:
-            (success, message) tuple
-        """
-        pass
-
     @abstractmethod
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """
