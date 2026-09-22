@@ -1102,6 +1102,22 @@ ListItem.personas-library-row.is-active.-highlight {
     text-wrap: wrap;
 }
 
+/* Keep raw disclosure chrome and content within the compact inspector clip. */
+#mcp-inspector-test-result-raw > CollapsibleTitle {
+    width: $ds-width-full;
+    height: auto;
+    min-width: $ds-size-0;
+}
+
+#mcp-inspector-test-result-raw > Contents {
+    padding: $ds-space-0;
+}
+
+/* Leave space for disclosure chrome while retaining keyboard output scrolling. */
+.mcp-compact #mcp-inspector-test-result-raw-scroll {
+    height: $ds-size-8;
+}
+
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
    MCPWorkbench.on_resize) the triad rebalances toward the canvas so the
    servers table keeps its primary columns in-viewport; the rail/inspector

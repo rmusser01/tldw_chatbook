@@ -1,0 +1,11 @@
+{
+  "pid": 69435,
+  "started_at": "2026-09-22T17:07:55.578381+00:00",
+  "repo": "<repo>",
+  "head": "96a58145ca975b0d7928413580e6666822da6cbd",
+  "dirty_status": " M Tests/UI/test_mcp_inspector.py\n M Tests/Utils/test_mcp_native_qa_args.py\n M tldw_chatbook/UI/MCP_Modules/mcp_inspector.py\n M tldw_chatbook/css/components/_agentic_terminal.tcss\n M tldw_chatbook/css/tldw_cli_modular.tcss\n?? Docs/superpowers/qa/2026-09-18-mcp-inspector-results/\n?? Tests/UI/test_mcp_inspector_results.py\n?? \"backlog/tasks/task-32913 - Keep-MCP-tool-results-current-and-raw-responses-readable-on-merged-dev.md\"\n",
+  "requested_size": [
+    170,
+    48
+  ]
+}
