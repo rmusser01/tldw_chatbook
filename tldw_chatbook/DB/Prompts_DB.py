@@ -34,6 +34,7 @@ import threading
 import time
 import uuid
 import re
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from math import ceil
@@ -4885,6 +4886,34 @@ def view_prompt_keywords_markdown(db_instance: PromptsDatabase) -> str:
         return error_msg
 
 
+def _markdown_export_arcname(name, prompt_id, used_keys: set) -> str:
+    """Return a unique ``.md`` archive name for a prompt in the export ZIP.
+
+    Distinct prompts can sanitise to the same filename (``a:b`` and ``a?b`` both
+    -> ``a_b.md``) or share a name outright; without disambiguation the ZIP got
+    duplicate entries and extractors silently dropped all but the last. Names are
+    compared case-insensitively and NFC-normalised so entries that would also
+    collide on a case-insensitive or normalisation-sensitive filesystem
+    (``Foo`` vs ``foo``) are disambiguated too. On collision the prompt id is
+    appended, then a numeric suffix. ``used_keys`` is mutated with the chosen
+    name's comparison key.
+    """
+    base = re.sub(r"[^\w\-_ \.]", "_", name).strip() or "prompt"
+
+    def _key(candidate: str) -> str:
+        return unicodedata.normalize("NFC", candidate).casefold()
+
+    arcname = f"{base}.md"
+    if _key(arcname) in used_keys:
+        arcname = f"{base}-{prompt_id}.md"
+        suffix = 2
+        while _key(arcname) in used_keys:
+            arcname = f"{base}-{prompt_id}-{suffix}.md"
+            suffix += 1
+    used_keys.add(_key(arcname))
+    return arcname
+
+
 def export_prompts_formatted(
     db_instance: PromptsDatabase,
     export_format: str = "csv",  # 'csv' or 'markdown'
@@ -5046,7 +5075,7 @@ def export_prompts_formatted(
             )
 
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                used_arcnames: set[str] = set()
+                used_arcname_keys: set[str] = set()
                 for p_data in prompts_data:
                     author_sec = (
                         f"**Author**: {p_data['author']}"
@@ -5090,22 +5119,12 @@ def export_prompts_formatted(
                         keywords_section=keywords_sec,
                     ).strip()  # Clean up extra newlines if sections are empty
 
-                    # Distinct prompts can sanitise to the same filename
-                    # ("a:b" and "a?b" both -> "a_b.md"), and duplicate names
-                    # collide outright; either way the old code overwrote the
-                    # staging file and wrote duplicate zip entries, so extractors
-                    # yielded fewer prompts than the "Successfully exported N"
-                    # status claimed. Disambiguate with the prompt id and write
-                    # straight into the archive (no leaking on-disk staging copy).
-                    base = re.sub(r"[^\w\-_ \.]", "_", p_data["name"]).strip() or "prompt"
-                    arcname = f"{base}.md"
-                    if arcname in used_arcnames:
-                        arcname = f"{base}-{p_data['id']}.md"
-                        suffix = 2
-                        while arcname in used_arcnames:
-                            arcname = f"{base}-{p_data['id']}-{suffix}.md"
-                            suffix += 1
-                    used_arcnames.add(arcname)
+                    # Unique, collision-safe filename; writestr straight into
+                    # the archive (no leaking on-disk staging copy). See
+                    # _markdown_export_arcname for the disambiguation contract.
+                    arcname = _markdown_export_arcname(
+                        p_data["name"], p_data["id"], used_arcname_keys
+                    )
                     zipf.writestr(arcname, md_content)
 
             output_file_path = zip_file_path

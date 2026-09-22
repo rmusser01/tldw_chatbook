@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import threading
+import zipfile
 from pathlib import Path
 
 # The module to be tested
@@ -591,12 +592,12 @@ class TestStandaloneFunctions(BaseTestCase):
         os.remove(file_path)
 
     def test_export_prompts_formatted_markdown_disambiguates_colliding_names(self):
-        """Two prompt names that sanitise to the same filename ("a:b" and "a?b"
-        both -> "a_b.md") must BOTH survive the export -- the old code overwrote
-        the staging file and wrote duplicate zip entries, so extractors yielded
-        one prompt while the status still claimed both."""
-        import zipfile
+        """Colliding prompt names must not drop prompts from the markdown export.
 
+        Two names that sanitise to the same filename ("a:b" and "a?b" both ->
+        "a_b.md") previously overwrote the staging file and wrote duplicate zip
+        entries, so extractors yielded one prompt while the status claimed both.
+        """
         file_db = self._get_file_db()
         file_db.add_prompt(
             name="a:b", author="A", details="", system_prompt="", user_prompt="",
@@ -621,6 +622,26 @@ class TestStandaloneFunctions(BaseTestCase):
             self.assertIn("a?b", bodies)
         finally:
             os.remove(file_path)
+
+    def test_markdown_export_arcname_disambiguation(self):
+        """_markdown_export_arcname gives every prompt a unique, collision-safe name.
+
+        Isolated coverage of the id-suffix branch, the numeric fallback, the
+        case-insensitive/NFC collision, and the empty-name fallback.
+        """
+        from tldw_chatbook.DB.Prompts_DB import _markdown_export_arcname
+
+        used = set()
+        self.assertEqual(_markdown_export_arcname("a:b", 1, used), "a_b.md")
+        self.assertEqual(_markdown_export_arcname("a?b", 2, used), "a_b-2.md")
+        # "A_B" keys to the same as "a_b" on a case-insensitive filesystem.
+        self.assertEqual(_markdown_export_arcname("A_B", 3, used), "A_B-3.md")
+        # Numeric fallback when the base-id name also collides.
+        self.assertEqual(
+            _markdown_export_arcname("x", 9, {"x.md", "x-9.md"}), "x-9-2.md"
+        )
+        # Empty / all-stripped name falls back to a stable stem.
+        self.assertEqual(_markdown_export_arcname("   ", 4, set()), "prompt.md")
 
 
 class TestDatabaseIntegrityAndSchema(BaseTestCase):
