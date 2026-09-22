@@ -4,6 +4,7 @@ from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 admit_startup()
 
 from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
+from tldw_chatbook.TTS.backends.voice_manager_base import VoiceManagerBase
 
 # higgs_voice_manager.py
 # Description: Voice profile management utilities for Higgs Audio TTS
@@ -48,7 +49,7 @@ except ImportError:
 #
 
 
-class HiggsVoiceProfileManager:
+class HiggsVoiceProfileManager(VoiceManagerBase):
     """
     Manages voice profiles for Higgs Audio TTS backend.
 
@@ -58,60 +59,29 @@ class HiggsVoiceProfileManager:
     - Analyze audio characteristics
     - Validate reference audio files
     - Backup and restore profiles
+
+    The single-JSON store, cache, backups-on-save, and the shared
+    update/delete/get CRUD live in VoiceManagerBase (TASK-32863); this
+    class keeps the Higgs-specific create/list/export/import shapes,
+    audio validation/analysis, and backup retention.
     """
+
+    profiles_filename = "voice_profiles.json"
+    store_log_label = "voice"
+    action_log_label = ""
+    keep_backups = True
 
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):
-        """
-        Initialize the voice profile manager.
+        """Initialize the manager and its profile store.
 
         Args:
-            voice_samples_dir: Directory for storing voice samples and profiles
+            voice_samples_dir: Directory for storing voice samples and profiles.
         """
-        self.voice_samples_dir = Path(voice_samples_dir)
-        voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
+        super().__init__(voice_samples_dir)
 
-        self.profiles_file = self.voice_samples_dir / "voice_profiles.json"
-        self.backup_dir = self.voice_samples_dir / "backups"
-        voice_files.mkdir(self, self.backup_dir, exist_ok=True)
-
-        self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
-
-    @voice_files.call
-    def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk"""
-        if self._profiles_cache is not None:
-            return self._profiles_cache
-
-        if self.profiles_file.exists():
-            try:
-                with voice_files.open_text(self, self.profiles_file, "r") as f:
-                    self._profiles_cache = json.load(f)
-                    return self._profiles_cache
-            except Exception as e:
-                logger.error(f"Failed to load voice profiles: {e}")
-                self._profiles_cache = {}
-        else:
-            self._profiles_cache = {}
-
-        return self._profiles_cache
-
-    @voice_files.call
-    def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
-        """Save voice profiles to disk"""
-        try:
-            # Create backup before saving
-            if self.profiles_file.exists():
-                self._create_backup()
-
-            with voice_files.open_text(self, self.profiles_file, "w") as f:
-                json.dump(profiles, f, indent=2)
-
-            self._profiles_cache = profiles
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save voice profiles: {e}")
-            return False
+    def _backup_before_save(self) -> None:
+        self._create_backup()
 
     @voice_files.call
     def create_profile(
@@ -197,77 +167,6 @@ class HiggsVoiceProfileManager:
             return False, f"Error: {str(e)}"
 
     @voice_files.call
-    def update_profile(
-        self,
-        profile_name: str,
-        display_name: Optional[str] = None,
-        language: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata_update: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """Update an existing voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            profile = profiles[profile_name]
-
-            # Update fields if provided
-            if display_name is not None:
-                profile["display_name"] = display_name
-            if language is not None:
-                profile["language"] = language
-            if description is not None:
-                profile["description"] = description
-            if tags is not None:
-                profile["tags"] = tags
-            if metadata_update:
-                profile["metadata"].update(metadata_update)
-
-            profile["updated_at"] = utc_now_iso()
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                return True, f"Successfully updated profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile updates"
-
-        except Exception as e:
-            logger.error(f"Error updating profile: {e}")
-            return False, f"Error: {str(e)}"
-
-    @voice_files.call
-    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """Delete a voice profile"""
-        try:
-            profiles = self.load_profiles()
-            if profile_name not in profiles:
-                return False, f"Profile '{profile_name}' not found"
-
-            profiles[profile_name]
-
-            # Remove profile directory
-            profile_dir = self.voice_samples_dir / profile_name
-            if profile_dir.exists():
-                voice_files.remove_tree(self, profile_dir)
-
-            # Remove from profiles
-            del profiles[profile_name]
-
-            # Save updated profiles
-            if self.save_profiles(profiles):
-                logger.info(f"Deleted voice profile '{profile_name}'")
-                return True, f"Successfully deleted profile '{profile_name}'"
-            else:
-                return False, "Failed to save profile deletion"
-
-        except Exception as e:
-            logger.error(f"Error deleting profile: {e}")
-            return False, f"Error: {str(e)}"
-
-    @voice_files.call
     def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         List all voice profiles.
@@ -303,12 +202,6 @@ class HiggsVoiceProfileManager:
         # Sort by display name
         result.sort(key=lambda x: x["display_name"].lower())
         return result
-
-    @voice_files.call
-    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        """Get a specific voice profile"""
-        profiles = self.load_profiles()
-        return profiles.get(profile_name)
 
     @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:

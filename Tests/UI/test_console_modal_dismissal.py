@@ -790,7 +790,9 @@ TASK4_MODAL_CONTRACTS = (
     ),
     _Task4ModalContract(
         CancelConfirmationDialog,
-        "#cancel-confirmation-dialog",
+        # TASK-32864: collapsed onto ConfirmationDialog; the content selector
+        # is the pattern class's shared container id.
+        "#confirmation-dialog",
         False,
         "request_safe_cancel",
         "Console prompt queue cancellation",
@@ -2035,7 +2037,7 @@ MOUNTED_TASK4_CONTRACTS = (
     _MountedTask4Contract(
         "cancel-confirmation",
         CancelConfirmationDialog,
-        "#continue-btn",
+        "#cancel-button",
         False,
     ),
     _MountedTask4Contract(
