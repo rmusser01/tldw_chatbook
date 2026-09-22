@@ -201,6 +201,10 @@ async def test_directory_path_subject_enables_run(tmp_path):
         await pilot.click("#skill-eval-run")
         await pilot.pause()
         assert app.run_requested == []
+        # The guard's warning toast renders over the button for ~5s and
+        # would swallow the second Run click -- clear it first.
+        app.clear_notifications()
+        await pilot.pause()
         directory.value = ""
         await pilot.pause()
 
