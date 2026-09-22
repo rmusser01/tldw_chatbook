@@ -22,6 +22,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 from unicodedata import category as unicode_category
 
+from tldw_chatbook.Utils.Utils import elide_path_middle
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.provider_setup_persistence import ProviderSetupMutation
 
@@ -611,22 +613,29 @@ def middle_truncate_path(path_text: str, max_chars: int) -> str:
     lines. Keeps the start (which disambiguates the profile root) and the
     tail (the filename users recognize), joining with a single ellipsis.
 
+    Tier-2 review S21 [D4]: this was a re-roll of
+    ``Utils.Utils.elide_path_middle`` that had drifted into the exact
+    failure that helper's docstring says it exists to prevent. A plain
+    midpoint split eats into the BASENAME::
+
+        middle_truncate_path(".../config_for_my_work_profile.toml", 40)
+            -> '/Users/macbook-dev/…my_work_profile.toml'
+        elide_path_middle(".../config_for_my_work_profile.toml", 40)
+            -> '/Users/m…config_for_my_work_profile.toml'
+
+    -- on the Summary screen, whose entire job is an honest read-back of
+    what landed on disk. Delegated rather than deleted so the one caller
+    keeps the UAT-S-4 name and the ``max_chars`` floor.
+
     Args:
         path_text: The path to display.
         max_chars: Display budget in cells; floored at 8.
 
     Returns:
-        ``path_text`` unchanged when it fits, else head + "…" + tail at
-        exactly ``max_chars`` characters.
+        ``path_text`` unchanged when it fits, else an elided string of at
+        most ``max_chars`` characters that keeps the filename intact.
     """
-    if max_chars < 8:
-        max_chars = 8
-    if len(path_text) <= max_chars:
-        return path_text
-    keep = max_chars - 1
-    head = keep // 2
-    tail = keep - head
-    return f"{path_text[:head]}…{path_text[-tail:]}"
+    return elide_path_middle(path_text, max(max_chars, 8))
 
 
 def build_first_run_summary_actions(
