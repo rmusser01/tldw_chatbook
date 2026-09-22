@@ -1,0 +1,34 @@
+....F                                                                    [100%]
+=================================== FAILURES ===================================
+__________ test_test_tool_one_click_builtin_uses_prepared_entry_point __________
+Tests/UI/test_mcp_workbench.py:5964: in test_test_tool_one_click_builtin_uses_prepared_entry_point
+    assert len(app.unified_mcp_service.prepared_calls) == 1
+E   AssertionError: assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x11e4b5bb0>.prepared_calls
+E    +      where <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x11e4b5bb0> = BuiltinToolTestApp(title='BuiltinToolTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'}).unified_mcp_service
+----------------------------- Captured stderr call -----------------------------
+2026-09-22 09:03:12.229 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'BuiltinToolTestHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+1.79s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_renders_failed_with_message
+1.72s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+1.55s call     Tests/UI/test_mcp_workbench.py::test_test_tool_typed_failure_outcome_is_redacted_and_bounded
+1.50s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+1.33s call     Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_builtin_uses_prepared_entry_point
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_builtin_uses_prepared_entry_point
+1 failed, 4 passed in 9.89s
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-e9aed28c-fc73-44df-9749-4d08b32c6025/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-e9aed28c-fc73-44df-9749-4d08b32c6025/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-e9aed28c-fc73-44df-9749-4d08b32c6025
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-e9aed28c-fc73-44df-9749-4d08b32c6025'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-cab80d60-b2d8-4039-80f5-612e9b749e64/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-cab80d60-b2d8-4039-80f5-612e9b749e64/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-cab80d60-b2d8-4039-80f5-612e9b749e64
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-cab80d60-b2d8-4039-80f5-612e9b749e64'
+  warnings.warn(

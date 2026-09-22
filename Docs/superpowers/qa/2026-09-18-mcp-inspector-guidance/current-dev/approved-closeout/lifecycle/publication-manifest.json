@@ -1,0 +1,37 @@
+[
+  {
+    "source": "<tmp>/tldw-32836-approved-001/lifecycle.json",
+    "export": "lifecycle.json",
+    "source_sha256": "9a576a0d872e8c4fb4df55a97505b86694f214451ed0e32d67620b07543f3959",
+    "export_sha256": "9a576a0d872e8c4fb4df55a97505b86694f214451ed0e32d67620b07543f3959",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-native-launch.py",
+    "export": "2722-native-launch.py",
+    "source_sha256": "ddde85e2453f46bc40586d30fcbd2aa5ecefb9c66e1b9814bfdf9fd8df21a6cd",
+    "export_sha256": "60f423b727e728673974f3ca2425a533fee8c1360803a8623ca6ba7ee07c9cf8",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-native-lifecycle.py",
+    "export": "2722-native-lifecycle.py",
+    "source_sha256": "54789fa871edea9f35394ea2b2fcb59f681a4bb595c07d85190692a856fbb0de",
+    "export_sha256": "511a910d7e65873429b3230d4c631028098492277fb6a9bb9e3b708cf5339ca7",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-capture-comparison.json",
+    "export": "2722-capture-comparison.json",
+    "source_sha256": "b8800dc3aeaa7f10cb4af23b45ae6f51acc685a1badde9c0f7a776990667e2ac",
+    "export_sha256": "b8800dc3aeaa7f10cb4af23b45ae6f51acc685a1badde9c0f7a776990667e2ac",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-compare-captures.py",
+    "export": "2722-compare-captures.py",
+    "source_sha256": "be2248a1df6d837fe19a8b97132a6fe92f8a276baea4067e7de735cde13fd8c6",
+    "export_sha256": "66ddffacba6afd5205bdca5e4bcc3d203239ca6fcd146ad03c787ca611211098",
+    "normalization": "host paths and trailing whitespace"
+  }
+]
