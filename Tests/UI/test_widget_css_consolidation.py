@@ -1127,7 +1127,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("UI/Chatbooks_Window_Improved.py", "ChatbookCard", "DEFAULT_CSS"),
     ("UI/Chatbooks_Window_Improved.py", "ChatbooksWindowImproved", "DEFAULT_CSS"),
     ("UI/Chatbooks_Window_Improved.py", "EmptyStateWidget", "DEFAULT_CSS"),
-    ("UI/Chatbooks_Window.py", "ChatbooksWindow", "DEFAULT_CSS"),
     ("UI/ChatbookTemplatesWindow.py", "ChatbookTemplatesWindow", "DEFAULT_CSS"),
     ("UI/Console_Modules/provider_continuation_recovery.py", "ProviderContinuationRecoveryCallout", "DEFAULT_CSS"),
     ("UI/Dictation_Window_Improved.py", "ImprovedDictationWindow", "DEFAULT_CSS"),
