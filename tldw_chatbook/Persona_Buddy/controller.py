@@ -15,6 +15,8 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
+from loguru import logger
+
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualGraph,
     PersonaVisualIdentity,
@@ -302,6 +304,7 @@ def load_local_persona_portrait(
             data=image,
         )
     except Exception:
+        logger.opt(exception=True).debug("Persona buddy portrait build failed")
         return None
 
 
@@ -1102,6 +1105,9 @@ class PersonaBuddyController:
                 else self._reduced_motion
             )
         except Exception:
+            logger.opt(exception=True).debug(
+                "Persona buddy reduced-motion preference unreadable; assuming on"
+            )
             return True
         return value if type(value) is bool else True
 
@@ -1144,6 +1150,9 @@ class PersonaBuddyController:
                 else _LocalPersona(None, buddy.revision, buddy_id=buddy.id)
             )
         except Exception:  # noqa: BLE001 - reject invalid private library authority without paths
+            logger.opt(exception=True).debug(
+                "Persona buddy private library authority rejected"
+            )
             return None
 
     def _read_local_persona(
@@ -1173,6 +1182,7 @@ class PersonaBuddyController:
                 portrait = None
             return _LocalPersona(persona_id, revision, portrait)
         except Exception:
+            logger.opt(exception=True).debug("Persona buddy local persona unreadable")
             return None
 
     def _read_graph(
@@ -1188,6 +1198,7 @@ class PersonaBuddyController:
                 else repository.get_active_persona_pack(persona_id)
             )
         except Exception:
+            logger.opt(exception=True).debug("Persona buddy visual graph unreadable")
             return None
 
     def _resolve_runtime(
@@ -1216,6 +1227,9 @@ class PersonaBuddyController:
                 reduced_motion=reduced_motion,
             )
         except Exception:
+            logger.opt(exception=True).debug(
+                "Persona buddy visual runtime could not be resolved"
+            )
             return None
 
     @staticmethod
