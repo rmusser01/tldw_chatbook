@@ -728,8 +728,21 @@ class ServerNotesWorkspaceService:
         self,
         workspace_id: str,
         note_id: int,
-        version: int,
     ) -> dict[str, Any]:
+        """Delete one workspace note. NOT optimistic-locked -- see below.
+
+        (TASK-32893) This took a required ``version`` and threw it away, so
+        callers believed they had the concurrency guard that
+        :meth:`delete_server_note` really does have (it forwards
+        ``expected_version``, which the client sends as an ``expected-version``
+        header). The parameter is removed rather than threaded through: the
+        workspaces surface does not use that header at all -- its optimistic
+        locking is a ``version`` field in the request BODY
+        (``WorkspaceNoteUpdateRequest``), and a DELETE has no body -- so
+        sending one would be speculative and would re-create the same false
+        guarantee the moment the server ignored it. With no parameter, the
+        absence of the guard is visible at every call site instead.
+        """
         self._enforce_policy(self._note_action_id("delete", "workspace"))
         client = self._require_client()
         return await client.delete_workspace_note(workspace_id, note_id)

@@ -17,6 +17,12 @@ from datetime import datetime
 from loguru import logger
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
+from .voice_manager_base import (
+    create_profiles_backup,
+    list_profile_backups,
+    load_profiles_file,
+)
+
 # Optional imports
 try:
     import numpy as np
@@ -79,21 +85,21 @@ class HiggsVoiceProfileManager:
 
     @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk"""
+        """Load voice profiles from disk.
+
+        Returns:
+            The stored profiles, or ``{}`` when the store does not exist yet.
+
+        Raises:
+            Exception: (TASK-32893) When the store EXISTS but cannot be read --
+                the same "absent vs unreadable" confusion the Chatterbox
+                manager had. The pre-write backup below limits the damage, but
+                only an error stops the overwrite.
+        """
         if self._profiles_cache is not None:
             return self._profiles_cache
 
-        if self.profiles_file.exists():
-            try:
-                with voice_files.open_text(self, self.profiles_file, "r") as f:
-                    self._profiles_cache = json.load(f)
-                    return self._profiles_cache
-            except Exception as e:
-                logger.error(f"Failed to load voice profiles: {e}")
-                self._profiles_cache = {}
-        else:
-            self._profiles_cache = {}
-
+        self._profiles_cache = load_profiles_file(self, self.profiles_file)
         return self._profiles_cache
 
     @voice_files.call
@@ -560,21 +566,14 @@ class HiggsVoiceProfileManager:
 
     @voice_files.call
     def _create_backup(self):
-        """Create backup of current profiles"""
+        """Create backup of current profiles.
+
+        (TASK-32893) The stamp is UTC (ADR-173) and the prune drops the oldest
+        by PARSED timestamp. Both were local-time-and-glob-order before, so a
+        DST fall-back could prune the wrong file.
+        """
         try:
-            if self.profiles_file.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_file = (
-                    self.backup_dir / f"voice_profiles_backup_{timestamp}.json"
-                )
-                voice_files.copy(self, self.profiles_file, backup_file)
-
-                # Keep only last 10 backups
-                backups = sorted(self.backup_dir.glob("voice_profiles_backup_*.json"))
-                if len(backups) > 10:
-                    for old_backup in backups[:-10]:
-                        voice_files.unlink(self, old_backup)
-
+            create_profiles_backup(self, self.profiles_file, self.backup_dir)
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
 
@@ -587,8 +586,11 @@ class HiggsVoiceProfileManager:
             if backup_file:
                 backup_path = Path(backup_file)
             else:
-                # Use most recent backup
-                backups = sorted(self.backup_dir.glob("voice_profiles_backup_*.json"))
+                # (TASK-32893) Most recent by PARSED timestamp, not by glob
+                # order: lexical order over naive-local names is not
+                # chronological across a DST boundary, so "the latest backup"
+                # could restore an older one over newer profiles.
+                backups = list_profile_backups(self.backup_dir, self.profiles_file)
                 if not backups:
                     return False, "No backups found"
                 backup_path = backups[-1]

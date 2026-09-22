@@ -3,9 +3,130 @@ from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # Description: Base class for TTS voice profile managers
 #
 # Imports
+import json
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+
+from tldw_chatbook.Utils.timestamps import utc_now
+
+#######################################################################################################################
+#
+# Voice-profile store I/O, shared by every backend's profile manager
+#
+
+#: Backup filename stamp: UTC, ``Z``-suffixed, and filename-safe on Windows
+#: (ADR-173's canonical stored shape carries ``:``, which a path cannot).
+BACKUP_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+
+#: How many rotated backups each profile store keeps.
+BACKUP_KEEP = 10
+
+
+def _backup_glob(profiles_file: Path) -> str:
+    return f"{profiles_file.stem}_backup_*.json"
+
+
+def _backup_moment(path: Path) -> datetime:
+    """When this backup was taken, as an aware UTC ``datetime``.
+
+    (TASK-32893) Backups used to be named with ``datetime.now()`` -- naive
+    LOCAL time -- and selected by ``sorted(glob(...))``, i.e. by filename
+    bytes. Across a DST fall-back, or on a machine that changed timezone, the
+    lexically-last name is not the most recent backup, so "restore the latest"
+    restored the wrong file and the newest profiles were silently replaced by
+    older ones.
+    """
+    stamp = path.stem.rsplit("_backup_", 1)[-1]
+    try:
+        return datetime.strptime(stamp, BACKUP_STAMP_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        # A pre-TASK-32893 backup carries a naive LOCAL stamp that cannot be
+        # placed on a timeline without the writer's offset. The file's own
+        # mtime can: ``shutil.copy`` does not preserve mtime, so it IS the
+        # moment the backup was taken.
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+
+
+def list_profile_backups(backup_dir: Path, profiles_file: Path) -> List[Path]:
+    """This store's backups, OLDEST FIRST, ordered by parsed timestamp.
+
+    Args:
+        backup_dir: Directory holding the rotated copies.
+        profiles_file: The live profile store the backups are of.
+
+    Returns:
+        Chronologically ordered paths; empty when there are none.
+    """
+    if not backup_dir.is_dir():
+        return []
+    return sorted(backup_dir.glob(_backup_glob(profiles_file)), key=_backup_moment)
+
+
+def create_profiles_backup(
+    receiver: Any,
+    profiles_file: Path,
+    backup_dir: Path,
+    *,
+    keep: int = BACKUP_KEEP,
+) -> Optional[Path]:
+    """Copy the live profile store aside, then prune to the newest ``keep``.
+
+    Args:
+        receiver: The manager the loose-voice-file admission is scoped to.
+        profiles_file: The live profile store to copy.
+        backup_dir: Directory to write the copy into (created if absent).
+        keep: How many backups to retain, newest first.
+
+    Returns:
+        The backup path, or ``None`` when there was nothing to back up.
+    """
+    if not profiles_file.exists():
+        return None
+    voice_files.mkdir(receiver, backup_dir, parents=True, exist_ok=True)
+    stamp = utc_now().strftime(BACKUP_STAMP_FORMAT)
+    backup_file = backup_dir / f"{profiles_file.stem}_backup_{stamp}.json"
+    voice_files.copy(receiver, profiles_file, backup_file)
+    for stale in list_profile_backups(backup_dir, profiles_file)[:-keep]:
+        voice_files.unlink(receiver, stale)
+    return backup_file
+
+
+def load_profiles_file(receiver: Any, profiles_file: Path) -> Dict[str, Any]:
+    """Read a profile store, distinguishing ABSENT from UNREADABLE.
+
+    (TASK-32893) Both backends used to answer a read error with ``{}`` -- the
+    same answer as "this user has no profiles" -- so the next save wrote an
+    empty store over a file that was merely locked, permission-denied, or
+    truncated, and every profile in it was gone. A file that exists but cannot
+    be read is an error, and callers must see it.
+
+    Args:
+        receiver: The manager the loose-voice-file admission is scoped to.
+        profiles_file: The store to read.
+
+    Returns:
+        The stored mapping, or ``{}`` when the file genuinely does not exist.
+
+    Raises:
+        OSError: The file exists but could not be read.
+        json.JSONDecodeError: The file exists but is not valid JSON.
+        ValueError: The file exists but does not hold a JSON object.
+    """
+    if not profiles_file.exists():
+        return {}
+    with voice_files.open_text(receiver, profiles_file, "r") as handle:
+        profiles = json.load(handle)
+    if not isinstance(profiles, dict):
+        raise ValueError(
+            f"Voice profile store {profiles_file} does not hold a JSON object "
+            f"(found {type(profiles).__name__}); refusing to treat it as empty."
+        )
+    return profiles
+
 
 #######################################################################################################################
 #

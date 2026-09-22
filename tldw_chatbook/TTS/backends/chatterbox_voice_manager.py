@@ -10,7 +10,11 @@ from datetime import datetime
 from loguru import logger
 
 # Local imports
-from .voice_manager_base import VoiceManagerBase
+from .voice_manager_base import (
+    VoiceManagerBase,
+    create_profiles_backup,
+    load_profiles_file,
+)
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
@@ -37,31 +41,37 @@ class ChatterboxVoiceManager(VoiceManagerBase):
         """
         super().__init__(voice_samples_dir)
         self.profiles_file = self.voice_samples_dir / "chatterbox_profiles.json"
+        self.backup_dir = self.voice_samples_dir / "backups"
         self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
     @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk"""
+        """Load voice profiles from disk.
+
+        Returns:
+            The stored profiles, or ``{}`` when the store does not exist yet.
+
+        Raises:
+            Exception: (TASK-32893) When the store EXISTS but cannot be read.
+                It used to be swallowed into ``{}`` -- indistinguishable from
+                "no profiles" -- and the next ``save_profiles`` then wrote that
+                empty mapping over a file that was merely locked or corrupt.
+        """
         if self._profiles_cache is not None:
             return self._profiles_cache
 
-        if self.profiles_file.exists():
-            try:
-                with voice_files.open_text(self, self.profiles_file, "r") as f:
-                    self._profiles_cache = json.load(f)
-                    return self._profiles_cache
-            except Exception as e:
-                logger.error(f"Failed to load Chatterbox voice profiles: {e}")
-                self._profiles_cache = {}
-        else:
-            self._profiles_cache = {}
-
+        self._profiles_cache = load_profiles_file(self, self.profiles_file)
         return self._profiles_cache
 
     @voice_files.call
     def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
-        """Save voice profiles to disk"""
+        """Save voice profiles to disk, keeping a copy of what was there."""
         try:
+            # (TASK-32893) Back up first, as the Higgs manager already did:
+            # this write is the only thing standing between a bad profile edit
+            # and every profile the user has.
+            create_profiles_backup(self, self.profiles_file, self.backup_dir)
+
             with voice_files.open_text(self, self.profiles_file, "w") as f:
                 json.dump(profiles, f, indent=2)
 
