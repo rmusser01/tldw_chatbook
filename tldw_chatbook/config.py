@@ -82,6 +82,7 @@ from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     PrivatePathResult,
@@ -3425,14 +3426,29 @@ def _load_settings_uncached(
     ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
 
-    # Create the chat dictionaries folder if it doesn't exist
+    # Create the chat dictionaries folder if it doesn't exist. task-32901:
+    # a umask-derived mkdir lands 0775 on umask-002 machines and the very
+    # next boot's admission check refuses it; the private lifecycle creates
+    # 0700 and hardens an existing 0775 instance in place.
     try:
         if bootstrap.succeeded:
             with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
-                chat_dicts_folder.mkdir(parents=True, exist_ok=True)
+                secure_private_directory(
+                    chat_dicts_folder, create=True, application_owned=True
+                )
         logger.debug(f"Ensured chat dictionaries folder exists: {chat_dicts_folder}")
     except RecoveryRequired:
         raise
+    except PrivatePathError as e:
+        # task-32901: a pre-existing shared-writable instance (pre-fix
+        # umask-002 machines) is refused by the admission pre-check before
+        # the hardened create above can repair it; name the exact repair,
+        # reason-gated and shell-safe (see private_path_repair_hint).
+        repair = private_path_repair_hint(e)
+        suffix = f" Repair once with: {repair}" if repair else ""
+        logger.error(
+            f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}.{suffix}"
+        )
     except Exception as e:
         logger.error(
             f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}"
@@ -9607,18 +9623,48 @@ def get_model_cache_dir() -> Path:
         "embedding_config", "model_cache_dir", default_cache_dir
     )
 
+    cache_path: Path | None = None
     if custom_cache_dir and custom_cache_dir != default_cache_dir:
-        # Use custom path if explicitly configured
-        cache_path = Path(custom_cache_dir).expanduser().resolve()
-    else:
+        # Use custom path if explicitly configured. task-32901: the
+        # configured value is config input, so it goes through central
+        # validation before any filesystem creation (probe off: the
+        # no-follow boundary below owns link handling). An unusable value
+        # refuses loudly: silently relocating the cache would diverge from
+        # the config-participant binding for this route.
+        cache_path = validate_path_simple(
+            Path(custom_cache_dir).expanduser(),
+            require_exists=False,
+            probe_existing=False,
+        )
+        if not cache_path.is_absolute():
+            raise ValueError(
+                f"Configured model cache directory {custom_cache_dir!r} is not"
+                " a usable path: it must be absolute"
+            )
+    if cache_path is None:
         # Use user-specific folder
         user_dir = get_user_data_dir()
         cache_path = user_dir / "models" / "embeddings"
 
-    # Create directory if it doesn't exist
+    # Create directory if it doesn't exist. task-32901: umask-derived modes
+    # land 0775 on umask-002 machines. The default data-root path uses the
+    # private lifecycle (creates 0700, hardens an existing 0775 instance);
+    # an explicitly configured custom directory stays under the user's
+    # ownership policy, so only the creation mode is pinned there.
     try:
         with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
-            cache_path.mkdir(parents=True, exist_ok=True)
+            if custom_cache_dir and custom_cache_dir != default_cache_dir:
+                cache_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            else:
+                secure_private_directory(
+                    cache_path, create=True, application_owned=True
+                )
+    except PrivatePathError as e:
+        repair = private_path_repair_hint(e)
+        suffix = f" Repair once with: {repair}" if repair else ""
+        logger.error(
+            f"Could not create model cache directory {cache_path}: {e}.{suffix}"
+        )
     except OSError as e:
         logger.opt(exception=True).error(
             f"Could not create model cache directory {cache_path}: {e}"

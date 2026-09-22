@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││   ← All servers  ◦ Off (opt-in)          ││                  │
+│ Source       ││  Turned off — open to enable.            ││  ◦ Off         ▁ │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││                                          ││  (opt-in)        │
+│ ▊Local    ▼▎ ││  Runs over stdio when an MCP client      ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  launches it:                          ▁ ││  (built-in)      │
+│              ││    python3 -m tldw_chatbook.MCP          ││  Why · Off —     │
+│ Servers      ││ ▐X▌ Enabled                              ││  enable it to    │
+│  ◦ off · ⌂   ││ ▐X▌ Expose tools                         ││  let MCP         │
+│  built-in    ││ ▐X▌ Expose resources                     ││  clients use     │
+│    All       ││ ▐X▌ Expose prompts                       ││  chatbook's      │
+│  servers     ││  Applies to the next client launch —     ││  tools.          │
+│  ◦ ⌂ t…      ││  the built-in server reads config at     ││  Add server      │
+│              ││  start.                                  ││  Advanced…       │
+│              ││ Tool gates                               ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q
