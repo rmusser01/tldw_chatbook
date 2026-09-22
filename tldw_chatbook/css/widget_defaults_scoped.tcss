@@ -268,28 +268,26 @@
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
 
+
     MCPAuditMode #mcp-audit-filter-bar {
+        layout: vertical;
         height: auto;
         min-height: 0;
     }
-    MCPAuditMode #mcp-audit-filter-text {
-        width: 1fr;
-    }
-
-    MCPAuditMode #mcp-audit-filter-decision-slot {
-        width: 24;
-        height: auto;
-    }
-    MCPAuditMode #mcp-audit-filter-initiator-slot {
-        width: 20;
-        height: auto;
-    }
-
-    MCPAuditMode #mcp-audit-filter-decision {
-        width: 24;
-    }
+    MCPAuditMode #mcp-audit-filter-text,
+    MCPAuditMode #mcp-audit-filter-decision-slot,
+    MCPAuditMode #mcp-audit-filter-initiator-slot,
+    MCPAuditMode #mcp-audit-filter-decision,
     MCPAuditMode #mcp-audit-filter-initiator {
-        width: 20;
+        width: 100%;
+    }
+    MCPAuditMode #mcp-audit-filter-decision-slot,
+    MCPAuditMode #mcp-audit-filter-initiator-slot {
+        height: auto;
+    }
+    MCPAuditMode #mcp-audit-executions-view {
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     MCPAuditMode #mcp-audit-table {
         height: auto;

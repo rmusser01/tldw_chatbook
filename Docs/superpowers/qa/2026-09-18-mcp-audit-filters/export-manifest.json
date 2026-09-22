@@ -1,0 +1,293 @@
+{
+  "normalization": "Host paths use stable placeholders; UTF-8 text strips trailing whitespace. Raw originals remain private; source hashes are retained, export hashes identify current normalized copies.",
+  "files": [
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "e37cc3bd2121c552af8620ecd620b8063423afcafedc0aee727c9698a5881bad",
+      "export_sha256": "e37cc3bd2121c552af8620ecd620b8063423afcafedc0aee727c9698a5881bad"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-decision.svg",
+      "export": "native/textual-dark-170x48-decision.svg",
+      "source_sha256": "7506e05ca9f1b4b71716646e3b0bf73eb610bb312f112de7d023344aedc928ac",
+      "export_sha256": "4c2c517fbd696bbcb00b4d6c3b56269221c108efed12a0f974b251ac76d3a6a1"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-decision.txt",
+      "export": "native/textual-dark-170x48-decision.txt",
+      "source_sha256": "20279d6f92f0d8a589a2df1f2568d3b3f6b5103b8c142f82cb6a09a9b0df5e45",
+      "export_sha256": "20279d6f92f0d8a589a2df1f2568d3b3f6b5103b8c142f82cb6a09a9b0df5e45"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-initiator.svg",
+      "export": "native/textual-dark-170x48-initiator.svg",
+      "source_sha256": "2c04eb7453b4fd95e72b72ed91f57235f49fcbe3275b91105841824cb3c37d97",
+      "export_sha256": "00a4021c506e7550b5d45626fd4c07cbd6d5e697aa832f3501d6a8ca99f2a38a"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-initiator.txt",
+      "export": "native/textual-dark-170x48-initiator.txt",
+      "source_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd",
+      "export_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-last-row.svg",
+      "export": "native/textual-dark-170x48-last-row.svg",
+      "source_sha256": "69e1913476d48dd9b6d7dc038857944111f33f36004122a2bab5378587709eb1",
+      "export_sha256": "a3101289064bd9fc876f30febacd23851155f4dc40f45cb28302e0dce807177a"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-last-row.txt",
+      "export": "native/textual-dark-170x48-last-row.txt",
+      "source_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd",
+      "export_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-text.svg",
+      "export": "native/textual-dark-170x48-text.svg",
+      "source_sha256": "eb41dc3835e776b75b05e8b1b0dce1942e500c23f1a54d5cbe8c6252bfcbca27",
+      "export_sha256": "25d00aab3e0e87901b4a53ccc36c7fc80adbbc2ef5e013c54bb30a51306a3b39"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-170x48-text.txt",
+      "export": "native/textual-dark-170x48-text.txt",
+      "source_sha256": "0a995ed358f3c6fb72259beb47c232f1df974860216e2310c10a9615cb54e83b",
+      "export_sha256": "0a995ed358f3c6fb72259beb47c232f1df974860216e2310c10a9615cb54e83b"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-decision-menu.svg",
+      "export": "native/textual-dark-80x24-decision-menu.svg",
+      "source_sha256": "b1f36a4281e62b44bc5b65cb4e0a37ad52262d09b881b628040b367833bfa6c9",
+      "export_sha256": "ae3be25c05afad127e87a4aba6acd92f3864a6df6a9896f3937e276381bbde58"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-decision-menu.txt",
+      "export": "native/textual-dark-80x24-decision-menu.txt",
+      "source_sha256": "b6cbf2385409b466c8953cc21c81cc6816bd37e7a883e67cc8453919116b7a8b",
+      "export_sha256": "b6cbf2385409b466c8953cc21c81cc6816bd37e7a883e67cc8453919116b7a8b"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-decision.svg",
+      "export": "native/textual-dark-80x24-decision.svg",
+      "source_sha256": "9c1459c8c9dab9531dbcc2434257f56e4ff646e52f2ae1108a72b3c036f435b5",
+      "export_sha256": "3f3aff6ae48faedf67786c2015e2dee4fc056e0ce9d643e0b89083e74b02b6a4"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-decision.txt",
+      "export": "native/textual-dark-80x24-decision.txt",
+      "source_sha256": "19804847b9e0dff9a9e8ef1ff61f72072cb45a84942f6c5fa75aa6e46b1eb865",
+      "export_sha256": "19804847b9e0dff9a9e8ef1ff61f72072cb45a84942f6c5fa75aa6e46b1eb865"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-initiator.svg",
+      "export": "native/textual-dark-80x24-initiator.svg",
+      "source_sha256": "04eaa9a682e49432606ee521e34e05e954bae6eb5172cf8e0e05b82542e48a39",
+      "export_sha256": "e669d22fbb23ae93153b2ccfcdf0c6e6f678b67e7049f7be90c10db4fd967c50"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-initiator.txt",
+      "export": "native/textual-dark-80x24-initiator.txt",
+      "source_sha256": "ebbfd265fd5fdfbb75118fa7fbfdc36a7688195c134905dd65f045c89c7c5c5c",
+      "export_sha256": "ebbfd265fd5fdfbb75118fa7fbfdc36a7688195c134905dd65f045c89c7c5c5c"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-last-row.svg",
+      "export": "native/textual-dark-80x24-last-row.svg",
+      "source_sha256": "2b883fff19557b52be9b4e922f5ae48033ed8ce41633cbf76747f870205433af",
+      "export_sha256": "046e16b8b569e96ddd9e82333337030e54de44b275b4984be0236dfd92a49904"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-last-row.txt",
+      "export": "native/textual-dark-80x24-last-row.txt",
+      "source_sha256": "42dafc1421e703715edcf34877c720bbe3f2f1beb46d0a5ff98fff825468cbf1",
+      "export_sha256": "42dafc1421e703715edcf34877c720bbe3f2f1beb46d0a5ff98fff825468cbf1"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-text.svg",
+      "export": "native/textual-dark-80x24-text.svg",
+      "source_sha256": "b8a2b51e91f60c9a3f62a65e44d97c5bc098b70f74019761f8f9f8f1cc6e86ab",
+      "export_sha256": "2876a1f000712316d9340a231739a9e0ca977e64f1c792fef348d77ac186d870"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-dark-80x24-text.txt",
+      "export": "native/textual-dark-80x24-text.txt",
+      "source_sha256": "f15454a2c577da22113409dda2d99dfd2bb205c208d8f27fc1063576222636a6",
+      "export_sha256": "f15454a2c577da22113409dda2d99dfd2bb205c208d8f27fc1063576222636a6"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-decision.svg",
+      "export": "native/textual-light-170x48-decision.svg",
+      "source_sha256": "cc74c329e7b964d66a9a5ac1ce14b6ca4f5f25302cdff099a9a440a59476d3b3",
+      "export_sha256": "3c8b03012ca9cbfab293be8297c98a84c37a805e93cd0ae31922f1f1b5635e96"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-decision.txt",
+      "export": "native/textual-light-170x48-decision.txt",
+      "source_sha256": "20279d6f92f0d8a589a2df1f2568d3b3f6b5103b8c142f82cb6a09a9b0df5e45",
+      "export_sha256": "20279d6f92f0d8a589a2df1f2568d3b3f6b5103b8c142f82cb6a09a9b0df5e45"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-initiator.svg",
+      "export": "native/textual-light-170x48-initiator.svg",
+      "source_sha256": "a5e8ea799776787484fc27860858a467476ff468635c94206668df0c129c869d",
+      "export_sha256": "ef98201244f0f37861fb47d7709b5cdc6b8b497d09ab44652d1bc35c00ce68e5"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-initiator.txt",
+      "export": "native/textual-light-170x48-initiator.txt",
+      "source_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd",
+      "export_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-last-row.svg",
+      "export": "native/textual-light-170x48-last-row.svg",
+      "source_sha256": "4e3bb7e2deba4682112bedbfd12680704def289913f35c549aa30b1a485cad9d",
+      "export_sha256": "46595578b10e7b0bf2870659c9741805995b12941975973d3a0be98db09a8ff9"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-last-row.txt",
+      "export": "native/textual-light-170x48-last-row.txt",
+      "source_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd",
+      "export_sha256": "072d1bfdf10b5c1963e95b613df03aeb6bb05bd37035d4160c992558ffe41fcd"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-text.svg",
+      "export": "native/textual-light-170x48-text.svg",
+      "source_sha256": "4e01aaeb831b1b062544370b33ec6600a4bf99510adf69b1485e6042bb4ce3e3",
+      "export_sha256": "5ea413734a4507c2b63f629886e24fedb42d677bc26edb894c4bd1891f72ef52"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-170x48-text.txt",
+      "export": "native/textual-light-170x48-text.txt",
+      "source_sha256": "0a995ed358f3c6fb72259beb47c232f1df974860216e2310c10a9615cb54e83b",
+      "export_sha256": "0a995ed358f3c6fb72259beb47c232f1df974860216e2310c10a9615cb54e83b"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-decision-menu.svg",
+      "export": "native/textual-light-80x24-decision-menu.svg",
+      "source_sha256": "ae77d4636d118928bca1d5c57fa2a978dd5770bc9fa753f85df0637f3ff267c0",
+      "export_sha256": "4211a85e1d313b9db5ef5ce2af3cd0e6e2e6178354240367d081ff9142f45291"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-decision-menu.txt",
+      "export": "native/textual-light-80x24-decision-menu.txt",
+      "source_sha256": "6d61f70874c9b37afa7505fe9601dc9baa5d537c9cf984042aa54141ebaa6b5c",
+      "export_sha256": "6d61f70874c9b37afa7505fe9601dc9baa5d537c9cf984042aa54141ebaa6b5c"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-decision.svg",
+      "export": "native/textual-light-80x24-decision.svg",
+      "source_sha256": "3063cc22ffdc1e4b0f27ee6eef9b840a824556f87a277b8d9c18020a687d5c5d",
+      "export_sha256": "300a8ae9f8dd917c9cd9fe897b3c9cd2a61d468f176457310192f9c8ee4adadf"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-decision.txt",
+      "export": "native/textual-light-80x24-decision.txt",
+      "source_sha256": "29f980a0c8d7d8d7ac96b37642a2c2c1a19117677447f260b7b5b05cb6db8212",
+      "export_sha256": "29f980a0c8d7d8d7ac96b37642a2c2c1a19117677447f260b7b5b05cb6db8212"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-initiator.svg",
+      "export": "native/textual-light-80x24-initiator.svg",
+      "source_sha256": "cea004487a0b594a0eb4da84225166eb63ba334ebfc284be9bf159f4f319fcf3",
+      "export_sha256": "3669f1492592a47018d1890c6e6ce0f162f9e43953afe8d3a2089399e0ba7ff7"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-initiator.txt",
+      "export": "native/textual-light-80x24-initiator.txt",
+      "source_sha256": "b7ec6c661f93860e0598599c77e0cc917811e0d70f1a27ed5450b2cfaa20f1ec",
+      "export_sha256": "b7ec6c661f93860e0598599c77e0cc917811e0d70f1a27ed5450b2cfaa20f1ec"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-last-row.svg",
+      "export": "native/textual-light-80x24-last-row.svg",
+      "source_sha256": "4c1e458bfd79eb69ab1dc7ff75366ac186904b3091c85c2f52e5944983da27b4",
+      "export_sha256": "b2c25b5ab4a03489a970826d736d0d2a6393223e0d8fe1ca43ca4a22cd7372c8"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-last-row.txt",
+      "export": "native/textual-light-80x24-last-row.txt",
+      "source_sha256": "3107c29c0751c3d649fe341f731dba926a3bc39660a41df932d4631045aeec76",
+      "export_sha256": "3107c29c0751c3d649fe341f731dba926a3bc39660a41df932d4631045aeec76"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-text.svg",
+      "export": "native/textual-light-80x24-text.svg",
+      "source_sha256": "51b38d3e46166db6407277a748302bc2ed98c51f16c0904cb81b42d960ab1501",
+      "export_sha256": "0131c5abc106539f2888fe852964d7741e822c778109e6fc2d65fe0c974dc9d2"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/evidence/textual-light-80x24-text.txt",
+      "export": "native/textual-light-80x24-text.txt",
+      "source_sha256": "52f47eb80573abbf3b0ff2d850cc7cf39c983e5fe7691a3eb4f5259374447149",
+      "export_sha256": "52f47eb80573abbf3b0ff2d850cc7cf39c983e5fe7691a3eb4f5259374447149"
+    },
+    {
+      "source": "<tmp>/tldw-32835-native-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "155998c8b77160066021bb7e0a705b9d3c035fa611ae2180d7eafbee99f35752",
+      "export_sha256": "e68f6da0e703aff5882f1b0d9b72418bf04620353456ea9264e3eb5f4791c62f"
+    },
+    {
+      "source": "<tmp>/32835-preflight.txt",
+      "export": "preflight.txt",
+      "source_sha256": "858244b7a87f3623cc4de540ccf48a66efd1b163e11d4b5c83af95ba7dadb608",
+      "export_sha256": "858244b7a87f3623cc4de540ccf48a66efd1b163e11d4b5c83af95ba7dadb608"
+    },
+    {
+      "source": "<tmp>/32835-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "5b95549254ec90fa10d67f5c0d69b7e2985d5cc41712b18acc1e256d52665dd9",
+      "export_sha256": "5b95549254ec90fa10d67f5c0d69b7e2985d5cc41712b18acc1e256d52665dd9"
+    },
+    {
+      "source": "<tmp>/32835-precommit-census.json",
+      "export": "precommit-census.json",
+      "source_sha256": "3cbe90336935f2c1616beea7501c30e78d65cc74c902ee1a80a1405f8618717d",
+      "export_sha256": "3cbe90336935f2c1616beea7501c30e78d65cc74c902ee1a80a1405f8618717d"
+    },
+    {
+      "source": "<tmp>/tldw-32835-red-001/pytest.log",
+      "export": "tests/red-001.txt",
+      "source_sha256": "77eb19732bd0d1ff2eb44137c83b074f1fb9eb526b1c35902631bc0f64ec2cd8",
+      "export_sha256": "23d7833c6fbde1899f2438b7e4f714c65ac93592a82c6440d9a44df69e07e1f7"
+    },
+    {
+      "source": "<tmp>/tldw-32835-layout-001/pytest.log",
+      "export": "tests/layout-001.txt",
+      "source_sha256": "814b0346a910d7b8518e3f533a95128555f740f3140af865892841063ddc51f3",
+      "export_sha256": "a93a2001d8aac5cedacf508884d8e85b0c029d9a01d63626bcb5712398d2673d"
+    },
+    {
+      "source": "<tmp>/tldw-32835-focus-001/pytest.log",
+      "export": "tests/focus-001.txt",
+      "source_sha256": "e9fb4635354b37f28c13204de9595467a80bd9f432a3e4a471b092975e11ce86",
+      "export_sha256": "e9fb4635354b37f28c13204de9595467a80bd9f432a3e4a471b092975e11ce86"
+    },
+    {
+      "source": "<tmp>/tldw-32835-final-001/pytest.log",
+      "export": "tests/final-001.txt",
+      "source_sha256": "277c677f9b0374800bcf233e68b1e92ee5e90fa98a4622def0277bb12ab239b9",
+      "export_sha256": "907348dd10c4ed2ff7ccd98755b3dcb87cbab306c0df5ef354a1a001f7ec5a4a"
+    },
+    {
+      "source": "<tmp>/tldw-32835-final-002/pytest.log",
+      "export": "tests/final-002.txt",
+      "source_sha256": "469d1e7501a7ea01c92513280f84a095507f354b2d275e60406490e555d9852d",
+      "export_sha256": "cb0106cc89f455c8a1d8580103635679cd0f7af3898a63d6257daa7b41318518"
+    },
+    {
+      "source": "<tmp>/tldw-32835-final-003/pytest.log",
+      "export": "tests/final-003.txt",
+      "source_sha256": "0b2202a17c62cba685cf8dd5df701103c6945355c27f9074bb5e1c8620f05af4",
+      "export_sha256": "0b2202a17c62cba685cf8dd5df701103c6945355c27f9074bb5e1c8620f05af4"
+    },
+    {
+      "source": "<tmp>/tldw-32835-geometry-001/pytest.log",
+      "export": "tests/geometry-001.txt",
+      "source_sha256": "c2740acf4e5658a44f82bb51412ddc65c0d8867df4ff14a285e6b5b7fccb4495",
+      "export_sha256": "332cf066a2fa66cd7f5fe593e1f861dae5e55e8181890d82616d85b08dae748d"
+    }
+  ]
+}

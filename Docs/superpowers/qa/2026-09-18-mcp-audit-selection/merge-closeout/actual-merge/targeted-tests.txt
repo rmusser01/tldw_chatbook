@@ -1,0 +1,75 @@
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 55%]
+........................................................................ [ 74%]
+........................................................................ [ 93%]
+.............F.FF.FF.......                                              [100%]
+=================================== FAILURES ===================================
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py] _
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/Chat/console_chat_controller.py grew to 29393 lines (budget 29367, +26).
+E     
+E     tldw_chatbook/Chat/console_chat_controller.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 29393 <= 29367
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py] _
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/MCP_Modules/mcp_workbench.py grew to 6774 lines (budget 6760, +14).
+E     
+E     tldw_chatbook/UI/MCP_Modules/mcp_workbench.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 6774 <= 6760
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py] _
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/personas_screen.py grew to 16452 lines (budget 16436, +16).
+E     
+E     tldw_chatbook/UI/Screens/personas_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 16452 <= 16436
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_transcript.py] _
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/Widgets/Console/console_transcript.py grew to 8399 lines (budget 8353, +46).
+E     
+E     tldw_chatbook/Widgets/Console/console_transcript.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 8399 <= 8353
+_______ test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py] ________
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/app.py grew to 21443 lines (budget 21415, +28).
+E     
+E     tldw_chatbook/app.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 21443 <= 21415
+============================= slowest 25 durations =============================
+6.00s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[table]
+5.07s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[canvas]
+3.44s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+3.34s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+3.22s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[initiator]
+3.19s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+3.16s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[text]
+3.13s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[decision]
+3.05s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+3.02s call     Tests/UI/test_mcp_audit_selection.py::test_duplicate_event_keeps_its_row_within_same_filtered_snapshot
+3.00s call     Tests/UI/test_mcp_audit_selection.py::test_newer_execution_keeps_selected_event_and_drill_target
+2.98s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+2.97s call     Tests/UI/test_mcp_audit_selection.py::test_ambiguous_identical_events_clear_selection_on_refresh
+2.94s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+2.85s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.83s call     Tests/UI/test_mcp_audit_selection.py::test_execution_eviction_clears_detail_without_selecting_replacement
+2.60s call     Tests/UI/test_mcp_audit_selection.py::test_filtering_out_selected_execution_clears_detail
+2.51s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+2.19s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.17s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2.13s call     Tests/UI/test_mcp_workbench.py::test_double_space_cycle_echo_replaces_not_appends
+1.89s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+1.86s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+1.85s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+1.76s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+=========================== short test summary info ============================
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_transcript.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py]
+5 failed, 382 passed in 376.53s (0:06:16)

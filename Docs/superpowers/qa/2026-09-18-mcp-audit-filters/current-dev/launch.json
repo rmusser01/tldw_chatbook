@@ -1,0 +1,7 @@
+{
+  "pid": 41008,
+  "started_at": "2026-09-21T15:24:51.996795+00:00",
+  "repo": "<repo>",
+  "head": "78b6d27bf31c1b5eea50ffed5619fa74e14aea57",
+  "dirty_status": " M Docs/superpowers/qa/2026-09-18-mcp-audit-filters/native_check.py\n M Tests/Utils/test_mcp_native_qa_args.py\n"
+}

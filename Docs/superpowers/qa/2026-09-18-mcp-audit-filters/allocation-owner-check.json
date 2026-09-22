@@ -1,0 +1,12 @@
+{
+  "refs": 344,
+  "worktrees": 35,
+  "history": [],
+  "owners": [
+    {
+      "worktree": "<repo>",
+      "path": "backlog/tasks/task-32835 - Keep-MCP-Audit-filters-readable-and-reachable-in-compact-terminals.md"
+    }
+  ],
+  "unique": true
+}

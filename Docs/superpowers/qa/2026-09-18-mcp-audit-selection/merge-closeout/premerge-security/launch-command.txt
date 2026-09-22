@@ -1,0 +1,1 @@
+<repo>/.venv/bin/python -c 'import runpy; runpy.run_path('"'"'<repo>/Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native_check.py'"'"')['"'"'main'"'"']()' <tmp>/tldw-32834-security-005 tldw32834security005 review; native_exit_code=$?; printf "%s\n" "$native_exit_code" > <tmp>/tldw-32834-security-005/exit-code

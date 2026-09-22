@@ -1,0 +1,16 @@
+[
+  {
+    "path": "tldw_chatbook/app.py",
+    "base": "e02604a4595073bc96c1d7e56f9685f0f1f4bf8c",
+    "identical_to_candidate": true,
+    "sha256": "8323f933912ab03799c78bcbde74304211b65614fd34d1cf45928122c390a2b1",
+    "failure": "tldw_chatbook/app.py grew to 21437 lines (budget 21415, +22).\n\ntldw_chatbook/app.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module \u2014 do NOT raise the budget to make this pass. Lower it when the file shrinks."
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+    "base": "e02604a4595073bc96c1d7e56f9685f0f1f4bf8c",
+    "identical_to_candidate": true,
+    "sha256": "d111341968c8882d5908a003d4f8846b2650304e5526a929b96059fce2abb194",
+    "failure": "tldw_chatbook/UI/Screens/personas_screen.py grew to 16444 lines (budget 16436, +8).\n\ntldw_chatbook/UI/Screens/personas_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module \u2014 do NOT raise the budget to make this pass. Lower it when the file shrinks."
+  }
+]

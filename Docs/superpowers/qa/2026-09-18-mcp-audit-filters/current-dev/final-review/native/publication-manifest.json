@@ -1,0 +1,261 @@
+[
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/result.json",
+    "export": "result.json",
+    "source_sha256": "2789a91dfd203f2583c5f2cec9fad0a3cac207eaa6287e95eb27ac9df5591d83",
+    "export_sha256": "80624aa36a2e5ff8aca12783d98218afa949dfa1ae221f1215021d16add4d696",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-decision.svg",
+    "export": "textual-dark-170x48-decision.svg",
+    "source_sha256": "4d8860c027a1ca82fc4c81d03b5e586692f5f574ac174377d08777dc0bc04fff",
+    "export_sha256": "4894202989dac0d615016ede017b7f689826eab26ca16d70df56dbecf00e733c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-decision.txt",
+    "export": "textual-dark-170x48-decision.txt",
+    "source_sha256": "c7a298230482890abadcca7ee13fef6cf5cdb8c03b020a411678a8365ade7dbe",
+    "export_sha256": "c7a298230482890abadcca7ee13fef6cf5cdb8c03b020a411678a8365ade7dbe",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-initiator.svg",
+    "export": "textual-dark-170x48-initiator.svg",
+    "source_sha256": "78d55cf39bdae0ae0d615396ea6e3b810e8ba626077c18e911628ceba1d4e474",
+    "export_sha256": "3cb1f58705b1e572db54f8f139a0c2942dfc1370a3d4d325b30b0ea7c809057f",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-initiator.txt",
+    "export": "textual-dark-170x48-initiator.txt",
+    "source_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "export_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-last-row.svg",
+    "export": "textual-dark-170x48-last-row.svg",
+    "source_sha256": "df1a3cee725f2f38c2c637487a79e66d82ee9497ef97932bfaa3e065868f0ab0",
+    "export_sha256": "06b7c7992c790c6376e85cbda179e89cac32122f147cc7ca47a12f203af358bb",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-last-row.txt",
+    "export": "textual-dark-170x48-last-row.txt",
+    "source_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "export_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-text.svg",
+    "export": "textual-dark-170x48-text.svg",
+    "source_sha256": "7bfa951d0cee9ca334b294daf70dfbffa7b2592d7fc45156baedd38760b3a25c",
+    "export_sha256": "1563d6d0643c149d6286757c3a50901f9e56e445b7fd881b5e7ab671948adea5",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-170x48-text.txt",
+    "export": "textual-dark-170x48-text.txt",
+    "source_sha256": "33db88ffc35552784c7c99f12887f80d4362999e97a6856eaa3efc791d826b3b",
+    "export_sha256": "33db88ffc35552784c7c99f12887f80d4362999e97a6856eaa3efc791d826b3b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-decision-menu.svg",
+    "export": "textual-dark-80x24-decision-menu.svg",
+    "source_sha256": "2224d16c8bc965a796d3bfd0c093156f95777442cb592384fb5e9f11554766eb",
+    "export_sha256": "3aa9f0c58018ee95e9cc71b8ceeae2b770b89fe6229614ec49d6bca5c836f239",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-decision-menu.txt",
+    "export": "textual-dark-80x24-decision-menu.txt",
+    "source_sha256": "675fde3a41e5eefad5536c01fb041f6329668f353ce9a09273b6bffae3176f86",
+    "export_sha256": "675fde3a41e5eefad5536c01fb041f6329668f353ce9a09273b6bffae3176f86",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-decision.svg",
+    "export": "textual-dark-80x24-decision.svg",
+    "source_sha256": "29b9921433b149f45f04223642c80114e05adf59f59bbe4910062297df7fdc36",
+    "export_sha256": "593aad36ca0e31d35b386e5af223fed79eeaad4afebf814cb39ca400b640c0bc",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-decision.txt",
+    "export": "textual-dark-80x24-decision.txt",
+    "source_sha256": "6d65c611139ac0b7c3e816f334df0aee5d3d10cba0205506802c5f74948e3da5",
+    "export_sha256": "6d65c611139ac0b7c3e816f334df0aee5d3d10cba0205506802c5f74948e3da5",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-initiator.svg",
+    "export": "textual-dark-80x24-initiator.svg",
+    "source_sha256": "0e6bf7bff8df0cff6969f6372f7af415aa31b2e45af72d72d7c8ea7752b570e3",
+    "export_sha256": "b316355a895932f4c5df66f8af3c3e966346a10e193e0e34a9d960ed6c768097",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-initiator.txt",
+    "export": "textual-dark-80x24-initiator.txt",
+    "source_sha256": "caaa2ad2324ab2094108f307e53fcb254d785e1bef20923897535c13dbdb4f9c",
+    "export_sha256": "caaa2ad2324ab2094108f307e53fcb254d785e1bef20923897535c13dbdb4f9c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-last-row.svg",
+    "export": "textual-dark-80x24-last-row.svg",
+    "source_sha256": "b7a0c62700612f33ea12900747470bc411b0bfa7bddaf69714762b85ab50eb20",
+    "export_sha256": "a2f1c4df301ce33f44b49689b56440983c7e0196e0f0f35c01dd714ce8f9c65d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-last-row.txt",
+    "export": "textual-dark-80x24-last-row.txt",
+    "source_sha256": "77008cafd14e0e2a63de6974884c1ed5b3ad36813d3b870a8bd6ba80aaf24b0d",
+    "export_sha256": "77008cafd14e0e2a63de6974884c1ed5b3ad36813d3b870a8bd6ba80aaf24b0d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-text.svg",
+    "export": "textual-dark-80x24-text.svg",
+    "source_sha256": "1ae9720e43e9f2729df30232494c59c6794440adaf464aa57a5897145188fc84",
+    "export_sha256": "99ce39faf95559193baabd469afa098fcff1445ee265e6fe78b2aef64a085327",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-dark-80x24-text.txt",
+    "export": "textual-dark-80x24-text.txt",
+    "source_sha256": "3f5e91084d10e15aa550b108356d11d153d4c29b4cec12a5befac3c9a10f7150",
+    "export_sha256": "3f5e91084d10e15aa550b108356d11d153d4c29b4cec12a5befac3c9a10f7150",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-decision.svg",
+    "export": "textual-light-170x48-decision.svg",
+    "source_sha256": "40482a8b7f4486989d91dd5695b9dadc1fb6a86d8c8d1e9d6f75175b6c2efa01",
+    "export_sha256": "c42e89bd030efea91dbc4b1e901dd4c76462c0b0f3d213bcb1cca791520a6586",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-decision.txt",
+    "export": "textual-light-170x48-decision.txt",
+    "source_sha256": "c7a298230482890abadcca7ee13fef6cf5cdb8c03b020a411678a8365ade7dbe",
+    "export_sha256": "c7a298230482890abadcca7ee13fef6cf5cdb8c03b020a411678a8365ade7dbe",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-initiator.svg",
+    "export": "textual-light-170x48-initiator.svg",
+    "source_sha256": "c68f6839773777c978ee87de263e214e96a105019a4a266c5d780c456d402b38",
+    "export_sha256": "068ed7a5dd5c62c692be6f0ab3e7e49b9f810f32c9d0ce5269c0f4a146685740",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-initiator.txt",
+    "export": "textual-light-170x48-initiator.txt",
+    "source_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "export_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-last-row.svg",
+    "export": "textual-light-170x48-last-row.svg",
+    "source_sha256": "3488272660f57bea049a0fde15294533d442cd501c4cd914de9eb6e5c1735b8d",
+    "export_sha256": "33deb9074548ddd3fe2a529050c121c74ed66b2f33702a788aaabc001e07da9b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-last-row.txt",
+    "export": "textual-light-170x48-last-row.txt",
+    "source_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "export_sha256": "160a6b60e12f1cd1f6c25c3b54d7fa1c207cd87f440238353454c04ccd9a263a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-text.svg",
+    "export": "textual-light-170x48-text.svg",
+    "source_sha256": "e9f46323b24f8f98fdfd13aa1c262e0b13818c153cdfb063bd347e45d2d925a4",
+    "export_sha256": "defdef391ff4a0d21cbaf4467e84c14a1c316be19fbc39311af93292ee2c350c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-170x48-text.txt",
+    "export": "textual-light-170x48-text.txt",
+    "source_sha256": "33db88ffc35552784c7c99f12887f80d4362999e97a6856eaa3efc791d826b3b",
+    "export_sha256": "33db88ffc35552784c7c99f12887f80d4362999e97a6856eaa3efc791d826b3b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-decision-menu.svg",
+    "export": "textual-light-80x24-decision-menu.svg",
+    "source_sha256": "4792d85a7439bd2950737432a04671bbaf0dfec47e4314c3a9f734683f0fb697",
+    "export_sha256": "605f421bf4e89ce494f8a78f2312b3985ef91e869d3cf71a062c183d94839b41",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-decision-menu.txt",
+    "export": "textual-light-80x24-decision-menu.txt",
+    "source_sha256": "fc6a55fa07b083a6c0c45c4ea3bb71ad2b6e4e195c1afac673cf1a9d708e31ff",
+    "export_sha256": "fc6a55fa07b083a6c0c45c4ea3bb71ad2b6e4e195c1afac673cf1a9d708e31ff",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-decision.svg",
+    "export": "textual-light-80x24-decision.svg",
+    "source_sha256": "02610f243a3d9fd7fe0098518fdc7abe0e8e0769df1899c0dc5a2efc48023683",
+    "export_sha256": "ea9281add8b99d65e4250be1f25a8eb09b6af1ed2dc854be19e02a506726898e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-decision.txt",
+    "export": "textual-light-80x24-decision.txt",
+    "source_sha256": "c41064e56152612d932f3d595ebdde308bdcc40165d4307e5bf27eb25d6dbafd",
+    "export_sha256": "c41064e56152612d932f3d595ebdde308bdcc40165d4307e5bf27eb25d6dbafd",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-initiator.svg",
+    "export": "textual-light-80x24-initiator.svg",
+    "source_sha256": "16576c984f655fb0a06036dbd3bff7eb6aad02d8aa066b5cebaf5820081961fe",
+    "export_sha256": "2b73c14b7fa95792139cf53c8458f917852a9d5412e786dd4b368b19781af933",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-initiator.txt",
+    "export": "textual-light-80x24-initiator.txt",
+    "source_sha256": "267762425e86eb81cfedb97b69a79a6285c90fea0b63b7f746a8022934f69508",
+    "export_sha256": "267762425e86eb81cfedb97b69a79a6285c90fea0b63b7f746a8022934f69508",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-last-row.svg",
+    "export": "textual-light-80x24-last-row.svg",
+    "source_sha256": "1abfc2b20de75653dd8390b6b7fe62f367bdc2069ce2e407b05186df878df0fe",
+    "export_sha256": "08d63271f4cf64ee23d08684bef54ec19084bf63c43c1cdbd5d94885c76ed52c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-last-row.txt",
+    "export": "textual-light-80x24-last-row.txt",
+    "source_sha256": "112ea1e3868a54cbe67c95f221663947856790b197fcc861d8a3393a75eb603d",
+    "export_sha256": "112ea1e3868a54cbe67c95f221663947856790b197fcc861d8a3393a75eb603d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-text.svg",
+    "export": "textual-light-80x24-text.svg",
+    "source_sha256": "6c4ff71b382de530e6f3ae5fe1341225dc19e11e859d98039663f7caa226ef62",
+    "export_sha256": "8685d499907a2e8cd13330b51b5fb87e275e7fc5112f764f8e6f3a8b67ea2de1",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/evidence/textual-light-80x24-text.txt",
+    "export": "textual-light-80x24-text.txt",
+    "source_sha256": "6ae6cfed52ae5334cd9e247bf787fe2e72626503760117e85504f4fcda7f5e41",
+    "export_sha256": "6ae6cfed52ae5334cd9e247bf787fe2e72626503760117e85504f4fcda7f5e41",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/launch.json",
+    "export": "launch.json",
+    "source_sha256": "c5683b98c7606b0526957b3d79570ec22105f96196708661f1f60fe3c146afed",
+    "export_sha256": "228b9e5512af3f53120e9a0568f3b09c3507ea38dca2d0b49e0cc64aa796018c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/launch-command.txt",
+    "export": "launch-command.txt",
+    "source_sha256": "303704defe3aab750ddc99ddc9d835acae14dc6d08969723ed292a38cffb3024",
+    "export_sha256": "f74afa5e800f77a649a96d39ed6272f7b1295144db4e2a685fd99174b526ee09",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32835-qodo-002/lifecycle.json",
+    "export": "lifecycle.json",
+    "source_sha256": "7ad33c8aba39dd3ab8290ebc1d2b4828ae0d3f051795422f004c0a5ccf17c573",
+    "export_sha256": "79040594d9da056877f983be3d7345706baa278575cc73e6a40d1bef8476735b",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

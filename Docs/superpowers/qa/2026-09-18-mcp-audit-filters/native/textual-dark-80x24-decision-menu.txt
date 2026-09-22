@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  ╭──────────────╮    Findings            ││                  │
+│ Source       ││  │  Executions  │                        ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  ╰──────────────╯                        ││  ◦ Off (opt-in)  │
+│ ▊Local    ▼▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    ││  (built-in)      │
+│              ││  ▊  All decisions                   ▎    ││  Why · Off —     │
+│ Servers      ││  ▊  Allowed                         ▎    ││  enable it to    │
+│  ◦ off · ⌂   ││  ▊  Approved                        ▎    ││  let MCP         │
+│  built-in    ││  ▊  Approved (session)              ▎    ││  clients use     │
+│    All       ││  ▊  Denied by you                   ▎ ▂▂ ││  chatbook's      │
+│  servers     ││  ▊  Blocked (Off)                   ▎    ││  tools.          │
+│  ◦ ⌂ t…      ││  ▊  Blocked (kill switch)           ▎    ││  Add server      │
+│              ││  ▊  Denied (timeout)                ▎    ││    Advanced…     │
+│              ││  ▊  Denied (no decision)            ▎    ││                  │
+╰──────────────╯╰──▊  Downgraded                      ▎────╯╰──────────────────╯
+  1-4 mode | a add ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎P · Ctrl+Q

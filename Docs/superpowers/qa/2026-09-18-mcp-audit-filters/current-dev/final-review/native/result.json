@@ -1,0 +1,92 @@
+{
+  "pid": 25882,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "text_typed_and_visible": true,
+      "decision_keyboard_menu": true,
+      "initiator_keyboard_menu": true,
+      "tab_to_visible_last_row": true,
+      "filter_values_retained": true,
+      "filtered_count": 24
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "text_typed_and_visible": true,
+      "decision_keyboard_menu": true,
+      "initiator_keyboard_menu": true,
+      "tab_to_visible_last_row": true,
+      "filter_values_retained": true,
+      "filtered_count": 24
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "text_typed_and_visible": true,
+      "decision_keyboard_menu": true,
+      "initiator_keyboard_menu": true,
+      "tab_to_visible_last_row": true,
+      "filter_values_retained": true,
+      "filtered_count": 24
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "text_typed_and_visible": true,
+      "decision_keyboard_menu": true,
+      "initiator_keyboard_menu": true,
+      "tab_to_visible_last_row": true,
+      "filter_values_retained": true,
+      "filtered_count": 24
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook.app": "<repo>/tldw_chatbook/app.py",
+    "tldw_chatbook.config": "<repo>/tldw_chatbook/config.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "<repo>/tldw_chatbook/MCP/unified_control_plane_service.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "5fbac017095700fc3a1e9c99da165603e768717157dc21f0474d15ac43313da2",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "0cc79fcdb82d6821a659b92d819048a258894a78ba5418e5bf4289f4303dd035",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "603a8ec88df5dfd01db4cf02b27164b719c16835deb713a0077b1b032cb49f6e",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "78d38ba7999c7878fdb02b11f67595ceb33ab1fd521520c861645b732adcdae4",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "64958e3290cd2d7de727872a6bc00f78c463442423987a47054f1cb29a702899",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "29772994d0304b42f729321ea666b9dfb51f4d0b862608cda68b7c78cb3da77c",
+    "tldw_chatbook/MCP/execution_log.py": "2103254e8a62bf671ed236ff36feff9363a443d42cea3b58b2dba9ded6105891",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "f432bc3f9c3b016b1ff850146d56999216e8725dd9c38bf4b7417f589de87bb9",
+    "tldw_chatbook/app.py": "2d80080ad80ca37a97f218c0096de53b1cd5a5a612412805cb06403ef1c61e4a",
+    "tldw_chatbook/config.py": "5f50fe92aed6e708c09e5c5436628f80172a4bb99b1f991e6fb1be425f8512bd",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
+  },
+  "runner_sha256": "3aa58bb5135a0fc2ce0704362f5a436d83e84f0ff3a9236c0b89168edb2f66ed",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "record_count": 48,
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

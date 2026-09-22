@@ -1,0 +1,432 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size0-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size0-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size1-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size1-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size2-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size2-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size3-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size3-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_rows_render_in_given_newest_first_order_with_all_columns",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_when_column_formats_iso_timestamp",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_when_column_falls_back_gracefully_for_malformed_or_missing_ts",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_duration_column_uses_shared_formatter",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_outcome_column_variants",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_decision_and_outcome_columns_carry_semantic_color",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_initiator_and_decision_columns_fall_back_to_em_dash_when_missing",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_row_keys_are_stable_synthetic_index",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_empty_state_shown_when_no_entries_recorded",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_narrowing_to_zero_rows_does_not_show_empty_state",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_going_from_empty_to_populated_hides_empty_state_again",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_by_decision_select_narrows_rows",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_by_initiator_select_narrows_rows",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_by_text_matches_tool_name_or_server_key",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filters_combine_with_and_semantics",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_select_options_cover_full_decision_and_initiator_vocabulary",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_decision_vocabulary_names_user_denials_and_policy_off_apart",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_every_refusal_token_has_its_own_label_and_reads_as_an_error[user]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_every_refusal_token_has_its_own_label_and_reads_as_an_error[policy]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_every_refusal_token_has_its_own_label_and_reads_as_an_error[killswitch]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_every_refusal_token_has_its_own_label_and_reads_as_an_error[timeout]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_every_refusal_token_has_its_own_label_and_reads_as_an_error[unresolved]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_policy_off_denials_read_as_blocked_calls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_decision_filter_narrows_user_denials_and_policy_off_separately",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_approved_session_decision_renders_as_successful_execution",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_select_mount_posts_no_changed_event",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_cursor_key_is_preserved_across_a_filter_rebuild",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_row_selection_posts_entry_selected_with_synthetic_index",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_audit_tables_keep_their_viewport_height_cap[executions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_audit_tables_keep_their_viewport_height_cap[findings]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_subview_strip_hugs_its_buttons",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_select_fills_its_slot[decision]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_filter_select_fills_its_slot[initiator]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_default_subview_is_executions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_clicking_findings_button_switches_subview",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_clicking_executions_button_switches_back",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_subview_buttons_are_tooltipped",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_render_from_a_fake_payload",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_severity_column_carries_semantic_color",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_defensive_missing_fields_fall_back_to_em_dash",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_row_keys_are_stable_synthetic_index",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_discovery_stale_catalog_keywords[discovery_stale-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_discovery_stale_catalog_keywords[-Tool discovery has not run recently.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_discovery_stale_catalog_keywords[catalog_expired-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_discovery_stale_catalog_keywords[-The tool catalog looks stale.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_discovery_stale_catalog_keywords[STALE_BINDING-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_auth_credential_token_keywords[auth_expired-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_auth_credential_token_keywords[-Missing authentication for this connection.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_auth_credential_token_keywords[credential_missing-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_auth_credential_token_keywords[-The stored credential is invalid.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_auth_credential_token_keywords[-Access token has expired.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_permission_policy_keywords[permission_drift-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_permission_policy_keywords[-This tool's permission no longer matches policy.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_permission_policy_keywords[policy_violation-]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_maps_permission_policy_keywords[-Violates the workspace policy.]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_defaults_to_view_details_for_unrecognized_finding",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_defaults_for_finding_with_no_recognizable_fields",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_first_matching_bucket_wins_on_overlap",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_remediation_actions_reads_type_alias_when_finding_type_absent",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_cursor_key_is_preserved_across_a_resync_with_same_rows",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_local_source_shows_server_only_copy",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_builtin_source_shows_server_only_copy",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_mount_before_any_update_findings_call_shows_server_only_copy",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_server_source_fetch_failure_shows_fail_soft_retry_hint",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_server_source_zero_findings_shows_distinct_empty_copy",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_going_from_absent_to_populated_findings_hides_empty_state",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_findings_row_selection_posts_finding_selected_with_synthetic_index",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_mode::test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundled_css",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_classes_defined_only_in_owning_sheet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_owning_sheets_are_bundled",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_deprecated_names_ratchet_down",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_catalog_and_gallery_sync",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_no_new_local_ds_fallbacks",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_literal_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_python_style_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_sheet_size_ceiling",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_ratchet_regexes_match_pin_script",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_ignores_tokens_and_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_active_css_extension_is_in_dimension_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_pin_rejects_active_css_extension_without_writing_baseline",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Performance.test_boot_css_byte_budget::test_boot_parsed_css_bytes_stay_within_budget",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Performance.test_textual_css_fastpath::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "status": "passed"
+    }
+  ]
+}

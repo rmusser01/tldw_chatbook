@@ -1,0 +1,144 @@
+[
+  {
+    "capture": "textual-dark-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "085fe115e896348a20e6b220152f1f57775da5c1ed8f543930234902b93fc223",
+    "approved_svg_sha256": "d14e1c3301b259ea2624389a7e32e2c89f7c8db2c19ee0bd385dfe34de6b3c3f"
+  },
+  {
+    "capture": "textual-dark-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e",
+    "approved_svg_sha256": "a0ea5ca4679d7d2ea76588b5c329953096aeb312a04f3e46a1ef007a1e0d195e"
+  },
+  {
+    "capture": "textual-dark-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "b072c0351d6e407ea31adb8e4e2f0e4c4eda1bfef30d532714d72fe002d2e9a8",
+    "approved_svg_sha256": "f11369ad6abf0d14161d91a3185e47e051568a80cba938e206286c208708c33d"
+  },
+  {
+    "capture": "textual-dark-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "a518038910baf2faa204d442861f45fc55f2f09bc11b86b47100b111ea4e0916",
+    "approved_svg_sha256": "ede654e2cc7d11915568879d2b4368a4df0a22447e776b73708a2d0cb05d4606"
+  },
+  {
+    "capture": "textual-dark-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "90e14a36b0f0d2666eba4f8954a8d948c51aebfba7f02353434d6b8119deb108",
+    "approved_svg_sha256": "98ff756c8022abe6dce005914665ebbc5cf27f92de8af77432e6eaa27b900f4d"
+  },
+  {
+    "capture": "textual-dark-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "efae3d5807ed1497eb9839d0fec46eed9e4177d962e544a683cf32490d2d0fbf",
+    "approved_svg_sha256": "7050212d0695698bac213dfd12a2460937829f6f55792fc0b70f2b583fec40f4"
+  },
+  {
+    "capture": "textual-dark-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f",
+    "approved_svg_sha256": "12d31bc54ff4ccd6d8c975b08cbbfd15f52ee24e31a09743ce69812bd7260d5f"
+  },
+  {
+    "capture": "textual-dark-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "4f0e589ff3a40e5f663addc15ff45e4f3abebab4fd1cec6d5a1e6a64cf09f65b",
+    "approved_svg_sha256": "ec013febc4c66a0f217f04e494ad8c071c9257196098e0b8770a73e781f2cf6a"
+  },
+  {
+    "capture": "textual-dark-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "1e1b21276f63925da2e68216c553be1246c6545519e995756b49f0d7981d9b97",
+    "approved_svg_sha256": "ed35403451f4a075984090f84263e35de862466c92fdf95daa6a7e802d607b2a"
+  },
+  {
+    "capture": "textual-dark-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "064b0117dbf15dea4db7f955f62af8be985be5ebb1a36d4721cfbd1ca9b904ac",
+    "approved_svg_sha256": "736458813e26bb5793f71bc5fbb87175a26526e35d24bd014a5bc02922b177ff"
+  },
+  {
+    "capture": "textual-light-170x48-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "8db142e2e3566c31292b848e0ae910919925ad6bd726a908c3e7a4db68b15200",
+    "approved_svg_sha256": "a570263250dcea9d70d9be1dd47d41750f149637fbd06ddb0956dc6c37ecaccc"
+  },
+  {
+    "capture": "textual-light-170x48-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6",
+    "approved_svg_sha256": "09acd1afc606ec7989921f1b110380af2e02ba50a2e501f1d5f9658bf75f4ef6"
+  },
+  {
+    "capture": "textual-light-170x48-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "6da866eb291a60fb7b8b22d4e28321c5d85605b1f63b03f1a52b91643c6d6baa",
+    "approved_svg_sha256": "4e168de98de5697bdc5e60541994b62305914e544d133e9c34422a740311a748",
+    "remaining_difference": "Blinking input caret; matches the already visually inspected Qodo follow-up capture except timestamp and Rich ID."
+  },
+  {
+    "capture": "textual-light-170x48-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "cbfaf93e6696dbbcb5d6408819cb54b25fd747f924cd18657b4bac17a9377e98",
+    "approved_svg_sha256": "035f6cc97edb3ccd78e0f04486ad798af8c73ae8e8eebf72dbc9adc36d464c4c"
+  },
+  {
+    "capture": "textual-light-170x48-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "83ec217a1cc3c4966252ef64211c6b86c82345454cef08a535e1315dc19cf3e5",
+    "approved_svg_sha256": "3ef5e9105bbf53d83d40cf4a2f64c7f9ab389c42e229f662d2c1d143540ebe90"
+  },
+  {
+    "capture": "textual-light-80x24-combined-filters",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "01d1471bf2c4c8090d5a05ea978a6ccd5656732ec8b86a14686a79c82e1c5a05",
+    "approved_svg_sha256": "02caebbf933b96cfbeba15dd1382cb349fae721ad88b007ca265cb0a39a3c739"
+  },
+  {
+    "capture": "textual-light-80x24-exact-tool",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694",
+    "approved_svg_sha256": "d33d423dc612c5c775dfa520db4d660f510d07125b776be135381996b7568694"
+  },
+  {
+    "capture": "textual-light-80x24-filtered",
+    "svg_identical_except_timestamp_and_generated_id": false,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "4757b301d0fbe0f38cc2b29141534ac06d4459667e3e4380942a00cc1afcd211",
+    "approved_svg_sha256": "65545c45eee199454aea0a20af0162ca0faf7fe38e567a15da00a1e29137062f",
+    "remaining_difference": "Blinking input caret; matches the already visually inspected Qodo follow-up capture except timestamp and Rich ID."
+  },
+  {
+    "capture": "textual-light-80x24-refreshed",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "8a9e58f2ce377c826e3cb1e84a323fb7a19f732f93d1763c23a97e25d720d779",
+    "approved_svg_sha256": "cdcfa9941cdf1be84e98a11658adf19369e2ce90852145c80851a7c4cd8d96e8"
+  },
+  {
+    "capture": "textual-light-80x24-selected",
+    "svg_identical_except_timestamp_and_generated_id": true,
+    "terminal_identical_except_timestamp": true,
+    "replay_svg_sha256": "823f95f08d137917d3281dfa6042098f35a24ae3de9febbe0b7789df19568e94",
+    "approved_svg_sha256": "ee7dda4cd3578239f735841a4338516593212a8fc072ff500b0120ec91fce166"
+  }
+]

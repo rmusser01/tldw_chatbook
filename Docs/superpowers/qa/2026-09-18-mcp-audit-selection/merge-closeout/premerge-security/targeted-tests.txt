@@ -1,0 +1,46 @@
+.....................................F..F.......                         [100%]
+=================================== FAILURES ===================================
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py] _
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/personas_screen.py grew to 16444 lines (budget 16436, +8).
+E     
+E     tldw_chatbook/UI/Screens/personas_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 16444 <= 16436
+_______ test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py] ________
+Tests/Architecture/test_module_size_ratchet.py:78: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/app.py grew to 21437 lines (budget 21415, +22).
+E     
+E     tldw_chatbook/app.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 21437 <= 21415
+============================= slowest 25 durations =============================
+3.19s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+3.18s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+3.14s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+3.09s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+3.09s call     Tests/UI/test_mcp_audit_selection.py::test_duplicate_event_keeps_its_row_within_same_filtered_snapshot
+3.07s call     Tests/UI/test_mcp_audit_selection.py::test_newer_execution_keeps_selected_event_and_drill_target
+3.06s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+3.01s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[decision]
+2.98s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[text]
+2.97s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[initiator]
+2.85s call     Tests/UI/test_mcp_audit_selection.py::test_ambiguous_identical_events_clear_selection_on_refresh
+2.84s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[table]
+2.79s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[canvas]
+2.64s call     Tests/UI/test_mcp_audit_selection.py::test_execution_eviction_clears_detail_without_selecting_replacement
+2.57s call     Tests/UI/test_mcp_audit_selection.py::test_filtering_out_selected_execution_clears_detail
+1.87s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-1-new-0]
+1.79s call     Tests/UI/test_mcp_audit_identity.py::test_renewed_row_keys_never_reactivate_an_older_snapshot
+1.77s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-1-None]
+1.70s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-0-None]
+1.70s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[2-2-None]
+1.70s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[1-2-None]
+1.68s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-1-None]
+1.66s call     Tests/UI/test_mcp_audit_identity.py::test_refresh_requires_unique_identity_in_both_snapshots[0-0-None]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py]
+2 failed, 46 passed in 61.05s (0:01:01)

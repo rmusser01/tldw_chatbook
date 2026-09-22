@@ -1,0 +1,8 @@
+2026-09-21 — independent read-only review by audit_qodo_review
+Scope: PR2721 integrated diff from merged PR2720 plus current native runner and CLI admission changes.
+No actionable findings.
+- Full-width filters and execution-pane scrolling preserve readable controls.
+- Deferred reveal uses current focus, checks attachment and screen ownership, and keeps the table cursor visible without changing selection or filter values.
+- Regression coverage verifies painted labels in two themes/four sizes, keyboard focus, retained values and outside-focus behavior.
+- Native bootstrap pins checkout and admits the private profile before app imports; network blocking, provenance, TTY and painted-label checks follow the established runner contract.
+The reviewer did not edit files or run tests; execution receipts are retained separately.
