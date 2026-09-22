@@ -171,6 +171,32 @@ def test_local_notification_adapter_counts_unread_local_notifications():
     ]
 
 
+def test_local_notification_adapter_logs_when_the_inbox_read_fails():
+    """A failing inbox DB must not be indistinguishable from an empty inbox.
+
+    tier-2 review S17 P3: `_unread_notification_count` swallowed every
+    exception and reported "0 unread" with no log line anywhere, so a genuine
+    notifications DB failure looked exactly like "nothing new" on Home.
+    """
+    from loguru import logger
+
+    class BrokenNotificationsService:
+        def list_queue(self, *, limit=100, include_dismissed=False, category=None):
+            raise RuntimeError("inbox database is locked")
+
+    records: list[str] = []
+    sink_id = logger.add(records.append, level="DEBUG")
+    try:
+        adapter = LocalNotificationHomeActiveWorkAdapter(
+            notification_service=BrokenNotificationsService()
+        )
+        assert adapter._unread_notification_count() == 0
+    finally:
+        logger.remove(sink_id)
+
+    assert any("inbox database is locked" in line for line in records), records
+
+
 def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     class FakeWatchlistsService:
         def __init__(self):

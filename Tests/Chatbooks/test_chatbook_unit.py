@@ -10,9 +10,11 @@ Detailed unit tests for chatbook components with mocked dependencies.
 
 import pytest
 import json
+import re
 import zipfile
 from pathlib import Path
 from datetime import datetime
+from typing import Any, Dict
 from unittest.mock import Mock, patch
 import sqlite3
 
@@ -511,6 +513,44 @@ class TestConflictResolver:
         )
 
         assert resolution == ConflictResolution.RENAME
+
+    def test_merge_notes_separator_uses_canonical_utc_not_local_time(self):
+        """The separator is baked into the user's note content permanently.
+
+        tier-2 P3 (S17): a naive `datetime.now()` there means two users in
+        different time zones merging the same chatbook get different note
+        bodies, with nothing in the text saying which zone it was.
+        """
+        from tldw_chatbook.Utils.timestamps import is_canonical_utc
+
+        resolver = ConflictResolver()
+        merged = resolver.merge_notes(
+            {"content": "Original"}, {"content": "Incoming"}
+        )
+        stamp = re.search(
+            r"\[Imported from chatbook on (.+?)\]", merged["content"]
+        )
+        assert stamp is not None, merged["content"]
+        assert is_canonical_utc(stamp.group(1)), stamp.group(1)
+
+    def test_character_conflict_preview_does_not_claim_false_truncation(self):
+        """tier-2 P3 (S17): a short description rendered as `abc...` in the
+        conflict prompt tells the user text was cut that never was."""
+        captured: Dict[str, Any] = {}
+
+        def ask(conflict_info):
+            captured.update(conflict_info)
+            return ConflictResolution.SKIP
+
+        resolver = ConflictResolver(ask_callback=ask)
+        resolver.resolve_character_conflict(
+            {"name": "Alice", "description": "abc"},
+            {"name": "Alice", "description": "x" * 150},
+            ConflictResolution.ASK,
+        )
+
+        assert captured["existing_description"] == "abc"
+        assert captured["incoming_description"] == "x" * 100 + "..."
 
 
 class TestErrorHandling:

@@ -4,6 +4,8 @@ import ast
 from functools import cache
 from pathlib import Path
 import re
+import subprocess
+import sys
 import warnings
 
 import pytest
@@ -1956,6 +1958,44 @@ def test_legacy_state_exports_remain_serialization_compatible() -> None:
     payload = original.to_dict()
 
     assert AppState.from_dict(payload).to_dict() == payload
+
+
+def test_state_package_does_not_drag_dead_modules_onto_the_boot_path() -> None:
+    """The one live leaf import must not import the four dead siblings.
+
+    tier-2 review S17 P3: `UI/Screens/chat_screen.py` imports
+    `state.ui_state`, which runs `state/__init__.py`, which eagerly imported
+    `app_state`, `chat_state`, `navigation_state` and `notes_state` -- four
+    modules with no production consumer -- putting all of them in
+    `sys.modules` at ui-ready (ADR-097's boot budget).
+    """
+    probe = (
+        "import sys;"
+        "import tldw_chatbook.state.ui_state;"
+        "print([n for n in ("
+        "'tldw_chatbook.state.app_state',"
+        "'tldw_chatbook.state.chat_state',"
+        "'tldw_chatbook.state.navigation_state',"
+        "'tldw_chatbook.state.notes_state',"
+        ") if n in sys.modules])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=str(PROJECT_ROOT),
+    )
+
+    assert result.stdout.strip().endswith("[]"), result.stdout
+
+
+def test_state_package_exports_still_resolve_lazily() -> None:
+    """__all__ must keep working after the exports go lazy."""
+    import tldw_chatbook.state as state_package
+
+    for name in state_package.__all__:
+        assert getattr(state_package, name) is not None, name
 
 
 def test_legacy_state_docs_describe_compatibility_not_live_authority() -> None:
