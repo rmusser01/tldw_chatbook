@@ -1,0 +1,81 @@
+[
+  {
+    "source": "<tmp>/2722-failed-ci.log",
+    "export": "2722-failed-ci.log",
+    "source_sha256": "068e99ee11e06f1b18e6ca2415d61cb2b59c41e7a7937141e8d8b5377e796e1c",
+    "export_sha256": "6b1eb6c7e5f5acf113b5a26ede558f456fd3fe4a04e06876253799e3b70ed0b9",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-ci-repro.txt",
+    "export": "2722-ci-repro.txt",
+    "source_sha256": "15846eeed541e9a6f261f818f5b27af65a91884f8e00d43ab1594a8fa26471e3",
+    "export_sha256": "d4c46947ed7a487946233f1f8a16781e1592b36212e7a9aa3bcb3f8ac568eec1",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-ci-probe.txt",
+    "export": "2722-ci-probe.txt",
+    "source_sha256": "b0c4707c55ed86de7f4920e9c3208582f5794d1d5b48b2acd971cce3e7292422",
+    "export_sha256": "87fef0cb968fb38fc850307917c6dc576a8b667f7ab06e2728505fe27c6be99f",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-ci-settled-clicks.txt",
+    "export": "2722-ci-settled-clicks.txt",
+    "source_sha256": "f6567ba6227cd7149dfcfd6b28e2ecd8cd0e8b855856cbd3ba3dfb3ac8254c86",
+    "export_sha256": "8f9a6507d4f44a01bf4d7b211e32bbeacfee936d356ed304ce5c582ad494a8e5",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-redaction-outcome.txt",
+    "export": "2722-redaction-outcome.txt",
+    "source_sha256": "d4f70f9b34f4deb31134dfada8943e8630eec42872d80ddb071f7335ac16044e",
+    "export_sha256": "8f37940af5c48fec174fdb15121bce87d3351e5b166edd8774faaf21997ec6ff",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-workbench-green.txt",
+    "export": "2722-workbench-green.txt",
+    "source_sha256": "8fbc7a9768352f3292e45e4e83b7fb440a5e51dea3e9f823d02c499069434ac9",
+    "export_sha256": "f7461ed40d0e258941dbac9e861218fb9f0b4512dfe66d2849096945c3670aeb",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-incoming-tests.txt",
+    "export": "2722-incoming-tests.txt",
+    "source_sha256": "1dbb056d54b8a430aba44eea504188e143eb8f338717dd038a8ebec34e877786",
+    "export_sha256": "321ada0e5121ed29e782b7a4d0cb943260ee7747f31e1a15b33f5cb8b320b48c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-final-preflight.txt",
+    "export": "2722-final-preflight.txt",
+    "source_sha256": "0b4101f0b9fe21a14c43d09f7eb767e023b4474aefa5ac015b1d9bc22796b868",
+    "export_sha256": "895e20d104643f25951386dcbdd22d5576a5764c708127f88bf7230b369b5694",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-static-analysis.json",
+    "export": "2722-static-analysis.json",
+    "source_sha256": "c2dae5fd09e4252b112e162bbf244cc3a5c40f520aa4c38dd878d71d039f34a0",
+    "export_sha256": "4ec1ee1333bb935596d6f2b8c63f16130adeefa04516ce5ce8ecc5c44f5d3301",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722_click_probe.py",
+    "export": "2722_click_probe.py",
+    "source_sha256": "5ddb1c34f634b1c44dbcb4a6021270f3af926250ec74563cfa9107b9f5eeb352",
+    "export_sha256": "daab8d604b51da031f7677260af6cabc656c0772f57136f5c6ff218027e9574c",
+    "normalization": "host paths and trailing whitespace",
+    "initial_export_sha256": "2c1255b1bc9886fbb4d7fe71acdf62233cfbd743749b89af1ed0f7998cb04b61",
+    "review_followup": "Google-style helper docstrings and import/format cleanup; probe also replaces environment delay with fixed 35ms. Original raw source hash and initial export hash retained; see PR2722 review follow-up."
+  },
+  {
+    "source": "<tmp>/2722-click-probe.jsonl",
+    "export": "2722-click-probe.jsonl",
+    "source_sha256": "53d0d545297f3969152eb0a748d989d8c284bf6ee6f076aecd9c6a341e43aafc",
+    "export_sha256": "53d0d545297f3969152eb0a748d989d8c284bf6ee6f076aecd9c6a341e43aafc",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

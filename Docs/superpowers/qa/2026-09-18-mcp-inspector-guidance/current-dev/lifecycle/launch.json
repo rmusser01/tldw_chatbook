@@ -1,0 +1,7 @@
+{
+  "pid": 53761,
+  "started_at": "2026-09-22T03:53:40.683591+00:00",
+  "repo": "<repo>",
+  "head": "46622efdbfd0fceac23b5200febca9a4d628b9f4",
+  "dirty_status": " M Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/native_check.py\n M Tests/Utils/test_mcp_native_qa_args.py\n M \"backlog/tasks/task-32835 - Keep-MCP-Audit-filters-readable-and-reachable-in-compact-terminals.md\"\n M \"backlog/tasks/task-32836 - Keep-MCP-inspector-readiness-guidance-with-its-server-context.md\"\n"
+}

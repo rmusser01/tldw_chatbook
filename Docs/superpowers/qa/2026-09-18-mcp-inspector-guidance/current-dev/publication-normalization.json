@@ -1,0 +1,32 @@
+[
+  {
+    "receipt": "allocation-owner-check.json",
+    "before_normalization_sha256": "6fb462bb3baff8d52bf5b814eacad65d737fb30967f99e5ff6dd63dfd972e7e6",
+    "normalized_sha256": "c2e67541e0fc077e1acc7ad433798ded9f67c04d2c2589ca8f94f6f707e6d5ec"
+  },
+  {
+    "receipt": "export-manifest.json",
+    "before_normalization_sha256": "b632f6d603689e332622c615cd241d018ce29a3882eb7be3fab53b3c0a6bdc72",
+    "normalized_sha256": "c2d2400f45dfd4b051a8c61cf73a9677e66071007581765314d49f622a1e0728"
+  },
+  {
+    "receipt": "lifecycle.json",
+    "before_normalization_sha256": "e7034f33432811c3d5a8794287163ee5b88631eb9c0c3d7e57fe3cf72600b9cd",
+    "normalized_sha256": "79c3c0d6070602296ccbddfe147f163660f063de8ac58c2095ad579ddfebfd1a"
+  },
+  {
+    "receipt": "tests/final-001.txt",
+    "before_normalization_sha256": "435b9dd59906693519aa2ef2947fdb2336e652abdca920edbe889690bfd33148",
+    "normalized_sha256": "8023a89d60339c18ce19e333d9fec401fb5d450a88f83dfcee096b68375377df"
+  },
+  {
+    "receipt": "tests/green-001.txt",
+    "before_normalization_sha256": "1ba453e8f21ef6fca114c39c772d37bdf5605eb0fc7878fc454e122dc6900001",
+    "normalized_sha256": "47622ce300e93c50f66ef478b86863698cbe2acb679ee40eb6e54796129b40a0"
+  },
+  {
+    "receipt": "tests/red-001.txt",
+    "before_normalization_sha256": "3fddc353c7ec3e2ff37d243b3f977da3cde1d9642358b1a9076502026b81f864",
+    "normalized_sha256": "3f45b10528c9e068265c90c49330c77700cd62b973cfcaac66c8587fe3a3f0d1"
+  }
+]
