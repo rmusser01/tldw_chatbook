@@ -19,14 +19,14 @@ anywhere. This module is a thin adapter that:
   user-data directory, as a sibling of the legacy ``models/stt/...``
   installer's own destination; and
 - resolves the active managed Parakeet v2 artifact directory, if any, for
-  the managed-first model-directory resolver used by both
-  ``Audio.console_dictation`` and ``Local_Ingestion.transcription_service``.
+  the managed-first model-directory resolver used by
+  ``Local_Ingestion.transcription_service``.
 
 IMPORT BOUNDARY (load-bearing -- see
 ``Tests/Model_Artifacts/test_credentials_and_boundaries.py::
 test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch``):
-``Audio.console_dictation`` and ``Local_Ingestion.transcription_service`` are
-synchronous, worker-side modules that must never import
+``Local_Ingestion.transcription_service`` is a synchronous, worker-side
+module that must never import
 ``Model_Artifacts.acquisition`` or ``Model_Artifacts.fetch`` (both
 ``import httpx`` at module scope -- see ``Model_Artifacts/__init__.py``'s own
 docstring). This module therefore imports only ``Model_Artifacts.service``
@@ -425,7 +425,7 @@ def active_managed_parakeet_v2_dir(
     """Return the active, verified managed Parakeet v2 artifact directory, if any.
 
     Used by the managed-first model-directory resolver
-    (``Audio.console_dictation``, ``Local_Ingestion.transcription_service``):
+    (``Local_Ingestion.transcription_service``):
     checked after an explicitly configured directory and before the
     verified legacy ``.tldw-verified.json`` bundle. Uses ONLY the
     synchronous, credential-free ``ModelArtifactService`` surface --

@@ -321,9 +321,7 @@ class LazyLiveDictationService:
         self._load_privacy_settings()
 
         # Buffer configuration
-        self.buffer_duration_ms = get_cli_setting(
-            "dictation.buffer_duration_ms", self.BUFFER_DURATION_MS
-        )
+        self.buffer_duration_ms = self._resolve_buffer_duration_ms()
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
         self.silence_threshold_seconds = self._resolve_silence_threshold()
         self.vad_aggressiveness = self._resolve_vad_aggressiveness()
@@ -487,6 +485,56 @@ class LazyLiveDictationService:
             )
             return cls.VAD_PREROLL_MS
         return preroll_ms
+
+    @classmethod
+    def _resolve_buffer_duration_ms(cls) -> int:
+        """Read `dictation.buffer_duration_ms`, falling back to the default.
+
+        This value is not advisory: `_ensure_audio_service` passes
+        `chunk_size=int(buffer_duration_ms * 16)` straight through to the
+        recorder, where it becomes PortAudio's `frames_per_buffer`/`blocksize`.
+        Unvalidated, a TOML string survived to `int("500" * 16)` -- a 48-digit
+        chunk size -- and `0`/negative gave `chunk_size <= 0`. The identical
+        clamp already guarded the UI path (`set_buffer_duration`); only the
+        config path was open.
+
+        The ceiling is `set_buffer_duration`'s own (and the owning widget's
+        documented 100..2000 Input range): above it, `chunk_size` becomes an
+        absurd per-buffer allocation. The FLOOR is deliberately 1, not
+        `set_buffer_duration`'s 100 -- 100 ms is a UI ergonomics choice, not a
+        device constraint, and a smaller buffer is perfectly usable (
+        `Tests/Audio/test_dictation_lazy_transcription.py` drives the real
+        service at 10 ms to pace its cadence). What must never reach the
+        recorder is a non-integer, a `nan`/`inf`, or a value that makes
+        `chunk_size <= 0`.
+
+        Returns:
+            A positive buffer duration in milliseconds, at most 2000.
+        """
+        raw = get_cli_setting("dictation.buffer_duration_ms", cls.BUFFER_DURATION_MS)
+        try:
+            duration_ms = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            # Same trap as the resolvers above: `nan`/`inf` are valid TOML
+            # floats. `int(float("nan"))` raises `ValueError` and
+            # `int(float("inf"))` raises `OverflowError` (not `ValueError`),
+            # so both must be caught here or a typo'd config value crashes
+            # dictation start instead of falling back.
+            logger.warning(
+                "Invalid dictation.buffer_duration_ms {!r}; using {}",
+                raw,
+                cls.BUFFER_DURATION_MS,
+            )
+            return cls.BUFFER_DURATION_MS
+        if not 1 <= duration_ms <= 2000:
+            logger.warning(
+                "dictation.buffer_duration_ms must be a positive integer of at "
+                "most 2000 (got {!r}); using {}",
+                raw,
+                cls.BUFFER_DURATION_MS,
+            )
+            return cls.BUFFER_DURATION_MS
+        return duration_ms
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""

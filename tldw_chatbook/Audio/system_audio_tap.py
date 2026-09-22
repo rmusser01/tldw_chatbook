@@ -26,6 +26,12 @@ from loguru import logger
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 FRAME_BYTES = 640
+#: Ceiling on the one-file swiftc compile of the audiotap helper. It runs
+#: inside meetings_screen's `@work(exclusive=True, group="meetings-prepare")`,
+#: so a swiftc that stalls (a code-signing or licence prompt is the realistic
+#: macOS trigger) would otherwise hold that group for the process lifetime and
+#: leave the Meetings screen permanently "preparing".
+SWIFTC_COMPILE_TIMEOUT_SECONDS = 120
 SINK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MACOS_MIN = (14, 2)
 HELPER_NAME = "tldw-audiotap"
@@ -232,11 +238,18 @@ def ensure_helper(
     if swiftc is None:
         return None
     target.parent.mkdir(parents=True, exist_ok=True)
-    result = run(
-        [swiftc, "-O", "-o", str(target), str(helper_source_path()),
-         "-framework", "CoreAudio", "-framework", "AVFoundation"],
-        capture_output=True, text=True,
-    )
+    try:
+        result = run(
+            [swiftc, "-O", "-o", str(target), str(helper_source_path()),
+             "-framework", "CoreAudio", "-framework", "AVFoundation"],
+            capture_output=True, text=True,
+            timeout=SWIFTC_COMPILE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "audiotap helper compile timed out after {}s", SWIFTC_COMPILE_TIMEOUT_SECONDS
+        )
+        return None
     if getattr(result, "returncode", 1) != 0 or not target.exists():
         logger.warning(
             "audiotap helper compile failed: {}",

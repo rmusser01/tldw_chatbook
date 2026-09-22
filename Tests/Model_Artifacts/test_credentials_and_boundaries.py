@@ -509,10 +509,11 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     ``ArtifactLeaseKey``); only the async, network-capable, credentialed
     modules are forbidden.
 
-    TASK-1696: also imports ``Audio.console_dictation`` and the new
-    ``Local_Ingestion.parakeet_v2_artifact`` adapter it and
-    ``transcription_service`` both now reach transitively -- the managed-
-    first model-directory resolver these two worker-side modules share.
+    TASK-1696: also imports the ``Local_Ingestion.parakeet_v2_artifact``
+    adapter ``transcription_service`` now reaches transitively -- the
+    managed-first model-directory resolver it provides. (Its second consumer,
+    ``Audio.console_dictation``, was deleted as dead code by the tier-2
+    review; the import boundary it shared is still covered here.)
     ``parakeet_v2_artifact`` itself imports only ``Model_Artifacts.service``
     at module scope (its ``ArtifactAcquisitionService``-based orchestration
     helpers import ``.acquisition`` locally, inside their own function
@@ -559,7 +560,6 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
             import tldw_chatbook.Model_Artifacts.curated_registry
             import tldw_chatbook.Model_Artifacts.store
             import tldw_chatbook.Local_Ingestion.transcription_service
-            import tldw_chatbook.Audio.console_dictation
         finally:
             builtins.__import__ = original_import
 

@@ -120,6 +120,13 @@ def _wav_duration(path: Path) -> float:
         return audio.getnframes() / rate if rate else 0.0
 
 
+#: Ceiling on the one-file ffmpeg conversion to 16 kHz mono PCM. ffmpeg on a
+#: malformed or truncated container can block indefinitely; the repo's own
+#: precedent for a named per-module constant is
+#: `Media_Playback/stream_resolve.py`'s `YTDLP_TIMEOUT_SECONDS`.
+FFMPEG_CONVERT_TIMEOUT_SECONDS = 600
+
+
 @contextmanager
 def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
     """Yield a WAV input, converting non-WAV media with local ffmpeg."""
@@ -152,6 +159,11 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
             ],
             check=True,
             capture_output=True,
+            timeout=FFMPEG_CONVERT_TIMEOUT_SECONDS,
+            # ffmpeg reads stdin by default; the input here is always a file
+            # path, so inheriting the parent's stdin only lets a stuck ffmpeg
+            # consume it.
+            stdin=subprocess.DEVNULL,
         )
         yield output
     finally:
