@@ -291,7 +291,7 @@ SpeechServicesTab
 2. **audio_troubleshooting_dialog.py** - Device diagnostics and testing
 3. **voice_command_dialog.py** - Command configuration UI
 4. **transcription_history_viewer.py** - Retired with the history implementation
-5. **dictation_performance_widget.py** - Performance dashboard
+5. **dictation_performance_widget.py** - Retired (unused; removed in task-32810)
 
 #### Events
 1. **dictation_integration_events.py** - Cross-app integration events

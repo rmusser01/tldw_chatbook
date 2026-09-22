@@ -1316,8 +1316,6 @@ class ConsoleTurnFileCard(Vertical):
 
     @staticmethod
     def _styled_diff(text: str):
-        from rich.text import Text
-
         out = Text()
         for line in text.splitlines(keepends=False):
             if line.startswith("+") and not line.startswith("+++"):
