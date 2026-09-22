@@ -14,6 +14,17 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+> **CORRECTION (2026-09-22): the stated cause below is WRONG. See TASK-32912.**
+>
+> `test.yml:121`'s `--ignore=Tests/UI` is a red herring -- it is the core/UI job split inside a workflow that
+> also has a 12-shard `ui-tests` job. The real reason nothing gates a PR is four lines higher: **`test.yml`
+> is `on: push: branches: ["main"]` + `workflow_dispatch` and has no `pull_request` trigger at all**, so the
+> *entire* Tests workflow gates nothing -- not just `Tests/UI`. And the nightly that would otherwise catch
+> this has executed **zero** tests for four consecutive nights, because one collection error aborts the run.
+>
+> Everything below about the *consequences* still holds, and the measured numbers are now real rather than
+> estimated. What changed is the cause, and therefore the fix.
+
 Found by chasing a single stale assertion and asking why it had never failed anything.
 
 `Tests/UI/` is **1,172 test files / 19,182 test functions**. It is executed by neither of the two places
@@ -70,6 +81,47 @@ a media-DB migration lazily loads config *inside* an active raw-participant scop
 generalises, a meaningful share of `Tests/UI` may be recoverable cheaply.
 
 Source: tier-2 code review 2026-09-21, found while verifying TASK-32892.
+
+## Measured, 2026-09-22 (this is no longer an estimate)
+
+Six parallel processes, `--timeout=60 --timeout-method=signal`, 18,148 of 25,917 executed before the run was
+stopped deliberately:
+
+| result | count | share |
+|---|---:|---:|
+| passed | 10,858 | 59.8% |
+| failed | 7,072 | **39.0%** |
+| errored | 214 | 1.2% |
+
+The failed share was flat within +/-1 point across eight samples, so **~40% of `Tests/UI` is red**. A
+classification slice attributes most of it to the ADR-126 `RecoveryRequired` gate (58 of 97 sampled), not to
+product failures.
+
+**The config-load lead does NOT generalise.** It recovers **66 tests in `Tests/Media`** (72 failed -> 6) and
+**~0 in `Tests/UI`** -- measured, same 14 failures before and after. Two corrections to how it was written:
+the mechanism is `Chunk_Lib.py:301` snapshotting config at *module import* while a migration imports it
+lazily; and running the import from a wrapper **before** pytest binds the participant to the developer's
+**real** `~/.config/tldw_cli/config.toml`, so it has to live in `Tests/conftest.py`. `Tests/UI`'s failure is
+`app_factory.py:112` rebinding against a per-test `tmp_path` -- same exception name, different bug.
+
+Four hangs found, none censused: `test_pattern_gallery_snapshots.py::test_gallery_snapshot[textual-dark]`,
+two in `test_actor_pack_export_ownership.py`, and one in `test_mcp_workbench_lifetime.py`. Two of them time
+out *inside `difflib`* -- pytest diffing a huge snapshot, not the product.
+
+## Why option (c), not a ratchet
+
+At 40% red, "bring it in green" is out. A **ratchet** is out too, and for a reason worth recording: a ratchet
+still has to *run* the suite, and the only PR-triggered workflow is `derived-artifacts.yml`, whose fast lane
+already burns 15m54s of a 30-minute cap. There is no budget to run 25,917 tests on every PR.
+
+Shipped instead: a `ui-fast-lane` job running a **verified-green census** -- 120 files / 851 tests / 3m48s,
+serial, minimal deps, pinned order (the exact configuration it was verified in). `derived-artifacts` gains
+`needs: [pr-fast-lane, ui-fast-lane]` plus a verdict step, so a single branch-protection context still
+governs merges.
+
+Two things left open and reported rather than fixed: the `_google_tools_payload` NameError (TASK-32912) and
+the ADR-126 `app_factory` admission, which is what would grow the census past 120 -- a design question about
+`keep_bootstrap_profile`, not an allowlist edit.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
