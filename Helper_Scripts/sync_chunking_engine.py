@@ -624,6 +624,23 @@ import threading
 ''',
         name,
     )
+    # TASK-32803.1 / ADR-173 repair: the security-event timestamp rides the
+    # shared aware-UTC helper. Upstream's datetime.utcnow() is naive and
+    # deprecated in 3.12, and it was hand-edited in the vendored tree with no
+    # carry-forward record -- the next re-sync would have reverted the one
+    # fix the timestamp guard exists to enforce (tier-2 review, slice S26).
+    text = _replace_once(
+        text,
+        "import threading\nfrom datetime import datetime\n",
+        "import threading\nfrom tldw_chatbook.Utils.timestamps import utc_now_iso\n",
+        name,
+    )
+    text = _replace_once(
+        text,
+        '            "timestamp": datetime.utcnow().isoformat(),\n',
+        '            "timestamp": utc_now_iso(),\n',
+        name,
+    )
     # TASK-19323 repair 3: retire the zero-caller export_events — a bare
     # open()+json.dump of the event store, invisible to the persistent-sink
     # topology (SINK_CALL_NAMES does not track bare open).
