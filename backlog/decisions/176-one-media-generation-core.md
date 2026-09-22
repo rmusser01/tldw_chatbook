@@ -12,8 +12,16 @@ The modality-shared machinery of `Image_Generation/` and `Video_Generation/` liv
 - the adapter-registry skeleton (spec table, lazy resolution, enablement,
   per-backend caching, register/reset lifecycle);
 - the TOML/keyring/env secret-precedence config machinery;
-- the worker skeleton;
-- the request-validation skeleton.
+- the byte-identical request-validation bound/allowlist helpers.
+
+Measured at merge time, the worker and full request-validation modules
+are pattern-shared, not code-shared (0.44-0.45 normalized similarity; no
+verbatim block >= 20 lines): extracting them would produce a longer
+parameterized pipeline than either file and would obscure video's
+decision-1-revision-3 container-agreement sequencing. They remain
+modality-local until real duplication emerges; the dataclass builders
+and the ComfyUI adapter lifecycle (~50% shared) are the named next
+slices if the owner wants deeper consolidation.
 
 `Image_Generation/` and `Video_Generation/` remain the public import
 surface — module paths, class names, frozen request/result contracts, and
@@ -52,8 +60,9 @@ would clone it all again.
 
 ## Consequences
 
-- One registry/config/worker/validation skeleton to harden; fixes land
-  for both modalities.
+- One registry/config-machinery/validation-helper core to harden; fixes
+  land for both modalities. The workers and full validators stay
+  modality-local (see Decision) until duplication justifies extraction.
 - The modality packages shrink to their genuine per-modality content
   (backend tables, adapters, formats/metadata/store).
 - Public import paths and request/result contracts are unchanged, so

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.Media_Generation import validation_helpers as shared_helpers
 
 import math
 import re
@@ -20,6 +19,8 @@ from tldw_chatbook.Video_Generation.config import (
     DEFAULT_MAX_WIDTH,
     get_video_generation_config,
 )
+
+from tldw_chatbook.Media_Generation import validation_helpers as shared_helpers
 
 #: Choke-point caps for the reference-asset seam. Per-kind size caps follow
 #: the MiniMax-H3 documented input limits; local backends inherit the same
@@ -220,6 +221,6 @@ def _validate_positive_finite_float(issues, value, *, path):
     shared_helpers.validate_positive_finite_float(issues, value, path=path, issue=_issue)
 
 
-def allowed_extra_params_for_backend(backend: str, config) -> set[str]:
+def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
     """Return configured passthrough allowlist keys for a video backend."""
     return shared_helpers.allowed_extra_params_for_backend(backend, config, _EXTRA_PARAM_ATTRS)

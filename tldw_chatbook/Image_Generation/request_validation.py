@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.Media_Generation import validation_helpers as shared_helpers
 
 import math
 from dataclasses import dataclass
@@ -13,6 +12,8 @@ from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
 from tldw_chatbook.Image_Generation.config import (
+
+# Media_Generation.validation_helpers; these delegates keep the local names
     DEFAULT_INLINE_MAX_BYTES,
     DEFAULT_MAX_HEIGHT,
     DEFAULT_MAX_PIXELS,
@@ -21,6 +22,8 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_MAX_WIDTH,
     get_image_generation_config,
 )
+
+from tldw_chatbook.Media_Generation import validation_helpers as shared_helpers
 
 #: Choke-point bounds for the reference-image seam (task-3 of the
 #: fal/Gemini/Fireworks plan). Adapters (Tasks 4-6) can assume that any
@@ -299,7 +302,6 @@ def _validate_reference_dimension(
 
 
 # ADR-176: the shared bound/allowlist helpers live in
-# Media_Generation.validation_helpers; these delegates keep the local names
 # (the issue factory and extra-params enforcement stay modality-specific).
 _EXTRA_PARAM_ATTRS = {
     "stable_diffusion_cpp": "sd_cpp_allowed_extra_params",
@@ -321,6 +323,6 @@ def _validate_positive_finite_float(issues, value, *, path):
     shared_helpers.validate_positive_finite_float(issues, value, path=path, issue=_issue)
 
 
-def allowed_extra_params_for_backend(backend: str, config) -> set[str]:
+def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
     """Return configured passthrough allowlist keys for a image backend."""
     return shared_helpers.allowed_extra_params_for_backend(backend, config, _EXTRA_PARAM_ATTRS)

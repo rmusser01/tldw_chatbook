@@ -17,6 +17,16 @@ IssueFactory = Callable[[str, str], Any]
 
 
 def positive_int_attr(config: Any, attr: str, default: int) -> int:
+    """Read a positive int attribute from a config object.
+
+    Args:
+        config: The modality config.
+        attr: Attribute name.
+        default: Fallback when absent or non-positive.
+
+    Returns:
+        The attribute value when positive, else ``default``.
+    """
     try:
         value = int(getattr(config, attr, default))
     except (TypeError, ValueError):
@@ -32,6 +42,18 @@ def validate_int_bound(
     max_value: int,
     issue: IssueFactory,
 ) -> bool:
+    """Validate an optional int in ``[1, max_value]``.
+
+    Args:
+        issues: List collecting validation issues.
+        value: Raw request value (None skips).
+        path: Issue path.
+        max_value: Inclusive upper bound.
+        issue: Factory building issues.
+
+    Returns:
+        True when the value is valid or None.
+    """
     if value is None:
         return True
     if isinstance(value, bool) or not isinstance(value, int):
@@ -50,6 +72,14 @@ def validate_positive_finite_float(
     path: str,
     issue: IssueFactory,
 ) -> None:
+    """Validate an optional finite positive float.
+
+    Args:
+        issues: List collecting validation issues.
+        value: Raw request value (None skips).
+        path: Issue path.
+        issue: Factory building issues.
+    """
     if value is None:
         return
     if isinstance(value, bool):

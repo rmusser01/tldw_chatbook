@@ -69,6 +69,12 @@ class MediaAdapterRegistry:
     # --- shared skeleton ---
 
     def register_adapter(self, name: str, adapter: Any) -> None:
+        """Register an adapter spec under a backend name.
+
+        Args:
+            name: Backend name.
+            adapter: Adapter class or dotted spec string.
+        """
         self._adapter_specs[name] = adapter
         try:
             adapter_name = adapter.__name__  # type: ignore[attr-defined]

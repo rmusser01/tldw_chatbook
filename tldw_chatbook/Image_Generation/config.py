@@ -12,6 +12,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import keyring
+from loguru import logger
+
 from tldw_chatbook.Media_Generation.config_machinery import ModalityConfigTables, SecretSpec
 from tldw_chatbook.Media_Generation.config_machinery import coerce_choice
 from tldw_chatbook.Media_Generation.config_machinery import coerce_float
@@ -21,7 +23,7 @@ from tldw_chatbook.Media_Generation.config_machinery import keyring_get as media
 from tldw_chatbook.Media_Generation.config_machinery import load_generation_section
 from tldw_chatbook.Media_Generation.config_machinery import parse_list
 from tldw_chatbook.Media_Generation.config_machinery import resolve_secret, warn_unknown_top_level_keys
-from loguru import logger
+# ADR-176: the mechanics below live in Media_Generation.config_machinery;
 
 
 DEFAULT_BACKEND = "stable_diffusion_cpp"
@@ -200,7 +202,6 @@ def _read_image_generation_toml() -> dict:
 
 
 
-# ADR-176: the mechanics below live in Media_Generation.config_machinery;
 # these delegates keep the module-level names as test patch points and
 # builder call sites.
 _TABLES = ModalityConfigTables(

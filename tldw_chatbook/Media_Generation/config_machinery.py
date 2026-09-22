@@ -87,6 +87,15 @@ class ModalityConfigTables:
 
 
 def coerce_int(value: Any, default: int) -> int:
+    """Coerce a value to int, falling back to ``default`` on failure.
+
+    Args:
+        value: Raw config value.
+        default: Fallback.
+
+    Returns:
+        The parsed integer.
+    """
     try:
         return int(str(value).strip())
     except (TypeError, ValueError):
@@ -94,6 +103,15 @@ def coerce_int(value: Any, default: int) -> int:
 
 
 def coerce_float(value: Any, default: float) -> float:
+    """Coerce a value to float, falling back to ``default`` on failure.
+
+    Args:
+        value: Raw config value.
+        default: Fallback.
+
+    Returns:
+        The parsed float.
+    """
     try:
         return float(str(value).strip())
     except (TypeError, ValueError):
@@ -101,6 +119,15 @@ def coerce_float(value: Any, default: float) -> float:
 
 
 def coerce_bool(value: Any, default: bool) -> bool:
+    """Coerce a value to bool, falling back to ``default``.
+
+    Args:
+        value: Raw config value (bool or common string spellings).
+        default: Fallback.
+
+    Returns:
+        The parsed boolean.
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -121,6 +148,14 @@ def coerce_choice(value: Any, *, default: str, allowed: set[str]) -> str:
 
 
 def parse_list(value: Any) -> list[str]:
+    """Parse a value into a list of stripped non-empty strings.
+
+    Args:
+        value: Raw config value (list, JSON array, or comma-separated).
+
+    Returns:
+        The parsed strings.
+    """
     if value is None:
         return []
     if isinstance(value, list):
@@ -138,6 +173,15 @@ def parse_list(value: Any) -> list[str]:
 
 
 def get_config_value(section: Mapping[str, Any], key: str) -> str | None:
+    """Read a stripped, non-empty string value from a section.
+
+    Args:
+        section: Mapping to read from.
+        key: Key to read.
+
+    Returns:
+        The stripped value, or None when absent/empty.
+    """
     raw = section.get(key)
     if raw is None:
         return None
@@ -181,7 +225,7 @@ def warn_unknown_top_level_keys(raw: Any, tables: ModalityConfigTables) -> None:
         )
 
 
-def keyring_get(backend: str, tables: ModalityConfigTables):
+def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
     """Namespaced keyring lookup; never raises."""
     try:
         return keyring.get_password(tables.keyring_namespace, backend)

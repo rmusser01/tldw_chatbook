@@ -145,7 +145,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: are invisible to this census). Deferring it means lazy-import surgery
 #: across another task's 53-writer sweep; attributed here instead.
 #: Snapshot refreshed via ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
-MAX_TLDW_MODULES_AT_UI_READY = 1032
+# TASK-32856: Media_Generation core adds 2 ui-ready residents (measured
+# 1030); limit = measured + the documented +/-1 warm-boot wobble.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
