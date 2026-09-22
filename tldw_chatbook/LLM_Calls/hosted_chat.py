@@ -726,14 +726,43 @@ class ProviderPayloadValidators:
         self._label = label
 
     def bad_request(self, message: str) -> ChatBadRequestError:
+        """Build the family bad-request error.
+
+        Args:
+            message: Human-readable failure detail.
+
+        Returns:
+            The provider-identified ``ChatBadRequestError``.
+        """
         return ChatBadRequestError(provider=self._provider, message=message)
 
     def configuration_error(self, message: str) -> ChatConfigurationError:
+        """Build the family configuration error.
+
+        Args:
+            message: Human-readable failure detail.
+
+        Returns:
+            The provider-identified ``ChatConfigurationError``.
+        """
         return ChatConfigurationError(provider=self._provider, message=message)
 
     def nonnegative_integer(self, 
         settings: Mapping[str, object], name: str, default: int
     ) -> int:
+        """Coerce a non-negative integer setting.
+
+        Args:
+            settings: Provider settings mapping.
+            name: Setting key.
+            default: Value used when the key is absent.
+
+        Returns:
+            The validated integer.
+
+        Raises:
+            ChatConfigurationError: On a negative or non-integer value.
+        """
         value = settings.get(name, default)
         if type(value) is not int or value < 0:
             raise self.configuration_error(f"{self._label} {name} must be a non-negative integer.")
@@ -742,6 +771,19 @@ class ProviderPayloadValidators:
     def nonnegative_number(self, 
         settings: Mapping[str, object], name: str, default: float
     ) -> float:
+        """Coerce a finite non-negative numeric setting.
+
+        Args:
+            settings: Provider settings mapping.
+            name: Setting key.
+            default: Value used when the key is absent.
+
+        Returns:
+            The validated float.
+
+        Raises:
+            ChatConfigurationError: On a non-numeric, negative, or non-finite value.
+        """
         value = settings.get(name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise self.configuration_error(f"{self._label} {name} must be numeric.")
@@ -751,6 +793,18 @@ class ProviderPayloadValidators:
         return normalized
 
     def positive_integer(self, name: str, value: object) -> int:
+        """Coerce a positive integer payload value.
+
+        Args:
+            name: Setting name, for the error message.
+            value: The candidate integer.
+
+        Returns:
+            The validated integer.
+
+        Raises:
+            ChatBadRequestError: On a zero, negative, or non-integer value.
+        """
         if type(value) is not int or value <= 0:
             raise self.bad_request(f"{self._label} {name} is invalid.")
         return value
@@ -758,6 +812,19 @@ class ProviderPayloadValidators:
     def positive_number(self, 
         settings: Mapping[str, object], name: str, default: float
     ) -> float:
+        """Coerce a finite positive numeric setting.
+
+        Args:
+            settings: Provider settings mapping.
+            name: Setting key.
+            default: Value used when the key is absent.
+
+        Returns:
+            The validated float.
+
+        Raises:
+            ChatConfigurationError: On a non-numeric, non-positive, or non-finite value.
+        """
         value = settings.get(name, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise self.configuration_error(f"{self._label} {name} must be numeric.")
@@ -767,6 +834,17 @@ class ProviderPayloadValidators:
         return normalized
 
     def normalize_stop(self, value: object) -> object:
+        """Normalize a stop/stop-sequence value.
+
+        Args:
+            value: A non-empty string, or a 1-4 element sequence of them.
+
+        Returns:
+            The string, or the sequence as a list.
+
+        Raises:
+            ChatBadRequestError: On any other shape.
+        """
         if isinstance(value, str) and value:
             return value
         if (
@@ -779,6 +857,17 @@ class ProviderPayloadValidators:
         raise self.bad_request(f"{self._label} stop is invalid.")
 
     def normalize_response_format(self, value: object) -> dict[str, Any]:
+        """Normalize a response_format payload.
+
+        Args:
+            value: A ``text``/``json_object``/``json_schema`` mapping.
+
+        Returns:
+            A deep copy of the validated mapping.
+
+        Raises:
+            ChatBadRequestError: On an unknown type or unsupported keys.
+        """
         if not isinstance(value, Mapping) or not self.json_shape_is_bounded(value):
             raise self.bad_request(f"{self._label} response format is invalid.")
         format_type = value.get("type")
@@ -798,6 +887,19 @@ class ProviderPayloadValidators:
         value: object,
         prior_ids: set[str],
     ) -> tuple[dict[str, Any], ...]:
+        """Normalize an assistant tool-call batch.
+
+        Args:
+            value: Sequence of raw ``{id, type, function}`` call mappings.
+            prior_ids: Mutable set of already-seen call ids, extended here.
+
+        Returns:
+            The validated calls as a tuple of deep-copied mappings.
+
+        Raises:
+            ChatBadRequestError: On a malformed batch, duplicate id, invalid
+                function name, or unparseable arguments.
+        """
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or not value:
             raise self.bad_request(f"{self._label} tool call batch is invalid.")
         calls: list[dict[str, Any]] = []
@@ -833,6 +935,15 @@ class ProviderPayloadValidators:
         return tuple(calls)
 
     def json_shape_is_bounded(self, value: object) -> bool:
+        """Check a decoded value against the payload shape caps.
+
+        Args:
+            value: An already-decoded JSON value.
+
+        Returns:
+            True when depth, node count, string sizes, key types, and float
+            finiteness are all within the shared payload caps.
+        """
         stack: list[tuple[object, int]] = [(value, 1)]
         nodes = 0
         while stack:
