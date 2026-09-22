@@ -148,6 +148,24 @@ class SkillEvalPanel(Widget):
             self.subject_ref = subject_ref
             self.subject_kind = subject_kind
 
+    class DepthChanged(Message, namespace="skill_eval_panel"):
+        """TASK-32888: the depth pick, persisted by the screen so a launch
+        in progress survives navigation away and back."""
+
+        def __init__(self, depth: SkillEvalDepth) -> None:
+            super().__init__()
+            self.depth = depth
+
+    class TargetsPicked(Message, namespace="skill_eval_panel"):
+        """TASK-32888: one or both model picks changed, persisted by the
+        screen (empty id = explicitly unset)."""
+
+        def __init__(self, generator_target_id: str,
+                     judge_target_id: str) -> None:
+            super().__init__()
+            self.generator_target_id = generator_target_id
+            self.judge_target_id = judge_target_id
+
     #: TASK-32889: Escape closes the panel (widget-level binding -- the
     #: Lab-wide "Escape is a deliberate no-op" contract binds nothing at
     #: screen level, and widget bindings are the sanctioned finer grain).
@@ -264,12 +282,26 @@ class SkillEvalPanel(Widget):
         if event.select.id == "skill-eval-depth":
             self._depth = event.value
             self._refresh_estimate()
+            self.post_message(self.DepthChanged(event.value))
         elif event.select.id in ("skill-eval-generator", "skill-eval-judge"):
             # TASK-32884: the no-models guidance row is not a target.
             if event.value == _NO_TARGETS_SENTINEL:
                 event.select.value = Select.NULL
                 self.notify(_NO_TARGETS_ROW, severity="information")
                 return
+            # TASK-32888: persist both picks in one message -- the screen
+            # round-trips them exactly like the subject.
+            generator = self.query_one("#skill-eval-generator", Select).value
+            judge = self.query_one("#skill-eval-judge", Select).value
+
+            def _id(value: object) -> str:
+                if value is Select.NULL or not value:
+                    return ""
+                return str(value)
+
+            self.post_message(
+                self.TargetsPicked(_id(generator), _id(judge))
+            )
         elif event.select.id == "skill-eval-subject-picker":
             # TASK-32883: the empty-store guidance row is not a subject.
             # Reject it, stay unset, and say why -- a silently stuck picker

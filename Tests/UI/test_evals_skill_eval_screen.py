@@ -390,13 +390,14 @@ async def test_new_skill_eval_button_creates_a_draft_bench_and_selects_it(
         config = load_skill_eval_bench(evals_db, screen._selection.id)
         assert config.subject_kind == "store"
         assert config.depth is SkillEvalDepth.STANDARD
-        # Both slots bind the FIRST row ``skill_eval_targets()`` returns
-        # (``list_models`` is newest-first, so this is whichever model row
-        # the view model leads with -- asserted through the view model
-        # itself rather than a creation-order guess).
-        expected_first = EvalsViewModel(evals_db).skill_eval_targets()[0]["id"]
-        assert config.generator_target_id == expected_first
-        assert config.judge_target_id == expected_first
+        # TASK-32888: drafts start with EMPTY target ids. The old pre-seed
+        # of the first available model row was invisible in the panel yet
+        # silently became the run's models through config-loading paths;
+        # with picks now persisting and restoring, an honest empty (the
+        # user picks, TASK-32884's guidance teaches where from) replaces
+        # the hidden default.
+        assert config.generator_target_id == ""
+        assert config.judge_target_id == ""
 
         panel = screen.query_one(SkillEvalPanel)
         # The panel is fed the view model's targets (set_options runs
@@ -1282,3 +1283,122 @@ async def test_run_again_on_report_dispatches_with_persisted_config(
         assert screen._skill_eval_generator_target_id == generator.id
         assert screen._skill_eval_judge_target_id == judge.id
         assert screen._skill_eval_run_running is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-32888: launch config survives navigation; Tab cannot navigate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_launch_picks_survive_navigation_away_and_back(
+    evals_app, evals_db, monkeypatch
+):
+    """TASK-32888: subject, depth, AND model picks persist on change and
+    survive navigating away and back. The HCI live pass lost an entire
+    in-progress launch (subject + models) to one stray navigation; only
+    the subject round-tripped before. Model restore is guarded: a saved
+    target that no longer exists as an eval_models row stays unset (the
+    Run guard then demands a fresh pick) -- a stale id can never silently
+    become the run's target."""
+    from textual.widgets import Select
+
+    gen_id = evals_db.create_model(name="gen", provider="llama_cpp", model_id="m")
+    jud_id = evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2")
+
+    async def _skills(_app_config):
+        return ([{"name": "csv-cleaner", "trust_status": "trusted"}],
+                frozenset({"csv-cleaner"}))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.evals_screen.store_skill_names", _skills
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="",
+            judge_target_id="",
+        ),
+    )
+    from .test_evals_skill_eval_panel import _pick_via_overlay
+
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        await _wait_until(
+            pilot,
+            lambda: screen.query_one("#skill-eval-generator", Select)._options,
+        )
+
+        panel = screen.query_one(SkillEvalPanel)
+        # Pick everything through the panel's own controls. The subject
+        # picker is fed by an async store worker -- wait for its real
+        # options (NULL padding makes a bare options check vacuous).
+        from textual.widgets import Select as _Sel
+
+        await _wait_until(
+            pilot,
+            lambda: any(
+                v is not _Sel.NULL
+                for _l, v in panel.query_one(
+                    "#skill-eval-subject-picker", _Sel
+                )._options
+            ),
+        )
+        await _pick_via_overlay(pilot, "skill-eval-subject-picker", downs=2)
+        screen.query_one("#skill-eval-depth", Select).value = SkillEvalDepth.DEEP
+        await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
+        await _pick_via_overlay(pilot, "skill-eval-judge", downs=3)
+        await pilot.pause()
+
+        # Navigate away (selection cleared = panel unmounted) and back.
+        screen.select(kind="none")
+        await _wait_until(pilot, lambda: not screen.query(SkillEvalPanel))
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        # Poll the RESTORED values, not a vacuous options-truthiness (the
+        # NULL padding row makes `_options` truthy before any feed lands):
+        # the remount panel's feed is applied by the swap's safety net,
+        # which waits for the panel's children to compose first.
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.query_one("#skill-eval-depth", Select).value
+                is SkillEvalDepth.DEEP
+            ),
+        )
+
+        assert screen.query_one("#skill-eval-generator", Select).value == gen_id
+        assert screen.query_one("#skill-eval-judge", Select).value == jud_id
+        assert panel is not screen.query_one(SkillEvalPanel)  # fresh mount
+
+
+@pytest.mark.asyncio
+async def test_tab_traversal_never_navigates_away(evals_app, evals_db):
+    """TASK-32888 repro probe: a full Tab cycle across the Evals screen
+    (panel fields included) must never switch screens -- navigation needs
+    an explicit press (Enter/click) on a destination control. The served
+    HCI incident's Evals->Library switch therefore required an Enter on
+    nav chrome, and with picks persisted (see the round-trip test) that
+    is no longer state-destroying."""
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.STANDARD, generator_target_id="g",
+            judge_target_id="j",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+        screen.query_one("#skill-eval-subject-dir").focus()
+
+        for _ in range(24):
+            await pilot.press("tab")
+            assert type(pilot.app.screen) is type(screen), (
+                "A pure Tab traversal switched screens"
+            )

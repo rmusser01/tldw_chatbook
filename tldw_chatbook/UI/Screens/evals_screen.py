@@ -632,6 +632,19 @@ class EvalsScreen(LabScreen):
             # Same notification the frame's own deferred body mount fires, so a
             # mode that re-wires itself against a fresh body keeps working.
             self.on_lab_body_ready()
+            # TASK-32888: fill any skill-eval panel the swap left unfed
+            # (compose-time ``call_after_refresh`` callbacks are sometimes
+            # swallowed by the swap's batch, and a call_later posted from
+            # the swap worker was observed never dispatching either).
+            # Direct call: the region replacement was awaited, so the
+            # panel is mounted; the net itself tolerates a not-yet-
+            # composed panel by simply doing nothing this pass.
+            try:
+                await self._feed_skill_eval_panel_if_unfed()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Skill eval panel safety net failed."
+                )
             if focus_id:
                 self.call_later(self._restore_selection_focus, focus_id)
 
@@ -1104,14 +1117,22 @@ class EvalsScreen(LabScreen):
             )
             return
         targets = self._view_model.skill_eval_targets()
-        first_target = str(targets[0]["id"]) if targets else ""
+        # TASK-32888: drafts start with EMPTY target ids. The old pre-seed
+        # of the first available target was invisible in the panel (the
+        # pickers deliberately showed nothing) yet silently became the
+        # run's models through config-loading paths -- an unseen default,
+        # and incompatible with picks now persisting and restoring
+        # (restore could not tell a user pick from the pre-seed). With
+        # TASK-32884's teaching guidance and TASK-32885's guards, an
+        # honest empty beats a hidden default.
+        _ = targets
         config = SkillEvalConfig(
             name=_unique_name("skill eval"),
             subject_ref="",
             subject_kind="store",
             depth=SkillEvalDepth.STANDARD,
-            generator_target_id=first_target,
-            judge_target_id=first_target,
+            generator_target_id="",
+            judge_target_id="",
         )
         try:
             bench_id = save_skill_eval_bench(db, config)
@@ -2084,6 +2105,157 @@ class EvalsScreen(LabScreen):
             return
         panel.set_subject(event.subject_ref, event.subject_kind)
 
+    @on(SkillEvalPanel.DepthChanged)
+    def _on_skill_eval_depth_changed(
+        self, event: SkillEvalPanel.DepthChanged
+    ) -> None:
+        """TASK-32888: persist the depth pick onto the bench config so an
+        in-progress launch survives navigation away and back (only the
+        subject round-tripped before -- the live HCI pass lost a whole
+        launch configuration to one stray navigation)."""
+        event.stop()
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            config = replace(
+                load_skill_eval_bench(db, selection.id),
+                depth=event.depth,
+            )
+            save_skill_eval_bench(db, config)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not persist skill eval depth."
+            )
+
+    @on(SkillEvalPanel.TargetsPicked)
+    def _on_skill_eval_targets_picked(
+        self, event: SkillEvalPanel.TargetsPicked
+    ) -> None:
+        """TASK-32888: persist both model picks onto the bench config.
+
+        Restore-side staleness is guarded at mount (an id that no longer
+        exists as an eval_models row simply stays unset), so a stale
+        saved target can still never silently become a run's target.
+        """
+        event.stop()
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            config = replace(
+                load_skill_eval_bench(db, selection.id),
+                generator_target_id=event.generator_target_id,
+                judge_target_id=event.judge_target_id,
+            )
+            save_skill_eval_bench(db, config)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not persist skill eval model picks."
+            )
+
+    async def _feed_skill_eval_panel_if_unfed(self) -> None:
+        """TASK-32888 safety net: a skill-eval panel left unfed by a swap.
+
+        The compose-time ``panel.call_after_refresh`` feed callbacks work
+        on a first mount but were observed never firing for a panel
+        mounted inside a selection swap's batch (remounts came up with
+        empty pickers and a NULL depth), so an in-progress launch
+        appeared to lose its configuration to a stray navigation. This
+        runs after the swap settles -- outside the batch -- and tries the
+        fill BOTH immediately (children may already be composed) and via
+        the panel's next refresh (when they are not). A fully unfed
+        panel gets the whole feed; any NULL control additionally gets its
+        persisted value restored (targets only when their eval_models
+        row still exists -- a stale id stays unset and the Run guard
+        demands a fresh pick).
+        """
+        selection = self._selection
+        db = self._view_model.db
+        if db is None or selection.kind != "skill_eval_bench" or not selection.id:
+            return
+        try:
+            panel = self.query_one("#evals-skill-eval-panel", SkillEvalPanel)
+        except QueryError:
+            return
+        try:
+            config = load_skill_eval_bench(db, selection.id)
+        except Exception:
+            return
+
+        def _fill() -> None:
+            try:
+                generator = panel.query_one("#skill-eval-generator", Select)
+            except QueryError:
+                return  # children not composed yet; the refresh pass retries
+
+            def _has_real_options(select: Select) -> bool:
+                return any(
+                    value is not Select.NULL
+                    for _label, value in select._options
+                )
+
+            if not _has_real_options(generator):
+                # Unfed remount: the compose-time callbacks were lost in
+                # the swap -- redo the whole feed exactly as a first
+                # mount would.
+                try:
+                    panel.set_subject(
+                        config.subject_ref or "(no subject set)",
+                        config.subject_kind,
+                    )
+                except Exception:
+                    pass
+                try:
+                    panel.set_targets(self._view_model.skill_eval_targets())
+                except Exception:
+                    pass
+                self._start_subject_feed(panel)
+
+            try:
+                depth = panel.query_one("#skill-eval-depth", Select)
+            except QueryError:
+                depth = None
+            if depth is not None and depth.value is Select.NULL:
+                try:
+                    depth.value = config.depth
+                except Exception:
+                    pass
+            live_ids = {
+                row["id"] for row in self._view_model.skill_eval_targets()
+            }
+            for picker_id, saved in (
+                ("skill-eval-generator", config.generator_target_id),
+                ("skill-eval-judge", config.judge_target_id),
+            ):
+                if not (saved and saved in live_ids):
+                    continue
+                try:
+                    picker = panel.query_one(f"#{picker_id}", Select)
+                except QueryError:
+                    continue
+                if picker.value is Select.NULL:
+                    try:
+                        picker.value = saved
+                    except Exception:
+                        pass
+
+        # Both an immediate call and a call_after_refresh scheduled from
+        # this swap worker were observed never applying (the refresh
+        # callback dispatched into the same black hole as the compose-time
+        # ones), so the wait lives HERE, awaited inline: children compose
+        # within a refresh cycle or two, the fill applies, the loop exits.
+        for _attempt in range(100):
+            try:
+                panel.query_one("#skill-eval-depth", Select)
+            except QueryError:
+                await asyncio.sleep(0.02)
+                continue
+            _fill()
+            return
+
     def _start_subject_feed(self, panel: SkillEvalPanel) -> None:
         """Starts one mounted panel's picker-feed worker (post-mount only).
 
@@ -2933,13 +3105,14 @@ class EvalsScreen(LabScreen):
                 return
             # A DB-free widget (see its module docstring) -- the screen
             # feeds it: subject summary line, target options, and the
-            # bench's saved depth restored into the depth Select AFTER
-            # mount (``call_after_refresh``; the panel's children do not
-            # exist until it composes), where the programmatic value
-            # assignment fires ``Select.Changed`` and re-syncs the panel's
-            # estimate line. Model picks are deliberately NOT restored --
-            # the panel's own Run guard requires a fresh pick, so a stale
-            # saved target can never silently become the run's target.
+            # The panel is fed after it mounts (``call_after_refresh``;
+            # the panel's children do not exist until it composes), where
+            # the programmatic value assignment fires ``Select.Changed``
+            # and re-syncs the panel's estimate line. These sometimes never
+            # fire for a panel mounted inside a selection swap -- the
+            # TASK-32888 safety net (``_feed_skill_eval_panel_if_unfed``,
+            # scheduled after the swap settles) fills any panel left
+            # unfed, so a remount can no longer come up empty.
             panel = SkillEvalPanel(id="evals-skill-eval-panel")
             yield panel
             panel.call_after_refresh(
@@ -2969,7 +3142,6 @@ class EvalsScreen(LabScreen):
             # ``compose`` and find no children to feed yet.
             panel.call_after_refresh(self._start_subject_feed, panel)
             return
-
         if selection.kind == "classic":
             task = (
                 self._view_model.classic_task_by_id(selection.id)
