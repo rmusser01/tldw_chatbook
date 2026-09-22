@@ -1088,32 +1088,6 @@ class CCPCharacterHandler:
         except Exception as e:
             logger.opt(exception=True).error(f"Error importing character: {e}")
 
-    async def handle_export_character(self) -> None:
-        """Export the current character."""
-        if not self.current_character_id:
-            logger.warning("No character selected to export")
-            return
-
-        try:
-            from ...Character_Chat.ccv3_parser import export_character_card_json
-
-            # Generate export filename
-            name = self.current_character_data.get("name", "character")
-            safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
-            file_path = f"exports/{safe_name}_card.json"
-
-            # Export the character card
-            success = export_character_card_json(self.current_character_id, file_path)
-
-            if success:
-                logger.info(f"Exported character to {file_path}")
-                # Could show a notification here
-            else:
-                logger.error(f"Failed to export character {self.current_character_id}")
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error exporting character: {e}")
-
     async def handle_generate_field(self, field_name: str) -> None:
         """Generate a character field using AI.
 
