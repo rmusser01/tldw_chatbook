@@ -2369,3 +2369,29 @@ async def test_disabled_reason_hints_sit_under_their_own_buttons(
         assert ids.index("evals-rail-new-character-bench") < ids.index(
             "evals-rail-new-character-bench-hint"
         ) < ids.index("evals-rail-new-skill-eval")
+
+
+@pytest.mark.asyncio
+async def test_skills_steering_survives_without_a_provider(evals_db):
+    """PR #2791 review #13: the skills-aware first step must not require
+    provider readiness -- creating a skill-eval draft is provider-
+    independent, so a skills user with no llama.cpp provider still gets
+    steered to '+ New skill eval', not Settings."""
+    from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
+    from tldw_chatbook.UI.Evals.library_rail import LibraryRail
+    from textual.app import App, ComposeResult
+
+    class _RailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield LibraryRail(
+                EvalsViewModel(evals_db),
+                app_config={},  # no providers configured
+                skills_available=True,
+            )
+
+    app = _RailHarness()
+    async with app.run_test(size=(60, 45)) as pilot:
+        await pilot.pause()
+        hint = pilot.app.screen.query_one("#evals-rail-skill-eval-hint")
+        assert "skills installed" in str(hint.renderable)
+        assert not pilot.app.screen.query("#evals-rail-first-run-hint")

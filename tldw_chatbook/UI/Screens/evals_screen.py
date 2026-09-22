@@ -643,7 +643,11 @@ class EvalsScreen(LabScreen):
                 await self._feed_skill_eval_panel_if_unfed()
             except Exception:
                 logger.opt(exception=True).warning(
-                    "Skill eval panel safety net failed."
+                    "Skill eval panel safety net failed "
+                    "(bench={!r}, revision={}{})",
+                    self._selection.id,
+                    revision,
+                    " (rail rebuilt too)" if rail_dirty else "",
                 )
             if focus_id:
                 self.call_later(self._restore_selection_focus, focus_id)
@@ -2170,6 +2174,13 @@ class EvalsScreen(LabScreen):
                 "Could not persist skill eval model picks."
             )
 
+    #: TASK-32888 (Qodo review): the panel-feed compose-wait policy, as
+    #: named constants -- retries x interval is the swap's bounded wait
+    #: for a freshly mounted panel's children to compose (100 x 20 ms =
+    #: 2 s), not two independent literals.
+    _PANEL_FEED_RETRIES = 100
+    _PANEL_FEED_INTERVAL_S = 0.02
+
     async def _feed_skill_eval_panel_if_unfed(self) -> None:
         """TASK-32888 safety net: a skill-eval panel left unfed by a swap.
 
@@ -2214,7 +2225,12 @@ class EvalsScreen(LabScreen):
             if not _has_real_options(generator):
                 # Unfed remount: the compose-time callbacks were lost in
                 # the swap -- redo the whole feed exactly as a first
-                # mount would.
+                # mount would. Depth is restored UNCONDITIONALLY here
+                # (Qodo review): a fresh panel composes its depth Select
+                # with the STANDARD default, never Select.NULL, so a
+                # NULL-guarded restore silently reverted a persisted
+                # Quick/Deep bench to Standard on exactly this fallback
+                # path.
                 try:
                     panel.set_subject(
                         config.subject_ref or "(no subject set)",
@@ -2227,6 +2243,12 @@ class EvalsScreen(LabScreen):
                 except Exception:
                     pass
                 self._start_subject_feed(panel)
+                try:
+                    panel.query_one("#skill-eval-depth", Select).value = (
+                        config.depth
+                    )
+                except Exception:
+                    pass
 
             try:
                 depth = panel.query_one("#skill-eval-depth", Select)
@@ -2237,6 +2259,13 @@ class EvalsScreen(LabScreen):
                     depth.value = config.depth
                 except Exception:
                     pass
+
+            # Qodo review: an in-flight run remounts to honest controls
+            # too -- Run disabled with its running label, Stop armed
+            # (otherwise a returning user faces an enabled-looking Run
+            # the guard rejects and a dead Stop button).
+            if self._skill_eval_run_running:
+                self._set_skill_eval_running_ui()
             live_ids = {
                 row["id"] for row in self._view_model.skill_eval_targets()
             }
@@ -2261,11 +2290,11 @@ class EvalsScreen(LabScreen):
         # callback dispatched into the same black hole as the compose-time
         # ones), so the wait lives HERE, awaited inline: children compose
         # within a refresh cycle or two, the fill applies, the loop exits.
-        for _attempt in range(100):
+        for _attempt in range(self._PANEL_FEED_RETRIES):
             try:
                 panel.query_one("#skill-eval-depth", Select)
             except QueryError:
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(self._PANEL_FEED_INTERVAL_S)
                 continue
             _fill()
             return

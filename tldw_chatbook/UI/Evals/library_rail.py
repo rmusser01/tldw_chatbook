@@ -870,14 +870,16 @@ class LibraryRail(NotifyMixin, Vertical):
                 # classic task also present, this text would just be a
                 # redundant wall above a real list; the actionable button
                 # below still renders either way.
-                if provider_ready and self.skills_available:
+                if self.skills_available:
                     # TASK-32886: the user's assets are SKILLS -- steer to
                     # the skill-eval CTA, not the word-bench sample (the
                     # TASK-1076 copy actively pointed skill users at the
-                    # wrong feature; HCI review A4). Same visual class as
-                    # the sample steering so it reads as THE recommended
-                    # path at a glance; the sample button itself still
-                    # renders below.
+                    # wrong feature; HCI review A4). Deliberately NOT
+                    # gated on ``provider_ready`` (Qodo review): creating
+                    # a skill-eval draft is provider-independent, so a
+                    # skills user with no llama.cpp provider still gets
+                    # the right first step -- the model pickers carry
+                    # their own bootstrap guidance.
                     children.append(
                         Static(
                             "Start here — you have skills installed. "

@@ -1787,3 +1787,51 @@ async def test_report_rerun_running_state_and_stop(evals_app, evals_db, tmp_path
         await pilot.pause()
         assert not screen.query_one("#skill-eval-run-again", Button).disabled
         assert screen.query_one("#skill-eval-detail-stop", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_unfed_remount_restores_depth_and_running_state(
+    evals_app, evals_db
+):
+    """PR #2791 review #3/#4: on the fallback feed path (the compose-time
+    callbacks lost in a swap), a persisted Quick/Deep depth must survive
+    -- the fresh panel's STANDARD default is not Select.NULL, so the
+    restore cannot be NULL-guarded -- and a remount while a run is in
+    flight must disable Run and arm Stop."""
+    from textual.widgets import Button, Select
+
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref="csv-cleaner", subject_kind="store",
+            depth=SkillEvalDepth.QUICK, generator_target_id="",
+            judge_target_id="",
+        ),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        screen = pilot.app.screen
+        screen.select(kind="skill_eval_bench", id=bench_id)
+        await _wait_until(pilot, lambda: bool(screen.query(SkillEvalPanel)))
+
+        # Sabotage the panel into the "unfed remount" state and simulate
+        # an in-flight run, then run the safety net directly -- this is
+        # exactly the state a swap whose compose callbacks were lost
+        # leaves behind.
+        panel = screen.query_one(SkillEvalPanel)
+        panel.query_one("#skill-eval-generator", Select).set_options([])
+        screen._skill_eval_run_running = True
+
+        import asyncio as _aio
+        await screen._feed_skill_eval_panel_if_unfed()
+        await _aio.sleep(0)
+
+        assert panel.query_one("#skill-eval-depth", Select).value is (
+            SkillEvalDepth.QUICK
+        )
+        run = panel.query_one("#skill-eval-run", Button)
+        stop = panel.query_one("#skill-eval-cancel", Button)
+        assert run.disabled and "Running" in str(run.label)
+        assert not stop.disabled
+
+        screen._skill_eval_run_running = False
+        screen._reset_skill_eval_running_ui()
