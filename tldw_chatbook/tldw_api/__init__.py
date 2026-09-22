@@ -2009,7 +2009,7 @@ _SUBMODULE_BY_NAME = {
     "ServerLivenessResponse": "server_runtime_schemas",
     "ServerMediaListResponse": "media_reading_schemas",
     "ServerMetricsResponse": "server_runtime_schemas",
-    "ServerNotificationStreamEvent": "server_notifications_schemas",
+    "ServerNotificationStreamEvent": "notifications_reminders_schemas",
     "ServerReadinessResponse": "server_runtime_schemas",
     "ServerSecurityHealthResponse": "server_runtime_schemas",
     "SessionResponse": "auth_user_schemas",

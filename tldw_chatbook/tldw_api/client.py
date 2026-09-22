@@ -8,7 +8,16 @@ import json  # For MediaWiki streaming
 import math
 import ssl
 from pathlib import Path  # For utils.prepare_files_for_httpx
-from typing import Optional, Dict, Any, List, AsyncGenerator, Union, Literal
+from typing import (
+    Optional,
+    Dict,
+    Any,
+    List,
+    AsyncGenerator,
+    NoReturn,
+    Union,
+    Literal,
+)
 from urllib.parse import quote
 
 #
@@ -960,6 +969,7 @@ from .watchlists_schemas import (
     WatchlistRunResponse,
 )
 from .notifications_reminders_schemas import (
+    ServerNotificationStreamEvent,
     NotificationCancelSnoozeResponse,
     NotificationDismissResponse,
     NotificationPreferencesResponse,
@@ -976,9 +986,6 @@ from .notifications_reminders_schemas import (
     ReminderTaskListResponse,
     ReminderTaskResponse,
     ReminderTaskUpdateRequest,
-)
-from .server_notifications_schemas import (
-    ServerNotificationStreamEvent,
 )
 from .scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationCapabilities,
@@ -1094,6 +1101,118 @@ def _workspace_source_path_id(value: Any, field_name: str) -> str:
     ):
         raise ValueError(f"{field_name} is too long")
     return quote(normalized, safe="")
+
+
+def _reject_unsafe_endpoint(endpoint: str) -> str:
+    """Refuse a request path that an interpolated value has escaped.
+
+    Methods here build paths with f-strings (``f"/api/v1/sharing/public/
+    {token}"``); 334 of those segments are `str`-annotated parameters that
+    reach no ``quote()``. httpx resolves the path via ``base_url.join()``,
+    which treats ``?``/``#`` as delimiters and normalises ``..`` -- so a
+    pasted share token containing ``?`` appends attacker-chosen query
+    parameters to an authenticated request, and one containing ``../``
+    walks out of the API namespace with ``X-API-KEY`` still attached.
+
+    One choke point, not 334 call sites. Fails CLOSED: no endpoint in this
+    package carries a literal ``?``/``#``. It deliberately does not
+    re-encode ``/`` -- per-segment quoting (``_workspace_source_path_id``
+    is the shape) remains the complete fix.
+
+    Args:
+        endpoint: The request path assembled by the calling method.
+
+    Returns:
+        The endpoint, unchanged, when it is safe to send.
+
+    Raises:
+        APIRequestError: On a query/fragment delimiter or a ``..`` segment.
+    """
+    if "?" in endpoint or "#" in endpoint:
+        raise APIRequestError(
+            "Refusing to send a request path containing '?' or '#': a value "
+            "interpolated into the endpoint escaped its path segment."
+        )
+    if ".." in endpoint.split("/"):
+        raise APIRequestError(
+            "Refusing to send a request path containing a '..' segment: a "
+            "value interpolated into the endpoint escaped its path segment."
+        )
+    return endpoint
+
+
+def _raise_api_error_from(error: httpx.HTTPStatusError) -> NoReturn:
+    """Translate a non-2xx response into this package's exception family.
+
+    One implementation for all five request primitives. There were five
+    hand-rolled copies and only ``_request``'s carried the structured
+    ``{"detail": {...}}`` branch, so a tldw_server refusal reached the user
+    as the raw httpx text on the other four -- the "schedules task 6
+    round 2, D9" regression, still live on both streaming paths. ``detail``
+    is handled in all three shapes the server sends: a pydantic validation
+    list, a string, or the structured refusal object.
+
+    The streaming primitives read the body before ``raise_for_status()``,
+    so ``response.json()`` works here; the ``except`` arm covers a non-JSON
+    body and an unread stream (``.text`` then raises ``ResponseNotRead``,
+    a ``RuntimeError``, not a ``ValueError``).
+
+    Args:
+        error: The ``httpx.HTTPStatusError`` from ``raise_for_status()``.
+
+    Raises:
+        AuthenticationError: On 401.
+        APIRequestError: On 422.
+        APIResponseError: On any other non-2xx status.
+    """
+    response = error.response
+    error_detail = str(error)
+    response_data: Any
+    try:
+        response_data = response.json()
+    except Exception:
+        try:
+            raw_text = response.text
+        except Exception:  # unread streaming response
+            raw_text = ""
+        response_data = {"raw_text": raw_text}
+    else:
+        detail = (
+            response_data.get("detail") if isinstance(response_data, dict) else None
+        )
+        if isinstance(detail, list) and detail:
+            first = detail[0] if isinstance(detail[0], dict) else {}
+            loc = ".".join(map(str, first.get("loc", [])))
+            error_detail = f"Validation Error: {first.get('msg', '')} for field '{loc}'"
+        elif isinstance(detail, str):
+            error_detail = detail
+        elif isinstance(detail, dict):
+            # Structured refusal: tldw_server returns `{"detail": {"code",
+            # "message", "details", "retryable"}}` for its deterministic
+            # 4xx refusals. Without this branch `error_detail` stayed the
+            # raw httpx text ("Client error '409 Conflict' for url ... For
+            # more information check: https://developer.mozilla.org/..."),
+            # so the server's own explanation was dropped on the floor and
+            # callers could only report a generic failure -- exactly what
+            # made a 409 `scheduled_task_definition_archived` surface to
+            # the user as "this action requires a server connection"
+            # (schedules task 6 round 2, D9). `message` is the human
+            # sentence, `code` the machine token; prefer the former, fall
+            # back to the latter, and only then to the raw text.
+            error_detail = str(
+                detail.get("message") or detail.get("code") or error_detail
+            )
+
+    status_code = response.status_code
+    if status_code == 401:
+        raise AuthenticationError(
+            f"Authentication failed: {error_detail}", response_data=response_data
+        )
+    if status_code == 422:  # Unprocessable Entity (pydantic validation error)
+        raise APIRequestError(
+            f"Validation Error: {error_detail}", response_data=response_data
+        )
+    raise APIResponseError(status_code, error_detail, response_data=response_data)
 
 
 class TLDWAPIClient:
@@ -1337,6 +1456,7 @@ class TLDWAPIClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         client = await self._get_client()
+        endpoint = _reject_unsafe_endpoint(endpoint)
         url = f"{self.base_url}{endpoint}"  # Ensure base_url doesn't make double slash
 
         try:
@@ -1356,60 +1476,7 @@ class TLDWAPIClient:
                 return {}
             return response.json()
         except httpx.HTTPStatusError as e:
-            # Try to get more details from response if available
-            error_detail = str(e)
-            response_data = None
-            try:
-                response_data = e.response.json()
-                if isinstance(response_data, dict) and "detail" in response_data:
-                    if (
-                        isinstance(response_data["detail"], list)
-                        and response_data["detail"]
-                    ):
-                        # Pydantic validation error format
-                        error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
-                    elif isinstance(response_data["detail"], str):
-                        error_detail = response_data["detail"]
-                    elif isinstance(response_data["detail"], dict):
-                        # Structured refusal: tldw_server returns
-                        # `{"detail": {"code", "message", "details",
-                        # "retryable"}}` for its deterministic 4xx
-                        # refusals. Without this branch `error_detail`
-                        # stayed the raw httpx text ("Client error '409
-                        # Conflict' for url ... For more information
-                        # check: https://developer.mozilla.org/..."), so
-                        # the server's own explanation was dropped on the
-                        # floor and callers could only report a generic
-                        # failure -- exactly what made a 409
-                        # `scheduled_task_definition_archived` surface to
-                        # the user as "this action requires a server
-                        # connection" (schedules task 6 round 2, D9).
-                        # `message` is the human sentence, `code` the
-                        # machine token; prefer the former, fall back to
-                        # the latter, and only then to the raw text.
-                        detail_obj = response_data["detail"]
-                        error_detail = str(
-                            detail_obj.get("message")
-                            or detail_obj.get("code")
-                            or error_detail
-                        )
-            except ValueError:
-                pass  # Ignore if response is not JSON or detail not found
-
-            if e.response.status_code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed: {error_detail}",
-                    response_data=response_data,
-                )
-            elif (
-                e.response.status_code == 422
-            ):  # Unprocessable Entity (Pydantic validation error)
-                raise APIRequestError(
-                    f"Validation Error: {error_detail}", response_data=response_data
-                )
-            raise APIResponseError(
-                e.response.status_code, error_detail, response_data=response_data
-            )
+            _raise_api_error_from(e)
         except httpx.RequestError as e:  # Covers ConnectError, TimeoutException, etc.
             raise APIConnectionError(f"Connection error to {url}: {e}")
         except json.JSONDecodeError:
@@ -1443,6 +1510,7 @@ class TLDWAPIClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> ReadingExportResponse:
         client = await self._get_client()
+        endpoint = _reject_unsafe_endpoint(endpoint)
         url = f"{self.base_url}{endpoint}"
 
         try:
@@ -1465,28 +1533,7 @@ class TLDWAPIClient:
                 filename=self._filename_from_content_disposition(content_disposition),
             )
         except httpx.HTTPStatusError as e:
-            error_detail = str(e)
-            response_data = None
-            try:
-                response_data = e.response.json()
-                if isinstance(response_data, dict) and isinstance(
-                    response_data.get("detail"), str
-                ):
-                    error_detail = response_data["detail"]
-            except Exception:
-                response_data = {"raw_text": e.response.text}
-            if e.response.status_code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed: {error_detail}",
-                    response_data=response_data,
-                )
-            elif e.response.status_code == 422:
-                raise APIRequestError(
-                    f"Validation Error: {error_detail}", response_data=response_data
-                )
-            raise APIResponseError(
-                e.response.status_code, error_detail, response_data=response_data
-            )
+            _raise_api_error_from(e)
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
@@ -1519,6 +1566,7 @@ class TLDWAPIClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
         client = await self._get_client()
+        endpoint = _reject_unsafe_endpoint(endpoint)
         url = f"{self.base_url}{endpoint}"
 
         try:
@@ -1531,28 +1579,7 @@ class TLDWAPIClient:
                 str(key).lower(): str(value) for key, value in response.headers.items()
             }
         except httpx.HTTPStatusError as e:
-            error_detail = str(e)
-            response_data = None
-            try:
-                response_data = e.response.json()
-                if isinstance(response_data, dict) and isinstance(
-                    response_data.get("detail"), str
-                ):
-                    error_detail = response_data["detail"]
-            except Exception:
-                response_data = {"raw_text": e.response.text}
-            if e.response.status_code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed: {error_detail}",
-                    response_data=response_data,
-                )
-            elif e.response.status_code == 422:
-                raise APIRequestError(
-                    f"Validation Error: {error_detail}", response_data=response_data
-                )
-            raise APIResponseError(
-                e.response.status_code, error_detail, response_data=response_data
-            )
+            _raise_api_error_from(e)
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
@@ -1564,6 +1591,7 @@ class TLDWAPIClient:
         files: Optional[List[tuple]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         client = await self._get_client()
+        endpoint = _reject_unsafe_endpoint(endpoint)
         url = f"{self.base_url}{endpoint}"
 
         try:
@@ -1571,6 +1599,14 @@ class TLDWAPIClient:
                 method, endpoint, data=data, files=files
             ) as response:
                 await self._raise_if_redirected(response, endpoint)
+                if response.status_code >= 400:
+                    # `raise_for_status()` fires inside this `async with`, so
+                    # by the time the `except` body runs `__aexit__` has closed
+                    # the response: `.json()` then raises `ResponseNotRead` and
+                    # `.aread()` raises `StreamClosed`, and the server's own
+                    # explanation is lost. Buffer it here, while the stream is
+                    # still open.
+                    await response.aread()
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
@@ -1580,29 +1616,7 @@ class TLDWAPIClient:
                             # Log or handle malformed JSON lines if necessary
                             print(f"Warning: Could not decode JSON line: {line}")
         except httpx.HTTPStatusError as e:
-            error_detail = str(e)
-            # Stream errors are harder to parse nicely, attempt if possible
-            response_text = ""
-            try:
-                response_text = await e.response.aread()  # read the body
-                response_data = json.loads(response_text)
-                if isinstance(response_data, dict) and "detail" in response_data:
-                    error_detail = response_data["detail"]
-            except Exception:
-                response_data = {"raw_text": response_text}
-                pass
-            if e.response.status_code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed: {error_detail}",
-                    response_data=response_data
-                    if isinstance(response_data, dict)
-                    else None,
-                )
-            raise APIResponseError(
-                e.response.status_code,
-                error_detail,
-                response_data={"raw_text": response_text},
-            )
+            _raise_api_error_from(e)
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
@@ -1614,6 +1628,7 @@ class TLDWAPIClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         client = await self._get_client()
+        endpoint = _reject_unsafe_endpoint(endpoint)
         url = f"{self.base_url}{endpoint}"
         event_name = "message"
         event_id: str | None = None
@@ -1644,6 +1659,14 @@ class TLDWAPIClient:
                 headers=headers,
             ) as response:
                 await self._raise_if_redirected(response, endpoint)
+                if response.status_code >= 400:
+                    # `raise_for_status()` fires inside this `async with`, so
+                    # by the time the `except` body runs `__aexit__` has closed
+                    # the response: `.json()` then raises `ResponseNotRead` and
+                    # `.aread()` raises `StreamClosed`, and the server's own
+                    # explanation is lost. Buffer it here, while the stream is
+                    # still open.
+                    await response.aread()
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line == "":
@@ -1666,24 +1689,7 @@ class TLDWAPIClient:
                 if event is not None:
                     yield event
         except httpx.HTTPStatusError as e:
-            error_detail = str(e)
-            response_data = None
-            try:
-                response_data = e.response.json()
-                if isinstance(response_data, dict) and isinstance(
-                    response_data.get("detail"), str
-                ):
-                    error_detail = response_data["detail"]
-            except ValueError:
-                pass
-            if e.response.status_code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed: {error_detail}",
-                    response_data=response_data,
-                )
-            raise APIResponseError(
-                e.response.status_code, error_detail, response_data=response_data
-            )
+            _raise_api_error_from(e)
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
@@ -13620,7 +13626,12 @@ class TLDWAPIClient:
         )
         try:
             return PromptCollectionCreateResponse.model_validate(response)
-        except Exception:
+        except ValidationError:
+            # The declared union return: a server schema mismatch
+            # falls back to the raw dict, which the callers in
+            # `Prompt_Management/prompt_scope_service.py` handle.
+            # Narrowed from `except Exception` so a bug of OURS in
+            # validation is not silently degraded into that shape.
             return response
 
     async def list_prompt_collections(
@@ -13633,7 +13644,12 @@ class TLDWAPIClient:
         )
         try:
             return PromptCollectionListResponse.model_validate(response)
-        except Exception:
+        except ValidationError:
+            # The declared union return: a server schema mismatch
+            # falls back to the raw dict, which the callers in
+            # `Prompt_Management/prompt_scope_service.py` handle.
+            # Narrowed from `except Exception` so a bug of OURS in
+            # validation is not silently degraded into that shape.
             return response
 
     async def get_prompt_collection(
@@ -13645,7 +13661,12 @@ class TLDWAPIClient:
         )
         try:
             return PromptCollectionResponse.model_validate(response)
-        except Exception:
+        except ValidationError:
+            # The declared union return: a server schema mismatch
+            # falls back to the raw dict, which the callers in
+            # `Prompt_Management/prompt_scope_service.py` handle.
+            # Narrowed from `except Exception` so a bug of OURS in
+            # validation is not silently degraded into that shape.
             return response
 
     async def update_prompt_collection(
@@ -13669,7 +13690,12 @@ class TLDWAPIClient:
         )
         try:
             return PromptCollectionResponse.model_validate(response)
-        except Exception:
+        except ValidationError:
+            # The declared union return: a server schema mismatch
+            # falls back to the raw dict, which the callers in
+            # `Prompt_Management/prompt_scope_service.py` handle.
+            # Narrowed from `except Exception` so a bug of OURS in
+            # validation is not silently degraded into that shape.
             return response
 
     async def export_chatbook(

@@ -45,6 +45,14 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7807,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    # Added by the tier-2 review (S06 P2 [D3]): the largest module in the
+    # repo with no row -- 1,217 methods on one class, rank 8 repo-wide,
+    # while rank 9 (`personas_screen.py`) was already pinned. The
+    # hand-picked list above missed it. 1,086 of those methods are a single
+    # `_request(...)` -> `Model.model_validate` shape, so the honest
+    # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
+    # the precedent already in the package.
+    "tldw_chatbook/tldw_api/client.py": 16687,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
