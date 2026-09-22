@@ -11,17 +11,27 @@ import runpy
 import subprocess
 import sys
 import traceback
+from datetime import UTC, datetime
 from pathlib import Path
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
-    socket, session = sys.argv[2:4]
+def main() -> None:
+    """Qualify inspector guidance in an unused private native terminal profile.
+
+    ROOT TMUX_SOCKET SESSION are admitted before app imports or output writes.
+    The journey uses one synthetic private JSONL record and executes no tools.
+
+    Raises:
+        SystemExit: Zero for success, one for journey failure, two for invalid CLI.
+    """
     here = Path(__file__).resolve()
     repo = here.parents[4]
-    runpy.run_path(
-        str(repo / "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py")
-    )["validate_profile"](root)
+    sys.path.insert(0, str(repo))
+    args = runpy.run_path(str(repo / "Docs/superpowers/qa/native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, socket, session = args.root, args.tmux_socket, args.session
+    tmux_path = args.tmux_path
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -38,10 +48,15 @@ def main():
         "SERPER_API_KEY",
     ):
         os.environ.pop(key, None)
-    sys.path.insert(0, str(repo))
+    from loguru import logger
     from textual.css.query import NoMatches, QueryError
     from textual.widgets import Button, Static
-    from textual_image._terminal import probe_terminal
+
+    from Tests.network_guard import blocked_attempts, install
+
+    install()
+    logger.remove()
+    logger.add(root / "native.log", level="INFO")
 
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.MCP.execution_log import build_record
@@ -50,12 +65,29 @@ def main():
     from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.Utils.app_shutdown import claim_process_exit
+    from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
 
     evidence = root / "evidence"
     evidence.mkdir(exist_ok=False)
-    (root / "launch.json").write_text(json.dumps({"pid": os.getpid()}))
+    (root / "launch.json").write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "started_at": datetime.now(UTC).isoformat(),
+                "repo": str(repo),
+                "head": subprocess.check_output(
+                    ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+                ).strip(),
+                "dirty_status": subprocess.check_output(
+                    ["git", "-C", str(repo), "status", "--short"], text=True
+                ),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     claim_process_exit()
-    probe_terminal()
+    warm_up_image_protocol()
     app = TldwCli()
     paths = [
         "tldw_chatbook/UI/MCP_Modules/" + p + ".py"
@@ -75,11 +107,14 @@ def main():
         "tldw_chatbook/MCP/execution_log.py",
         "tldw_chatbook/MCP/local_control_service.py",
         "tldw_chatbook/MCP/unified_control_plane_service.py",
-        "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+        "tldw_chatbook/app.py",
+        "tldw_chatbook/config.py",
+        "Docs/superpowers/qa/native_runner_args.py",
     ]
     result = {
         "pid": os.getpid(),
         "cells": [],
+        "module_origins": {},
         "source_hashes": {
             p: hashlib.sha256((repo / p).read_bytes()).hexdigest() for p in paths
         },
@@ -92,7 +127,7 @@ def main():
     async def tmux(*args):
         return await asyncio.to_thread(
             subprocess.run,
-            ["/opt/homebrew/bin/tmux", "-L", socket, *args],
+            [tmux_path, "-L", socket, *args],
             check=True,
             text=True,
             capture_output=True,
@@ -119,7 +154,12 @@ def main():
 
         def visible(control):
             region, clip = app.screen._compositor.visible_widgets[control]
+            assert region.width > 0 and region.height > 0
             assert region.intersection(clip) == region, (control.id, region, clip)
+            painted_widget = app.screen.get_widget_at(
+                region.x + region.width // 2, region.y + region.height // 2
+            )[0]
+            assert painted_widget is control or control in painted_widget.ancestors
 
         async def focus(selector):
             control = app.screen.query_one(selector)
@@ -161,6 +201,17 @@ def main():
                 ),
                 "MCP loaded",
             )
+            for module_name in (
+                "tldw_chatbook.app",
+                "tldw_chatbook.config",
+                "tldw_chatbook.UI.MCP_Modules.mcp_workbench",
+                "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode",
+                "tldw_chatbook.UI.MCP_Modules.mcp_inspector",
+                "tldw_chatbook.MCP.unified_control_plane_service",
+            ):
+                path = Path(sys.modules[module_name].__file__).resolve()
+                assert path.is_relative_to(repo), (module_name, path)
+                result["module_origins"][module_name] = str(path)
             service = app.unified_mcp_service
             log = service.execution_log
             assert log is not None
@@ -288,6 +339,9 @@ def main():
             result.update(passed=False, error=traceback.format_exc())
             app.save_screenshot("failed-state.svg", path=str(evidence))
         finally:
+            result["network_attempts"] = blocked_attempts()
+            if result["network_attempts"]:
+                result["passed"] = False
             record()
             await tmux("send-keys", "-t", session, "C-q")
 

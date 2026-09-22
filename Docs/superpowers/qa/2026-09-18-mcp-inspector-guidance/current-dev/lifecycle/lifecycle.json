@@ -1,6 +1,6 @@
 {
-  "root": "<tmp>/tldw-32836-native-001",
-  "pid": 69055,
+  "root": "<tmp>/tldw-32836-current-001",
+  "pid": 53761,
   "pid_absent": true,
   "exit_code": 0,
   "app_run_returned": true,
@@ -65,12 +65,12 @@
   },
   "defaults_unchanged": true,
   "default_before": {
-    "<home>/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "<home>/.config/tldw_cli/config.toml": "a13c53fd3d92b318dec1e5371e8fb045d8460106d28087bb2f504f66cd691979",
     "<home>/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
     "<home>/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
   },
   "default_after": {
-    "<home>/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "<home>/.config/tldw_cli/config.toml": "a13c53fd3d92b318dec1e5371e8fb045d8460106d28087bb2f504f66cd691979",
     "<home>/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
     "<home>/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
   },
@@ -79,5 +79,9 @@
     "data/default_user/faulthandler.log": 0
   },
   "errors": [],
-  "source_hashes_match": true
+  "source_hashes_match": true,
+  "runner_hash_matches": true,
+  "network_attempts": [],
+  "preexisting_fixture_files_unchanged": true,
+  "fixture_pids_absent": {}
 }

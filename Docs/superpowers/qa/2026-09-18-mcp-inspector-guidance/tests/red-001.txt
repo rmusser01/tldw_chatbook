@@ -86,7 +86,7 @@ kwargs = {'request': <FixtureRequest for <Coroutine test_all_guidance_stays_hidd
                     await process.wait()
         if process.returncode:
 >           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
-E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3030/test_all_guidance_stays_hidden0/private-profile-process/pytest.log
+E           Failed: <tmp>/pytest-of-user/pytest-3030/test_all_guidance_stays_hidden0/private-profile-process/pytest.log
 E           F                                                                        [100%]
 E           =================================== FAILURES ===================================
 E           ______ test_all_guidance_stays_hidden_through_refresh_then_restores[tool] ______
@@ -139,23 +139,23 @@ Tests/private_profile.py:84: Failed
 2026-09-18 22:09:59.894 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511/test_fs_read_of_file_in_unread0
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511/test_fs_read_of_file_in_unread0'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511/test_fs_read_of_file_in_unread0'
     warnings.warn(
 
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-8754a1d6-1b00-4724-86c3-e6bc159da511'
     warnings.warn(
 
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15/test_fs_read_of_file_in_unread0
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15/test_fs_read_of_file_in_unread0'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15/test_fs_read_of_file_in_unread0'
     warnings.warn(
 
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-02986b19-d1cc-4b50-ba85-d85e10896c15'
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

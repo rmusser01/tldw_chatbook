@@ -1,5 +1,12 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current continuation — PR2722 inspector guidance
+
+Approved PR2721 merged at `3722a857480b94b30fd4755f3f8e3002bd163ec3` with passing current-head CI, zero Qodo findings and an actual tree identical to its qualified candidate. TASK-32835 is Done; [closeout](../qa/2026-09-18-mcp-audit-filters/merge-closeout/README.md).
+
+PR2722 / TASK-32836 resumes from that actual merge. Readiness badge, explanation and actions now share the existing detail visibility owner. [201 targeted passes and 16 current native captures](../qa/2026-09-18-mcp-inspector-guidance/current-dev/README.md) qualify the bounded slice. One inherited dimension ratchet is documented; no allowances changed. Both ledger conflict histories were retained, with the saved inspector checkpoint labeled historical; no product conflict occurred. This slice remains In Progress pending its own visual approval, current-head CI/Qodo and final dev review. No full suite ran; the wider workstream remains open and the old heartbeat remains paused.
+
+
 ## PR2721 current-dev Audit filters ready for visual review — 2026-09-21
 
 The saved compact-filter slice now includes merged PR2720 dev `7a758b8196`.

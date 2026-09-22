@@ -1,5 +1,10 @@
 # MCP inspector guidance ownership — TASK-32836
 
+Current integration: [fresh dev review and evidence](current-dev/README.md).
+The sections below retain the original 2026-09-18 checkpoint and counts; their
+base, source hashes, draft status and follow-up statements are historical.
+The maintained native runner now uses the shared admission/bootstrap contract.
+
 Opening a detail hid the readiness badge but left its explanation and action
 buttons above unrelated content. The existing visibility owner now controls
 all three widgets together. Tool, permission, Audit and finding detail all hide

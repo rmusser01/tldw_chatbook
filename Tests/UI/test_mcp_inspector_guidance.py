@@ -70,8 +70,9 @@ async def test_all_guidance_stays_hidden_through_refresh_then_restores(request, 
         assert_hidden(app, inspector)
 
         # Rebuilt action children must inherit their hidden parent's state.
+        operation = object()
         for snapshot in (None, _ready_snap(), as_checking(_stale_snap(), "connect")):
-            await inspector.update_readiness(snapshot)
+            await inspector.update_readiness(snapshot, cancel_operation=operation)
             await pilot.pause()
             assert_hidden(app, inspector)
 
@@ -121,7 +122,7 @@ async def test_real_workbench_detail_owns_guidance_visibility(
     async with app.run_test(size=size) as pilot:
         workbench = await _open(pilot, tmp_path / "permissions.json")
         inspector = workbench.query_one(MCPInspector)
-        await workbench._clear_tool_view()
+        await inspector.clear_mode_view()
         await inspector.update_readiness(_stale_snap())
         for kind in ("tool", "permission", "audit", "finding"):
             await show_detail(inspector, kind)

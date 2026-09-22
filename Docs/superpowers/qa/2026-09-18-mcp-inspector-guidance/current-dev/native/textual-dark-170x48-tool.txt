@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││                                             │
+│ Source                                     ││  ▊  Local MCP / Hub test root                         ▎                   ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  chat_with_character — tldw_chatbook        │
+│ ▊  Local                              ▼  ▎ ││                                                                         ▃ ││                                             │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Root: local MCP serving and Hub tests. Blank uses the serving            ││  Chat with a specific character.            │
+│                                            ││  process's current folder. Console uses Chat scratch and admitted         ││                                             │
+│ Servers                                    ││  Workspace folders.                                                       ││  Tags: —                                    │
+│  ◦ off (opt-in) · ⌂ built-in               ││                                                                           ││                                             │
+│    All servers                             ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  Parameters: form                           │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  ▊  Filter tools…                         ▎▊  All servers          ▼  ▎   ││                                             │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  Test Tool                                  │
+│                                            ││                                                                           ││  chat_with_character — tldw_chatbook        │
+│                                            ││  Tool                                  State  Server                      ││                                             │
+│                                            ││  chat_with_character                   Ask    tldw_chatbook               ││  Permission: Ask                            │
+│                                            ││  chat_with_llm                         Ask    tldw_chatbook               ││                                             │
+│                                            ││  create_note                           Ask    tldw_chatbook               ││  Inherited from the global default.         │
+│                                            ││  export_conversation                   Ask    tldw_chatbook               ││                                             │
+│                                            ││  get_conversation_history              Ask    tldw_chatbook               ││  Change in Permissions                      │
+│                                            ││  library_get_conversation              Ask    tldw_chatbook               ││  Advanced…                                  │
+│                                            ││  library_get_media                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_media_chunk               Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_media_structure           Ask    tldw_chatbook           ▃▃  ││                                             │
+│                                            ││  library_get_note                      Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_prompt                    Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_skill                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_chunk_specs              Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_conversations            Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_media                    Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_notes                    Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_prompts                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_skills                   Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_rechunk_media                 Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_save_chunk_spec               Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_save_note                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_conversations          Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_media                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_notes                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_prompts                Ask    tldw_chatbook               ││                                             │
+│                                            ││                                                        ▊                  ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

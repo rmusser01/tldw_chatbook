@@ -1,13 +1,13 @@
 ..............................................................           [100%]
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0'
     warnings.warn(
 
 .venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c'
+  <repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c
+  <class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c'
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
