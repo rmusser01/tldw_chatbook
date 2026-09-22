@@ -516,14 +516,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "reusable Higgs voice artifact directory",
     ),
     ExceptionRule(
-        "tldw_chatbook/TTS/backends/higgs_voice_manager.py",
-        "function:main",
-        "literal:~/.config/tldw_cli/higgs_voices",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "reusable Higgs voice-manager artifact directory",
-    ),
-    ExceptionRule(
         "tldw_chatbook/TTS/backends/kokoro.py",
         "function:initialize",
         "join:.config/tldw_cli",
