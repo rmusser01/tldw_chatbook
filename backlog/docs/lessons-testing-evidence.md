@@ -16223,24 +16223,20 @@ baseline earns one root-cause pass before it is treated as noise: a number
 you inherited and never explained is a standing assumption that every future
 triage will be measured against.
 
-### A uv-created venv has no `pip` module, and 16 packaging tests fail with a misleading assert (task-32900, 2026-09-21)
+### A truncated grep is not a references check (TASK-32864, PR #2795)
 
-Verifying task-32900 in a throwaway `uv venv` + `uv pip install -e ".[dev]"`
-environment, `Tests/Packaging/test_installed_distribution.py` reported 176
-ERRORs and then 16 FAILs. The visible assert was `returncode == 1` on a
-`python -m pip install --target ...` call inside the tests, and before pip was
-present at all, `python -m build --no-isolation` died with `Backend
-'setuptools.build_meta' is not available`. Root cause: uv-created venvs do not
-ship the `pip` (or `setuptools`/`build`) module, and the packaging suite
-shells out to all three. `uv pip install pip build setuptools` into the venv
-turned every one of those failures green — the code under test was never
-broken.
+**What happened.** Collapsing `CancelConfirmationDialog` onto the shared
+pattern renamed its buttons from `#continue-btn`/`#cancel-btn` to
+`#cancel-button`/`#confirm-button`. A repo-wide grep for the old ids was
+piped through `head -8`, the visible hits were all unrelated dialogs, and
+the change shipped on that evidence. Two dependent suites
+(`test_console_video_capacity.py`, `test_console_prompt_queue_modal.py`)
+still clicked the removed selectors — their hits sat beyond the cutoff —
+and the PR's AI reviewer caught what the verification did not.
 
-Rule: before diagnosing packaging-suite failures in a fresh environment, check
-`python -m pip --version` works in that interpreter. Treat `uv venv` +
-`uv pip install` as incomplete for this repo's Packaging tests by construction.
-The same session also produced one `ScreenStackError: No screens on stack`
-flake in `test_installed_wheel_loaders_entry_points_and_assets_are_immutable`
-(passed with and without the change under test on re-run): a single red run of
-a Textual `run_test` teardown is not evidence of causality — stash-and-rerun
-both ways before believing it.
+**What to do.** A references check that feeds a rename must be exhaustive
+by construction: count the matches (`grep -c` / `| wc -l`) and assert the
+number you inspected, never trust a `head` window into an unbounded list.
+And run the callers' suites, not just the changed module's: the collapse
+was pinned by the dismissal suite while the two interaction suites that
+actually pressed the renamed buttons never ran.
