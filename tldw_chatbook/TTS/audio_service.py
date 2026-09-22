@@ -48,6 +48,27 @@ except ImportError:
 #
 # Audio Service Implementation
 
+# FFMETADATA1 reserves these five characters; ffmpeg's own writer
+# (libavformat/ffmetaenc.c ``write_escape_str``) emits a backslash before
+# each and keeps the character itself. Audiobook title/artist/genre/
+# description and every chapter title are user text, so an unescaped
+# newline would let a description open a fake ``[CHAPTER]`` record.
+_FFMETADATA_ESCAPES = str.maketrans({character: "\\" + character for character in "\\=;#\n"})
+
+
+def escape_ffmetadata(value: str) -> str:
+    """Escape one FFMETADATA1 key or value for literal inclusion.
+
+    Args:
+        value: The raw text to write into an FFMETADATA1 document.
+
+    Returns:
+        The text with ``\\``, ``=``, ``;``, ``#`` and newline each
+        prefixed by a backslash, in a single pass so an escape can never
+        be re-escaped.
+    """
+    return str(value).translate(_FFMETADATA_ESCAPES)
+
 
 class AudioService:
     """Service for audio format conversion and processing"""
@@ -359,7 +380,9 @@ class AudioService:
             # Add general metadata
             if metadata:
                 for key, value in metadata.items():
-                    metadata_content += f"{key}={value}\n"
+                    metadata_content += (
+                        f"{escape_ffmetadata(key)}={escape_ffmetadata(value)}\n"
+                    )
 
             # Add chapters
             for i, (title, start_time) in enumerate(
@@ -374,7 +397,7 @@ class AudioService:
                 metadata_content += "TIMEBASE=1/1000\n"
                 metadata_content += f"START={start_time}\n"
                 metadata_content += f"END={end_time}\n"
-                metadata_content += f"title={title}\n"
+                metadata_content += f"title={escape_ffmetadata(title)}\n"
 
             # Write metadata to temporary file
             with tempfile.NamedTemporaryFile(
