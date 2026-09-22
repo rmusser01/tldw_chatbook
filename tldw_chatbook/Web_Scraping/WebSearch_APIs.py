@@ -370,6 +370,11 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
 #: so a legitimate summary that merely discusses errors downstream cannot be
 #: mistaken for one. The old guard tested only the "Error:" prefix, which no
 #: provider-prefixed message matches.
+#: DuckDuckGo result fields arrive as HTML fragments. Compiled once here:
+#: it used to be re-compiled inside a nested function called per result,
+#: inside a five-iteration page loop (tier-2 review, slice S14).
+_STRIP_TAGS_RE = re.compile("<.*?>")
+
 _SUMMARY_FAILURE_MARKERS = (
     # The legacy convention this guard originally tested for.
     "error:",
@@ -3088,8 +3093,7 @@ def search_web_duckduckgo(
 
     def _normalize(raw_html: str) -> str:
         """Strip HTML tags from the raw_html string."""
-        REGEX_STRIP_TAGS = re.compile("<.*?>")
-        return unescape(REGEX_STRIP_TAGS.sub("", raw_html)) if raw_html else ""
+        return unescape(_STRIP_TAGS_RE.sub("", raw_html)) if raw_html else ""
 
     if timelimit:
         payload["df"] = timelimit
@@ -3262,15 +3266,12 @@ def extract_domain(url: str) -> str:
         str: Domain name
     """
     try:
-        from urllib.parse import urlparse
-
-        parsed_uri = urlparse(url)
-        domain = parsed_uri.netloc
-        return domain.replace("www.", "")
-    except (ImportError, ValueError, AttributeError) as e:
-        # ImportError if urllib.parse not available (very unlikely)
-        # ValueError if URL is malformed
-        # AttributeError if parsed_uri doesn't have expected attributes
+        # removeprefix, not replace: "newww.example.com" must not become
+        # "neexample.com" (tier-2 review, slice S14).
+        return urlparse(url).netloc.removeprefix("www.")
+    except (ValueError, AttributeError):
+        # ValueError if the URL is malformed; AttributeError if the parse
+        # result is not the expected shape.
         logger.debug("Failed to parse a result domain")
         return url
 
