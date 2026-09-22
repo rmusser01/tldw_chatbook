@@ -53,12 +53,6 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: `test_known_unhardened_entries_are_still_unhardened` deletes the register
 #: as each one is fixed, so it cannot rot into folklore.
 _KNOWN_UNHARDENED: dict[str, str] = {
-    "Evals/eval_runner.py": (
-        "Parses MODEL OUTPUT (`ET.fromstring` over a generated XML answer), "
-        "so the payload is prompt-injection reachable -- the sharpest of "
-        "the seven: a poisoned document in the corpus can choose the XML "
-        "the model emits."
-    ),
     "Local_Ingestion/XML_Ingestion.py": (
         "Parses user-supplied .xml files chosen for ingestion -- the same "
         "threat shape as the OPML importer fixed by TASK-19558 (a file the "
@@ -279,7 +273,8 @@ def test_no_module_parses_xml_without_defusedxml() -> None:
     saying the other seven were "deliberately not allowlisted so widening
     turns them red" described a widening that had not happened. The register
     above is the honest form -- the census covers the whole package, and the
-    seven known-open modules are named with what reaches them.
+    known-open modules are named with what reaches them. `Evals/eval_runner`
+    was hardened by the tier-2 review and its entry deleted here, as designed.
     """
     offenders = {
         key: hits
@@ -298,7 +293,7 @@ def test_no_module_parses_xml_without_defusedxml() -> None:
 def test_known_unhardened_entries_are_still_unhardened() -> None:
     """A register entry for a module that no longer needs it is stale.
 
-    Without this, fixing one of the seven leaves a permanent hole in the
+    Without this, fixing one of them leaves a permanent hole in the
     census: the module would stay skipped, and a LATER regression in the
     same file would never red.
     """
