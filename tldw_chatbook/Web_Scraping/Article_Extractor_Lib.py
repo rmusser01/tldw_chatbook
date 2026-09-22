@@ -45,7 +45,17 @@ from typing import Any, Dict, List, Union, Optional, Tuple
 import asyncio
 from urllib.parse import urljoin, urlparse
 from xml.dom import minidom
+# Stdlib ElementTree for document BUILDING only (`Element`/
+# `SubElement`/`tostring`/`ElementTree` have no defusedxml
+# counterparts, and a tree we construct ourselves carries no
+# attacker-controlled input). Every PARSE of foreign bytes goes
+# through `_safe_fromstring`/`_safe_parse` below -- the shape
+# `Subscriptions/watchlist_opml_service.py` established. A fetched
+# sitemap is a billion-laughs vector that `MAX_FETCH_BYTES_SITEMAP`
+# cannot bound, because amplification is the whole point.
 import xml.etree.ElementTree as xET
+from defusedxml.ElementTree import fromstring as _safe_fromstring
+from defusedxml.ElementTree import parse as _safe_parse
 
 #
 # External Libraries
@@ -876,7 +886,7 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     :return: List of scraped articles
     """
     try:
-        tree = xET.parse(sitemap_file)
+        tree = _safe_parse(sitemap_file)
         root = tree.getroot()
 
         articles = []
@@ -1061,7 +1071,7 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             timeout=30,
         )
         response.raise_for_status()
-        root = xET.fromstring(response.content)
+        root = _safe_fromstring(response.content)
 
         return [
             article
@@ -1210,7 +1220,7 @@ def generate_sitemap_for_url(url: str) -> List[Dict[str, str]]:
     with secure_temp_file(suffix=".xml", prefix="filtered_sitemap_") as temp_file:
         create_filtered_sitemap(url, temp_file.name, is_content_page)
         temp_file.seek(0)
-        tree = xET.parse(temp_file.name)
+        tree = _safe_parse(temp_file.name)
         root = tree.getroot()
 
         sitemap = []
