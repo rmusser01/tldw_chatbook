@@ -1,5 +1,5 @@
 ---
-id: TASK-32901
+id: TASK-32914
 title: "Work stream: the tier-2 P2 findings"
 status: To Do
 assignee: []
@@ -13,6 +13,12 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+> **ID CORRECTION (2026-09-22): this work stream is TASK-32914, not 32901.** `task-32901` was claimed
+> on `dev` by an unrelated task (*Fix fallback-data-root startup crash and umask-0775 app-directory
+> creation*) that landed **after** this program's watermark check. Older arrival keeps the id, so this
+> one renumbered. Commits and PR descriptions written before the correction still cite `task-32901`;
+> they refer to this task.
+
 The 115 P2 findings, grouped by package family rather than by defect class so each PR stays reviewable
 and one reviewer can hold the whole diff. Every member was re-validated against `origin/dev d0face3ebe`
 before filing; the per-finding verdict, current file:line and the literal command that proves it are in

@@ -31,7 +31,7 @@ Source: tier-2 code review 2026-09-21 -- `qa/tier2-code-review-2026-09-21/report
 **1. The line count.** The headline "~9,000 lines" double-counts. The six named modules total **7,569**
 lines; the review reached ~9,000 by including `eval_templates.py` (1,298) -- which a **sibling finding in the
 same slice** states can never execute, because the package of the same name shadows it. That file has since
-been deleted on its own merits (TASK-32901, with a repo-wide shadowed-module guard added alongside it), so
+been deleted on its own merits (TASK-32914, with a repo-wide shadowed-module guard added alongside it), so
 the remaining stack is ~7,569 lines plus `_run_admitted_evaluation`.
 
 **2. The reason the review gave is wrong, and a naive delete will not compile.** The review said the stack is

@@ -74,7 +74,7 @@ measurement exactly.
 
 Deliberately out of scope: `isoformat().replace("+00:00","Z")` at microsecond precision is treated as
 conforming though it is variable-width; widening costs 40+ census rows and belongs with the writer
-migration (TASK-32901). Recorded in the guard's docstring.
+migration (TASK-32914). Recorded in the guard's docstring.
 
 Verified independently of the implementing agent: preflight GREEN and now reporting real numbers; size
 ratchet unchanged at exactly 5 failed / 58 passed; the timestamp ratchet bites when a writer is injected
