@@ -909,7 +909,7 @@ class NotesOrganizationRepository:
         if domain == "notes.keyword_collection_link":
             self._materialize_collection_link(cursor, operation, payload)
             return None
-        return self._materialize_folder_link(cursor, dataset_id, operation, payload)
+        return self._materialize_folder_link(cursor, operation, payload)
 
     def _materialize_keyword(
         self,
@@ -1217,7 +1217,6 @@ class NotesOrganizationRepository:
     def _materialize_folder_link(
         self,
         cursor: sqlite3.Cursor,
-        dataset_id: str,
         operation: str,
         payload: Mapping[str, object],
     ) -> str | None:
