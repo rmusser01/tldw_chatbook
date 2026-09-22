@@ -101,3 +101,51 @@ async def test_refresh_recompose_still_restores_focus() -> None:
             await pilot.pause()
 
         assert await _focused_id(pilot) == "probe-input"
+
+
+class _OrderingScreen(_FocusProbeScreen):
+    """Queues a post-recompose pass of its own, the way subclasses do."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.order: list[str] = []
+
+    def restore_focus_after_recompose(self, previous: str | None) -> None:
+        self.order.append("restore")
+        super().restore_focus_after_recompose(previous)
+
+    def _own_pass(self) -> None:
+        self.order.append("own_pass")
+
+
+class _OrderingApp(App):
+    def on_mount(self) -> None:
+        self.push_screen(_OrderingScreen())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_callers_own_post_recompose_pass_still_runs_before_the_restore() -> None:
+    """The two-hop queue order is load-bearing and must survive the move.
+
+    PR L review item 3: the Library's stage-visibility pass HIDES containers,
+    and a widget that becomes hidden blurs itself (`Widget._on_hide` ->
+    `blur()`), so a restore landing before that pass would put focus straight
+    back to `None`. `Widget.focusable` reads `visible`, which cannot see a
+    hide that has not happened yet -- ordering is the only fix.
+    """
+    async with _OrderingApp().run_test() as pilot:
+        screen = pilot.app.screen
+        assert isinstance(screen, _OrderingScreen)
+        screen.set_focus(screen.query_one("#probe-input", Input))
+        await pilot.pause()
+
+        screen.refresh(recompose=True)
+        screen.call_after_refresh(screen._own_pass)
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.order == ["own_pass", "restore"], (
+            f"the caller's own pass must run first; got {screen.order}"
+        )
+        assert await _focused_id(pilot) == "probe-input"
