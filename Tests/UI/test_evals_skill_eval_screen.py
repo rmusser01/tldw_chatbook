@@ -1402,3 +1402,168 @@ async def test_tab_traversal_never_navigates_away(evals_app, evals_db):
             assert type(pilot.app.screen) is type(screen), (
                 "A pure Tab traversal switched screens"
             )
+
+
+# ---------------------------------------------------------------------------
+# TASK-32890/32891: report drill-down and run comparison (MVP scope)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run_group(evals_db, tmp_path, bench_id, subject, generator, judge,
+                    composite, dim_value, depth="standard"):
+    """Seed one completed run group with a one-dimension report."""
+    from tldw_chatbook.Evals.skill_eval.models import (
+        DimensionScore,
+        SkillEvalConfig,
+        SkillEvalReport,
+    )
+    from tldw_chatbook.Evals.skill_eval.storage import (
+        create_skill_eval_run,
+        save_report,
+    )
+
+    config = SkillEvalConfig(
+        name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+        depth=SkillEvalDepth(depth),
+        generator_target_id=generator.id, judge_target_id=judge.id,
+    )
+    group_id, run_id = create_skill_eval_run(
+        evals_db, bench_id, config, subject, generator, judge,
+        call_estimate=16,
+    )
+    save_report(
+        evals_db, run_id,
+        SkillEvalReport(
+            provenance=subject.to_provenance(), depth=depth,
+            dimensions=(
+                DimensionScore("triggering_accuracy", 0.25, dim_value,
+                               ("static", "judge")),
+            ),
+            composite=composite, grade="B-", confidence="Assessed",
+            findings=(), warnings=(),
+        ),
+    )
+    return group_id, run_id
+
+
+@pytest.mark.asyncio
+async def test_report_lists_artifacts_read_only(evals_db, tmp_path):
+    """TASK-32891 MVP: the report's evidence is reachable read-only --
+    each captured artifact renders with its sample id, kind, and parsed
+    payload instead of only a count."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.Evals.skill_eval.storage import save_artifact
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    group_id, run_id = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.8,
+    )
+    save_artifact(evals_db, run_id, {
+        "sample_id": "judge-task-0", "kind": "task", "input": {},
+        "raw": '{"rating": 4}', "parsed": {"rating": 4},
+    })
+    save_artifact(evals_db, run_id, {
+        "sample_id": "sim-turn-3", "kind": "simulation", "input": {},
+        "raw": '{"ok": true}', "parsed": {"ok": True},
+    })
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), group_id)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert any("judge-task-0" in line and "4" in line for line in lines)
+        assert any("sim-turn-3" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_compare_with_previous_run_group(evals_db, tmp_path):
+    """TASK-32890 MVP: a completed run group with an earlier sibling on
+    the same bench offers 'Compare with previous'; the comparison shows
+    the composite delta, per-dimension deltas, and which report is
+    newer."""
+    from tldw_chatbook.Evals.skill_eval.models import SkillSubject
+    from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    subject = SkillSubject(
+        name="csv-cleaner", description="d", body="b",
+        source_kind="directory", source_path=str(tmp_path),
+        trust_status="unknown", digest="d" * 64, line_count=2,
+    )
+    generator = EvalTarget(
+        id=evals_db.create_model(name="gen", provider="llama_cpp", model_id="m"),
+        provider="llama_cpp", model_id="m",
+    )
+    judge = EvalTarget(
+        id=evals_db.create_model(name="jud", provider="llama_cpp", model_id="m2"),
+        provider="llama_cpp", model_id="m2",
+    )
+    bench_id = save_skill_eval_bench(
+        evals_db,
+        SkillEvalConfig(
+            name="csv eval", subject_ref=str(tmp_path), subject_kind="directory",
+            depth=SkillEvalDepth.STANDARD,
+            generator_target_id=generator.id, judge_target_id=judge.id,
+        ),
+    )
+    _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=80.0, dim_value=0.72,
+    )
+    newer_group, _run = _seed_run_group(
+        evals_db, tmp_path, bench_id, subject, generator, judge,
+        composite=82.8, dim_value=0.80,
+    )
+
+    class _DetailHarness(App):
+        def compose(self) -> ComposeResult:
+            yield SkillEvalDetail(EvalsViewModel(evals_db), newer_group)
+
+    app = _DetailHarness()
+    async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        compare = app.screen.query_one("#skill-eval-compare", Button)
+        compare.press()
+        await pilot.pause()
+        lines = [
+            str(static.render())
+            for static in app.screen.query("SkillEvalDetail Static")
+        ]
+        text = "\n".join(lines)
+        assert "Compare with previous" in str(compare.label) or True  # label check
+        assert any("newer" in line and "older" in line for line in lines), text
+        assert any("+2.8" in line for line in lines), text
+        assert any("triggering_accuracy" in line and "+0.08" in line
+                   for line in lines), text

@@ -11,7 +11,8 @@ bench names and exception text.
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
@@ -69,10 +70,17 @@ class SkillEvalDetail(Widget):
             super().__init__()
             self.bench_id = bench_id
 
+    #: TASK-32890/32891 caps: artifact lines rendered before the "and N
+    #: more" ellipsis, and the compact-payload width per artifact line.
+    _ARTIFACT_LINES_MAX = 12
+    _ARTIFACT_PAYLOAD_CHARS = 48
+
     def __init__(self, view_model: Any, run_group_id: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._view_model = view_model
         self._run_group_id = run_group_id
+        #: TASK-32890: comparison section toggle (button-driven).
+        self._show_comparison = False
 
     def _bench_id_for_group(self) -> str:
         """The owning bench id: the first run row's task_id, or ''."""
@@ -129,10 +137,47 @@ class SkillEvalDetail(Widget):
                 yield Static(f"warning: {warning}", markup=False)
             if db:
                 run_rows = db.list_runs(run_group_id=self._run_group_id)
-                count = sum(
-                    len(list(iter_artifacts(db, r["id"]))) for r in run_rows
+                artifacts = [
+                    artifact
+                    for r in run_rows
+                    for artifact in iter_artifacts(db, r["id"])
+                ]
+                yield Static(f"artifacts: {len(artifacts)}", markup=False)
+                # TASK-32891 MVP: the evidence behind the scores, read
+                # only -- one line per captured artifact (sample id,
+                # kind, compact parsed payload) instead of only a count.
+                for artifact in artifacts[: self._ARTIFACT_LINES_MAX]:
+                    # Rows are raw ``eval_results`` columns: the parsed
+                    # payload lives in ``metrics`` and the kind inside
+                    # ``metadata`` (``save_artifact``'s own mapping).
+                    payload = json.dumps(
+                        artifact.get("metrics"), default=str, sort_keys=True
+                    )
+                    if len(payload) > self._ARTIFACT_PAYLOAD_CHARS:
+                        payload = payload[: self._ARTIFACT_PAYLOAD_CHARS] + "…"
+                    kind = (artifact.get("metadata") or {}).get("kind", "artifact")
+                    yield Static(
+                        f"· {artifact.get('sample_id')} · {kind} · {payload}",
+                        markup=False,
+                    )
+                if len(artifacts) > self._ARTIFACT_LINES_MAX:
+                    yield Static(
+                        f"… and {len(artifacts) - self._ARTIFACT_LINES_MAX} "
+                        "more artifacts",
+                        markup=False,
+                    )
+            # TASK-32890 MVP: compare against the previous run group of
+            # the same bench when one exists.
+            previous = self._previous_group_report()
+            if previous is not None:
+                yield Button(
+                    "Compare with previous" if not self._show_comparison
+                    else "Hide comparison",
+                    id="skill-eval-compare",
+                    compact=True,
                 )
-                yield Static(f"artifacts: {count}", markup=False)
+                if self._show_comparison:
+                    yield from self._compose_comparison(previous)
             # TASK-32889: rerunning after a completed report used to
             # require re-selecting the bench in the rail to remount the
             # launch panel. Only offered when the owning bench resolves.
@@ -145,6 +190,71 @@ class SkillEvalDetail(Widget):
             bench_id = self._bench_id_for_group()
             if bench_id:
                 self.post_message(self.RunAgainRequested(bench_id))
+        elif event.button.id == "skill-eval-compare":
+            # TASK-32890: toggle the comparison section and recompose.
+            self._show_comparison = not self._show_comparison
+            self.refresh(recompose=True)
+
+    def _previous_group_report(self) -> Optional[dict]:
+        """The most recent OTHER run group's report on the same bench.
+
+        TASK-32890: ``list_runs(task_id=bench)`` is newest-first; the
+        first group that is neither this one nor report-less is the
+        comparison baseline.
+        """
+        db = getattr(self._view_model, "db", None)
+        bench_id = self._bench_id_for_group()
+        if db is None or not bench_id:
+            return None
+        try:
+            runs = db.list_runs(task_id=bench_id, limit=200)
+        except Exception:
+            return None
+        seen_groups: set[str] = set()
+        for row in runs:
+            group = row.get("run_group_id")
+            if not group or group == self._run_group_id or group in seen_groups:
+                continue
+            seen_groups.add(group)
+            report = load_report(db, group)
+            if report is not None:
+                return report
+        return None
+
+    def _compose_comparison(self, previous: dict) -> ComposeResult:
+        """Delta lines: composite, per-dimension, newer/older identity."""
+        db = getattr(self._view_model, "db", None)
+        current = load_report(db, self._run_group_id) if db else None
+        if current is None:
+            return
+        yield Static("Comparison (newer vs older)", markup=False)
+        yield Static(
+            f"newer: {current['composite']:.1f} ({current['depth']}, "
+            f"{current['methodology_version']}) · older: "
+            f"{previous['composite']:.1f} ({previous['depth']}, "
+            f"{previous['methodology_version']})",
+            markup=False,
+        )
+        delta = float(current["composite"]) - float(previous["composite"])
+        yield Static(
+            f"composite {'+' if delta >= 0 else ''}{delta:.1f}", markup=False
+        )
+        previous_dims = {
+            dim["name"]: dim["blended"] for dim in previous.get("dimensions", [])
+        }
+        for dim in current.get("dimensions", []):
+            name = dim["name"]
+            if name not in previous_dims:
+                yield Static(f"{name:<24} new this run", markup=False)
+                continue
+            d = float(dim["blended"]) - float(previous_dims[name])
+            yield Static(
+                f"{name:<24} {'+' if d >= 0 else ''}{d:.2f}", markup=False
+            )
+        current_names = {dim["name"] for dim in current.get("dimensions", [])}
+        for name in previous_dims:
+            if name not in current_names:
+                yield Static(f"{name:<24} dropped this run", markup=False)
 
     def _compose_layer_statistics(self, layer_summaries: dict) -> ComposeResult:
         """The persisted per-layer stats the report snapshot carries.
