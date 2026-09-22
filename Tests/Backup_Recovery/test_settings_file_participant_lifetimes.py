@@ -954,3 +954,42 @@ def test_runtime_source_binding_does_not_load_unrelated_source_types(
     source = RuntimeSourceStateStore(selected)
     source.save(RuntimeSourceState())
     assert selected.exists()
+
+
+def test_published_bytes_are_fsynced_before_the_rename(
+    tmp_path, local_root, monkeypatch
+):
+    """The inode published by `_replace` must have been fsynced first.
+
+    `_file` closing the wrapper only hands the bytes to the OS. `_replace`
+    then renames over the destination, so a crash in that window leaves the
+    published name pointing at an inode with no committed blocks while the
+    previous content is already unlinked -- for a whole-file read-modify-write
+    store like note templates, that is every saved template, not one record.
+    """
+    import os
+
+    from tldw_chatbook import config
+    from tldw_chatbook.Notes.template_store import merge_templates
+
+    selected = tmp_path / "note_templates.json"
+    monkeypatch.setattr(
+        config, "_get_effective_config_path", lambda: tmp_path / "config.toml"
+    )
+
+    synced: list[tuple[int, int]] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd):
+        info = os.fstat(fd)
+        synced.append((info.st_dev, info.st_ino))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    merge_templates([("durable", {"title": "Durable"})])
+
+    published = selected.stat()
+    assert (published.st_dev, published.st_ino) in synced
+    assert json.loads(selected.read_text())["templates"]["durable"] == {
+        "title": "Durable"
+    }
