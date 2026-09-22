@@ -188,23 +188,7 @@ def collect_w001(tree: ast.Module, path: Path) -> list[str]:
 
 
 def collect_w002(tree: ast.Module, path: Path) -> list[str]:
-    """DOM lookups reached after an await, with no enclosing ``try`` BODY.
-
-    Only ``Try.body`` is protected by that statement's own handlers. A
-    ``query_one`` in the ``except:``/``else:``/``finally:`` section of a
-    ``try`` is NOT caught by it -- the exception propagates straight out of
-    the function -- and the ``finally`` variant is the most dangerous of the
-    three, because that is the section that runs during CANCELLATION, when
-    the tree is already being torn down.
-
-    Tier-2 review S19 [D3]: the guard walk used to stop at the first ``Try``
-    ancestor regardless of which section the node sat in, so 59 sites
-    repo-wide were invisible to both this census and the gate that reads it
-    -- including the `finally`-body pair in
-    ``scheduling/schedules_workbench._run_sync``, which the same review filed
-    as a P1 app-exit. The guard exists because exactly this defect class took
-    the app down three times (see this module's own header).
-    """
+    """DOM lookups reached after an await, with no enclosing ``try``."""
     if not UI_PACKAGES & set(path.parts):
         return []
     sites: list[str] = []
@@ -231,22 +215,11 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
             if node.lineno <= first_await:
                 continue
             guarded = False
-            child: ast.AST = node
             cursor = parents.get(node)
             while cursor is not None and cursor is not func:
-                # `child in cursor.body` identifies the SECTION: only the
-                # protected body counts, and only when the statement
-                # actually has handlers (a bare `try/finally` catches
-                # nothing). `in` on AST nodes falls back to identity, which
-                # is what is wanted here.
-                if (
-                    isinstance(cursor, ast.Try)
-                    and cursor.handlers
-                    and any(stmt is child for stmt in cursor.body)
-                ):
+                if isinstance(cursor, ast.Try):
                     guarded = True
                     break
-                child = cursor
                 cursor = parents.get(cursor)
             if guarded:
                 continue
