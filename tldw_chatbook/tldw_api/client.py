@@ -1583,9 +1583,10 @@ class TLDWAPIClient:
                             # app under redirect_stdout), so dropped pages
                             # were invisible. Tier-2 review, slice S06.
                             logger.warning(
-                                "Could not decode JSON line from {}: {}",
+                                "Could not decode JSON line from {} "
+                                "({} bytes); skipping it",
                                 endpoint,
-                                line[:200],
+                                len(line),
                             )
         except httpx.HTTPStatusError as e:
             error_detail = str(e)
