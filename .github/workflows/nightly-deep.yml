@@ -100,6 +100,21 @@ jobs:
           python -c "import nltk; nltk.download('punkt', quiet=True)"
           python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
+      # TASK-32908: --continue-on-collection-errors is not defensive padding,
+      # it is a repair. Without it ONE unimportable test file aborts the whole
+      # session, and this job had been doing exactly that every night:
+      # run 35706024071 (2026-09-22) logged `collected 101851 items / 1 error`
+      # followed by `Interrupted: 1 error during collection` -- 8 skipped,
+      # ZERO tests executed -- and the same on the six preceding nights. The
+      # culprit was Tests/Chat/test_google_native_tools.py importing
+      # `_google_tools_payload`, which 0ea2906e99 deleted from
+      # LLM_API_Calls.py while leaving its call site at line 3435 (a live
+      # NameError on the Google native-tools path, still unfixed).
+      #
+      # A whole-tree nightly is the only coverage the ~96% of Tests/UI outside
+      # the PR gate has. One bad import must cost that one file, not all
+      # 101,851 tests. The run still reports the collection error and still
+      # exits non-zero -- nothing is being swallowed.
       - name: Run deep suite (serial, thorough, slow tiers, cache-off)
         env:
           TLDW_HYPOTHESIS_PROFILE: thorough
@@ -108,6 +123,7 @@ jobs:
         run: |
           pytest ./Tests/ \
             --run-slow \
+            --continue-on-collection-errors \
             --timeout=600 \
             --json-report --json-report-omit log \
             --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
