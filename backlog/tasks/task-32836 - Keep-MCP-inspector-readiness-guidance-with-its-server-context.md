@@ -1,11 +1,11 @@
 ---
 id: TASK-32836
 title: Keep MCP inspector readiness guidance with its server context
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 05:08'
-updated_date: '2026-09-22 16:22'
+updated_date: '2026-09-22 16:49'
 labels: []
 dependencies: []
 ---
@@ -56,4 +56,6 @@ Current-dev integration starts at actual PR2721 merge3722a857; both conflicting 
 Owner approved the current gallery and continuation. Conflict-free rebase onto dev5cdc9ddda00a4112ec06cf8b81fd23bd31d9edb7; inspector source identical to approved b423. Five CI Test Tool failures traced to synthetic mouse clicks during focus scrolling; test helper now settles scheduled animations and asserts real mouse hit. Redaction test requires a Failed outcome. 359 Workbench/guidance plus231 incoming startup/private-path/runner admission cases pass; delayed five-case probe and two strengthened redaction cases pass. Nine artifact guards pass, no introduced Ruff diagnostics, changed ranges formatted. Four fresh native cells/16captures and clean lifecycle pass; all16 inspector regions match approval, two central scrollbar fractional glyph differences disclosed. QA: Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/current-dev/approved-closeout/README.md. Existing ADR150/161; remains In Progress pending final-head CI/Qodo/dev and actual merge.
 
 Addressed all six Qodo rule findings on86efdced97: document guidance/capture/probe helpers, group/format QA imports, replace the diagnostic environment delay with its recorded35ms constant. Explicit check=False preserves lifecycle process-check default. All9 guidance and6 diagnostic cases pass, four files pass Ruff and capture comparison unchanged. AST receipt confirms no product/test logic changes. Publication manifests retain raw and original-export hashes with explicit review transformations and new hashes; final-head review/CI still required.
+
+PR2722 merged on2026-09-22 as ed2a57906269c453d1bbf823dbb2e011b9fc5faf after owner visual approval, all six Qodo findings addressed/resolved and final-head Qodo zero bugs/rule violations. Final CI35753818823:1152 main passes and123 admission passes plus one expected failure; all required/artifact/latency/CSS/backlog checks pass. Actual merge tree6592911e0b5e656bcbd19ff33d00cb82fec211d7 exactly matches reviewed head30a65af171 and qualified candidate2f2ec4b4. Dev5cdc9ddd remained unchanged before merge; no new conflicts. Merge receipts: Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/merge-closeout/README.md. Wider component review continues separately with saved PR2719; no additional screen completion claimed.
 <!-- SECTION:NOTES:END -->

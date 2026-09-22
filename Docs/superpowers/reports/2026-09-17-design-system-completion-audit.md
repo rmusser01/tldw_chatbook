@@ -1,5 +1,11 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2722 merged; saved raw-response review next — 2026-09-22
+
+[PR2722](https://github.com/rmusser01/tldw_chatbook/pull/2722) merged as `ed2a579062` after owner visual approval, all six Qodo findings resolved and final-head Qodo zero findings. CI passed1,152 contract and123 admission cases with one expected failure; all remaining checks pass. Its actual tree exactly matches the qualified head/candidate and native source hashes. TASK-32836 is Done. [Closeout](../qa/2026-09-18-mcp-inspector-guidance/merge-closeout/README.md).
+
+A fresh follow-up branch starts from that merged dev. Next is saved PR2719: replace stale result details after local validation and keep raw responses readable in compact inspectors. Its scrolling prerequisite already merged in PR2770/TASK-32882; older PR2718 is historical. Requalify the saved slice against current runtime and obtain its own visual approval before merge. Other MCP and destination reviews remain open; the heartbeat stays paused. Earlier pending/next checkpoints are historical.
+
 ## Current continuation — PR2722 inspector guidance
 
 Approved PR2721 merged at `3722a857480b94b30fd4755f3f8e3002bd163ec3` with passing current-head CI, zero Qodo findings and an actual tree identical to its qualified candidate. TASK-32835 is Done; [closeout](../qa/2026-09-18-mcp-audit-filters/merge-closeout/README.md).
