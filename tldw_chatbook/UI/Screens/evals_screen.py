@@ -2604,36 +2604,55 @@ class EvalsScreen(LabScreen):
                 ),
                 progress=self._on_skill_eval_progress,
             )
-            if runner.judge_result is not None:
-                for artifact in runner.judge_result.artifacts:
-                    save_artifact(db, run_id, artifact)
-            if runner.sim_result is not None:
-                for cell in runner.sim_result.cells:
-                    # Qodo F8: map every cell field explicitly --
-                    # ``save_artifact`` persists only sample_id/input/raw/
-                    # parsed/kind, so spreading the raw cell dropped its
-                    # prompt_index/repeat/activated/error evidence.
-                    save_artifact(
-                        db,
-                        run_id,
-                        {
-                            "sample_id": (
-                                f"sim-{cell['prompt_index']}-{cell['repeat']}"
-                            ),
-                            "kind": "sim",
-                            "input": {
-                                "prompt_index": cell["prompt_index"],
-                                "repeat": cell["repeat"],
-                            },
-                            "parsed": {
-                                "activated": cell["activated"],
-                                "error": cell["error"],
-                            },
-                            "raw": str(cell.get("raw") or ""),
-                        },
-                    )
             status = "cancelled" if cancel_token.is_cancelled else "completed"
-            save_report(db, run_id, report, status=status)
+
+            def _persist() -> None:
+                """Every `eval_results` row + the report, on ONE thread.
+
+                Tier-2 review S18. `save_artifact` -> `EvalsDB.store_result`
+                opens `with self.connection(): with conn:` -- one committed
+                transaction per call -- and a deep run persists 16 judge
+                cells plus `deep_sim_total` (50) sim cells. Measured on a
+                file-backed `EvalsDB`: 66 serial `store_result` calls cost
+                108-137 ms, i.e. 7-8 dropped frames of frozen UI at the end
+                of every deep run, because this worker is a plain coroutine
+                (`run_worker(self._run_skill_eval_worker, ...)`, no
+                `thread=True`) and so runs on the event loop. `EvalsDB`
+                keeps `threading.local` connections opened with
+                `check_same_thread=False`, so the hop is safe as-is; nothing
+                in this closure touches the DOM.
+                """
+                if runner.judge_result is not None:
+                    for artifact in runner.judge_result.artifacts:
+                        save_artifact(db, run_id, artifact)
+                if runner.sim_result is not None:
+                    for cell in runner.sim_result.cells:
+                        # Qodo F8: map every cell field explicitly --
+                        # ``save_artifact`` persists only sample_id/input/raw/
+                        # parsed/kind, so spreading the raw cell dropped its
+                        # prompt_index/repeat/activated/error evidence.
+                        save_artifact(
+                            db,
+                            run_id,
+                            {
+                                "sample_id": (
+                                    f"sim-{cell['prompt_index']}-{cell['repeat']}"
+                                ),
+                                "kind": "sim",
+                                "input": {
+                                    "prompt_index": cell["prompt_index"],
+                                    "repeat": cell["repeat"],
+                                },
+                                "parsed": {
+                                    "activated": cell["activated"],
+                                    "error": cell["error"],
+                                },
+                                "raw": str(cell.get("raw") or ""),
+                            },
+                        )
+                save_report(db, run_id, report, status=status)
+
+            await asyncio.to_thread(_persist)
             finished_ok = True
         except asyncio.CancelledError:
             # Re-raised, never swallowed -- Textual's worker bookkeeping

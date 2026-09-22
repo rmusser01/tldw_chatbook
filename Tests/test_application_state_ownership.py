@@ -219,7 +219,6 @@ ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
 RECENT_WORK_SCREEN_PATHS = (
     PRODUCTION_ROOT / "UI" / "Screens" / "home_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "workflows_screen.py",
-    PRODUCTION_ROOT / "UI" / "Screens" / "schedules_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py",
 )
 RETIRED_HANDOFF_FIELDS = (
@@ -1896,10 +1895,6 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
         "tldw_chatbook/UI/Screens/workflows_screen.py": {
             ("WorkflowsScreen", "on_mount"),
             ("WorkflowsScreen", "_latest_console_follow_item"),
-        },
-        "tldw_chatbook/UI/Screens/schedules_screen.py": {
-            ("SchedulesScreen", "on_mount"),
-            ("SchedulesScreen", "_latest_console_follow_item"),
         },
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
             ("SchedulesWorkbench", "_latest_console_follow_item_from_adapter"),

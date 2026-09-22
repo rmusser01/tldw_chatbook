@@ -504,6 +504,30 @@ class BackupRestoreScreen(Screen):
         self._poller = self.set_interval(0.2, self._refresh_status)
         self._refresh_status()
 
+    def on_screen_suspend(self):
+        """Pause the 5 Hz status poll while this screen is covered.
+
+        Tier-2 review S19. This screen pushes ``FileOpen``/``FileSave``/
+        ``SelectDirectory`` over itself, and Textual SUSPENDS a covered
+        screen rather than unmounting it -- so the poll kept ticking (and
+        laying out) behind an opaque modal. TASK-23022's rule: a hidden
+        clock must not tick unseen. ``SchedulesWorkbench`` already has both
+        halves of this; this screen had neither.
+        """
+        if self._poller is not None:
+            self._poller.pause()
+
+    def on_screen_resume(self):
+        """Restart the poll and repaint immediately, so no stale text shows.
+
+        No ``super().on_screen_resume()``: Textual dispatches to every
+        handler along the MRO for one event (see ``BaseAppScreen``'s MRO
+        contract), so the base handler runs regardless.
+        """
+        if self._poller is not None:
+            self._poller.resume()
+        self._refresh_status()
+
     def on_unmount(self):
         self._revision += 1
         if self._poller is not None:
@@ -1687,7 +1711,15 @@ class BackupRestoreScreen(Screen):
                     exclusive=True,
                     group="later-credential-review",
                 )
-        self.query_one("#backup-status", Static).update(text)
+        # Compare before updating: `Static.update` ends in
+        # `refresh(layout=True)` by default, so the 5 Hz poll laid the
+        # screen out five times a second to repaint an unchanged string
+        # (tier-2 review S19). `SchedulesWorkbench._update_static_content`
+        # is the same rule. `Button.disabled` below needs no guard -- it is
+        # a reactive and Textual already drops a same-value write.
+        status = self.query_one("#backup-status", Static)
+        if status.content != text:
+            status.update(text)
         self.query_one("#backup-cancel", Button).disabled = (
             current["state"] != "running"
         )

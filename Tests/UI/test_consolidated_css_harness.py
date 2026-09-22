@@ -290,7 +290,6 @@ _SPLIT_SHEET_OWNERS = {
     "screen_agentic_settings.tcss": ("SettingsScreen", "DestinationHarness"),
     "screen_feature_evals.tcss": ("EvalsScreen", "DestinationHarness"),
     "screen_feature_scheduling.tcss": (
-        "SchedulesScreen",
         "SchedulingScreen",
         "DestinationHarness",
     ),

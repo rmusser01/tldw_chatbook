@@ -13445,15 +13445,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Drive the item-status write to completion off the UI thread.
 
         TASK-1541. `_update_item_status` used to `await
-        self._controller.update_item_status(...)` directly, and every layer
-        of that call chain -- `WatchlistsBackendController.update_item_status`
-        -> `WatchlistScopeService.update_item` -> `LocalWatchlistsService.
-        update_item` -> `SubscriptionsDB.mark_item_status` -- is an `async
+        self._controller.update_item_status(...)` directly, and at the time
+        every layer of that call chain --
+        `WatchlistsBackendController.update_item_status` ->
+        `WatchlistScopeService.update_item` -> `LocalWatchlistsService.
+        update_item` -> `SubscriptionsDB.mark_item_status` -- was an `async
         def` with no genuine `await` of its own. `_maybe_await` (the
         controller's own helper) only awaits a value that is ALREADY
         awaitable; it never puts a plain synchronous call on a thread. So
-        awaiting that chain runs the whole thing, including the transactional
-        `UPDATE`, synchronously to completion on whichever thread awaits the
+        awaiting that chain ran the whole thing, including the transactional
+        `UPDATE`, synchronously to completion on whichever thread awaited the
         outermost coroutine -- and `run_worker` only *schedules* a coroutine
         back onto this SAME event loop, it does not move it to a thread
         (identical shape to `_toggle_briefing_queue`'s fix, whose docstring
@@ -13464,19 +13465,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         value explicitly, having previously inherited it, and measured the
         wait: a 1.0 s lock held cost the second writer 1.07 s).
 
-        Mirrors `library_screen.py`'s `_run_library_service_call(...,
-        isolate_in_worker=True)`: `asyncio.to_thread` gives the worker thread
-        no event loop of its own, so `asyncio.run` builds a throwaway one
-        there to drive the controller coroutine to completion, rather than
-        resuming it back on this loop. `runtime_backend` is read here, on
-        the calling (event-loop) thread, and passed into the thread body as a
-        plain string -- the worker body itself must never read a screen
-        reactive directly.
+        **That premise expired (tier-2 review S18, 2026-09-21).**
+        `Subscriptions/db_offload.py` landed nine days after this wrapper
+        (`668ac79791`, 2026-08-11, vs `2d4ae86506`, 2026-08-02), and
+        `LocalWatchlistsService.update_item` now ends in `await
+        run_db_off_loop(db, db.mark_item_status, ...)`, whose own body is
+        `await asyncio.to_thread(...)` for any file-backed `SubscriptionsDB`.
+        The chain therefore takes itself off the loop, and wrapping it in
+        `asyncio.to_thread(lambda: asyncio.run(...))` bought a THIRD hop:
+        one default-executor thread, a throwaway event loop AND a throwaway
+        `ThreadPoolExecutor` built and torn down inside it, then a second
+        thread -- per `j`/`k` in the reader, since `_mark_item_read_on_open`
+        fires on every item open. Awaiting the controller directly is what
+        this method does now; the off-loop guarantee is
+        `run_db_off_loop`'s, which is where it belongs and where the
+        in-memory-database exemption is already reasoned about.
+        (`_toggle_briefing_queue` is NOT the same case and keeps its
+        `to_thread`: it calls `db.set_item_briefing_queued` directly, with no
+        service layer to offload for it.)
 
         Drain invariant (TASK-1541, Qodo redesign; replaces an earlier,
         incorrect "last press wins is not guaranteed at the database" caveat
-        that used to live here). This OS thread is genuinely not cancellable
-        once started -- `asyncio.to_thread`'s underlying executor future can
+        that used to live here). The OS thread `run_db_off_loop` hands the
+        write to is genuinely not cancellable once started --
+        `asyncio.to_thread`'s underlying executor future can
         only be cancelled before it begins running -- which is exactly why an
         earlier design (`exclusive=True` "supersede" worker groups) could not
         safely guarantee write ORDER: a superseded write's thread and its
@@ -13494,18 +13506,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             The controller's result dict, unused by the only current caller
             but kept so a future caller does not have to re-add it.
         """
-        runtime_backend = self.runtime_backend
-
-        def _invoke() -> dict[str, Any]:
-            return asyncio.run(  # policy-exception: worker-thread loop
-                self._controller.update_item_status(
-                    runtime_backend=runtime_backend,
-                    item_id=item_id,
-                    status=status,
-                )
-            )
-
-        return await asyncio.to_thread(_invoke)
+        return await self._controller.update_item_status(
+            runtime_backend=self.runtime_backend,
+            item_id=item_id,
+            status=status,
+        )
 
     def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
         """Push a patched status into the mounted Items table's Status cell."""
