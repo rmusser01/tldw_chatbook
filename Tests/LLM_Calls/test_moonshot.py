@@ -507,7 +507,9 @@ def test_moonshot_response_format_is_exact_and_bounded(
     monkeypatch: pytest.MonkeyPatch,
     response_format: dict[str, object],
 ) -> None:
-    monkeypatch.setattr(moonshot, "_MAX_JSON_DEPTH", 3)
+    from tldw_chatbook.LLM_Calls import hosted_chat as _hosted_chat
+
+    monkeypatch.setattr(_hosted_chat, "_PAYLOAD_MAX_JSON_DEPTH", 3)
 
     with pytest.raises(ChatBadRequestError):
         build_moonshot_chat_payload(

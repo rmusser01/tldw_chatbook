@@ -14,8 +14,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatBadRequestError,
-    ChatConfigurationError,
     ChatProviderError,
 )
 from tldw_chatbook.Chat.provider_continuation import (
@@ -28,6 +26,8 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
+    ProviderPayloadValidators,
+    TOOL_FUNCTION_NAME,
     HostedChatProtocolError,
     HostedChatStream,
     HostedChatTurn,
@@ -546,12 +546,8 @@ def _zai_continuation_candidate(
     return parse_provider_continuation_json(dump_provider_continuation_json(candidate))
 
 
-def _configuration_error(message: str) -> ChatConfigurationError:
-    return ChatConfigurationError(provider="zai", message=message)
 
 
-def _bad_request(message: str) -> ChatBadRequestError:
-    return ChatBadRequestError(provider="zai", message=message)
 
 
 def _resolve_string(
@@ -564,6 +560,20 @@ def _resolve_string(
     if not isinstance(value, str) or not value.strip():
         raise _configuration_error(f"Z.ai {name} is invalid.")
     return value.strip()
+
+
+_validators = ProviderPayloadValidators("zai", "Z.ai")
+_bad_request = _validators.bad_request
+_configuration_error = _validators.configuration_error
+_nonnegative_integer = _validators.nonnegative_integer
+_nonnegative_number = _validators.nonnegative_number
+_positive_integer = _validators.positive_integer
+_positive_number = _validators.positive_number
+_normalize_stop = _validators.normalize_stop
+_normalize_response_format = _validators.normalize_response_format
+_normalize_call_batch = _validators.normalize_call_batch
+_json_shape_is_bounded = _validators.json_shape_is_bounded
+_FUNCTION_NAME = TOOL_FUNCTION_NAME
 
 
 def _resolve_api_key(
@@ -603,37 +613,10 @@ def _resolve_base_url(explicit: object, settings: Mapping[str, object]) -> str:
         raise _configuration_error("Z.ai API base URL is invalid.") from None
 
 
-def _positive_number(
-    settings: Mapping[str, object], name: str, default: float
-) -> float:
-    value = settings.get(name, default)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise _configuration_error(f"Z.ai {name} must be numeric.")
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized <= 0:
-        raise _configuration_error(f"Z.ai {name} must be positive and finite.")
-    return normalized
 
 
-def _nonnegative_number(
-    settings: Mapping[str, object], name: str, default: float
-) -> float:
-    value = settings.get(name, default)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise _configuration_error(f"Z.ai {name} must be numeric.")
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized < 0:
-        raise _configuration_error(f"Z.ai {name} must be non-negative.")
-    return normalized
 
 
-def _nonnegative_integer(
-    settings: Mapping[str, object], name: str, default: int
-) -> int:
-    value = settings.get(name, default)
-    if type(value) is not int or value < 0:
-        raise _configuration_error(f"Z.ai {name} must be a non-negative integer.")
-    return value
 
 
 def _resolve_streaming(settings: Mapping[str, object]) -> bool:
@@ -709,43 +692,6 @@ def _normalize_messages(
     return result
 
 
-def _normalize_call_batch(
-    value: object,
-    prior_ids: set[str],
-) -> tuple[dict[str, Any], ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or not value:
-        raise _bad_request("Z.ai tool call batch is invalid.")
-    calls: list[dict[str, Any]] = []
-    for raw_call in value:
-        if not isinstance(raw_call, Mapping) or set(raw_call) != {
-            "id",
-            "type",
-            "function",
-        }:
-            raise _bad_request("Z.ai tool call is malformed.")
-        call_id = raw_call.get("id")
-        function = raw_call.get("function")
-        if (
-            not isinstance(call_id, str)
-            or not call_id
-            or call_id in prior_ids
-            or raw_call.get("type") != "function"
-            or not isinstance(function, Mapping)
-            or set(function) != {"name", "arguments"}
-            or not isinstance(function.get("name"), str)
-            or not _FUNCTION_NAME.fullmatch(cast(str, function.get("name")))
-            or not isinstance(function.get("arguments"), str)
-        ):
-            raise _bad_request("Z.ai tool call is malformed.")
-        try:
-            arguments = json.loads(cast(str, function.get("arguments")))
-        except (TypeError, ValueError):
-            raise _bad_request("Z.ai tool call arguments are invalid.") from None
-        if not isinstance(arguments, dict) or not _json_shape_is_bounded(arguments):
-            raise _bad_request("Z.ai tool call arguments are invalid.")
-        prior_ids.add(call_id)
-        calls.append(deepcopy(dict(raw_call)))
-    return tuple(calls)
 
 
 def _normalize_tools(value: object) -> list[dict[str, Any]] | None:
@@ -863,40 +809,10 @@ def _validate_sampler(name: str, value: object) -> None:
         raise _bad_request(f"Z.ai {name} is invalid.")
 
 
-def _positive_integer(name: str, value: object) -> int:
-    if type(value) is not int or value <= 0:
-        raise _bad_request(f"Z.ai {name} is invalid.")
-    return value
 
 
-def _normalize_stop(value: object) -> object:
-    if isinstance(value, str) and value:
-        return value
-    if (
-        isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes))
-        and 1 <= len(value) <= 4
-        and all(isinstance(item, str) and item for item in value)
-    ):
-        return list(value)
-    raise _bad_request("Z.ai stop is invalid.")
 
 
-def _normalize_response_format(value: object) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or not _json_shape_is_bounded(value):
-        raise _bad_request("Z.ai response format is invalid.")
-    kind = value.get("type")
-    if kind in {"text", "json_object"}:
-        if set(value) != {"type"}:
-            raise _bad_request("Z.ai response format is invalid.")
-    elif kind == "json_schema":
-        if set(value) != {"type", "json_schema"} or not isinstance(
-            value.get("json_schema"), Mapping
-        ):
-            raise _bad_request("Z.ai response format is invalid.")
-    else:
-        raise _bad_request("Z.ai response format is invalid.")
-    return deepcopy(dict(value))
 
 
 def _bounded_identifier(name: str, value: object) -> str:
@@ -910,32 +826,3 @@ def _bounded_identifier(name: str, value: object) -> str:
     return value
 
 
-def _json_shape_is_bounded(value: object) -> bool:
-    stack: list[tuple[object, int]] = [(value, 1)]
-    nodes = 0
-    while stack:
-        current, depth = stack.pop()
-        nodes += 1
-        if nodes > _MAX_JSON_NODES or depth > _MAX_JSON_DEPTH:
-            return False
-        if current is None or type(current) in {bool, int}:
-            continue
-        if isinstance(current, float):
-            if not math.isfinite(current):
-                return False
-            continue
-        if isinstance(current, str):
-            if len(current) > _MAX_JSON_STRING_CHARS:
-                return False
-            continue
-        if isinstance(current, Mapping):
-            for key, item in current.items():
-                if not isinstance(key, str) or len(key) > _MAX_JSON_STRING_CHARS:
-                    return False
-                stack.append((item, depth + 1))
-            continue
-        if isinstance(current, Sequence) and not isinstance(current, (str, bytes)):
-            stack.extend((item, depth + 1) for item in current)
-            continue
-        return False
-    return True

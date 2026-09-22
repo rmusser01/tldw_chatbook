@@ -26,6 +26,7 @@ from urllib3.util import Retry
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
+    ChatConfigurationError,
     ChatProviderError,
     ChatRateLimitError,
 )
@@ -702,6 +703,166 @@ def _strict_json_loads(value: str) -> object:
         )
     except StrictJSONError:
         return _JSON_DECODE_FAILED
+
+
+_PAYLOAD_MAX_JSON_DEPTH = 64
+_PAYLOAD_MAX_JSON_NODES = 50_000
+_PAYLOAD_MAX_JSON_STRING_CHARS = 16 * 1024 * 1024
+TOOL_FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
+
+
+class ProviderPayloadValidators:
+    """Shared request-payload validators for hosted Chat-Completions providers.
+
+    Moonshot and Z.ai carried these as two label-only copies; ADR-175 homes
+    the mechanics here, parameterized by the provider wire identity. Payload
+    builders stay with their providers (ADR-062) and credential resolution
+    stays per provider (ADR-012/ADR-062: the neutral layer never imports
+    configuration).
+    """
+
+    def __init__(self, provider: str, label: str):
+        self._provider = provider
+        self._label = label
+
+    def bad_request(self, message: str) -> ChatBadRequestError:
+        return ChatBadRequestError(provider=self._provider, message=message)
+
+    def configuration_error(self, message: str) -> ChatConfigurationError:
+        return ChatConfigurationError(provider=self._provider, message=message)
+
+    def nonnegative_integer(self, 
+        settings: Mapping[str, object], name: str, default: int
+    ) -> int:
+        value = settings.get(name, default)
+        if type(value) is not int or value < 0:
+            raise self.configuration_error(f"{self._label} {name} must be a non-negative integer.")
+        return value
+
+    def nonnegative_number(self, 
+        settings: Mapping[str, object], name: str, default: float
+    ) -> float:
+        value = settings.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise self.configuration_error(f"{self._label} {name} must be numeric.")
+        normalized = float(value)
+        if not math.isfinite(normalized) or normalized < 0:
+            raise self.configuration_error(f"{self._label} {name} must be non-negative.")
+        return normalized
+
+    def positive_integer(self, name: str, value: object) -> int:
+        if type(value) is not int or value <= 0:
+            raise self.bad_request(f"{self._label} {name} is invalid.")
+        return value
+
+    def positive_number(self, 
+        settings: Mapping[str, object], name: str, default: float
+    ) -> float:
+        value = settings.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise self.configuration_error(f"{self._label} {name} must be numeric.")
+        normalized = float(value)
+        if not math.isfinite(normalized) or normalized <= 0:
+            raise self.configuration_error(f"{self._label} {name} must be positive and finite.")
+        return normalized
+
+    def normalize_stop(self, value: object) -> object:
+        if isinstance(value, str) and value:
+            return value
+        if (
+            isinstance(value, Sequence)
+            and not isinstance(value, (str, bytes))
+            and 1 <= len(value) <= 4
+            and all(isinstance(item, str) and item for item in value)
+        ):
+            return list(value)
+        raise self.bad_request(f"{self._label} stop is invalid.")
+
+    def normalize_response_format(self, value: object) -> dict[str, Any]:
+        if not isinstance(value, Mapping) or not self.json_shape_is_bounded(value):
+            raise self.bad_request(f"{self._label} response format is invalid.")
+        format_type = value.get("type")
+        if format_type in {"text", "json_object"}:
+            if set(value) != {"type"}:
+                raise self.bad_request(f"{self._label} response format is invalid.")
+        elif format_type == "json_schema":
+            if set(value) != {"type", "json_schema"} or not isinstance(
+                value.get("json_schema"), Mapping
+            ):
+                raise self.bad_request(f"{self._label} response format is invalid.")
+        else:
+            raise self.bad_request(f"{self._label} response format is invalid.")
+        return deepcopy(dict(value))
+
+    def normalize_call_batch(self, 
+        value: object,
+        prior_ids: set[str],
+    ) -> tuple[dict[str, Any], ...]:
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or not value:
+            raise self.bad_request(f"{self._label} tool call batch is invalid.")
+        calls: list[dict[str, Any]] = []
+        for raw_call in value:
+            if not isinstance(raw_call, Mapping) or set(raw_call) != {
+                "id",
+                "type",
+                "function",
+            }:
+                raise self.bad_request(f"{self._label} tool call is malformed.")
+            call_id = raw_call.get("id")
+            function = raw_call.get("function")
+            if (
+                not isinstance(call_id, str)
+                or not call_id
+                or call_id in prior_ids
+                or raw_call.get("type") != "function"
+                or not isinstance(function, Mapping)
+                or set(function) != {"name", "arguments"}
+                or not isinstance(function.get("name"), str)
+                or not TOOL_FUNCTION_NAME.fullmatch(cast(str, function.get("name")))
+                or not isinstance(function.get("arguments"), str)
+            ):
+                raise self.bad_request(f"{self._label} tool call is malformed.")
+            try:
+                arguments = json.loads(cast(str, function.get("arguments")))
+            except (TypeError, ValueError):
+                raise self.bad_request(f"{self._label} tool call arguments are invalid.") from None
+            if not isinstance(arguments, dict) or not self.json_shape_is_bounded(arguments):
+                raise self.bad_request(f"{self._label} tool call arguments are invalid.")
+            prior_ids.add(call_id)
+            calls.append(deepcopy(dict(raw_call)))
+        return tuple(calls)
+
+    def json_shape_is_bounded(self, value: object) -> bool:
+        stack: list[tuple[object, int]] = [(value, 1)]
+        nodes = 0
+        while stack:
+            current, depth = stack.pop()
+            nodes += 1
+            if nodes > _PAYLOAD_MAX_JSON_NODES or depth > _PAYLOAD_MAX_JSON_DEPTH:
+                return False
+            if current is None or type(current) in {bool, int}:
+                continue
+            if isinstance(current, float):
+                if not math.isfinite(current):
+                    return False
+                continue
+            if isinstance(current, str):
+                if len(current) > _PAYLOAD_MAX_JSON_STRING_CHARS:
+                    return False
+                continue
+            if isinstance(current, Mapping):
+                for key, item in current.items():
+                    if not isinstance(key, str) or len(key) > _PAYLOAD_MAX_JSON_STRING_CHARS:
+                        return False
+                    stack.append((item, depth + 1))
+                continue
+            if isinstance(current, Sequence) and not isinstance(current, (str, bytes)):
+                stack.extend((item, depth + 1) for item in current)
+                continue
+            return False
+        return True
+
+
 
 
 def _required_metadata(value: object, label: str) -> str:
