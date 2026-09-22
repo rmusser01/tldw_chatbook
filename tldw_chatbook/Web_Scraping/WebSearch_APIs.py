@@ -82,7 +82,11 @@ from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import is_public_http_url
+from tldw_chatbook.Utils.egress import (
+    MAX_FETCH_BYTES_PAGE,
+    EgressFetchError,
+    is_public_http_url,
+)
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -846,6 +850,82 @@ SEARCH_BACKEND_TIMEOUT_S = 30
 sub-questions before giving up. Shared with `generate_and_search`'s
 total-failure warning (task-3221) so the "N attempts" the user is told
 about can never drift from the loop bound that actually produced it."""
+
+#: Response cap for search-provider calls. Same constant the rest of
+#: `Web_Scraping/` already fetches pages under (`guarded_fetch_*`); a search
+#: API's JSON answer is orders of magnitude below it, so this bounds a
+#: hostile or broken endpoint without bounding any legitimate response.
+MAX_SEARCH_RESPONSE_BYTES = MAX_FETCH_BYTES_PAGE
+
+
+def _credentialed_search_request(
+    method: str,
+    url: str,
+    *,
+    session: Any = None,
+    max_bytes: int = MAX_SEARCH_RESPONSE_BYTES,
+    **kwargs: Any,
+):
+    """One capped, redirect-refusing hop for a credential-carrying call.
+
+    TASK-32894. Every search backend in this module used to call
+    `requests.get`/`requests.post` directly, i.e. with `allow_redirects=True`
+    and no size cap. `requests`' own `rebuild_auth` strips ONLY
+    `Authorization` across a cross-origin hop, so `X-Subscription-Token`
+    (Brave), `X-API-KEY` (Serper), `x-api-key` (Exa) and
+    `Ocp-Apim-Subscription-Key` (Bing) -- and Google's key, which rides in
+    the query string -- were forwarded verbatim to whatever a 30x named.
+    Bing's endpoint is config-supplied and unvalidated, so the redirect
+    target need not even be the vendor's.
+
+    A search API has no legitimate redirect, so one is refused rather than
+    followed. The body is read in bounded chunks and re-attached, matching
+    `Utils/egress.guarded_fetch_requests` (that helper is GET-only and takes
+    no `params`/`json`, which is why this is local rather than a call into
+    it) so `.json()`/`.content` behave exactly as before for callers.
+
+    Args:
+        method: ``"get"`` or ``"post"``.
+        url: Fully-qualified provider endpoint.
+        session: Optional `requests.Session` (Bing mounts a retry adapter);
+            the module-level `requests` is used when omitted.
+        max_bytes: Cap for the buffered response body.
+        **kwargs: Passed through to the transport (`headers`, `params`,
+            `json`, `data`, `timeout`, `verify`).
+
+    Returns:
+        The provider response with its body buffered, as before.
+
+    Raises:
+        EgressFetchError: On a redirect, or a body past ``max_bytes``.
+    """
+    caller = session if session is not None else requests
+    response = getattr(caller, method)(
+        url, allow_redirects=False, stream=True, **kwargs
+    )
+    collected = bytearray()
+    try:
+        if getattr(response, "is_redirect", False):
+            raise EgressFetchError(
+                "search provider redirected a credentialed request", url=url
+            )
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            collected += chunk
+            if len(collected) > max_bytes:
+                raise EgressFetchError(
+                    f"response exceeds {max_bytes} bytes", url=url
+                )
+    finally:
+        close = getattr(response, "close", None)
+        if close is not None:
+            close()
+    response._content = bytes(collected)
+    response._content_consumed = True
+    return response
+
+
 
 
 def analyze_question(question: str, api_endpoint) -> Dict:
@@ -2707,7 +2787,14 @@ def search_web_bing(
         session.mount("https://", HTTPAdapter(max_retries=retries))
 
         # Send the request with the session
-        response = session.get(search_url, headers=headers, params=params, timeout=10)
+        response = _credentialed_search_request(
+            "get",
+            search_url,
+            session=session,
+            headers=headers,
+            params=params,
+            timeout=10,
+        )
         response.raise_for_status()
 
 
@@ -2942,7 +3029,14 @@ def search_web_brave(
 
     # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
     # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
-    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    response = _credentialed_search_request(
+        "get",
+        search_url,
+        headers=headers,
+        params=params,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+    )
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -3435,7 +3529,13 @@ def search_web_google(
         # Make the API call
         # task-3060: bound worst-case latency -- an unresponsive Google CSE
         # endpoint must not hang perform_websearch indefinitely.
-        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+        response = _credentialed_search_request(
+            "get",
+            search_url,
+            params=params,
+            timeout=SEARCH_BACKEND_TIMEOUT_S,
+            verify=requests_verify(),
+        )
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3641,7 +3741,14 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
 
     # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
     # must not hang perform_websearch indefinitely.
-    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    response = _credentialed_search_request(
+        "get",
+        endpoint,
+        headers=headers,
+        params=params,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+    )
     response.raise_for_status()
     return response.json()
 
@@ -3913,7 +4020,14 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    response = _credentialed_search_request(
+        "post",
+        "https://google.serper.dev/search",
+        headers=headers,
+        json=payload,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+    )
     response.raise_for_status()
     return response.json()
 
@@ -3984,7 +4098,14 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    response = _credentialed_search_request(
+        "post",
+        "https://api.exa.ai/search",
+        headers=headers,
+        json=payload,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+    )
     response.raise_for_status()
     return response.json()
 
@@ -4078,8 +4199,12 @@ def search_web_tavily(
 
     # task-3060: bound worst-case latency -- an unresponsive Tavily
     # endpoint must not hang perform_websearch indefinitely.
-    response = requests.post(
-        tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S,
+    response = _credentialed_search_request(
+        "post",
+        tavily_api_url,
+        headers=headers,
+        data=json.dumps(payload),
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
         verify=requests_verify(),
     )
     response.raise_for_status()
@@ -4180,8 +4305,12 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "folderId": folder_id,
         "responseFormat": "FORMAT_XML",
     }
-    response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S,
+    response = _credentialed_search_request(
+        "post",
+        "https://searchapi.api.cloud.yandex.net/v2/web/search",
+        headers=headers,
+        json=payload,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
         verify=requests_verify(),
     )
     response.raise_for_status()

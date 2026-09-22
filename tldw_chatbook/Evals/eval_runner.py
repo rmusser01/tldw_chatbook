@@ -1855,7 +1855,16 @@ class BaseEvalRunner(ABC):
     def _is_valid_xml(self, text: str) -> bool:
         """Check if text is valid XML."""
         try:
-            import xml.etree.ElementTree as ET
+            # TASK-32894: this parses MODEL OUTPUT, so the payload is
+            # prompt-injection reachable -- a poisoned corpus document can
+            # choose the XML the model emits. defusedxml refuses an
+            # entity-expansion DTD (`EntitiesForbidden`, a ValueError)
+            # rather than materializing it; the blanket except below then
+            # correctly reports the document as not-valid-XML.
+            try:
+                import defusedxml.ElementTree as ET
+            except ImportError:  # pragma: no cover - core dependency
+                import xml.etree.ElementTree as ET
 
             ET.fromstring(text.strip())
             return True

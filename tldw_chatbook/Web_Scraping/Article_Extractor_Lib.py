@@ -45,7 +45,26 @@ from typing import Any, Dict, List, Union, Optional, Tuple
 import asyncio
 from urllib.parse import urljoin, urlparse
 from xml.dom import minidom
+# Stdlib ElementTree is kept for document BUILDING only
+# (`Element`/`SubElement`/`tostring`/`ElementTree` have no defusedxml
+# counterparts, and a tree we constructed ourselves has no
+# attacker-controlled input). Every PARSE of foreign bytes goes through
+# `_safe_parse`/`_safe_fromstring` below.
 import xml.etree.ElementTree as xET
+
+# TASK-32894: `defusedxml` is a CORE dependency (`pyproject.toml`, "engine xml
+# security parsing"), so the fallback arm is a belt-and-braces guard for a
+# broken install, not an optional-feature gate -- same shape as
+# `Subscriptions/monitoring_engine.py` and `watchlist_opml_service.py`. The
+# exposure is ENTITY EXPANSION (billion laughs), not XXE: stdlib
+# ElementTree already ignores external entities but happily expands
+# internal ones, so a small document becomes gigabytes inside the parser.
+try:
+    from defusedxml.ElementTree import fromstring as _safe_fromstring
+    from defusedxml.ElementTree import parse as _safe_parse
+except ImportError:  # pragma: no cover - defusedxml is a core dependency
+    from xml.etree.ElementTree import fromstring as _safe_fromstring
+    from xml.etree.ElementTree import parse as _safe_parse
 
 #
 # External Libraries
@@ -876,7 +895,7 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     :return: List of scraped articles
     """
     try:
-        tree = xET.parse(sitemap_file)
+        tree = _safe_parse(sitemap_file)
         root = tree.getroot()
 
         articles = []
@@ -887,8 +906,13 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
                     articles.append(article_data)
 
         return articles
-    except xET.ParseError as e:
-        logging.error(f"Error parsing sitemap: {e}")
+    except (xET.ParseError, ValueError) as e:
+        # ValueError covers defusedxml's `EntitiesForbidden` refusal, which is
+        # NOT an `ET.ParseError` (TASK-32894). Type only, never the message:
+        # `EntitiesForbidden` names the offending ENTITY, i.e. text the
+        # hostile document chose, and this sink is persistent
+        # (`local_watchlists_service._check_url_isolated` states the rule).
+        logging.error(f"Error parsing sitemap: {type(e).__name__}")
         return []
 
 
@@ -1061,7 +1085,7 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             timeout=30,
         )
         response.raise_for_status()
-        root = xET.fromstring(response.content)
+        root = _safe_fromstring(response.content)
 
         return [
             article
@@ -1072,6 +1096,13 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
         ]
     except (EgressBlockedError, EgressFetchError) as e:
         logging.error(f"Sitemap fetch blocked or too large: {e}")
+        return []
+    except (xET.ParseError, ValueError) as e:
+        # ValueError covers defusedxml's `EntitiesForbidden` refusal
+        # (TASK-32894); a refused sitemap yields no articles, not a crash.
+        # Type only -- the refusal message names the entity the hostile
+        # document chose, and this sink is persistent.
+        logging.error(f"Error parsing sitemap: {type(e).__name__}")
         return []
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
@@ -1210,7 +1241,7 @@ def generate_sitemap_for_url(url: str) -> List[Dict[str, str]]:
     with secure_temp_file(suffix=".xml", prefix="filtered_sitemap_") as temp_file:
         create_filtered_sitemap(url, temp_file.name, is_content_page)
         temp_file.seek(0)
-        tree = xET.parse(temp_file.name)
+        tree = _safe_parse(temp_file.name)
         root = tree.getroot()
 
         sitemap = []

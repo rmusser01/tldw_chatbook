@@ -1,8 +1,22 @@
 # XML_Ingestion.py
 # Description: This file contains functions for reading and writing XML files.
 # Imports
-import xml.etree.ElementTree as ET
 import time
+
+# TASK-32894: `defusedxml` is a CORE dependency (`pyproject.toml`, "engine xml
+# security parsing"), so the fallback arm is a belt-and-braces guard for a
+# broken install, not an optional-feature gate -- same shape as
+# `Subscriptions/monitoring_engine.py` and `watchlist_opml_service.py`. The
+# exposure is ENTITY EXPANSION (billion laughs), not XXE: stdlib
+# ElementTree already ignores external entities but happily expands
+# internal ones, so a small document becomes gigabytes inside the parser.
+# `ET.tostring` and `ET.ParseError` are re-exported by defusedxml, so this
+# is a straight swap; only `Element`/`SubElement` lack counterparts and
+# this module builds no documents.
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:  # pragma: no cover - defusedxml is a core dependency
+    import xml.etree.ElementTree as ET
 
 #
 # External Imports

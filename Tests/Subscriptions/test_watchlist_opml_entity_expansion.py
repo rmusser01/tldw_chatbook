@@ -53,17 +53,6 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: `test_known_unhardened_entries_are_still_unhardened` deletes the register
 #: as each one is fixed, so it cannot rot into folklore.
 _KNOWN_UNHARDENED: dict[str, str] = {
-    "Evals/eval_runner.py": (
-        "Parses MODEL OUTPUT (`ET.fromstring` over a generated XML answer), "
-        "so the payload is prompt-injection reachable -- the sharpest of "
-        "the seven: a poisoned document in the corpus can choose the XML "
-        "the model emits."
-    ),
-    "Local_Ingestion/XML_Ingestion.py": (
-        "Parses user-supplied .xml files chosen for ingestion -- the same "
-        "threat shape as the OPML importer fixed by TASK-19558 (a file the "
-        "user did not write, imported on their behalf)."
-    ),
     "Media/local_media_reading_service.py": (
         "`ET.iterparse` over stored media documents. iterparse streams "
         "elements but still expands internal entities, so a byte cap on the "
@@ -76,14 +65,6 @@ _KNOWN_UNHARDENED: dict[str, str] = {
     "Utils/file_extraction.py": (
         "Parses XML pulled out of user-supplied archives/documents during "
         "extraction."
-    ),
-    "Web_Scraping/Article_Extractor_Lib.py": (
-        "Parses FETCHED sitemaps. A response size cap does not help here: "
-        "amplification is the whole point of a billion-laughs payload -- a "
-        "few hundred bytes on the wire become gigabytes in the parser."
-    ),
-    "Web_Scraping/Article_Scraper/crawler.py": (
-        "Parses FETCHED sitemaps, same as `Article_Extractor_Lib` above."
     ),
 }
 
