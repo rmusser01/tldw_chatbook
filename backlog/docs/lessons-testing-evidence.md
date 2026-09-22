@@ -16252,3 +16252,37 @@ not settle focus scrolling. The shared test Run-click helper now waits for
 scheduled animations and asserts the unchanged Pilot mouse click actually hits.
 No retry or direct-handler bypass is involved. Also assert a Failed outcome in
 redaction tests: absence-only checks had accepted the empty, never-run result.
+
+## `git stash push <path>` + `git stash pop` is not a safe revert-and-restore (task-32901)
+
+**Incident.** Watching a test go red before a fix means running it against the
+pre-fix code. The obvious move is `git stash push <the changed file> -q`, run
+pytest, `git stash pop -q`. It works right up until the file is already
+committed: `git stash push` with a pathspec that has **no uncommitted change
+creates no stash entry at all, and exits 0**. The paired `git stash pop` then
+pops whatever is at `stash@{0}` -- which, in a repo several agents share, was
+another session's stash from a different branch. Six files came back with
+conflict markers, including two production modules. Nothing was lost (`pop`
+reported "The stash entry is kept in case you need it again" and the entry was
+still there afterwards), but a nine-minute test run that was in flight at the
+time reported a spurious `test_every_module_compiles_on_the_declared_python_floor`
+failure, which cost a full re-run to clear.
+
+**What to do.** Never pair `stash push <path>` with a bare `stash pop` for a
+revert-and-restore. Two alternatives, both exact:
+
+* **Before the fix is committed:** copy the file aside first
+  (`cp <file> /tmp/fixed.py`), restore the old content with
+  `git show <base>:<path> > <path>`, run the test, then `cp /tmp/fixed.py
+  <path>`. No stash stack involved.
+* **After the fix is committed:** the same shape, using the base revision --
+  `git show 9e33252708:tldw_chatbook/UI/Navigation/base_app_screen.py > ...`.
+
+And if `stash pop` does fire by accident: the entry is KEPT on conflict, so
+`git reset --hard HEAD` restores your worktree and leaves the other session's
+stash intact. Check `git stash list` before and after to prove it.
+
+**Corollary.** Do not run a long test suite in the background while editing the
+tree it reads. A failure from a half-written file looks exactly like a real
+regression, and the only way to tell is to run it again on a quiet tree --
+which is what the batch comparison was supposed to save you.
