@@ -1,0 +1,58 @@
+[
+  {
+    "source": "<tmp>/2722-qodo-final.json",
+    "export": "2722-qodo-final.json",
+    "source_sha256": "b7b90e7ea33691b30b5251baa6f72ef29f1b9f34da076e7800efdbcfaa7c6f52",
+    "export_sha256": "b7b90e7ea33691b30b5251baa6f72ef29f1b9f34da076e7800efdbcfaa7c6f52",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-qodo-inline.json",
+    "export": "2722-qodo-inline.json",
+    "source_sha256": "cf4f56fc9eb2b90376c21b7d7da13a479411549553a2811c70adde9dade50472",
+    "export_sha256": "39621860bef3ecfaf59972f2c6432e4cce43d861597f12933b34e7a093e60a7e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-review-guidance.txt",
+    "export": "2722-review-guidance.txt",
+    "source_sha256": "779d0a4542959b361e7b0e7c75a114f8511467176d7ff3b254c9c63bd904151a",
+    "export_sha256": "360af5041b37cfae95d04ff135dbe206576fdb6cda13d97f984465b506eb075e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-review-probe.txt",
+    "export": "2722-review-probe.txt",
+    "source_sha256": "2510938437e3e364796b5aabf8fef2c13ab8ba998516bda86d9019457aebe6a7",
+    "export_sha256": "d2a67d6c0fbe7e7e48fca877638046f30acbb6dc367d41cdb611ac073ccb6584",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-review-lint.txt",
+    "export": "2722-review-lint.txt",
+    "source_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "export_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-review-ast.json",
+    "export": "2722-review-ast.json",
+    "source_sha256": "d93debdfcb814a16a202c09527029c82f7c3659515a739d46570ad99b229ea96",
+    "export_sha256": "d93debdfcb814a16a202c09527029c82f7c3659515a739d46570ad99b229ea96",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-qodo-click-probe.jsonl",
+    "export": "2722-qodo-click-probe.jsonl",
+    "source_sha256": "df9efb0e8141e12dcecace9b6ac91e6768dcda7c9e327acdc9aaa2490ce65b82",
+    "export_sha256": "df9efb0e8141e12dcecace9b6ac91e6768dcda7c9e327acdc9aaa2490ce65b82",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2722-capture-comparison.json",
+    "export": "2722-capture-comparison.json",
+    "source_sha256": "b8800dc3aeaa7f10cb4af23b45ae6f51acc685a1badde9c0f7a776990667e2ac",
+    "export_sha256": "b8800dc3aeaa7f10cb4af23b45ae6f51acc685a1badde9c0f7a776990667e2ac",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

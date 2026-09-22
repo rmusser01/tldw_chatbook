@@ -4122,6 +4122,13 @@ async def _select_tools_mode_row(app: App, pilot, row: int) -> None:
     await pilot.pause()
 
 
+async def _click_test_run(pilot) -> None:
+    """Click Run after focus scrolling settles, preserving real mouse dispatch."""
+    await pilot.wait_for_scheduled_animations()
+    await pilot.pause()
+    assert await pilot.click("#mcp-inspector-test-run")
+
+
 def _prepared_test_event(
     service: ToolTestHubService,
     tool: HubTool,
@@ -4338,7 +4345,7 @@ async def test_test_tool_run_success_calls_service_and_renders_ok():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4364,7 +4371,7 @@ async def test_test_tool_run_error_renders_failed_with_message():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4481,7 +4488,7 @@ async def test_test_tool_run_permission_error_renders_blocked_not_failed():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4523,7 +4530,7 @@ async def test_test_tool_run_server_source_display_only_value_error_renders_bloc
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4558,7 +4565,7 @@ async def test_test_tool_run_bare_permission_error_from_tool_body_renders_failed
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4590,7 +4597,7 @@ async def test_test_tool_run_redacts_secret_shaped_result():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4631,7 +4638,7 @@ async def test_test_tool_run_redacts_secret_in_error_shaped_result_note():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4667,7 +4674,7 @@ async def test_test_tool_run_error_with_dict_shaped_args_is_redacted():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4880,7 +4887,7 @@ async def test_test_tool_profile_changed_never_arms_refreshed_stale_authority():
             refreshed_preview=refreshed,
         )
 
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -5009,11 +5016,12 @@ async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
         await _select_tools_mode_row(app, pilot, 0)
         await pilot.click("#mcp-inspector-test-tool")
         await app.workers.wait_for_complete()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         rendered = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert rendered.startswith("Failed · ")
         assert "string-secret" not in rendered
         assert "mapping-secret" not in rendered
         assert "/Users/" not in rendered
@@ -5391,7 +5399,7 @@ async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
         await _select_tools_mode_row(app, pilot, 0)
         await pilot.click("#mcp-inspector-test-tool")
         await app.workers.wait_for_complete()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -5426,7 +5434,7 @@ async def test_test_tool_never_started_outcome_omits_success_decision_note():
         await _select_tools_mode_row(app, pilot, 0)
         await pilot.click("#mcp-inspector-test-tool")
         await app.workers.wait_for_complete()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -5957,7 +5965,7 @@ async def test_test_tool_one_click_builtin_uses_prepared_entry_point():
         await pilot.click("#mcp-inspector-test-tool")
         await app.workers.wait_for_complete()
         app.query_one("#mcp-schema-field-0", Input).value = "1"
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -6093,7 +6101,7 @@ async def test_test_tool_run_non_str_dict_key_result_does_not_crash():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -6133,7 +6141,7 @@ async def test_test_tool_run_non_mapping_result_str_raises_does_not_crash():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -6218,7 +6226,7 @@ async def test_collect_arguments_value_error_does_not_call_service():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         # required "query" field left empty
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -6240,7 +6248,7 @@ async def test_raw_mode_tool_run_posts_parsed_json_to_service():
         await pilot.pause()
         raw_area = app.query_one("#mcp-schema-raw", TextArea)
         raw_area.text = '{"id": 42}'
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -8636,7 +8644,7 @@ async def test_test_tool_blocked_change_button_jumps_to_permissions_row():
         await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -8711,7 +8719,7 @@ async def test_goto_permission_row_is_the_single_shared_implementation_for_all_t
         app.unified_mcp_service.gate_state = "deny"
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
+        await _click_test_run(pilot)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
