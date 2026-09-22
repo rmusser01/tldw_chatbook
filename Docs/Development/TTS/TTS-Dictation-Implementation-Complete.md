@@ -71,7 +71,7 @@ All requested improvements to the TTS and Dictation features have been successfu
 - `/tldw_chatbook/Widgets/audio_troubleshooting_dialog.py` - Device diagnostics
 - `/tldw_chatbook/Widgets/voice_command_dialog.py` - Command configuration
 - `/tldw_chatbook/Widgets/transcription_history_viewer.py` - Retired with the rejected history implementation
-- `/tldw_chatbook/Widgets/dictation_performance_widget.py` - Performance dashboard
+- `/tldw_chatbook/Widgets/dictation_performance_widget.py` - Retired (unused; removed in task-32810)
 
 ### Event System
 - `/tldw_chatbook/Event_Handlers/Audio_Events/dictation_integration_events.py` - Integration events
