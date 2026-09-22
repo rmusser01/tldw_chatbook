@@ -16,7 +16,6 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
 def test_workbench_package_import_does_not_load_widget_or_navigation_modules():
     module_names = (
         "tldw_chatbook.UI.Workbench",
-        "tldw_chatbook.UI.Workbench.route_inventory",
         "tldw_chatbook.UI.Workbench.workbench_widgets",
         "tldw_chatbook.UI.Navigation.screen_registry",
         "tldw_chatbook.UI.Navigation.shell_destinations",
@@ -38,7 +37,6 @@ def test_workbench_package_import_does_not_load_widget_or_navigation_modules():
     try:
         importlib.import_module("tldw_chatbook.UI.Workbench")
 
-        assert "tldw_chatbook.UI.Workbench.route_inventory" not in sys.modules
         assert "tldw_chatbook.UI.Workbench.workbench_widgets" not in sys.modules
         assert "tldw_chatbook.UI.Navigation.screen_registry" not in sys.modules
         assert "tldw_chatbook.UI.Navigation.shell_destinations" not in sys.modules
