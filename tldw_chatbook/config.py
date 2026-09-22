@@ -5292,6 +5292,9 @@ google_safe_search = false
 # Maximum file sizes for processing
 max_audio_file_size_mb = 500
 max_video_file_size_mb = 2000
+# Whole-file read ceiling for text-shaped sources (plaintext, HTML, and the
+# MOBI basic-text fallback), which are read entirely into memory.
+max_text_file_size_mb = 50
 
 # FFmpeg path (optional - will try to find automatically if not set)
 # ffmpeg_path = "/usr/bin/ffmpeg"

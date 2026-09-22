@@ -298,6 +298,9 @@ def _pcm_16k_mono(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
+            # A malformed or adversarial container can park ffmpeg
+            # indefinitely; bound it rather than wedge the worker.
+            timeout=3600,
         )
         return _read_normalized_wav(temporary_path)
     finally:

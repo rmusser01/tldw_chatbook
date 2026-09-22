@@ -525,6 +525,52 @@ _TEXT_CHUNK_TYPES = frozenset(
 _TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article", "image"})
 
 
+def max_text_file_bytes() -> int:
+    """Return the whole-file read ceiling for text-shaped ingest sources.
+
+    Symmetric with ``LocalAudioProcessor``/``LocalVideoProcessor``, which read
+    ``media_processing.max_audio_file_size_mb`` (500) and
+    ``media_processing.max_video_file_size_mb`` (2000) the same way, including
+    the explicit ``None`` fallback for a config key present but unset.
+
+    Returns:
+        The cap in bytes.
+    """
+    from ..config import get_cli_setting
+
+    max_mb = get_cli_setting("media_processing.max_text_file_size_mb", 50)
+    if max_mb is None:
+        max_mb = 50
+    return int(max_mb) * 1024 * 1024
+
+
+def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
+    """Read a text-shaped ingest file whole, refusing anything over the cap.
+
+    ``Path.read_bytes()`` on an ingest path is unbounded: plaintext and HTML
+    were read entirely into memory with no ceiling at all, while the audio and
+    video processors beside them have had one for their own sources all along.
+
+    Args:
+        file_path: Path to the file to read.
+
+    Returns:
+        The file's bytes.
+
+    Raises:
+        FileIngestionError: The file is larger than the configured cap. Message
+            shape matches the audio/video limit errors verbatim.
+    """
+    path = Path(file_path)
+    max_bytes = max_text_file_bytes()
+    size = path.stat().st_size
+    if size > max_bytes:
+        raise FileIngestionError(
+            f"File size ({size / (1024 * 1024):.2f} MB) exceeds limit"
+        )
+    return path.read_bytes()
+
+
 def _decode_ingest_text(
     raw: bytes, encoding: Optional[str]
 ) -> tuple[str, list[str]]:
@@ -1486,7 +1532,7 @@ def parse_local_file_for_ingest(
             # the old "chunking will be handled by the database" comment
             # described a placeholder that never chunked anything.
             content, decode_warnings = _decode_ingest_text(
-                file_path.read_bytes(), encoding
+                read_ingest_file_bytes(file_path), encoding
             )
 
             # Simple result structure for plaintext
@@ -1512,7 +1558,7 @@ def parse_local_file_for_ingest(
             # (task-3301) Decoded per the form's Encoding selection -- the
             # old strict-utf-8 open failed the whole job on latin-1 bytes.
             html_content, decode_warnings = _decode_ingest_text(
-                file_path.read_bytes(), encoding
+                read_ingest_file_bytes(file_path), encoding
             )
 
             # Parse HTML and extract text

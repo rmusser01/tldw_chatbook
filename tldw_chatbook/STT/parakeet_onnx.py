@@ -152,6 +152,9 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
             ],
             check=True,
             capture_output=True,
+            # A malformed or adversarial container can park ffmpeg
+            # indefinitely; bound it rather than wedge the worker.
+            timeout=3600,
         )
         yield output
     finally:

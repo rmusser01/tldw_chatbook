@@ -409,7 +409,23 @@ class AudioService:
                     output_path,
                 ]
 
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        # ffmpeg reads stdin for interactive commands; with
+                        # stdin inherited it competes with the TUI for the
+                        # terminal and can block forever waiting on it.
+                        stdin=subprocess.DEVNULL,
+                        timeout=3600,
+                    )
+                except subprocess.TimeoutExpired:
+                    # A timeout is an ffmpeg failure; shaping it as one keeps
+                    # the reporting below (and its path-privacy census row)
+                    # exactly as it was, and takes the same chapterless
+                    # fallback rather than losing the whole book.
+                    result = subprocess.CompletedProcess(cmd, 1, "", "timed out")
                 if result.returncode != 0:
                     logger.error(f"FFmpeg error: {result.stderr}")
                     # Fallback: just save as M4B without chapters
