@@ -7548,7 +7548,6 @@ class ConsoleWorkspaceController:
         label: str,
     ) -> None:
         """Read the current version, write the state, and report the outcome."""
-        import asyncio
 
         from ...Chat.console_conversation_actions import conversation_state_label
 
@@ -7625,7 +7624,6 @@ class ConsoleWorkspaceController:
         self, conversation_id: str, new_title: str
     ) -> None:
         """Write a new conversation title off the event loop."""
-        import asyncio
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
@@ -7697,7 +7695,6 @@ class ConsoleWorkspaceController:
         self, conversation_id: str, conversation_title: str
     ) -> None:
         """Soft-delete one conversation off the event loop."""
-        import asyncio
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:

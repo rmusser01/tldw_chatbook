@@ -500,7 +500,6 @@ class BaseAppScreen(Screen):
     def _footer_status(self):
         """This screen's own AppFooterStatus, or None before compose."""
         from ...Widgets.AppFooterStatus import AppFooterStatus  # noqa: PLC0415 -- circular (see compose)
-        from textual.css.query import QueryError
 
         try:
             return self.query_one(AppFooterStatus)

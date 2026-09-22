@@ -1,4 +1,4 @@
-# chat_rag_events_simplified.py
+# chat_rag_events.py
 # Description: Simplified event handlers for RAG functionality using pipeline system
 #
 # Imports
@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 # Configure logger with context
-logger = logger.bind(module="chat_rag_events_simplified")
+logger = logger.bind(module="chat_rag_events")
 
 
 @dataclass(frozen=True)

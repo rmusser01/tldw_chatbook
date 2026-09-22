@@ -35,13 +35,7 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 from ..Utils.egress import EgressBlockedError, check_url_or_raise_async
-
-try:  # metrics are best-effort; never let their absence break delivery
-    from ..Metrics.metrics_logger import log_counter
-except Exception:  # noqa: BLE001
-
-    def log_counter(*_args: Any, **_kwargs: Any) -> None:  # type: ignore
-        return None
+from ..Metrics.metrics_logger import log_counter
 
 
 WEBHOOK_SIGNATURE_HEADER = "X-Tldw-Signature"
