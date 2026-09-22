@@ -16222,3 +16222,21 @@ not against the screen class's declaration. And a "pre-existing failures"
 baseline earns one root-cause pass before it is treated as noise: a number
 you inherited and never explained is a standing assumption that every future
 triage will be measured against.
+
+### A truncated grep is not a references check (TASK-32864, PR #2795)
+
+**What happened.** Collapsing `CancelConfirmationDialog` onto the shared
+pattern renamed its buttons from `#continue-btn`/`#cancel-btn` to
+`#cancel-button`/`#confirm-button`. A repo-wide grep for the old ids was
+piped through `head -8`, the visible hits were all unrelated dialogs, and
+the change shipped on that evidence. Two dependent suites
+(`test_console_video_capacity.py`, `test_console_prompt_queue_modal.py`)
+still clicked the removed selectors — their hits sat beyond the cutoff —
+and the PR's AI reviewer caught what the verification did not.
+
+**What to do.** A references check that feeds a rename must be exhaustive
+by construction: count the matches (`grep -c` / `| wc -l`) and assert the
+number you inspected, never trust a `head` window into an unbounded list.
+And run the callers' suites, not just the changed module's: the collapse
+was pinned by the dismissal suite while the two interaction suites that
+actually pressed the renamed buttons never ran.

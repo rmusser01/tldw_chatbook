@@ -392,7 +392,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         assert guard_count == 1
 
         if cancel_guard_with == "continue":
-            await pilot.click("#continue-btn")
+            await pilot.click("#cancel-button")
         else:
             await pilot.click(offset=(0, 0))
         await pilot.pause()
@@ -417,7 +417,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         await capacity_modal.request_safe_cancel(source="backdrop")
         await pilot.pause()
         assert isinstance(host.screen, CancelConfirmationDialog)
-        await pilot.click("#cancel-btn")
+        await pilot.click("#confirm-button")
         await worker.wait()
         await pilot.pause()
 

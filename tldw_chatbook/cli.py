@@ -8,6 +8,12 @@ def main_cli_runner() -> Any:
 
     Returns:
         The full application runner's return value.
+
+    Raises:
+        SystemExit: With status 1 when a private-path refusal (fail-closed
+            by design) escapes the Backup_Recovery preflight, the heavy
+            application import, or the runner itself. The plain-language
+            diagnostic is emitted to stderr first; no traceback is shown.
     """
 
     # TASK-21147 (UAT G-7): silence import-time DEBUG/INFO spew BEFORE the
@@ -48,28 +54,48 @@ def main_cli_runner() -> Any:
             launch_attempt=selected.recovery_launch_attempt,
         )
     sys.argv[1:] = remaining
-    from tldw_chatbook.Backup_Recovery.launcher import (
-        minimal_recovery,
-        startup_preflight,
+
+    # task-32900: a private-path refusal (fail-closed by design, ADR-029/
+    # ADR-127) must not reach a first-time user as a bare traceback.
+    # config.py already emitted the plain-language diagnostic before
+    # re-raising; this emit covers refusals from later startup stages
+    # (preflight, storage admission, the app import itself) and is a no-op
+    # when the diagnostic was already printed. SystemExit(1) keeps the
+    # packaged command's output to the diagnostic alone.
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+    from tldw_chatbook.Utils.startup_errors import (
+        emit_private_path_startup_error,
     )
 
-    reason, password = startup_preflight()
-    if reason is not None:
-        return minimal_recovery(reason)
-    from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+    try:
+        from tldw_chatbook.Backup_Recovery.launcher import (
+            minimal_recovery,
+            startup_preflight,
+        )
 
-    admit_startup()
-    if password is not None:
-        from tldw_chatbook.config import set_encryption_password
+        reason, password = startup_preflight()
+        if reason is not None:
+            return minimal_recovery(reason)
+        from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
-        set_encryption_password(password)
-        password = None
+        admit_startup()
+        if password is not None:
+            from tldw_chatbook.config import set_encryption_password
 
-    from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
+            set_encryption_password(password)
+            password = None
 
-    result = app_main_cli_runner()
-    from tldw_chatbook.Backup_Recovery.recovery_restart import RecoveryRestart, restart
+        from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 
-    if type(result) is RecoveryRestart:
-        return restart(result)
-    return result
+        result = app_main_cli_runner()
+        from tldw_chatbook.Backup_Recovery.recovery_restart import (
+            RecoveryRestart,
+            restart,
+        )
+
+        if type(result) is RecoveryRestart:
+            return restart(result)
+        return result
+    except PrivatePathError as exc:
+        emit_private_path_startup_error(exc)
+        raise SystemExit(1) from None
