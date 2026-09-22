@@ -156,7 +156,6 @@ RETIRED_FILES = (
 CCP_HANDLER_FILES = (
     "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_persona_handler.py",
-    "tldw_chatbook/UI/CCP_Modules/ccp_message_manager.py",
 )
 
 
