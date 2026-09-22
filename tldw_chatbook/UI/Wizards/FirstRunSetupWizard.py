@@ -99,6 +99,7 @@ from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_mess
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
     WizardNavigation,
@@ -158,6 +159,15 @@ class SetupRadioButton(RadioButton):
             else LIBRARY_GLYPH_RADIO_UNSELECTED
         )
         return super()._button
+
+
+def _radio_model_id(button) -> str:
+    """The raw embedding model id a `SetupRadioButton` was built from.
+
+    Falls back to the rendered label for buttons built before the id was
+    carried on `name` (tier-2 review S21 P3).
+    """
+    return str(getattr(button, "name", None) or button.label)
 
 
 class SetupCheckbox(Checkbox):
@@ -863,6 +873,17 @@ class _ProviderConnectionUiDraft:
 
     def __deepcopy__(self, memo: object) -> object:
         del memo
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __reduce__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        # `pickle` consults `__reduce_ex__` first, so sealing only
+        # `__reduce__` still let `pickle.dumps` emit the plaintext key --
+        # the gap between this class and its `ProviderCredentialDraft`
+        # sibling, which seals all four (tier-2 review S21 P3).
+        del protocol
         raise TypeError("Provider credentials are memory-only.")
 
     def clear_secret(self) -> None:
@@ -4890,7 +4911,15 @@ class RagStep(SetupStep):
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
             with SetupRadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
-                    yield SetupRadioButton(model_id)
+                    # The id comes from the user's `[embedding_config] models`
+                    # table, so it must not be handed to a markup parser: a
+                    # `[dim]` segment is silently deleted from the label (and
+                    # so from what is read back into config), and a `[/]` one
+                    # raises MarkupError out of compose(). The raw id rides
+                    # `name`, as AppearanceStep rides `_theme_name`, so the
+                    # committed value never depends on the rendering
+                    # (tier-2 review S21 P3).
+                    yield SetupRadioButton(escape_markup(model_id), name=model_id)
 
     def _embedding_model_ids(self) -> list[str]:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -4930,7 +4959,7 @@ class RagStep(SetupStep):
 
     @on(RadioSet.Changed, "#setup-rag-model-choice")
     def _on_model(self, event: RadioSet.Changed) -> None:
-        self.selected_embedding_model = str(event.pressed.label)
+        self.selected_embedding_model = _radio_model_id(event.pressed)
 
     def _effective_embedding_model(self) -> str:
         """F-A fix: same pressed-radio fallback as ProviderStep/ModelStep."""
@@ -4940,7 +4969,7 @@ class RagStep(SetupStep):
             pressed = self.query_one("#setup-rag-model-choice", RadioSet).pressed_button
         except Exception:
             return ""
-        return str(pressed.label) if pressed is not None else ""
+        return _radio_model_id(pressed) if pressed is not None else ""
 
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_rag_commit
@@ -8533,7 +8562,7 @@ class SetupWizardContainer(WizardContainer):
                 rag_step.selected_embedding_model = embedding_model
                 self._restore_radio_selection(
                     rag_step.query_one("#setup-rag-model-choice", RadioSet),
-                    lambda button: str(button.label) == embedding_model,
+                    lambda button: _radio_model_id(button) == embedding_model,
                 )
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
