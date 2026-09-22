@@ -215,6 +215,7 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     app.local_prompt_service = SimpleNamespace(marker="prompts")
     app.local_skills_service = SimpleNamespace(marker="skills")
     app.local_chat_conversation_service = SimpleNamespace(marker="conversations")
+    app.local_library_collections_service = SimpleNamespace(marker="collections")
 
     provider = screen._library_activity.build_provider(_turn_context(direct=True))
 
@@ -225,6 +226,7 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     assert service._prompts is app.local_prompt_service
     assert service._skills is app.local_skills_service
     assert service._conversations is app.local_chat_conversation_service
+    assert service._collections is app.local_library_collections_service
 
 
 def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypatch):
