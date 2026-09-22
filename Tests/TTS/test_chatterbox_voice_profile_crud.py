@@ -100,3 +100,29 @@ def test_delete_never_escapes_the_samples_root(manager, sample, tmp_path):
         with pytest.raises(ValueError, match="invalid_voice_name"):
             manager.delete_profile(malicious)
         assert sentinel.read_text() == "keep", malicious
+
+
+def test_create_refuses_an_oversized_reference_before_copying_it(
+    manager, sample, monkeypatch, tmp_path
+):
+    """Chatterbox had no size bound on a user-picked reference file.
+
+    Tier-2 review S03/S04: `VoiceManagerBase.validate_audio_file` checked
+    existence and extension only, and `create_profile` then hands the file to
+    `loose_voice_lifetime.copy`, which reads it WHOLE into memory in one
+    `stream.read()`. Higgs carried a 100 MB bound; Chatterbox, which inherits
+    the base unchanged, carried none, so a user picking a multi-GB container
+    OOMs the TUI. The bound is checked here on the base so both managers and
+    any future subclass get it.
+    """
+    monkeypatch.setattr(type(manager), "max_reference_audio_bytes", 512)
+    oversized = _write_wav(tmp_path / "big.wav")
+    assert oversized.stat().st_size > 512
+
+    ok, message = manager.create_profile("too-big", str(oversized))
+
+    assert ok is False
+    assert "too large" in message.lower()
+    # Nothing was copied: the profile directory must not exist.
+    assert not (manager.voice_samples_dir / "too-big").exists()
+    assert manager.load_profiles() == {}

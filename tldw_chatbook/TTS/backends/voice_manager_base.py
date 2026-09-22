@@ -42,6 +42,15 @@ class VoiceManagerBase(ABC):
     action_log_label = ""
     #: Create a ``backups`` directory and call ``_backup_before_save`` on save.
     keep_backups = False
+    #: Largest reference-audio file a profile may adopt. ``create_profile``
+    #: copies the picked file whole through a single in-memory read
+    #: (``loose_voice_lifetime.copy``), so an unbounded pick -- a multi-GB
+    #: container, say -- is an OOM of the whole TUI. Matches the bound
+    #: ``HiggsVoiceProfileManager`` already applies in its own validator.
+    #: NOT ``sample_audio_validation.MAX_PLAYABLE_AUDIO_BYTES`` (8 MiB): that
+    #: bounds audio this app GENERATED, and would reject an ordinary
+    #: few-minute user recording.
+    max_reference_audio_bytes = 100 * 1024 * 1024
 
     def __init__(self, voice_samples_dir: Path):
         """
@@ -315,8 +324,9 @@ class VoiceManagerBase(ABC):
         """
         Validate and get info about audio file.
 
-        Default implementation checks file existence and extension.
-        Subclasses can override for more detailed validation.
+        Default implementation checks file existence, extension, and size
+        against ``max_reference_audio_bytes``. Subclasses can override for
+        more detailed validation.
 
         Args:
             audio_path: Path to audio file
@@ -332,9 +342,18 @@ class VoiceManagerBase(ABC):
             if audio_path.suffix.lower() not in valid_extensions:
                 return False, {"error": f"Unsupported format: {audio_path.suffix}"}
 
+            size_bytes = audio_path.stat().st_size
+            if size_bytes > self.max_reference_audio_bytes:
+                return False, {
+                    "error": (
+                        f"File too large: {size_bytes / (1024 * 1024):.1f}MB "
+                        f"(max {self.max_reference_audio_bytes // (1024 * 1024)}MB)"
+                    )
+                }
+
             info = {
                 "path": str(audio_path),
-                "size_mb": audio_path.stat().st_size / (1024 * 1024),
+                "size_mb": size_bytes / (1024 * 1024),
                 "format": audio_path.suffix.lower(),
             }
 
