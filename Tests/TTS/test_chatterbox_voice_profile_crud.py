@@ -81,3 +81,22 @@ def test_no_backup_directory_unless_enabled(manager, sample):
     manager.create_profile("voice", str(sample))
     manager.create_profile("voice2", str(sample))
     assert not (manager.voice_samples_dir / "backups").exists()
+
+
+def test_delete_never_escapes_the_samples_root(manager, sample, tmp_path):
+    """Traversal-shaped names are refused before any filesystem effect.
+
+    Two independent layers refuse them: the loose-voice admission wrapper
+    rejects path-component characters in profile_name on every wrapped
+    call, and the shared delete validates the joined directory against the
+    samples root before removal (PR #2794 review, security finding).
+    """
+    outside = tmp_path / "outside-marker"
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("keep")
+
+    for malicious in ("../outside-marker", "..", "a/b", "a" + chr(92) + "b"):
+        with pytest.raises(ValueError, match="invalid_voice_name"):
+            manager.delete_profile(malicious)
+        assert sentinel.read_text() == "keep", malicious

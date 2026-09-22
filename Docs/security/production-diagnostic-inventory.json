@@ -2382,7 +2382,7 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "3fd92a8bb3832863d20d",
+      "diagnostic_digest": "80a7d14d35d0035765a7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/voice_manager_base.py",
       "reason": "remaining Chatbook production diagnostic owner"

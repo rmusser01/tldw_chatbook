@@ -73,6 +73,11 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
 
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):
+        """Initialize the manager and its profile store.
+
+        Args:
+            voice_samples_dir: Directory for storing voice samples and profiles.
+        """
         super().__init__(voice_samples_dir)
 
     def _backup_before_save(self) -> None:

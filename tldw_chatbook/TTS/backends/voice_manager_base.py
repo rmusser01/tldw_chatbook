@@ -1,4 +1,3 @@
-from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # voice_manager_base.py
 # Description: Base class for TTS voice profile managers
 #
@@ -10,6 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from loguru import logger
 
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
@@ -45,10 +45,12 @@ class VoiceManagerBase(ABC):
 
     def __init__(self, voice_samples_dir: Path):
         """
-        Initialize the voice manager.
+        Initialize the voice manager and its profile store.
 
         Args:
-            voice_samples_dir: Directory for storing voice samples and profiles
+            voice_samples_dir: Directory for storing voice samples and profiles;
+                the records file, cache, and optional backups directory live
+                inside it.
         """
         self.voice_samples_dir = Path(voice_samples_dir)
         voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
@@ -66,7 +68,12 @@ class VoiceManagerBase(ABC):
 
     @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Load voice profiles from disk"""
+        """Load the profile records from the store file.
+
+        Returns:
+            The cached-or-loaded ``{name: record}`` mapping; empty when the
+            store is missing or unreadable.
+        """
         if self._profiles_cache is not None:
             return self._profiles_cache
 
@@ -85,7 +92,14 @@ class VoiceManagerBase(ABC):
 
     @voice_files.call
     def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
-        """Save voice profiles to disk"""
+        """Persist the profile records, backing up first when enabled.
+
+        Args:
+            profiles: The complete ``{name: record}`` mapping to store.
+
+        Returns:
+            True on success; False (logged) on a write failure.
+        """
         try:
             self._backup_before_save()
 
@@ -100,7 +114,14 @@ class VoiceManagerBase(ABC):
 
     @voice_files.call
     def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        """Get a specific voice profile"""
+        """Get one profile record.
+
+        Args:
+            profile_name: Profile identifier.
+
+        Returns:
+            The record, or None when absent.
+        """
         profiles = self.load_profiles()
         return profiles.get(profile_name)
 
@@ -114,7 +135,19 @@ class VoiceManagerBase(ABC):
         tags: Optional[List[str]] = None,
         metadata_update: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, str]:
-        """Update an existing voice profile"""
+        """Update an existing voice profile.
+
+        Args:
+            profile_name: Profile identifier.
+            display_name: New display name (optional).
+            language: New language code (optional).
+            description: New description (optional).
+            tags: New tags list (optional).
+            metadata_update: Metadata fields to merge (optional).
+
+        Returns:
+            ``(success, message)``.
+        """
         try:
             profiles = self.load_profiles()
             if profile_name not in profiles:
@@ -143,19 +176,37 @@ class VoiceManagerBase(ABC):
                 return False, "Failed to save profile updates"
 
         except Exception as e:
-            logger.error(f"Error updating {self.action_log_label}profile: {e}")
+            logger.error(
+                f"Error updating {self.action_log_label}profile '{profile_name}': {e}"
+            )
             return False, f"Error: {str(e)}"
 
     @voice_files.call
     def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
-        """Delete a voice profile"""
+        """Delete a voice profile and its reference directory.
+
+        Args:
+            profile_name: Profile identifier; validated to stay inside the
+                samples root before any filesystem removal.
+
+        Returns:
+            ``(success, message)``.
+        """
         try:
             profiles = self.load_profiles()
             if profile_name not in profiles:
                 return False, f"Profile '{profile_name}' not found"
 
-            # Remove profile directory
+            # Remove profile directory. Profile names are path components:
+            # the loose-voice wrapper refuses path-component characters in
+            # profile_name before this call, and this resolution-free check
+            # (validating via resolve() would desynchronize from the
+            # admission layer's registered, unresolved roots) is the second
+            # containment layer -- a traversal-shaped name never reaches
+            # the filesystem.
             profile_dir = self.voice_samples_dir / profile_name
+            if Path(profile_name).name != profile_name:
+                return False, "Error: invalid profile name"
             if profile_dir.exists():
                 voice_files.remove_tree(self, profile_dir)
 
@@ -170,7 +221,9 @@ class VoiceManagerBase(ABC):
                 return False, "Failed to save profile deletion"
 
         except Exception as e:
-            logger.error(f"Error deleting {self.action_log_label}profile: {e}")
+            logger.error(
+                f"Error deleting {self.action_log_label}profile '{profile_name}': {e}"
+            )
             return False, f"Error: {str(e)}"
 
     @abstractmethod

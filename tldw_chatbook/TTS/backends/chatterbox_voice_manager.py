@@ -33,6 +33,11 @@ class ChatterboxVoiceManager(VoiceManagerBase):
 
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):
+        """Initialize the manager and its profile store.
+
+        Args:
+            voice_samples_dir: Directory for storing voice samples and profiles.
+        """
         super().__init__(voice_samples_dir)
 
     @voice_files.call

@@ -76,7 +76,9 @@ def test_list_summaries_filter_tags_and_sort(manager, sample):
     first = listed[0]
     assert first["display_name"] == "A-first"
     assert first["has_reference"] is True
-    assert first["audio_duration"] == 0  # no soundfile in this environment
+    # 0 without soundfile; the true 0.1s duration when it is installed
+    # (the higgs_tts extra) -- both are the real recorded value.
+    assert first["audio_duration"] in (0, pytest.approx(0.1))
     assert manager.list_profiles(tags=["y"])[0]["name"] == "alpha"
     assert manager.list_profiles(tags=["nope"]) == []
 
@@ -132,3 +134,22 @@ def test_save_creates_timestamped_backup(manager, sample):
     manager.create_profile("voice2", str(sample))
     backups = list(manager.backup_dir.glob("voice_profiles_backup_*.json"))
     assert len(backups) == 1  # only the second save had a prior file to back up
+
+
+def test_delete_never_escapes_the_samples_root(manager, sample, tmp_path):
+    """Traversal-shaped names are refused before any filesystem effect.
+
+    Two independent layers refuse them: the loose-voice admission wrapper
+    rejects path-component characters in profile_name on every wrapped
+    call, and the shared delete validates the joined directory against the
+    samples root before removal (PR #2794 review, security finding).
+    """
+    outside = tmp_path / "outside-marker"
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("keep")
+
+    for malicious in ("../outside-marker", "..", "a/b", "a" + chr(92) + "b"):
+        with pytest.raises(ValueError, match="invalid_voice_name"):
+            manager.delete_profile(malicious)
+        assert sentinel.read_text() == "keep", malicious
