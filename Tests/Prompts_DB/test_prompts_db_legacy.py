@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import threading
+import zipfile
 from pathlib import Path
 
 # The module to be tested
@@ -589,6 +590,58 @@ class TestStandaloneFunctions(BaseTestCase):
         self.assertTrue(os.path.exists(file_path))
         # A more thorough test could unzip and verify content, but file creation is a good start.
         os.remove(file_path)
+
+    def test_export_prompts_formatted_markdown_disambiguates_colliding_names(self):
+        """Colliding prompt names must not drop prompts from the markdown export.
+
+        Two names that sanitise to the same filename ("a:b" and "a?b" both ->
+        "a_b.md") previously overwrote the staging file and wrote duplicate zip
+        entries, so extractors yielded one prompt while the status claimed both.
+        """
+        file_db = self._get_file_db()
+        file_db.add_prompt(
+            name="a:b", author="A", details="", system_prompt="", user_prompt="",
+            keywords=[], overwrite=True,
+        )
+        file_db.add_prompt(
+            name="a?b", author="A", details="", system_prompt="", user_prompt="",
+            keywords=[], overwrite=True,
+        )
+
+        status, file_path = export_prompts_formatted(file_db, export_format="markdown")
+        self.assertIn("Successfully exported 2 prompts to Markdown", status)
+        try:
+            with zipfile.ZipFile(file_path) as zf:
+                names = zf.namelist()
+                self.assertEqual(len(names), 2, names)
+                self.assertEqual(len(set(names)), 2, f"duplicate arcnames: {names}")
+                bodies = "\n".join(zf.read(n).decode("utf-8") for n in names)
+            # Each prompt's own name is in its markdown body; both must be present
+            # (i.e. neither was overwritten by the other on the colliding name).
+            self.assertIn("a:b", bodies)
+            self.assertIn("a?b", bodies)
+        finally:
+            os.remove(file_path)
+
+    def test_markdown_export_arcname_disambiguation(self):
+        """_markdown_export_arcname gives every prompt a unique, collision-safe name.
+
+        Isolated coverage of the id-suffix branch, the numeric fallback, the
+        case-insensitive/NFC collision, and the empty-name fallback.
+        """
+        from tldw_chatbook.DB.Prompts_DB import _markdown_export_arcname
+
+        used = set()
+        self.assertEqual(_markdown_export_arcname("a:b", 1, used), "a_b.md")
+        self.assertEqual(_markdown_export_arcname("a?b", 2, used), "a_b-2.md")
+        # "A_B" keys to the same as "a_b" on a case-insensitive filesystem.
+        self.assertEqual(_markdown_export_arcname("A_B", 3, used), "A_B-3.md")
+        # Numeric fallback when the base-id name also collides.
+        self.assertEqual(
+            _markdown_export_arcname("x", 9, {"x.md", "x-9.md"}), "x-9-2.md"
+        )
+        # Empty / all-stripped name falls back to a stable stem.
+        self.assertEqual(_markdown_export_arcname("   ", 4, set()), "prompt.md")
 
 
 class TestDatabaseIntegrityAndSchema(BaseTestCase):
