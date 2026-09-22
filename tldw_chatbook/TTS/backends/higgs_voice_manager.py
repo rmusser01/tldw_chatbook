@@ -84,9 +84,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
         self._create_backup()
 
     @voice_files.call
-    @voice_files.call
-    @voice_files.call
-    @voice_files.call
     def create_profile(
         self,
         profile_name: str,
@@ -170,8 +167,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
             return False, f"Error: {str(e)}"
 
     @voice_files.call
-    @voice_files.call
-    @voice_files.call
     def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         List all voice profiles.
@@ -208,7 +203,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
         result.sort(key=lambda x: x["display_name"].lower())
         return result
 
-    @voice_files.call
     @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """

@@ -41,9 +41,6 @@ class ChatterboxVoiceManager(VoiceManagerBase):
         super().__init__(voice_samples_dir)
 
     @voice_files.call
-    @voice_files.call
-    @voice_files.call
-    @voice_files.call
     def create_profile(
         self,
         profile_name: str,
@@ -165,8 +162,6 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             profile["backend"] = "chatterbox"
         return profile
 
-    @voice_files.call
-    @voice_files.call
     @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """Export a Chatterbox voice profile"""
