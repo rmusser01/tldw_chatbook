@@ -1,0 +1,6 @@
+Read-only independent diagnosis of the six failures reproduced on untouched ea2d7b22a8:
+- Inactive local profile inspection now returns empty state (MCP/local_store.py:717); the old test expects profiles.
+- Inactive remote context resets to default/local (MCP/unified_context_store.py:47), invalidating the old selected-server/routing assumptions for inspection and run_action.
+- The approved remote fixture only sets owner flags (Tests/Backup_Recovery/test_activation_mcp_remote.py:78); current admission also requires reviewed root bindings (MCP/recovery_activation.py:422), so the two approved cases fail closed.
+- The retained-await test (test_activation_mcp_remote.py:249) waits for the fake server to be entered although the stale setup fails earlier. The timeout does not establish a lease deadlock.
+No Audit/runtime regression identified. Qualification limit: the 132 passing cases qualify their covered paths; successful reviewed remote execution and lease retention are not qualified by these failing tests.

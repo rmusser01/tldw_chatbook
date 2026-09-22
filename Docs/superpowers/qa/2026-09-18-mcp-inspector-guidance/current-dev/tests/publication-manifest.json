@@ -1,0 +1,72 @@
+[
+  {
+    "source": "<tmp>/32836-admission-red.txt",
+    "export": "32836-admission-red.txt",
+    "source_sha256": "52de6584632040c1e1468edce224f82853663239a6ddb98322edd202de29c0fe",
+    "export_sha256": "eb5a54802b07c8f58044463af3c55e8b2df6ccf13d5daad6f33be46023aa6523",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-admission-green.txt",
+    "export": "32836-admission-green.txt",
+    "source_sha256": "512baf8f032ce58a2134232b368a2bbc75c41e4b67cdb4edeaa6f0eb1f4feb20",
+    "export_sha256": "23b206541a4f9d50d1e060696307cb2b55ffd6c3392c77ba12534288aab482dd",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-integration-tests.txt",
+    "export": "32836-integration-tests.txt",
+    "source_sha256": "081c1a64ca8cab341cb72971aef1934a55969074b9aff491bc14e3fa61dff8cc",
+    "export_sha256": "65d4756f816800a04ddcd2520abc31fdd2f1f28be02da35d8185be193b902ef8",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-guidance-fixture-check.txt",
+    "export": "32836-guidance-fixture-check.txt",
+    "source_sha256": "ebfa54899ba00c0ceb86acf7356ba495704dc3829c7912afb2645d124feb592c",
+    "export_sha256": "9bfa1271861d2656cf1f8fbc2023aaa9309ef6484f9a4263a3463a779a2040f0",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-guidance-final.txt",
+    "export": "32836-guidance-final.txt",
+    "source_sha256": "f79f37c180ec4d447b0e7df7e07f5ea50c87c80cdb237a0798e302660b1d93f8",
+    "export_sha256": "b91a2605ecc56e54a0dd55ee050661c5ab83516265ab34d1f541b69e250f6835",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-preflight.txt",
+    "export": "32836-preflight.txt",
+    "source_sha256": "2240ab4d9dfc6c7456b14f0f361f7416c23214d1a36da282c47649d0d129fd0e",
+    "export_sha256": "3571be8b0656e969549aed4aa8a4ec419837d5cced71ae19d19b6703e86e2c66",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-mermaid-retry.txt",
+    "export": "32836-mermaid-retry.txt",
+    "source_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "export_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-upstream-dimensions.json",
+    "export": "32836-upstream-dimensions.json",
+    "source_sha256": "ca6e34ae96e118fe679dcb1d9c7414f23f14ffe9643546aa2bc008b14d09edf8",
+    "export_sha256": "ca6e34ae96e118fe679dcb1d9c7414f23f14ffe9643546aa2bc008b14d09edf8",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-static-analysis.json",
+    "export": "32836-static-analysis.json",
+    "source_sha256": "4839a1f5fb0ed88b85fc520902947f5203de88bc1f0bcb4e379d936ffbaf16dd",
+    "export_sha256": "4839a1f5fb0ed88b85fc520902947f5203de88bc1f0bcb4e379d936ffbaf16dd",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32836-formatting.json",
+    "export": "32836-formatting.json",
+    "source_sha256": "43f42071573bcd62e90dd803e18d86a35438a5b7f19710474f0c876d978fef00",
+    "export_sha256": "6d15cd0edb67bb5ae4f136d748e9e6e5928dbf819f9ee62ac61052d28d23f255",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

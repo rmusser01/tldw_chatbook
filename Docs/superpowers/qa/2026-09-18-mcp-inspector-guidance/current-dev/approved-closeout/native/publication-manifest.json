@@ -1,0 +1,233 @@
+[
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/result.json",
+    "export": "result.json",
+    "source_sha256": "cdf95a49e0785e4bb6c2d2dee8df18f0820b64a6e7834c51d0d95825e6d99d55",
+    "export_sha256": "cfa5aa9da3b3718e1bd2aafe766f278a1e682685caa5bd112c19746d17834bc5",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-audit.svg",
+    "export": "textual-dark-170x48-audit.svg",
+    "source_sha256": "b319c6c998476df6b4f848aaca6a80fa0eb5250707b5e91de0155587be6b2d3e",
+    "export_sha256": "3311d9235fbaaabfd05e6c0c08ad2bcfc3b176bef3631f9c8004abb76fd9b764",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-audit.txt",
+    "export": "textual-dark-170x48-audit.txt",
+    "source_sha256": "38a7e8ff8287fd1e12f2d7a9bdbf4f611b08f889bd0b897da6bb38d34afe57de",
+    "export_sha256": "38a7e8ff8287fd1e12f2d7a9bdbf4f611b08f889bd0b897da6bb38d34afe57de",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-restored.svg",
+    "export": "textual-dark-170x48-restored.svg",
+    "source_sha256": "bf155fe63f8cf404ddf0ba407054adc27d4eaeb1ebaae9c139a8418662710469",
+    "export_sha256": "3eb91c455d7f24eee1886eaddafd1668926fd256cd1b67006ba17cfcd0310f72",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-restored.txt",
+    "export": "textual-dark-170x48-restored.txt",
+    "source_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "export_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-server.svg",
+    "export": "textual-dark-170x48-server.svg",
+    "source_sha256": "5a66e072affeedbc2a0e9effd92f0346972872be2acebeae94e1fa95bd0b3bca",
+    "export_sha256": "53daeefb651814516679e2303b77270f7d3f7fe259b23c75968a9bc4595208e2",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-server.txt",
+    "export": "textual-dark-170x48-server.txt",
+    "source_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "export_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-tool.svg",
+    "export": "textual-dark-170x48-tool.svg",
+    "source_sha256": "e05526bde4d99eeee7f25b7a87917ca28cd02d6739e4a95f5f341c94f4a70c07",
+    "export_sha256": "e4e7fcd70675e422ffdc73c861a0be0ab2630157a5161eef2c6275daccb77ae3",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-170x48-tool.txt",
+    "export": "textual-dark-170x48-tool.txt",
+    "source_sha256": "877f837400a27461f2a966368dc40446f5478647227e44f51564811220d8960e",
+    "export_sha256": "877f837400a27461f2a966368dc40446f5478647227e44f51564811220d8960e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-audit.svg",
+    "export": "textual-dark-80x24-audit.svg",
+    "source_sha256": "0c1836b327a553cd161c2782e5950418f3eb0c97af96c8bf2b402fc34b162494",
+    "export_sha256": "b1de65c5bc6fc98c968c6fd921fab49ef08c428d5b1f1553fc5c406bc04a8e17",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-audit.txt",
+    "export": "textual-dark-80x24-audit.txt",
+    "source_sha256": "587ea1051bb34b2b70ebcd760a8a58cabd1add634723471dbd98fd23b5f0823c",
+    "export_sha256": "587ea1051bb34b2b70ebcd760a8a58cabd1add634723471dbd98fd23b5f0823c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-restored.svg",
+    "export": "textual-dark-80x24-restored.svg",
+    "source_sha256": "e9c086a1f0d593c18b927f517bf96977bb439316410ae530bdaa1a0f56d8f4d7",
+    "export_sha256": "68eb6fcd434eadd56c4d672b1cba399961b8be4d8aaf53ef209d82ff325c7ca8",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-restored.txt",
+    "export": "textual-dark-80x24-restored.txt",
+    "source_sha256": "9c20b20e9a7208176a5c380a04e115c65b832f8cf6ababfcce3deb6189cf6268",
+    "export_sha256": "9c20b20e9a7208176a5c380a04e115c65b832f8cf6ababfcce3deb6189cf6268",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-server.svg",
+    "export": "textual-dark-80x24-server.svg",
+    "source_sha256": "3a30f7b7e635687550d4d3ad2c63c0df7bcd5ebd07b54881b36fcea1021c2ddf",
+    "export_sha256": "055397683339ae90de8237cf7220f3fc8c4c3faf1b88eb9a4427f8d3c5a7c34b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-server.txt",
+    "export": "textual-dark-80x24-server.txt",
+    "source_sha256": "ae5f8cd9a7ba8a84d89e1692ff863ff373959456ac2af3a386744bcdd087abcb",
+    "export_sha256": "ae5f8cd9a7ba8a84d89e1692ff863ff373959456ac2af3a386744bcdd087abcb",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-tool.svg",
+    "export": "textual-dark-80x24-tool.svg",
+    "source_sha256": "329ad3693380d09eb751c5d145082721d4e02b08bcb54757523fdad3e795c009",
+    "export_sha256": "a1e1d509040e265e9dfbe88fa90bc9d777534980bc2b003c34a746f34d9961fe",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-dark-80x24-tool.txt",
+    "export": "textual-dark-80x24-tool.txt",
+    "source_sha256": "643bd9e2f13b017c99f16e867deb237665b973fdfc6c4523f5c817cfad919ba9",
+    "export_sha256": "643bd9e2f13b017c99f16e867deb237665b973fdfc6c4523f5c817cfad919ba9",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-audit.svg",
+    "export": "textual-light-170x48-audit.svg",
+    "source_sha256": "4f54214f521c31dd2ffb7808c363041b6beb219541b42fdf470ad33ad2b25f82",
+    "export_sha256": "f9739004ba3ed7c49384fa75a7b3f87ba184346f49486254eeaa949d7fc9738f",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-audit.txt",
+    "export": "textual-light-170x48-audit.txt",
+    "source_sha256": "38a7e8ff8287fd1e12f2d7a9bdbf4f611b08f889bd0b897da6bb38d34afe57de",
+    "export_sha256": "38a7e8ff8287fd1e12f2d7a9bdbf4f611b08f889bd0b897da6bb38d34afe57de",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-restored.svg",
+    "export": "textual-light-170x48-restored.svg",
+    "source_sha256": "1f0d4fcf5df1545419fcdba63c90e38551879f59eae49c53185d56159819be5b",
+    "export_sha256": "7e346f924175b1f3038523864e2cdd86b16dc13c918fb7ee79b21d91e41e67d2",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-restored.txt",
+    "export": "textual-light-170x48-restored.txt",
+    "source_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "export_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-server.svg",
+    "export": "textual-light-170x48-server.svg",
+    "source_sha256": "80acebb62412d8e819e0a5171a9319a37c179175690232f9bdb9981589c579f3",
+    "export_sha256": "66f62b820eaa284cd4c7b897472e349ec4e75aeeed0e9c0f5c3d265d1a7bc195",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-server.txt",
+    "export": "textual-light-170x48-server.txt",
+    "source_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "export_sha256": "20445d13bf5a57c17a2829a13dd04cc3d885e1db7223073b5abefdc0519de3db",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-tool.svg",
+    "export": "textual-light-170x48-tool.svg",
+    "source_sha256": "7361c8a70f19ce8b8af385e6ef381095b77272385000b86de12a5282b6a18cbb",
+    "export_sha256": "fa5add87be9bcd8ca6dace1959bb35d18ce2a3dc2d6226290c65c4d2ba17e14e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-170x48-tool.txt",
+    "export": "textual-light-170x48-tool.txt",
+    "source_sha256": "877f837400a27461f2a966368dc40446f5478647227e44f51564811220d8960e",
+    "export_sha256": "877f837400a27461f2a966368dc40446f5478647227e44f51564811220d8960e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-audit.svg",
+    "export": "textual-light-80x24-audit.svg",
+    "source_sha256": "1312d3b14cce86d654f53119032e10de0e880fe992e01a5f6873bf50c1dfd875",
+    "export_sha256": "a290203119a66cf6e280421e596e45bc39af36cfd91973bc330fe9c8d5466a44",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-audit.txt",
+    "export": "textual-light-80x24-audit.txt",
+    "source_sha256": "596088b5031944aa05718af0199fe11150b3e2d282e728322ca4c7c445eed75d",
+    "export_sha256": "596088b5031944aa05718af0199fe11150b3e2d282e728322ca4c7c445eed75d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-restored.svg",
+    "export": "textual-light-80x24-restored.svg",
+    "source_sha256": "254495c51fb3c1cf7b6d46c6f07af64b7fa6fef1d2c4aa27ba5ec11c23e9e82b",
+    "export_sha256": "ab19e0c750409c9fffac98400077c946ffc1b3245729af08bf1433474b9de8c3",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-restored.txt",
+    "export": "textual-light-80x24-restored.txt",
+    "source_sha256": "ea426c2a3f03989508f7d9c73aca279c4c9fa0ec8d80290e2ef5ac552d0628ba",
+    "export_sha256": "ea426c2a3f03989508f7d9c73aca279c4c9fa0ec8d80290e2ef5ac552d0628ba",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-server.svg",
+    "export": "textual-light-80x24-server.svg",
+    "source_sha256": "32b64bddfb2037937dfb388a66ce77fd0f84f5aa367e699fce9661dbcff01cbe",
+    "export_sha256": "b7e0a923595c72c18d31b755bd430ca5ae63cc36305df957b634127b77698271",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-server.txt",
+    "export": "textual-light-80x24-server.txt",
+    "source_sha256": "92ec91074c60e8d4bfc08668b2d4d41a5f802a2a2e2e0a144441b9771723252a",
+    "export_sha256": "92ec91074c60e8d4bfc08668b2d4d41a5f802a2a2e2e0a144441b9771723252a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-tool.svg",
+    "export": "textual-light-80x24-tool.svg",
+    "source_sha256": "64c4cccec3c6eb95368b659fbeca19f2d2e717c3deabc999e42d31f50806e550",
+    "export_sha256": "84a7bd4d4346e13a7ca4b4b67c1069a3669739c15126c2b90c6129de0c218e32",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32836-approved-001/evidence/textual-light-80x24-tool.txt",
+    "export": "textual-light-80x24-tool.txt",
+    "source_sha256": "1c2a370ed50bd7494d7eebf29366d1f85be579939aaf7887d3c4f3fedc2a4c41",
+    "export_sha256": "1c2a370ed50bd7494d7eebf29366d1f85be579939aaf7887d3c4f3fedc2a4c41",
+    "normalization": "host paths and trailing whitespace"
+  }
+]
