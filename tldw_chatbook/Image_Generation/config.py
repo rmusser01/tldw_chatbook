@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,6 +13,17 @@ from urllib.parse import urlsplit
 
 import keyring
 from loguru import logger
+
+from tldw_chatbook.Media_Generation.config_machinery import ModalityConfigTables, SecretSpec
+from tldw_chatbook.Media_Generation.config_machinery import coerce_choice
+from tldw_chatbook.Media_Generation.config_machinery import coerce_float
+from tldw_chatbook.Media_Generation.config_machinery import coerce_int
+from tldw_chatbook.Media_Generation.config_machinery import get_config_value
+from tldw_chatbook.Media_Generation.config_machinery import keyring_get as media_keyring_get
+from tldw_chatbook.Media_Generation.config_machinery import load_generation_section
+from tldw_chatbook.Media_Generation.config_machinery import parse_list
+from tldw_chatbook.Media_Generation.config_machinery import resolve_secret, warn_unknown_top_level_keys
+# ADR-176: the mechanics below live in Media_Generation.config_machinery;
 
 
 DEFAULT_BACKEND = "stable_diffusion_cpp"
@@ -180,36 +190,6 @@ _FLAT_MAP.update({
 _BACKEND_NAMES = set(_SECRETS) | {backend for backend, _toml_key in _NON_SECRET}
 
 
-def _warn_unknown_top_level_keys(raw: dict) -> None:
-    """Warn once per unknown key found directly under ``[image_generation]``.
-
-    The flattener above only reads keys listed in ``_GLOBAL_KEYS`` plus the
-    known backend subsections (``[image_generation.<backend>]``) and
-    ``[image_generation.styles]``. A backend field written using its *flat*
-    dataclass name straight under ``[image_generation]`` (e.g.
-    ``openrouter_image_default_model``) matches none of those and is
-    silently ignored -- this surfaces that mistake with the exact nested
-    replacement to use. Never raises (config loading must never crash on a
-    malformed/unexpected key).
-    """
-    try:
-        for key in raw:
-            if not isinstance(key, str):
-                continue
-            if key in _GLOBAL_KEYS or key == "styles" or key in _BACKEND_NAMES:
-                continue
-            target = _FLAT_MAP.get(key)
-            if target is not None:
-                backend, toml_key = target
-                logger.warning(
-                    f"[image_generation] unknown key '{key}' is ignored -- flat backend keys are "
-                    f"not read here; use [image_generation.{backend}] {toml_key} = ... instead"
-                )
-            else:
-                logger.warning(f"[image_generation] unknown key '{key}' is ignored")
-    except Exception as e:  # never let a malformed section crash config loading
-        logger.debug(f"image_generation unknown-key scan failed: {e}")
-
 
 def _read_image_generation_toml() -> dict:
     """Return the raw [image_generation] section dict (nested). Patch point in tests."""
@@ -217,75 +197,50 @@ def _read_image_generation_toml() -> dict:
     return load_settings().get("image_generation", {}) or {}
 
 
+
+
+
+
+
+# these delegates keep the module-level names as test patch points and
+# builder call sites.
+_TABLES = ModalityConfigTables(
+    section_name="image_generation",
+    keyring_namespace="tldw_chatbook_imagegen",
+    keyring_label="imagegen",
+    global_keys=tuple(_GLOBAL_KEYS),
+    extra_exempt=frozenset({"styles"}),
+    secrets={
+        backend: SecretSpec(flat_field, tuple(env_vars), kr_id, config_key)
+        for backend, (flat_field, env_vars, kr_id, config_key) in _SECRETS.items()
+    },
+    non_secret=dict(_NON_SECRET),
+)
+
+_coerce_int = coerce_int
+_coerce_float = coerce_float
+_coerce_choice = coerce_choice
+_parse_list = parse_list
+_get_config_value = get_config_value
+
+
+def _warn_unknown_top_level_keys(raw: dict) -> None:
+    warn_unknown_top_level_keys(raw, _TABLES)
+
+
 def _keyring_get(backend: str):
     """Namespaced keyring lookup; never raises. Patch point in tests."""
-    try:
-        return keyring.get_password("tldw_chatbook_imagegen", backend)
-    except Exception as e:  # keyring backend may be unavailable
-        logger.debug(f"keyring lookup failed for imagegen/{backend}: {e}")
-        return None
+    return media_keyring_get(backend, _TABLES)
 
 
 def _resolve_secret(backend: str, sub: dict):
-    """Resolve one backend's secret and where it came from.
-
-    Returns ``(flat_field_name, value, source)`` where ``source`` is one of
-    ``"env:<VAR>"`` (naming the winning variable), ``"config"``,
-    ``"keyring"``, or ``"missing"``. The precedence order (env > config >
-    keyring) and the value returned are unchanged from before ``source`` was
-    added.
-    """
-    field, env_vars, kr_id, config_key = _SECRETS[backend]
-    for ev in env_vars:                       # 1. env
-        v = os.getenv(ev)
-        if v:
-            return field, v, f"env:{ev}"
-    sub = sub or {}
-    cfg_val = sub.get(config_key)              # 2. config (per-backend key)
-    if not cfg_val and config_key != "api_key":
-        # Back-compat fallback (see _SECRETS' comment) -- e.g. a swarmui
-        # section hand-written (or saved before this fix) with `api_key`
-        # instead of its real `swarm_token` key. Never overrides an
-        # explicit config_key value that's already set.
-        cfg_val = sub.get("api_key")
-    if cfg_val and cfg_val != "<API_KEY_HERE>":
-        return field, cfg_val, "config"
-    if sub.get("auth_reference") == "recovery:setup_required":
-        return field, None, "missing"
-    kr = _keyring_get(kr_id)                    # 3. keyring
-    if kr:
-        return field, kr, "keyring"
-    return field, None, "missing"              # 4. optional shared handled by adapter/get_api_key opt-in
+    return resolve_secret(backend, sub, _TABLES, keyring_lookup=_keyring_get)
 
 
 def _load_image_generation_section() -> tuple[dict, dict[str, str]]:
-    """Assemble the FLAT mapping the config builder expects, from nested TOML + env + keyring.
-
-    Returns ``(flat, key_sources)``. ``key_sources`` maps every known
-    backend id (``_BACKEND_NAMES``) to where its secret was resolved from --
-    ``"env:<VAR>"``, ``"config"``, ``"keyring"``, or ``"missing"``. Backends
-    with no ``_SECRETS`` entry (currently only ``stable_diffusion_cpp``,
-    which takes no API key) are always ``"missing"``.
-    """
-    raw = _read_image_generation_toml()
-    _warn_unknown_top_level_keys(raw)
-    flat: dict = {}
-    for k in _GLOBAL_KEYS:
-        if k in raw:
-            flat[k] = raw[k]
-    for (backend, toml_key), flat_field in _NON_SECRET.items():
-        sub = raw.get(backend) or {}
-        if toml_key in sub:
-            flat[flat_field] = sub[toml_key]
-    key_sources: dict[str, str] = {backend: "missing" for backend in _BACKEND_NAMES}
-    for backend in _SECRETS:
-        field, value, source = _resolve_secret(backend, raw.get(backend) or {})
-        key_sources[backend] = source
-        if value:
-            flat[field] = value
-    return flat, key_sources
-
-
+    return load_generation_section(
+        _TABLES, read_toml=_read_image_generation_toml, keyring_lookup=_keyring_get
+    )
 @dataclass(frozen=True)
 class ImageGenerationConfig:
     default_backend: str | None
@@ -373,18 +328,6 @@ _IMAGE_GENERATION_CONFIG_SNAPSHOT = threading.local()
 _NO_CONFIG_SNAPSHOT = object()
 
 
-def _coerce_int(value: Any, default: int) -> int:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return default
-
-
-def _coerce_float(value: Any, default: float) -> float:
-    try:
-        return float(str(value).strip())
-    except (TypeError, ValueError):
-        return default
 
 
 def _coerce_positive_float(value: Any, default: float) -> float:
@@ -463,34 +406,6 @@ def normalize_comfyui_image_origin(value: Any) -> str:
     return f"{scheme}://{normalized_host}{normalized_port}"
 
 
-def _coerce_choice(
-    value: Any,
-    *,
-    default: str,
-    allowed: set[str],
-) -> str:
-    """Normalize a string choice to lowercase and return `default` when invalid."""
-    raw = str(value or "").strip().lower()
-    if raw in allowed:
-        return raw
-    return default
-
-
-def _parse_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    raw = str(value).strip()
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = None
-    if isinstance(parsed, list):
-        return [str(item).strip() for item in parsed if str(item).strip()]
-    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _parse_mapping_of_lists(value: Any) -> dict[str, list[str]]:
@@ -534,13 +449,6 @@ def _parse_mapping_of_lists(value: Any) -> dict[str, list[str]]:
         result[key] = items
     return result
 
-
-def _get_config_value(section: dict[str, str], key: str) -> str | None:
-    raw = section.get(key)
-    if raw is None:
-        return None
-    value = str(raw).strip()
-    return value or None
 
 
 def _get_image_generation_config_unlocked(
