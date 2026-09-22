@@ -127,11 +127,6 @@ class StudyScopeService:
             raise ValueError(f"{feature_label} are server-only in Chatbook.")
         return self._service_for_mode(normalized_mode)
 
-    def _enforce_policy(self, mode: StudyBackend, action_id: str) -> None:
-        if self.policy_enforcer is None:
-            return
-        self.policy_enforcer.require_allowed(action_id=f"{action_id}.{mode.value}")
-
     @staticmethod
     def _with_source(source: str, payload: Any) -> Any:
         if isinstance(payload, Mapping):
