@@ -1,0 +1,29 @@
+........................................................................ [ 62%]
+...........................................                              [100%]
+============================= slowest 25 durations =============================
+14.76s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]
+14.46s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]
+13.13s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-light]
+12.50s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-light]
+11.92s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-dark]
+10.85s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-light]
+10.45s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-dark]
+10.28s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-light]
+9.67s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-dark]
+9.64s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-dark]
+5.80s call     Tests/UI/test_mcp_audit_selection.py::test_duplicate_event_keeps_its_row_within_same_filtered_snapshot
+3.28s call     Tests/UI/test_mcp_audit_selection.py::test_refresh_cannot_identify_which_duplicate_execution_survived
+2.93s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-table]
+2.88s call     Tests/UI/test_mcp_audit_selection.py::test_ambiguous_identical_events_clear_selection_on_refresh
+2.87s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[subview-canvas]
+2.73s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.68s call     Tests/UI/test_mcp_audit_selection.py::test_newer_execution_keeps_selected_event_and_drill_target
+2.68s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[decision]
+2.68s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[initiator]
+2.65s call     Tests/UI/test_mcp_audit_selection.py::test_filters_retain_matching_detail_and_clear_zero_matches[text]
+2.64s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-canvas]
+2.57s call     Tests/UI/test_mcp_audit_selection.py::test_retired_execution_gesture_stays_retired_after_round_trip[mode-table]
+2.15s call     Tests/UI/test_mcp_audit_selection.py::test_execution_eviction_clears_detail_without_selecting_replacement
+2.08s call     Tests/UI/test_mcp_audit_selection.py::test_filtering_out_selected_execution_clears_detail
+1.97s call     Tests/UI/test_mcp_audit_selection.py::test_delayed_activation_cannot_select_replacement[canvas]
+115 passed in 206.11s (0:03:26)

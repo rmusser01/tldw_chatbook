@@ -1,5 +1,8 @@
 # Audit filters — current merged-dev qualification, 2026-09-21
 
+This is the pre-approval checkpoint. The [approved, rebased Qodo closeout](final-review/README.md)
+contains the latest qualification and normalized publication receipts.
+
 PR2721 / TASK-32835 resumes from PR2720's actual merge
 `7a758b8196bd3083ae9f878551d01dde7f4ec1ad`, also the latest fetched dev at
 publication preparation. Product/CSS commit `78b6d27bf3` reapplies saved commit
@@ -64,7 +67,7 @@ private databases, zero conversations/messages, unchanged default config/UI stat
 runtime policy and fixture sentinels, matching source/runner provenance, zero
 network attempts and no error/faulthandler output. The private terminal session
 was closed after qualification. [Export hashes](export-manifest.json) distinguish
-original captures from copies normalized only for trailing whitespace.
+original captures from copies normalized for trailing whitespace and subsequently sanitized for host paths.
 
 ## Conflict choices and remaining gate
 

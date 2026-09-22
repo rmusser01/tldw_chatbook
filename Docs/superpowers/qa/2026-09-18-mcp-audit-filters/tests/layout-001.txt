@@ -28,7 +28,7 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 args = ()
-kwargs = {'request': <FixtureRequest for <Coroutine test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]>>...52t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0'), 'theme': 'textual-dark'}
+kwargs = {'request': <FixtureRequest for <Coroutine test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]>>...52t9gw3w8qwk2nykh0000gn/T/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0'), 'theme': 'textual-dark'}
 
     @wraps(function)
     async def wrapped(*args, **kwargs):
@@ -86,7 +86,7 @@ kwargs = {'request': <FixtureRequest for <Coroutine test_keyboard_filters_and_ta
                     await process.wait()
         if process.returncode:
 >           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
-E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/pytest.log
+E           Failed: <tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/pytest.log
 E           --- _setup_logging START (from Logging_Config.py) ---
 E           Loguru: All pre-existing sinks removed.
 E           Loguru: Configured to forward its messages to standard Python logging system.
@@ -95,7 +95,7 @@ E           =================================== FAILURES =======================
 E           __ test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark] ___
 E
 E           request = <FixtureRequest for <Coroutine test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]>>
-E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/pytest/test_keyboard_filters_and_tabl0')
+E           tmp_path = PosixPath('<tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/pytest/test_keyboard_filters_and_tabl0')
 E           theme = 'textual-dark'
 E
 E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -147,12 +147,12 @@ E           2026-09-18 21:07:06.184 | WARNING  | tldw_chatbook.Audio.recording_s
 E           ----------------------------- Captured stderr call -----------------------------
 E           2026-09-18 21:07:06.185 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
 E           2026-09-18 21:07:06.201 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
-E           2026-09-18 21:07:06.212 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/config/config.toml
-E           2026-09-18 21:07:06.213 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
-E           2026-09-18 21:07:06.214 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 21:07:06.212 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at <tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/config/config.toml
+E           2026-09-18 21:07:06.213 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: <repo>/tldw_chatbook
+E           2026-09-18 21:07:06.214 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: <repo>/tldw_chatbook
 E           2026-09-18 21:07:06.214 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
 E           2026-09-18 21:07:06.215 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
-E           2026-09-18 21:07:06.234 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 21:07:06.234 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: <tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
 E           2026-09-18 21:07:06.235 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
 E           2026-09-18 21:07:06.236 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
 E           2026-09-18 21:07:06.313 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
@@ -160,24 +160,24 @@ E           2026-09-18 21:07:06.336 | INFO     | tldw_chatbook.app:__init__:8169
 E           2026-09-18 21:07:06.337 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
 E           2026-09-18 21:07:06.337 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
 E           2026-09-18 21:07:06.337 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
-E           2026-09-18 21:07:06.408 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
-E           2026-09-18 21:07:06.471 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wilii83e/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
-E           2026-09-18 21:07:06.628 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wilii83e/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 21:07:06.408 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: <tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 21:07:06.471 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: <tmp>/tldw-chatbook-test-wilii83e/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 21:07:06.628 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: <tmp>/tldw-chatbook-test-wilii83e/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
 E           2026-09-18 21:07:06.641 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
-E           2026-09-18 21:07:06.642 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wilii83e/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
-E           2026-09-18 21:07:06.643 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wilii83e/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 21:07:06.642 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: <tmp>/tldw-chatbook-test-wilii83e/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 21:07:06.643 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: <tmp>/tldw-chatbook-test-wilii83e/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
 E           2026-09-18 21:07:06.748 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
 E           2026-09-18 21:07:06.782 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
 E           2026-09-18 21:07:06.822 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
 E           2026-09-18 21:07:06.858 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
 E           2026-09-18 21:07:06.894 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
 E           2026-09-18 21:07:06.936 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
-E           2026-09-18 21:07:06.936 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wilii83e/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 21:07:06.936 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: <tmp>/tldw-chatbook-test-wilii83e/scheduled_tasks.sqlite [Client: default]
 E           2026-09-18 21:07:06.984 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
 E           2026-09-18 21:07:06.985 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
-E           2026-09-18 21:07:06.992 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 21:07:06.992 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from <repo>/tldw_chatbook/Evals/config/eval_config.yaml
 E           2026-09-18 21:07:07.062 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
-E           2026-09-18 21:07:07.063 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 21:07:07.063 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: <tmp>/pytest-of-user/pytest-3021/test_keyboard_filters_and_tabl0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
 E           2026-09-18 21:07:07.063 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
 E           2026-09-18 21:07:07.128 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
 E           2026-09-18 21:07:07.128 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers

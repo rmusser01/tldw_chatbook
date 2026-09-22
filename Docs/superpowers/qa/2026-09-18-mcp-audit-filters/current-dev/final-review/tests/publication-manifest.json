@@ -1,0 +1,65 @@
+[
+  {
+    "source": "<tmp>/2721-final-integration.txt",
+    "export": "2721-final-integration.txt",
+    "source_sha256": "95f9e29df7ccf49f807dc5c6741eae8a9c8ab4cdda7d702ee9b7eab38f966d8c",
+    "export_sha256": "95f9e29df7ccf49f807dc5c6741eae8a9c8ab4cdda7d702ee9b7eab38f966d8c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-incoming-mcp.txt",
+    "export": "2721-incoming-mcp.txt",
+    "source_sha256": "4973899722aad604535d0e86e24d770c9c11cce5febdc4271ac4001f9cf7f01b",
+    "export_sha256": "23aee46a89a81e54354ba4e42492e8afe793fc990f4e2db608824a3682af22a2",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-incoming-baseline.txt",
+    "export": "2721-incoming-baseline.txt",
+    "source_sha256": "a2882d8fe2fb0b1a4ed73e1ed7e4c3b1ebbc2cfe7d389a7cc5ed05573e284323",
+    "export_sha256": "1f6a0cdba990fd1b62bedb79e7814e658492584abc71c4c5b01ca254f547c20b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-export-red.txt",
+    "export": "2721-export-red.txt",
+    "source_sha256": "3fea2fe6ac22da24df0de75a476c307d0503f99405c6d80d2fd7ce8ea0d0459d",
+    "export_sha256": "9fbfb5734b79364ad84a590fcee62b5e0bb20cc516f9060c7a72d836e36f6a2c",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-pytest-owner-red.txt",
+    "export": "2721-pytest-owner-red.txt",
+    "source_sha256": "ccb413ae7fc98f0763f286441057a56f42d0bd312fcf63b073bc13ad5331faa3",
+    "export_sha256": "1fc37b3e59b44c42c077222fadb95a286f05eea26d24d4921190559f69e6d27b",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-alias-red.txt",
+    "export": "2721-alias-red.txt",
+    "source_sha256": "a8f2d9a054d5645dd0cfb97f292748fd8ddee9b70a2f570bbdcc68320959aced",
+    "export_sha256": "5780c2a50c39c1406217dfd8faaee4b1db35664bd51cec8d77614f01a3a25142",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-export-green.txt",
+    "export": "2721-export-green.txt",
+    "source_sha256": "0aab4b33247acd7336dc5c4a8a4a0ea74527cbb4ad56f4ebd12da70a947bee8e",
+    "export_sha256": "0aab4b33247acd7336dc5c4a8a4a0ea74527cbb4ad56f4ebd12da70a947bee8e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-export-final3.txt",
+    "export": "2721-export-final3.txt",
+    "source_sha256": "a89800e40221e80086b1d92b0915e3c2118395f09bd82dbdadd02be6b541c2ec",
+    "export_sha256": "a89800e40221e80086b1d92b0915e3c2118395f09bd82dbdadd02be6b541c2ec",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/2721-final-preflight.txt",
+    "export": "2721-final-preflight.txt",
+    "source_sha256": "5ffb19e1461b128ad43eb72bb1ef7a91f8199dc47284fd08da7a538d3b2d5dcc",
+    "export_sha256": "3ad2198e32be874c01869d0e7031b8f7f73de764df4b572e639a03fb3234d642",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

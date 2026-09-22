@@ -13,7 +13,7 @@ ________________________ test_dimension_literal_ratchet ________________________
            ^^^^^^^^^^^^^^^
 Tests/private_profile.py:84: in wrapped
     pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
-E   Failed: /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/pytest.log
+E   Failed: <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/pytest.log
 E   F                                                                        [100%]
 E   =================================== FAILURES ===================================
 E   ________________________ test_dimension_literal_ratchet ________________________
@@ -51,16 +51,16 @@ E
 E   Tests/UI/test_component_pattern_governance.py:283: AssertionError
 E   ---------------------------- Captured stderr setup -----------------------------
 E   2026-09-21 08:25:55.219 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
-E   2026-09-21 08:25:55.259 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
-E   2026-09-21 08:25:55.260 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
-E   2026-09-21 08:25:55.261 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
+E   2026-09-21 08:25:55.259 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
+E   2026-09-21 08:25:55.260 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E   2026-09-21 08:25:55.261 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
 E   2026-09-21 08:25:55.262 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6248 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
 E   2026-09-21 08:25:55.262 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6252 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
-E   2026-09-21 08:25:55.269 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
-E   2026-09-21 08:25:55.269 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E   2026-09-21 08:25:55.269 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: <repo>/tldw_chatbook
+E   2026-09-21 08:25:55.269 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: <repo>/tldw_chatbook
 E   2026-09-21 08:25:55.270 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1890 - load_settings: Configuration loaded from disk (cache miss or forced reload)
 E   2026-09-21 08:25:55.270 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2211 - Darwin platform-preferred STT provider resolved to: faster-whisper
-E   2026-09-21 08:25:55.297 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-21 08:25:55.297 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
 E   2026-09-21 08:25:55.297 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3445 - load_settings: Configuration cached for future use
 E   2026-09-21 08:25:55.297 | INFO     | tldw_chatbook.config:<module>:9845 - Default API Endpoint (from config.py global scope): openai
 E   2026-09-21 08:25:55.298 | DEBUG    | tldw_chatbook.config:<module>:9868 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
@@ -71,7 +71,7 @@ E   2026-09-21 08:25:55.590 | INFO     | tldw_chatbook.Audio.recording_service:<
 E   2026-09-21 08:25:55.592 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
 E   2026-09-21 08:25:55.793 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
 E   2026-09-21 08:25:56.154 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
-E   - generated xml file: /private/tmp/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/pytest.xml -
+E   - generated xml file: <tmp>/32835-governance-temp/test_dimension_literal_ratchet0/private-profile-process/pytest.xml -
 E   ============================= slowest 25 durations =============================
 E   1.15s setup    Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
 E

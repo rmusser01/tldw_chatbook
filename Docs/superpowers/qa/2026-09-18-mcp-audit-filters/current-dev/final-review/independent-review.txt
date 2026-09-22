@@ -1,0 +1,4 @@
+Independent review, 2026-09-21: audit_qodo_review
+Incoming dev 7a758b8196 -> ea2d7b22a8: no changed paths overlap the PR. MCP admission and datetime extraction preserve the reviewed contracts. Fresh native validation required because app.py changed.
+Qodo fixes: no product/layout issue in callback documentation or named fixture counts. Initial receipt exporter allowed an output symlink to overwrite another raw receipt. The final implementation rejects all existing/symlink destinations, reads every UTF-8 input before writing, and creates the destination exclusively. The alias regression failed before the fix; six exporter cases pass afterward. No remaining findings.
+Reviewer performed read-only inspection and alias reproduction; the integration/native results are recorded separately.

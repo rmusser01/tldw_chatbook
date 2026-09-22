@@ -16,6 +16,8 @@ import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
+AUDIT_FIXTURE_COUNT = 48
+
 
 def main() -> None:
     """Qualify Audit filters in an unused private native terminal profile.
@@ -215,7 +217,7 @@ def main() -> None:
             service = app.unified_mcp_service
             log = service.execution_log
             assert log is not None
-            for i in range(48):
+            for i in range(AUDIT_FIXTURE_COUNT):
                 blocked = bool(i % 2)
                 log.append(
                     build_record(
@@ -269,7 +271,7 @@ def main() -> None:
                     await pilot.press(*"review")
                     await settle()
                     assert field.value == "review" and "review" in painted(field)
-                    assert table.row_count == 48
+                    assert table.row_count == AUDIT_FIXTURE_COUNT
                     await capture(stem + "-text")
                     await pilot.press("tab")
                     await settle()
@@ -284,7 +286,7 @@ def main() -> None:
                     await settle()
                     assert decision.value == "denied-killswitch"
                     assert "Blocked(killswitch)" in painted(decision)
-                    assert table.row_count == 24
+                    assert table.row_count == AUDIT_FIXTURE_COUNT // 2
                     await capture(stem + "-decision")
                     await pilot.press("tab")
                     await settle()
@@ -295,7 +297,7 @@ def main() -> None:
                     await settle()
                     assert initiator.value == "test"
                     assert "Test" in painted(initiator)
-                    assert table.row_count == 24
+                    assert table.row_count == AUDIT_FIXTURE_COUNT // 2
                     await capture(stem + "-initiator")
                     await pilot.press("tab")
                     await settle()
@@ -303,7 +305,7 @@ def main() -> None:
                     visible(table)
                     await pilot.press("ctrl+end")
                     await settle()
-                    assert table.cursor_row == 23
+                    assert table.cursor_row == AUDIT_FIXTURE_COUNT // 2 - 1
                     row = table._get_row_region(table.cursor_row)
                     y = table.content_region.y + row.y - int(table.scroll_y)
                     clip = app.screen._compositor.visible_widgets[table][1]

@@ -55,12 +55,12 @@
     }
   ],
   "module_origins": {
-    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
-    "tldw_chatbook.config": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/config.py",
-    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
-    "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
-    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
-    "tldw_chatbook.MCP.unified_control_plane_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/unified_control_plane_service.py"
+    "tldw_chatbook.app": "<repo>/tldw_chatbook/app.py",
+    "tldw_chatbook.config": "<repo>/tldw_chatbook/config.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_audit_mode": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "<repo>/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "<repo>/tldw_chatbook/MCP/unified_control_plane_service.py"
   },
   "source_hashes": {
     "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "d0f0a71696a17b059c8fae06bca2fa60e4d64fa4c5c4bdbe4d2b68a9e407223c",

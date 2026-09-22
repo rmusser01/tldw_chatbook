@@ -1,4 +1,4 @@
-preflight: using /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/bin/python (3.12.11)
+preflight: using <repo>/.venv/bin/python (3.12.11)
 
 === generated stylesheets ===
 CSS bundle reproduces from its source modules.

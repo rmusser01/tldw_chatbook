@@ -1,0 +1,127 @@
+[
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/allocation-owner-check.json",
+    "before_normalization_sha256": "125ce5208ae476ddda692dd3666eb90e61b10be16173c1416ebaaf73fc9e6ebf",
+    "normalized_sha256": "090808a405c166c641c5e85065220eac4f0186b5f32fa22c33d8bff0b6984e25"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/export-manifest.json",
+    "before_normalization_sha256": "340555ff8f67e53cb65e1e72df65bf0e6daa76c2f0e5c8df12de06ffd35a220f",
+    "normalized_sha256": "0e5c079ce1ea32ddd17bdad20253f4e21a9f45635a2a2240e12863618b7e5b64"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/formatting.json",
+    "before_normalization_sha256": "4704fb61ffcabeb50ded80886f8aef9e020d00614a3f9489d50d2b19fbc55cea",
+    "normalized_sha256": "994e9566cc1b41510c6d1c6d585ba24d8553bbc035fb53a37ddd4e416d7fc42c"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/launch.json",
+    "before_normalization_sha256": "a03d4d7cac84c246c35637077ad8128b1dd6413850e5ff4e4dc567813fb70aee",
+    "normalized_sha256": "fc2095e375a13f02a7480d0b0da494e707b8fecbc16213f7a6b89ac588798080"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/lifecycle.json",
+    "before_normalization_sha256": "6b5142979abef69852f5e7b3b736d5129f87f8a05b278e43d5a5acac48e52cd1",
+    "normalized_sha256": "c1a8619675ef1be4af31827510f64b81b3673af0cea7a861f68ac8f7be23ead0"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/native/result.json",
+    "before_normalization_sha256": "1983e55badd41155b401ba983f3a10fa374f4c0a5e93a8003aec3631b4412a13",
+    "normalized_sha256": "67989920e54e97f726440183416932123ccf6dc4ef284e123dc61f4fc80f9252"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/preflight.txt",
+    "before_normalization_sha256": "eab8b69c9df9f0ec428fed2bd270b81b311ea7078e5e29e7e240638f3880bac9",
+    "normalized_sha256": "f4340f11356ff44220ad6933d9859dc8a7cf64e0543df1eb6e0d58763584e793"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/tests/admission-red.txt",
+    "before_normalization_sha256": "9e4e30d230203cbad59c05fbe409ff231c43668f882822507c7a86a2b163599f",
+    "normalized_sha256": "b644f1fe535427c5d98a726e7f44987d33b20b3fd55d5dd26abb7c7be121cb92"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/tests/governance.txt",
+    "before_normalization_sha256": "2c1c629d04a1cb8bff97fe37ce87c74bc48ade7e3a7c8523050ff5fd088ff06b",
+    "normalized_sha256": "464d82f4832376aa110f12d2bd0b86d73b80f614755f8ec3fa386a269b45fc4b"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/export-manifest.json",
+    "before_normalization_sha256": "72f1f5148679f8d25ba2326e7b12540e34f41444b96a9a9544c52dadd27118da",
+    "normalized_sha256": "67a072202af3c12af298b3d59ca15e54ca69386eb2ef6efe36ea665c3789007d"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/formatting.txt",
+    "before_normalization_sha256": "7beecf52e41534a2f7ecacbe4da4d59aa68d94e0f2afef25c361718c04ab6e2f",
+    "normalized_sha256": "4bd53fcbdb951060c9217d726c3781064ca746ff9a059648072be9f99df7d6bd"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/lifecycle.json",
+    "before_normalization_sha256": "155998c8b77160066021bb7e0a705b9d3c035fa611ae2180d7eafbee99f35752",
+    "normalized_sha256": "e68f6da0e703aff5882f1b0d9b72418bf04620353456ea9264e3eb5f4791c62f"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/tests/geometry-001.txt",
+    "before_normalization_sha256": "c2740acf4e5658a44f82bb51412ddc65c0d8867df4ff14a285e6b5b7fccb4495",
+    "normalized_sha256": "332cf066a2fa66cd7f5fe593e1f861dae5e55e8181890d82616d85b08dae748d"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/tests/layout-001.txt",
+    "before_normalization_sha256": "3c82ad30d4118b93779e2ddab675e702abbd10e4df73de9ac3eab0dd719c56b5",
+    "normalized_sha256": "a93a2001d8aac5cedacf508884d8e85b0c029d9a01d63626bcb5712398d2673d"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-filters/tests/red-001.txt",
+    "before_normalization_sha256": "99532b1158354f363fcdd69d2df785b5da5cef967e1333ef1f73cb14cb3d60d0",
+    "normalized_sha256": "23d7833c6fbde1899f2438b7e4f714c65ac93592a82c6440d9a44df69e07e1f7"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/actual-merge/launch-command.txt",
+    "before_normalization_sha256": "8a7cd43714b72bedbdf2da2491f8329317b5a72d61900dd75a9e27490b52b139",
+    "normalized_sha256": "565031d4a08352a7d4a051414c65c13f867544b4fdcfff44fa3aebcacc7f14a4"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/actual-merge/launch.json",
+    "before_normalization_sha256": "895ebab6d4aadbcae1c0cbcbd14de453b524889105a90395f208f660523bcf72",
+    "normalized_sha256": "e202dd6f572625eba965c76ad1fdc9cb49fc9bd9074e73117ff305055dc7ba00"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/actual-merge/lifecycle.json",
+    "before_normalization_sha256": "0d6e2e8f75ddb3d41a91b89765cdce5255ce2c1fc0d48e45b629268b7e00f9ef",
+    "normalized_sha256": "e5399cb426963d8fa8c21e373d2c72d21d51083486ed7a3ee0e97bfa00bd65d7"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/actual-merge/preflight.txt",
+    "before_normalization_sha256": "aba3e325c24e28c99bf21a15b3c1a68592c10bc12d1dd51daba21dde4e1767db",
+    "normalized_sha256": "b2ae78fc6da4c09ebdb7c257d4e9ad44c3ae74c0c5c539871bb812ecafeea8c4"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/actual-merge/result.json",
+    "before_normalization_sha256": "03d1dc10644f837716a545c0f4a9f5a475ae0f76f992ed9c0fd37c500e450920",
+    "normalized_sha256": "1ff7efbb008e3dd2e53e7d660b166eaf972716be973b043cab316b148053f12f"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/premerge-security/launch-command.txt",
+    "before_normalization_sha256": "9afc1ea625796ef6ef1a08cea8c5e0c903d3c5edbe1d76bee1e97a5be65b469b",
+    "normalized_sha256": "2f244689a0e903cc37113e051ad1ba305608dbc3e0f323a4b0fb32401ab5e613"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/premerge-security/launch.json",
+    "before_normalization_sha256": "5c7bfd53db505c121e90ee57bae9d60c18014f64160c0b2e8d0d21056c1c7c6c",
+    "normalized_sha256": "3f431670cdae69951fd84664894dd440fa6cc2be06ec9f29126f1dd686696fb7"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/premerge-security/lifecycle.json",
+    "before_normalization_sha256": "c49eada69fc77d1a1268c7e612c6fb991f0fda0b0c2c46e7b2586f2e5b2c1699",
+    "normalized_sha256": "287721d0ef979ea0ba6ee4d5697e0c4e43f35170dd5d3aba8485955ccf63146e"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/premerge-security/preflight-network-unavailable.txt",
+    "before_normalization_sha256": "3af85e94f1b33327022e32405a571f864769aca2cb6ae8def24af6ec1978dc06",
+    "normalized_sha256": "a526c53366c85366ebed69e6c87509d68ea80c67d4a6864a07bef61b779194b1"
+  },
+  {
+    "receipt": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/merge-closeout/premerge-security/result.json",
+    "before_normalization_sha256": "172f3277f66c88d985e1a439071f5bb2e64cea96cb8125b5b8dd9e53e78470e7",
+    "normalized_sha256": "e37613d539e4fd290847bf9c012d1243dfe04829ddaa3f3186f579f764489bf8"
+  }
+]

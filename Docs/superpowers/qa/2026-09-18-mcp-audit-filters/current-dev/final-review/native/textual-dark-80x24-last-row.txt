@@ -1,0 +1,24 @@
+                                ╭────────╮
+ ‹   ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  ╭──────────────╮    Findings            ││                  │
+│ Source       ││  │  Executions  │                        ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  ╰──────────────╯                        ││  Why · Off —     │
+│ ▊Local    ▼▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    ││  enable it to    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  Test                         ▼  ▎    ││  let MCP         │
+│              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎    ││  clients use     │
+│ Servers      ││                                          ││  chatbook's    ▅ │
+│  ◦ off · ⌂   ││  When                 Tool               ││  tools.          │
+│  built-in    ││  2026-09-21 20:20:38  local:audit-re     ││  Add server      │
+│    All       ││  2026-09-21 20:20:38  local:audit-re     ││  review_01 —     │
+│  servers     ││  2026-09-21 20:20:38  local:audit-re     ││  local:audit-r   │
+│  ◦ ⌂ t…      ││  2026-09-21 20:20:38  local:audit-re▄▄   ││  eview           │
+│              ││  2026-09-21 20:20:38  local:audit-re     ││ {                │
+│              ││             ▍                         ▂▂ ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,7 @@
+{
+  "pid": 25882,
+  "started_at": "2026-09-22T03:20:26.483329+00:00",
+  "repo": "<repo>",
+  "head": "273cc40b1fa1e2821a7437f4ced41c3bdf886f2b",
+  "dirty_status": " M Docs/superpowers/qa/2026-09-18-mcp-audit-filters/native_check.py\n M \"backlog/tasks/task-32835 - Keep-MCP-Audit-filters-readable-and-reachable-in-compact-terminals.md\"\n M tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py\n?? Docs/superpowers/qa/export_receipts.py\n?? Tests/Utils/test_mcp_qa_receipt_export.py\n"
+}

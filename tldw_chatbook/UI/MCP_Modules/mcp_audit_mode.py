@@ -521,11 +521,19 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         self._apply_subview_display()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
-        """Reveal the current control after focus scrolling and layout settle."""
+        """Reveal the current control after focus scrolling and layout settle.
+
+        Args:
+            event: Textual notification that a descendant received focus.
+        """
         self.call_after_refresh(self._reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
-        """Keep retained keyboard focus reachable in the resized pane."""
+        """Keep retained keyboard focus reachable in the resized pane.
+
+        Args:
+            event: Textual notification that this pane's size changed.
+        """
         self.call_after_refresh(self._reveal_focused_control)
 
     def _reveal_focused_control(self) -> None:

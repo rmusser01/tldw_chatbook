@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 04:02'
-updated_date: '2026-09-21 15:34'
+updated_date: '2026-09-22 03:28'
 labels: []
 dependencies: []
 ---
@@ -21,6 +21,7 @@ Let users read and operate all Audit filters and reach the filtered execution ta
 - [x] #1 Text filter values and full decision and initiator labels paint within their controls in dark and light compact layouts.
 - [x] #2 Keyboard focus can reach each filter and the execution table, including after resize, without losing filter values.
 - [x] #3 Wide layouts remain usable; targeted tests, design governance and private native evidence verify the supported sizes.
+- [x] #4 Published QA receipts normalize machine-specific paths while preserving verifiable source and export hashes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,6 +43,8 @@ Reason: existing responsive Audit controls and focus contract, no new state/stor
 6. Obtain independent diff review, targeted formatting/lint and all artifact guards. Update existing PR2721 against dev; show compact/wide visual evidence and explicit documentation-conflict choices. Wait for this slice's fresh visual approval before its own CI/Qodo/current-dev merge.
 
 Saved runner issues already confirmed by source inspection: direct private dependency probe_terminal import, old profile validation before checkout pinning, raw positional indexing/no shared CLI admission, no network guard, limited provenance. Existing current runners supply the bounded established replacements.
+
+7. Post-approval Qodo closeout: document callback event Args, share the synthetic fixture count and derive filtered expectations; export QA receipts through a small stdlib path-normalizing copier while retaining original/copy hashes. Normalize all QA additions in this PR, including preceding selection closeout; retain raw receipts only in the private local profile. Add focused exporter tests. Rebased without conflicts onto dev ea2d7b22a8; rerun targeted Audit/native qualification because incoming app startup and MCP support code changed. UI approval remains valid only if capture comparison confirms unchanged appearance. No new ADR: QA publication metadata repair and existing callback documentation, no product authority/storage contract change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -56,4 +59,6 @@ Modernized native runner admission and checkout pinning, replaced obsolete image
 Plan deviation for preceding PR2720 closeout: performance PR2739 landed eight seconds before merge, so actual merge tree differed from CI candidate. The actual merged tree was separately tested and visually qualified, with the deviation retained in its merge-closeout receipt; no identical-tree claim remains.
 
 PR2721 requires its own fresh visual approval, current-head CI, accumulated Qodo review and final dev/conflict review before merging. TASK-32835 stays In Progress. PR2722 inspector guidance and wider component review remain separate. No full suite was run.
+
+Post-approval closeout: rebased conflict-free onto dev ea2d7b22a8; added callback Args docs, shared fixture count and a tested stdlib receipt exporter. All 25 affected added QA receipts now use stable host-path placeholders with source/export hashes preserved. Independent review caught and verified the fix for output aliases: new destinations only, all inputs validated before writes. 381 distinct current-source checks pass; six incoming MCP failures reproduce on untouched dev. Nine artifact guards pass. All 18 native Audit bodies match the approved layout after timestamp/style-ID normalization; nine whole frames differ only in top navigation scroll. Fresh private lifecycle/source checks pass. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-filters/current-dev/final-review/README.md. Current-head CI/Qodo and final dev/tree verification still gate merge; task remains In Progress.
 <!-- SECTION:NOTES:END -->

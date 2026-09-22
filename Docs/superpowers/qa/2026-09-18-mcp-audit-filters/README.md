@@ -77,7 +77,7 @@ Source hashes matched immediately after native exit. The only later production
 change was Ruff wrapping the focus guard condition; its AST is identical, with
 [both hashes recorded](source-format-verification.json). Generated CSS is
 unchanged after capture. [Export hashes](export-manifest.json) record original
-private artifacts and repository copies normalized only for trailing whitespace.
+private artifacts and repository copies normalized for trailing whitespace and subsequently sanitized for host paths.
 
 ## Bounds and next review
 
