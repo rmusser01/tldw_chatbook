@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import math
 from dataclasses import dataclass
 from io import BytesIO
@@ -11,6 +12,8 @@ from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
 from tldw_chatbook.Image_Generation.config import (
+
+# Media_Generation.validation_helpers; these delegates keep the local names
     DEFAULT_INLINE_MAX_BYTES,
     DEFAULT_MAX_HEIGHT,
     DEFAULT_MAX_PIXELS,
@@ -19,6 +22,8 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_MAX_WIDTH,
     get_image_generation_config,
 )
+
+from tldw_chatbook.Media_Generation import validation_helpers as shared_helpers
 
 #: Choke-point bounds for the reference-image seam (task-3 of the
 #: fal/Gemini/Fireworks plan). Adapters (Tasks 4-6) can assume that any
@@ -62,23 +67,6 @@ def effective_inline_max_bytes(config: Any | None = None) -> int:
         return DEFAULT_INLINE_MAX_BYTES
     return value if value > 0 else DEFAULT_INLINE_MAX_BYTES
 
-
-def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
-    """Return configured passthrough allowlist keys for an image backend."""
-
-    backend_name = str(backend or "").strip().lower()
-    attr_by_backend = {
-        "stable_diffusion_cpp": "sd_cpp_allowed_extra_params",
-        "swarmui": "swarmui_allowed_extra_params",
-        "openrouter": "openrouter_image_allowed_extra_params",
-        "novita": "novita_image_allowed_extra_params",
-        "together": "together_image_allowed_extra_params",
-        "modelstudio": "modelstudio_image_allowed_extra_params",
-    }
-    attr = attr_by_backend.get(backend_name)
-    if not attr:
-        return set()
-    return {str(item).strip() for item in getattr(config, attr, []) or [] if str(item).strip()}
 
 
 def validate_image_generation_request(
@@ -126,50 +114,7 @@ def _issue(message: str, path: str) -> ImageGenerationValidationIssue:
     )
 
 
-def _positive_int_attr(config: Any, attr: str, default: int) -> int:
-    try:
-        value = int(getattr(config, attr, default))
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
 
-
-def _validate_int_bound(
-    issues: list[ImageGenerationValidationIssue],
-    value: Any,
-    *,
-    path: str,
-    max_value: int,
-) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, bool) or not isinstance(value, int):
-        issues.append(_issue(f"{path} must be an integer", path))
-        return False
-    if value <= 0 or value > max_value:
-        issues.append(_issue(f"{path} out of range", path))
-        return False
-    return True
-
-
-def _validate_positive_finite_float(
-    issues: list[ImageGenerationValidationIssue],
-    value: Any,
-    *,
-    path: str,
-) -> None:
-    if value is None:
-        return
-    if isinstance(value, bool):
-        issues.append(_issue(f"{path} must be a finite positive number", path))
-        return
-    try:
-        candidate = float(value)
-    except (TypeError, ValueError):
-        issues.append(_issue(f"{path} must be a finite positive number", path))
-        return
-    if not math.isfinite(candidate) or candidate <= 0:
-        issues.append(_issue(f"{path} must be a finite positive number", path))
 
 
 def _validate_extra_params(
@@ -354,3 +299,30 @@ def _validate_reference_dimension(
         issues.append(_issue(f"reference image {path} out of range", "reference_image"))
         return False
     return True
+
+
+# ADR-176: the shared bound/allowlist helpers live in
+# (the issue factory and extra-params enforcement stay modality-specific).
+_EXTRA_PARAM_ATTRS = {
+    "stable_diffusion_cpp": "sd_cpp_allowed_extra_params",
+    "swarmui": "swarmui_allowed_extra_params",
+    "openrouter": "openrouter_image_allowed_extra_params",
+    "novita": "novita_image_allowed_extra_params",
+    "together": "together_image_allowed_extra_params",
+    "modelstudio": "modelstudio_image_allowed_extra_params",
+}
+
+_positive_int_attr = shared_helpers.positive_int_attr
+
+
+def _validate_int_bound(issues, value, *, path, max_value):
+    return shared_helpers.validate_int_bound(issues, value, path=path, max_value=max_value, issue=_issue)
+
+
+def _validate_positive_finite_float(issues, value, *, path):
+    shared_helpers.validate_positive_finite_float(issues, value, path=path, issue=_issue)
+
+
+def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
+    """Return configured passthrough allowlist keys for a image backend."""
+    return shared_helpers.allowed_extra_params_for_backend(backend, config, _EXTRA_PARAM_ATTRS)

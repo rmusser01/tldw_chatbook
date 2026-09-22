@@ -1,0 +1,1204 @@
+PR Fast Lane	UNKNOWN STEP	﻿2026-09-22T04:04:25.1982092Z Current runner version: '2.337.0'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2007015Z ##[group]Runner Image Provisioner
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2007856Z Hosted Compute Agent
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2008537Z Version: 20260828.587
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2009170Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2009889Z Build Date: 2026-08-28T16:44:25Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2010719Z Worker ID: {cedf2166-697c-4bbb-a20a-c9c56d9538c4}
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2011440Z Azure Region: westus3
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2012057Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2013522Z ##[group]Operating System
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2014147Z Ubuntu
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2014820Z 24.04.5
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2015335Z LTS
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2015881Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2016676Z ##[group]Runner Image
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2017328Z Image: ubuntu-24.04
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2017966Z Version: 20260907.300.1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2019190Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2020819Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2021825Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2022955Z ##[group]GITHUB_TOKEN Permissions
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2024828Z Contents: read
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2025523Z Metadata: read
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2026296Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2028485Z Secret source: Actions
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2029447Z Cache mode: write
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2030222Z Prepare workflow directory
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2417878Z Prepare all required actions
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.2465396Z Getting action download info
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.5620209Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.6821631Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.8598938Z Complete job name: PR Fast Lane
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9359631Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9368684Z ##[group]Run actions/checkout@v4
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9369419Z with:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9369861Z   repository: rmusser01/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9373530Z   token: ***
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9373958Z   ssh-strict: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9374385Z   ssh-user: git
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9374818Z   persist-credentials: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9375292Z   clean: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9375724Z   sparse-checkout-cone-mode: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9376463Z   fetch-depth: 1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9376896Z   fetch-tags: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9377343Z   show-progress: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9377789Z   lfs: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9378229Z   submodules: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9378680Z   set-safe-directory: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9379183Z   allow-unsafe-pr-checkout: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:25.9379963Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0371285Z Syncing repository: rmusser01/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0373029Z ##[group]Getting Git version info
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0373812Z Working directory is '<home>/work/tldw_chatbook/tldw_chatbook'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0374911Z [command]/usr/bin/git version
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0438176Z git version 2.55.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0460491Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0476759Z Temporarily overriding HOME='<home>/work/_temp/8476ce49-5225-4d7d-b279-44b7ec3d8901' before making global git config changes
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0479178Z Adding repository directory to the temporary git global config as a safe directory
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0482563Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0531448Z Deleting the contents of '<home>/work/tldw_chatbook/tldw_chatbook'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0536538Z ##[group]Initializing the repository
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0541671Z [command]/usr/bin/git init <home>/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0648846Z hint: Using 'master' as the name for the initial branch. This default branch name
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0650010Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0651115Z hint: to use in all of your new repositories, which will suppress this warning,
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0652308Z hint: call:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0653084Z hint:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0654074Z hint: 	git config --global init.defaultBranch <name>
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0655304Z hint:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0656610Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0657727Z hint: 'development'. The just-created branch can be renamed via this command:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0658584Z hint:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0659305Z hint: 	git branch -m <name>
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0660231Z hint:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0661297Z hint: Disable this message with "git config set advice.defaultBranchName false"
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0662561Z Initialized empty Git repository in <home>/work/tldw_chatbook/tldw_chatbook/.git/
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0666453Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0714769Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0715539Z ##[group]Disabling automatic garbage collection
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0718504Z [command]/usr/bin/git config --local gc.auto 0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0747339Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0748051Z ##[group]Setting up auth
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0754516Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.0785421Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1129957Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1161503Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1378605Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1409034Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1626976Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1668304Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1670345Z ##[group]Fetching the repository
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:26.1673293Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1f8c7eb70022ff356b5af57e39f461650d54c292:refs/remotes/pull/2722/merge
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1831004Z From https://github.com/rmusser01/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1831867Z  * [new ref]           1f8c7eb70022ff356b5af57e39f461650d54c292 -> pull/2722/merge
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1835463Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1836343Z ##[group]Determining the checkout info
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1838521Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1851255Z [command]/usr/bin/git sparse-checkout disable
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1898128Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1926392Z ##[group]Checking out the ref
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:40.1930255Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2722/merge
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.2571086Z Updating files:  37% (8854/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.3916691Z Updating files:  38% (8990/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.4991802Z Updating files:  39% (9227/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.6194665Z Updating files:  40% (9463/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.6400132Z Updating files:  41% (9700/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.6868418Z Updating files:  42% (9936/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.7149122Z Updating files:  43% (10173/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.7434729Z Updating files:  44% (10410/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.7757287Z Updating files:  45% (10646/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.7994176Z Updating files:  46% (10883/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.8217280Z Updating files:  47% (11119/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.8631363Z Updating files:  48% (11356/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.8885538Z Updating files:  49% (11592/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.9164805Z Updating files:  50% (11829/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.9326465Z Updating files:  51% (12066/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.9533518Z Updating files:  52% (12302/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:41.9778983Z Updating files:  53% (12539/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.0040612Z Updating files:  54% (12775/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.0287038Z Updating files:  55% (13012/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.0523535Z Updating files:  56% (13248/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.0814267Z Updating files:  57% (13485/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.1064800Z Updating files:  58% (13722/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.1359985Z Updating files:  59% (13958/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.1701038Z Updating files:  60% (14195/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2090408Z Updating files:  61% (14431/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2157189Z Updating files:  62% (14668/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2369638Z Updating files:  62% (14719/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2593332Z Updating files:  63% (14904/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2796646Z Updating files:  64% (15141/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.2977779Z Updating files:  65% (15378/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3250119Z Updating files:  66% (15614/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3394034Z Updating files:  67% (15851/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3553212Z Updating files:  68% (16087/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3686637Z Updating files:  69% (16324/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3833078Z Updating files:  70% (16560/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.3992529Z Updating files:  71% (16797/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4145258Z Updating files:  72% (17034/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4299944Z Updating files:  73% (17270/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4451542Z Updating files:  74% (17507/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4582129Z Updating files:  75% (17743/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4722481Z Updating files:  76% (17980/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.4860184Z Updating files:  77% (18216/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5024732Z Updating files:  78% (18453/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5160533Z Updating files:  79% (18690/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5325463Z Updating files:  80% (18926/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5484228Z Updating files:  81% (19163/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5616959Z Updating files:  82% (19399/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5752291Z Updating files:  83% (19636/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.5913080Z Updating files:  84% (19872/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.6045396Z Updating files:  85% (20109/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.6174191Z Updating files:  86% (20346/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.6532988Z Updating files:  87% (20582/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.6898341Z Updating files:  88% (20819/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.7206687Z Updating files:  89% (21055/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.7463165Z Updating files:  90% (21292/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.7743353Z Updating files:  91% (21528/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.8016218Z Updating files:  92% (21765/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.8252230Z Updating files:  93% (22002/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.8538491Z Updating files:  94% (22238/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.9047889Z Updating files:  95% (22475/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.9237110Z Updating files:  96% (22711/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.9516649Z Updating files:  97% (22948/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:42.9776231Z Updating files:  98% (23184/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0346668Z Updating files:  99% (23421/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0347901Z Updating files: 100% (23657/23657)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0348509Z Updating files: 100% (23657/23657), done.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0581663Z Note: switching to 'refs/remotes/pull/2722/merge'.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0582021Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0582341Z You are in 'detached HEAD' state. You can look around, make experimental
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0583158Z changes and commit them, and you can discard any commits you make in this
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0584121Z state without impacting any branches by switching back to a branch.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0584515Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0584771Z If you want to create a new branch to retain commits you create, you may
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0585388Z do so (now or later) by using -c with the switch command. Example:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0585740Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0585883Z   git switch -c <new-branch-name>
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0586431Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0586574Z Or undo this operation with:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0586796Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0586909Z   git switch -
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0587075Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0587386Z Turn off this advice by setting config variable advice.detachedHead to false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0587795Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0588250Z HEAD is now at 1f8c7eb7 Merge b42368fd9a8bf7803353018b0414d0fb210c9d7f into 3722a857480b94b30fd4755f3f8e3002bd163ec3
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0680451Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0731043Z [command]/usr/bin/git log -1 --format=%H
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.0753633Z 1f8c7eb70022ff356b5af57e39f461650d54c292
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1096806Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1098783Z ##[group]Run actions/setup-python@v5
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1099052Z with:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1099259Z   python-version: 3.12
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1099489Z   cache: pip
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1099694Z   check-latest: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1102057Z   token: ***
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1102288Z   update-environment: true
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1102538Z   allow-prereleases: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1102768Z   freethreaded: false
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.1102981Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.2442069Z ##[group]Installed versions
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.2546879Z (node:2260) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.2547715Z (Use `node --trace-deprecation ...` to show where the warning was created)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.2548571Z Successfully set up CPython (3.12.14)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:43.2549343Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:44.8903062Z [command]/opt/hostedtoolcache/Python/3.12.14/x64/bin/pip cache dir
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:45.1786918Z <home>/.cache/pip
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:45.4211316Z Cache hit for: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:45.4317793Z (node:2260) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:46.6623031Z Received 20971520 of 3484503135 (0.6%), 20.0 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:47.6629222Z Received 167772160 of 3484503135 (4.8%), 80.0 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:48.6634515Z Received 322961408 of 3484503135 (9.3%), 102.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:49.6673785Z Received 490733568 of 3484503135 (14.1%), 116.9 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:50.6841284Z Received 650117120 of 3484503135 (18.7%), 123.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:51.6785848Z Received 805306368 of 3484503135 (23.1%), 127.7 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:52.6784939Z Received 968884224 of 3484503135 (27.8%), 131.7 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:53.6786378Z Received 1124073472 of 3484503135 (32.3%), 133.7 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:54.6784886Z Received 1291845632 of 3484503135 (37.1%), 136.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:55.6802679Z Received 1434451968 of 3484503135 (41.2%), 136.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:56.6807158Z Received 1585446912 of 3484503135 (45.5%), 137.2 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:57.6809359Z Received 1736441856 of 3484503135 (49.8%), 137.8 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:58.7146823Z Received 1879048192 of 3484503135 (53.9%), 137.3 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:04:59.7135114Z Received 2013265920 of 3484503135 (57.8%), 136.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:00.7148686Z Received 2147483648 of 3484503135 (61.6%), 136.1 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:01.7149823Z Received 2294284288 of 3484503135 (65.8%), 136.3 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:02.7161278Z Received 2428502016 of 3484503135 (69.7%), 135.8 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:03.7163812Z Received 2583691264 of 3484503135 (74.1%), 136.5 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:04.7164443Z Received 2717908992 of 3484503135 (78.0%), 136.0 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:05.7178514Z Received 2856321024 of 3484503135 (82.0%), 135.8 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:06.7189410Z Received 2994733056 of 3484503135 (85.9%), 135.6 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:07.7194855Z Received 3141533696 of 3484503135 (90.2%), 135.8 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:08.7205313Z Received 3296722944 of 3484503135 (94.6%), 136.4 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:09.7220675Z Received 3430940672 of 3484503135 (98.5%), 136.0 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:10.1188766Z Received 3484503135 of 3484503135 (100.0%), 135.9 MBs/sec
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:10.1190408Z Cache Size: ~3323 MB (3484503135 B)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:10.1303546Z [command]/usr/bin/tar -xf <home>/work/_temp/b9a7ef13-ce42-41b7-9c9d-76f0635f3b5a/cache.tzst -P -C <home>/work/tldw_chatbook/tldw_chatbook --use-compress-program unzstd
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:16.9488980Z Cache restored successfully
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.0959279Z Cache restored from key: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1270724Z ##[group]Run python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1271853Z [36;1mpython -m pip install -e . pytest pytest-asyncio pytest-timeout packaging[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1328641Z shell: /usr/bin/bash -e {0}
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1329083Z env:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1329540Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1330317Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1331092Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1331816Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1332488Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1333159Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:17.1333720Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:18.7247327Z Obtaining file:///home/runner/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:18.7288591Z   Installing build dependencies: started
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:19.3443206Z   Installing build dependencies: finished with status 'done'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:19.3449162Z   Checking if build backend supports build_editable: started
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:19.7013627Z   Checking if build backend supports build_editable: finished with status 'done'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:19.7021790Z   Getting requirements to build editable: started
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.2270199Z   Getting requirements to build editable: finished with status 'done'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.2280746Z   Preparing editable metadata (pyproject.toml): started
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.6113631Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7317690Z Collecting pytest
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7332378Z   Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7508784Z Collecting pytest-asyncio
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7522112Z   Using cached pytest_asyncio-1.4.0-py3-none-any.whl.metadata (4.1 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7631164Z Collecting pytest-timeout
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7643897Z   Using cached pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7789842Z Collecting packaging
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.7802562Z   Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8105610Z Collecting chardet<6,>=3.0.2 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8118342Z   Using cached chardet-5.2.0-py3-none-any.whl.metadata (3.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8276325Z Collecting httpx (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8288995Z   Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8405402Z Collecting loguru (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8417880Z   Using cached loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8859400Z Collecting textual==8.2.8 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8872117Z   Using cached textual-8.2.8-py3-none-any.whl.metadata (9.1 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.8992642Z Collecting textual-diff-view==0.1.5 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9004943Z   Using cached textual_diff_view-0.1.5-py3-none-any.whl.metadata (48 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9279782Z Collecting requests (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9292422Z   Using cached requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9600643Z Collecting rich (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9614325Z   Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9719803Z Collecting pyte==0.8.2 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:20.9732291Z   Using cached pyte-0.8.2-py3-none-any.whl.metadata (3.0 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.3432639Z Collecting regex==2026.4.4 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.3447530Z   Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.3592986Z Collecting wcwidth<1,>=0.2.14 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.4280068Z   Downloading wcwidth-0.8.4-py3-none-any.whl.metadata (23 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.4474276Z Collecting rich-pixels>=3.0.0 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.4486325Z   Using cached rich_pixels-3.0.1-py3-none-any.whl.metadata (2.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.5963711Z Collecting pillow>=10.4 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.5977862Z   Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.6476509Z Collecting PyYAML (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.6490471Z   Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.7447173Z Collecting pydantic<3,>=2.4 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.7461348Z   Using cached pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.7601019Z Collecting rfc8785==0.1.4 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.7614297Z   Using cached rfc8785-0.1.4-py3-none-any.whl.metadata (3.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.9296331Z Collecting cryptography (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.9311589Z   Using cached cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (4.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.9456471Z Collecting portalocker==3.2.0 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:21.9469121Z   Using cached portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0100403Z Collecting psutil (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0115061Z   Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0250669Z Collecting toml (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0264095Z   Using cached toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0356200Z Collecting pyperclip (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0368865Z   Using cached pyperclip-1.11.0-py3-none-any.whl.metadata (2.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0505990Z Collecting emoji (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0614171Z   Downloading emoji-2.16.0-py3-none-any.whl.metadata (5.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0766139Z Collecting jinja2 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.0778813Z   Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1438542Z Collecting pycryptodomex (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1453351Z   Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1719451Z Collecting keyring (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1733213Z   Using cached keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1901745Z Collecting markdownify (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.1914251Z   Using cached markdownify-1.2.3-py3-none-any.whl.metadata (9.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2011087Z Collecting aiofiles (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2023093Z   Using cached aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2194323Z Collecting croniter>=1.4.0 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2208238Z   Using cached croniter-6.2.4-py3-none-any.whl.metadata (23 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2340372Z Collecting textual-image (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2468852Z   Downloading textual_image-0.14.0-py3-none-any.whl.metadata (14 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2861447Z Collecting tiktoken==0.14.0 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2875233Z   Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (6.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2971728Z Collecting defusedxml (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.2983898Z   Using cached defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.3100313Z Collecting html5lib<2,>=1.1 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.3112129Z   Using cached html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.3228857Z Collecting tinycss2<2,>=1.4 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.3240798Z   Using cached tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.8077453Z Collecting aiohttp<4,>=3.9 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.8092228Z   Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.8868734Z Collecting sherpa-onnx<2,>=1.13 (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:22.9025295Z   Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (53 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.0996413Z Collecting numpy (from tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1103575Z   Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1288417Z Collecting markdown-it-py>=2.1.0 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1300124Z   Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1436530Z Collecting mdit-py-plugins (from textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1448673Z   Using cached mdit_py_plugins-0.6.1-py3-none-any.whl.metadata (2.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1613625Z Collecting platformdirs<5,>=3.6.0 (from textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.1723114Z   Downloading platformdirs-4.11.12-py3-none-any.whl.metadata (5.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.2208553Z Collecting pygments<3.0.0,>=2.19.2 (from textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.2221708Z   Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.2618831Z Collecting typing-extensions<5.0.0,>=4.4.0 (from textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.2631935Z   Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.5198554Z Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.5212893Z   Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.8169867Z Collecting aiosignal>=1.4.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:23.8183407Z   Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.1197249Z Collecting attrs>=17.3.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.1211444Z   Using cached attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.3658787Z Collecting frozenlist>=1.1.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.3672723Z   Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.7634703Z Collecting multidict<7.0,>=4.5 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.7743609Z   Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.8413523Z Collecting propcache>=0.2.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:24.8523672Z   Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (25 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.0898463Z Collecting yarl<2.0,>=1.17.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1007245Z   Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (111 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1300416Z Collecting six>=1.9 (from html5lib<2,>=1.1->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1312804Z   Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1393777Z Collecting webencodings (from html5lib<2,>=1.1->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1405601Z   Using cached webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1512783Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.1524592Z   Using cached annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8008063Z Collecting pydantic-core==2.46.5 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8021898Z   Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8119464Z Collecting typing-inspection>=0.4.2 (from pydantic<3,>=2.4->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8131573Z   Using cached typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8434987Z Collecting sherpa-onnx-core==1.13.8 (from sherpa-onnx<2,>=1.13->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8545517Z   Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl.metadata (628 bytes)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8727075Z Collecting idna>=2.0 (from yarl<2.0,>=1.17.0->aiohttp<4,>=3.9->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8830901Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.8991804Z Collecting iniconfig>=1.0.1 (from pytest)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9004147Z   Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9105177Z Collecting pluggy<2,>=1.5 (from pytest)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9117892Z   Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9352153Z Collecting python-dateutil (from croniter>=1.4.0->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9364638Z   Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9469171Z Collecting mdurl~=0.1 (from markdown-it-py>=2.1.0->markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9481346Z   Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9589901Z Collecting linkify-it-py<3,>=1 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:25.9602199Z   Using cached linkify_it_py-2.2.0-py3-none-any.whl.metadata (8.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1014899Z Collecting cffi>=2.0.0 (from cryptography->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1029170Z   Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1126047Z Collecting pycparser (from cffi>=2.0.0->cryptography->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1138422Z   Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1314734Z Collecting anyio (from httpx->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1327306Z   Using cached anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1480703Z Collecting certifi (from httpx->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1492931Z   Using cached certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1621450Z Collecting httpcore==1.* (from httpx->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1633610Z   Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1741048Z Collecting h11>=0.16 (from httpcore==1.*->httpx->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.1753185Z   Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2238653Z Collecting MarkupSafe>=2.0 (from jinja2->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2251366Z   Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2353509Z Collecting SecretStorage>=3.2 (from keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2365187Z   Using cached secretstorage-3.5.0-py3-none-any.whl.metadata (4.0 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2452485Z Collecting jeepney>=0.4.2 (from keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2464093Z   Using cached jeepney-0.9.0-py3-none-any.whl.metadata (1.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2560591Z Collecting jaraco.classes (from keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2572485Z   Using cached jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2719482Z Collecting jaraco.functools (from keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2731137Z   Using cached jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2841013Z Collecting jaraco.context (from keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.2852029Z   Using cached jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3144842Z Collecting more-itertools (from jaraco.classes->keyring->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3157067Z   Using cached more_itertools-11.1.0-py3-none-any.whl.metadata (41 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3326530Z Collecting beautifulsoup4<5,>=4.9 (from markdownify->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3338713Z   Using cached beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3498610Z Collecting soupsieve>=1.6.1 (from beautifulsoup4<5,>=4.9->markdownify->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.3510329Z   Using cached soupsieve-2.9.2-py3-none-any.whl.metadata (4.6 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.4660995Z Collecting charset_normalizer<4,>=2 (from requests->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.4675334Z   Using cached charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (45 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.4909302Z Collecting urllib3<3,>=1.26 (from requests->tldw_chatbook==0.2.2)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5014457Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5153121Z Using cached portalocker-3.2.0-py3-none-any.whl (22 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5164656Z Using cached pyte-0.8.2-py3-none-any.whl (31 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5176648Z Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (801 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5191058Z Using cached rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5202589Z Using cached textual-8.2.8-py3-none-any.whl (731 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5217018Z Using cached textual_diff_view-0.1.5-py3-none-any.whl (25 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5228618Z Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl (1.2 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5244462Z Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5261981Z Using cached chardet-5.2.0-py3-none-any.whl (199 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5273932Z Using cached html5lib-1.1-py2.py3-none-any.whl (112 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5380115Z Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (336 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5613900Z Downloading platformdirs-4.11.12-py3-none-any.whl (24 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5644067Z Using cached pydantic-2.13.5-py3-none-any.whl (472 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5657551Z Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5676082Z Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.5796218Z Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.4 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.6406576Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 73.1 MB/s  0:00:00
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.6523904Z Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl (10.6 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.6990502Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.6/10.6 MB 235.1 MB/s  0:00:00
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7003964Z Using cached tinycss2-1.5.1-py3-none-any.whl (28 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7016591Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7126843Z Downloading wcwidth-0.8.4-py3-none-any.whl (299 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7265408Z Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (117 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7298811Z Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7312081Z Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7323968Z Using cached pytest_asyncio-1.4.0-py3-none-any.whl (16 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7335613Z Using cached pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7347927Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7360286Z Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7372560Z Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7384361Z Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7396067Z Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7408264Z Using cached croniter-6.2.4-py3-none-any.whl (46 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7420712Z Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (242 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7525380Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7559093Z Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7571156Z Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7583487Z Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7595574Z Using cached linkify_it_py-2.2.0-py3-none-any.whl (21 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7608214Z Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7739589Z Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (250 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7774355Z Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7787450Z Using cached rich_pixels-3.0.1-py3-none-any.whl (6.0 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7799200Z Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7811147Z Using cached typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7823106Z Using cached webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7834730Z Using cached aiofiles-25.1.0-py3-none-any.whl (14 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7846853Z Using cached cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl (4.7 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7875547Z Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (221 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.7888401Z Using cached defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8005288Z Downloading emoji-2.16.0-py3-none-any.whl (610 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8059774Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 610.9/610.9 kB 125.1 MB/s  0:00:00
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8072302Z Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8085676Z Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8098236Z Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8110169Z Using cached anyio-4.15.1-py3-none-any.whl (132 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8122388Z Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8134708Z Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8147298Z Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8159315Z Using cached keyring-25.7.0-py3-none-any.whl (39 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8171115Z Using cached jeepney-0.9.0-py3-none-any.whl (49 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8183088Z Using cached secretstorage-3.5.0-py3-none-any.whl (15 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8195216Z Using cached jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8207292Z Using cached jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8219124Z Using cached jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8231168Z Using cached loguru-0.7.3-py3-none-any.whl (61 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8243150Z Using cached markdownify-1.2.3-py3-none-any.whl (15 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8255179Z Using cached beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8267456Z Using cached soupsieve-2.9.2-py3-none-any.whl (37 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8279539Z Using cached mdit_py_plugins-0.6.1-py3-none-any.whl (66 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8291411Z Using cached more_itertools-11.1.0-py3-none-any.whl (72 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8398944Z Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8871757Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 368.5 MB/s  0:00:00
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8886340Z Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8899616Z Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8915140Z Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8935137Z Using cached pyperclip-1.11.0-py3-none-any.whl (11 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8947879Z Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8961458Z Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8976803Z Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.8989840Z Using cached charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (248 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.9098105Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.9231360Z Downloading textual_image-0.14.0-py3-none-any.whl (180 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:26.9267644Z Using cached toml-0.10.2-py2.py3-none-any.whl (16 kB)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.1813286Z Building wheels for collected packages: tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.1822168Z   Building editable for tldw_chatbook (pyproject.toml): started
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.7600062Z   Building editable for tldw_chatbook (pyproject.toml): finished with status 'done'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.7606834Z   Created wheel for tldw_chatbook: filename=tldw_chatbook-0.2.2-0.editable-py3-none-any.whl size=28485 sha256=ca613e349bae2445124b4f7389a7c867f7dd3a38715a8a24bb9608db51550c7a
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.7608371Z   Stored in directory: <tmp>/pip-ephem-wheel-cache-fypc5517/wheels/24/4b/39/86b9fd25be7c432a62d8b220df51cdb18f8f5b9d989fcea420
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.7663445Z Successfully built tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:27.9189060Z Installing collected packages: sherpa-onnx-core, pyperclip, webencodings, wcwidth, urllib3, typing-extensions, toml, soupsieve, six, sherpa-onnx, rfc8785, regex, PyYAML, pygments, pycryptodomex, pycparser, psutil, propcache, portalocker, pluggy, platformdirs, pillow, packaging, numpy, multidict, more-itertools, mdurl, MarkupSafe, loguru, linkify-it-py, jeepney, jaraco.context, iniconfig, idna, h11, frozenlist, emoji, defusedxml, charset_normalizer, chardet, certifi, attrs, annotated-types, aiohappyeyeballs, aiofiles, yarl, typing-inspection, tinycss2, requests, python-dateutil, pytest, pyte, pydantic-core, markdown-it-py, jinja2, jaraco.functools, jaraco.classes, httpcore, html5lib, cffi, beautifulsoup4, anyio, aiosignal, tiktoken, rich, pytest-timeout, pytest-asyncio, pydantic, mdit-py-plugins, markdownify, httpx, cryptography, croniter, aiohttp, textual-image, textual, SecretStorage, rich-pixels, textual-diff-view, keyring, tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.0029391Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.0096425Z Successfully installed MarkupSafe-3.0.3 PyYAML-6.0.3 SecretStorage-3.5.0 aiofiles-25.1.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.3 aiosignal-1.4.0 annotated-types-0.8.0 anyio-4.15.1 attrs-26.1.0 beautifulsoup4-4.15.0 certifi-2026.7.22 cffi-2.1.1 chardet-5.2.0 charset_normalizer-3.5.1 croniter-6.2.4 cryptography-50.0.1 defusedxml-0.7.1 emoji-2.16.0 frozenlist-1.8.0 h11-0.16.0 html5lib-1.1 httpcore-1.0.9 httpx-0.28.1 idna-3.20 iniconfig-2.3.0 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 jinja2-3.1.6 keyring-25.7.0 linkify-it-py-2.2.0 loguru-0.7.3 markdown-it-py-4.2.0 markdownify-1.2.3 mdit-py-plugins-0.6.1 mdurl-0.1.2 more-itertools-11.1.0 multidict-6.9.1 numpy-2.5.3 packaging-26.3 pillow-12.3.0 platformdirs-4.11.12 pluggy-1.6.0 portalocker-3.2.0 propcache-0.5.4 psutil-7.2.2 pycparser-3.0 pycryptodomex-3.23.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyperclip-1.11.0 pyte-0.8.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-timeout-2.4.0 python-dateutil-2.9.0.post0 regex-2026.4.4 requests-2.34.2 rfc8785-0.1.4 rich-15.0.0 rich-pixels-3.0.1 sherpa-onnx-1.13.8 sherpa-onnx-core-1.13.8 six-1.17.0 soupsieve-2.9.2 textual-8.2.8 textual-diff-view-0.1.5 textual-image-0.14.0 tiktoken-0.14.0 tinycss2-1.5.1 tldw_chatbook-0.2.2 toml-0.10.2 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 wcwidth-0.8.4 webencodings-0.6.1 yarl-1.25.1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2393705Z ##[group]Run pytest \
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2393994Z [36;1mpytest \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2394212Z [36;1m  Tests/CI \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2394444Z [36;1m  Tests/test_smoke.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2394745Z [36;1m  Tests/Agents/test_execution_capacity.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2395083Z [36;1m  Tests/Agents/test_fleet_messages.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2395445Z [36;1m  Tests/Agents/test_session_todo_store.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2395826Z [36;1m  Tests/DB/test_agent_orchestration_dev_migration.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2396569Z [36;1m  Tests/DB/test_agent_run_budget_accounting.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2396929Z [36;1m  Tests/DB/test_automatic_work_budget.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2397265Z [36;1m  Tests/DB/test_automatic_runtime_owner.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2397599Z [36;1m  Tests/DB/test_automatic_wake_attempts.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2397955Z [36;1m  Tests/Model_Artifacts/test_operation_leases.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2398392Z [36;1m  Tests/Model_Artifacts/test_operation_leases_process.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2398771Z [36;1m  Tests/UI/test_mcp_workbench.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2399075Z [36;1m  Tests/UI/test_mcp_tools_mode.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2399368Z [36;1m  --timeout=180 \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2399606Z [36;1m  --tb=short[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2437425Z shell: /usr/bin/bash -e {0}
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2437691Z env:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2437969Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2438421Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2438863Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2439260Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2439668Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2440065Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:36.2440394Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3744766Z ============================= test session starts ==============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3745455Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3746454Z rootdir: <home>/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3747046Z configfile: pyproject.toml
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3747383Z plugins: anyio-4.15.1, asyncio-1.4.0, timeout-2.4.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3748448Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3749055Z timeout: 180.0s
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3749289Z timeout method: signal
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3749540Z timeout func_only: False
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3749793Z collected 1152 items
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:44.3749942Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.2520624Z Tests/CI/test_backlog_task_id_uniqueness.py ...                          [  0%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.3025233Z Tests/CI/test_canvas_mermaid_asset_checker.py ..........                 [  1%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.6631900Z Tests/CI/test_ci_queue_pressure_contract.py .................            [  2%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.7618110Z Tests/CI/test_derived_artifacts_workflow.py .........                    [  3%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.8951703Z Tests/CI/test_github_actions_test_workflow.py ...................        [  5%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.9333191Z Tests/CI/test_task19637_platform_evidence.py ....                        [  5%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:45.9850384Z Tests/CI/test_task2062_1_gguf_import_evidence.py ....                    [  5%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:46.1405621Z Tests/CI/test_task2062_2_gguf_source_evidence.py .....                   [  6%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:46.7257069Z Tests/CI/test_task31942_macos_concurrency_evidence.py ...............    [  7%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:48.1498878Z Tests/CI/test_task598_external_parakeet_evidence.py .................... [  9%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:48.3321527Z ................................                                         [ 11%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:48.4905076Z Tests/CI/test_task601_process_tree_evidence.py ......................... [ 14%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:49.1220633Z ................................................................         [ 19%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:49.3101509Z Tests/CI/test_task602_platform_evidence.py ............................. [ 22%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:49.5201640Z .......................................                                  [ 25%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:49.6867596Z Tests/CI/test_task603_dictation_evidence.py ............................ [ 28%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:50.0335377Z .........................                                                [ 30%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:05:50.1298934Z Tests/CI/test_textual_runtime_contract.py ..                             [ 30%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:15.2372135Z Tests/test_smoke.py ................                                     [ 31%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:15.5322793Z Tests/Agents/test_execution_capacity.py .......................          [ 33%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:15.8043949Z Tests/Agents/test_fleet_messages.py .................................... [ 36%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:15.9902034Z .....                                                                    [ 37%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:16.1699202Z Tests/Agents/test_session_todo_store.py ................................ [ 40%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:16.6335900Z ........................................................................ [ 46%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:18.5021178Z ........................................................................ [ 52%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:18.8258313Z .........                                                                [ 53%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:20.3819215Z Tests/DB/test_agent_orchestration_dev_migration.py ....                  [ 53%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:22.4480871Z Tests/DB/test_agent_run_budget_accounting.py ...............             [ 55%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:27.6341537Z Tests/DB/test_automatic_work_budget.py ..............................    [ 57%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:29.4546836Z Tests/DB/test_automatic_runtime_owner.py .........                       [ 58%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:32.4251357Z Tests/DB/test_automatic_wake_attempts.py ...............                 [ 59%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:32.8678296Z Tests/Model_Artifacts/test_operation_leases.py ......................... [ 61%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:33.2155900Z .........................                                                [ 64%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:06:36.4818539Z Tests/Model_Artifacts/test_operation_leases_process.py ......            [ 64%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:07:33.7062298Z Tests/UI/test_mcp_workbench.py ......................................... [ 68%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:09:18.6492203Z .............................................................F.....F.... [ 74%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:10:51.6841400Z ..............F......................................................... [ 80%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:12:52.9409891Z .....F...............F.................................................. [ 86%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:14:54.8663442Z ........................................................................ [ 93%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:15:41.6593492Z .....................                                                    [ 94%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:06.1923730Z Tests/UI/test_mcp_tools_mode.py ........................................ [ 98%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4585112Z ..................                                                       [100%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4587290Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4587934Z =================================== FAILURES ===================================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4588674Z _____________ test_test_tool_run_error_renders_failed_with_message _____________
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4589714Z Tests/UI/test_mcp_workbench.py:4371: in test_test_tool_run_error_renders_failed_with_message
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4590802Z     result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4591567Z                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4593123Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4594547Z     raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4595556Z E   textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4596799Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4598364Z 2026-09-22 04:08:58.085 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4600003Z _ test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked _
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4601186Z Tests/UI/test_mcp_workbench.py:4565: in test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4602311Z     result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4603026Z                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4603894Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4604886Z     raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4605866Z E   textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4607043Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4608576Z 2026-09-22 04:09:06.755 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4610188Z _ test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1] _
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4611288Z Tests/UI/test_mcp_workbench.py:5016: in test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4612367Z     rendered = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4613094Z                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4613947Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4614941Z     raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4616729Z E   textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4617530Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4618441Z 2026-09-22 04:09:49.028 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4619347Z _________ test_test_tool_typed_failure_outcome_is_redacted_and_bounded _________
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4619922Z Tests/UI/test_mcp_workbench.py:5401: in test_test_tool_typed_failure_outcome_is_redacted_and_bounded
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4620396Z     assert "[redacted]" in rendered
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4620688Z E   AssertionError: assert '[redacted]' in ''
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4621068Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4621943Z 2026-09-22 04:10:57.660 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4622835Z __________ test_test_tool_one_click_builtin_uses_prepared_entry_point __________
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4623403Z Tests/UI/test_mcp_workbench.py:5964: in test_test_tool_one_click_builtin_uses_prepared_entry_point
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4623921Z     assert len(app.unified_mcp_service.prepared_calls) == 1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4624269Z E   AssertionError: assert 0 == 1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4624528Z E    +  where 0 = len([])
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4625160Z E    +    where [] = <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x7fd7ba553800>.prepared_calls
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4626801Z E    +      where <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x7fd7ba553800> = BuiltinToolTestApp(title='BuiltinToolTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).unified_mcp_service
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4628070Z ----------------------------- Captured stderr call -----------------------------
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4628990Z 2026-09-22 04:11:37.177 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'BuiltinToolTestHubService' object has no attribute 'execution_log'
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4629855Z =============================== warnings summary ===============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4630401Z Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4631210Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Tools/patch_tool_impls.py:32: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4631903Z     satisfied (accepting only the ``\ No newline at end of file`` marker
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4632217Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4632434Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4632868Z ============================= slowest 25 durations =============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4633331Z 11.64s call     Tests/test_smoke.py::TestUIComponents::test_app_initialization
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4633921Z 6.88s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4634591Z 5.72s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4635230Z 5.59s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4636221Z 4.27s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4637046Z 3.05s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4637732Z 2.99s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4638590Z 2.67s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4639259Z 2.53s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4639956Z 2.47s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4640702Z 2.45s call     Tests/UI/test_mcp_workbench.py::test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_resync
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4641371Z 2.41s call     Tests/test_smoke.py::TestRAGFunctionality::test_rag_service_initialization
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4642018Z 2.40s call     Tests/UI/test_mcp_workbench.py::test_test_tool_repeated_cancellation_reclaims_abandoned_mint_and_tasks
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4642779Z 2.39s call     Tests/UI/test_mcp_workbench.py::test_slow_tool_result_does_not_render_under_a_different_selected_tool
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4643486Z 2.36s call     Tests/UI/test_mcp_workbench.py::test_raw_shell_hand_edited_allow_renders_ask_and_cycles_only_ask_off
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4644127Z 2.36s call     Tests/test_smoke.py::TestDatabaseSmoke::test_media_database_initialization
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4644746Z 2.31s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_non_mapping_result_str_raises_does_not_crash
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4645319Z 2.30s call     Tests/test_smoke.py::TestConfiguration::test_paths_exist
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4645779Z 2.22s call     Tests/test_smoke.py::TestConfiguration::test_config_loading
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4646874Z 2.21s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4647634Z 2.21s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_in_error_shaped_result_note
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4648352Z 2.20s call     Tests/UI/test_mcp_workbench.py::test_test_tool_profile_changed_never_arms_refreshed_stale_authority
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4648978Z 2.18s call     Tests/test_smoke.py::TestRAGFunctionality::test_chunking_service
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4649636Z 2.17s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure0]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4650448Z 2.16s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4651045Z =========================== short test summary info ============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4651939Z FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_renders_failed_with_message - textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:20.4653321Z FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked - textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1762600Z FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1] - textual.css.query.NoMatches: No nodes match '#mcp-inspector-test-result' on Screen(id='_default')
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1764838Z FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_typed_failure_outcome_is_redacted_and_bounded - AssertionError: assert '[redacted]' in ''
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1767095Z FAILED Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_builtin_uses_prepared_entry_point - AssertionError: assert 0 == 1
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1768239Z  +  where 0 = len([])
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1769161Z  +    where [] = <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x7fd7ba553800>.prepared_calls
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1770947Z  +      where <Tests.UI.test_mcp_workbench.BuiltinToolTestHubService object at 0x7fd7ba553800> = BuiltinToolTestApp(title='BuiltinToolTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}).unified_mcp_service
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:21.1772069Z ============ 5 failed, 1147 passed, 1 warning in 641.32s (0:10:41) =============
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9867026Z ##[error]Process completed with exit code 1.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9917463Z ##[group]Run pytest \
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9917760Z [36;1mpytest \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9918034Z [36;1m  Tests/UI/test_console_runtime_ownership.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9918412Z [36;1m  Tests/Chat/test_console_viewless_hooks.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9918784Z [36;1m  Tests/Agents/test_install_skill_runtime_tool.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9919185Z [36;1m  Tests/Chat/test_console_chat_create_integration.py \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9919529Z [36;1m  --timeout=300 \[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9919777Z [36;1m  --tb=short[0m
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9956237Z shell: /usr/bin/bash -e {0}
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9956506Z env:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9956779Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9957251Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9957697Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9958147Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9958537Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9958932Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:22.9959283Z ##[endgroup]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0160176Z ============================= test session starts ==============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0161186Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0161937Z rootdir: <home>/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0162398Z configfile: pyproject.toml
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0162801Z plugins: anyio-4.15.1, asyncio-1.4.0, timeout-2.4.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0163604Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0164351Z timeout: 300.0s
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0164640Z timeout method: signal
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0164982Z timeout func_only: False
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0165291Z collected 124 items
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:16:36.0165482Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:17:21.3407504Z Tests/UI/test_console_runtime_ownership.py ............................. [ 23%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:18:59.7766897Z .............x................--- _setup_logging START (from Logging_Config.py) ---
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:18:59.7767713Z Loguru: All pre-existing sinks removed.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:18:59.7768437Z Loguru: Configured to forward its messages to standard Python logging system.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:19:09.1688496Z ..........                                 [ 55%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:19:33.1729194Z Tests/Chat/test_console_viewless_hooks.py ..................             [ 70%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:19:37.0352831Z Tests/Agents/test_install_skill_runtime_tool.py ......                   [ 75%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:19:57.4058133Z Tests/Chat/test_console_chat_create_integration.py ..................... [ 91%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8562681Z ..........                                                               [100%]
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8563664Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8564392Z =============================== warnings summary ===============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8567698Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8568863Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8569821Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8570558Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8571123Z   <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8571383Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8571677Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8572364Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8573238Z   <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8573689Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8573967Z Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8574896Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8575620Z     "  /|___|\  ",
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8575749Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8576297Z Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8577236Z   <home>/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8577956Z     " /_|_O_|_\ ",
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8578081Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8578435Z Tests/Chat/test_console_chat_create_integration.py::test_fork_from_child_run_context_copies_parent_conversation
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8580104Z   <home>/work/tldw_chatbook/tldw_chatbook/Tests/conftest.py:529: UserWarning: open file descriptors grew by 235 over the test session (start=16, end=251, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8581306Z     warnings.warn(message, UserWarning, stacklevel=0)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8581536Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8581755Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8582205Z ============================= slowest 25 durations =============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8582768Z 40.21s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8583463Z 20.89s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8584211Z 19.75s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8585006Z 17.46s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8585778Z 16.97s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8586790Z 11.03s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8587639Z 3.51s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8588402Z 1.95s call     Tests/Agents/test_install_skill_runtime_tool.py::test_subagent_cannot_call_install_skill
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8589100Z 1.94s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_with_no_view_keeps_the_unseen_mark
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8589814Z 1.89s call     Tests/Agents/test_install_skill_runtime_tool.py::test_top_level_agent_dispatches_install_skill
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8590556Z 1.79s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_to_the_attached_view_still_clears_the_mark
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8591321Z 1.60s call     Tests/Chat/test_console_viewless_hooks.py::test_a_delivery_started_with_no_view_re_arms_at_the_next_attach
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8592094Z 1.55s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8592901Z 1.48s call     Tests/UI/test_console_runtime_ownership.py::test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8593734Z 1.46s call     Tests/UI/test_console_runtime_ownership.py::test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8594515Z 1.43s call     Tests/Chat/test_console_viewless_hooks.py::test_a_viewless_turn_calls_none_of_the_departed_views_hooks
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8595115Z
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8595220Z (9 durations < 1s hidden.)
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8595683Z =========================== short test summary info ============================
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8597357Z XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:09.8598875Z ============ 123 passed, 1 xfailed, 9 warnings in 223.40s (0:03:43) ============
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.8416940Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.8418258Z Post job cleanup.
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9308920Z [command]/usr/bin/git version
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9349659Z git version 2.55.0
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9388774Z Temporarily overriding HOME='<home>/work/_temp/9e090ac7-3c40-4aa3-a9ae-597d2ec2addb' before making global git config changes
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9390325Z Adding repository directory to the temporary git global config as a safe directory
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9394479Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9437902Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9475455Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9734092Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9765702Z http.https://github.com/.extraheader
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9776366Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:12.9811922Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:13.0065287Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:13.0102638Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:13.0541110Z Cleaning up orphan processes
+PR Fast Lane	UNKNOWN STEP	2026-09-22T04:20:13.0845885Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Derived artifacts reproduce from their sources	UNKNOWN STEP	﻿2026-09-22T04:20:19.0422468Z Current runner version: '2.337.0'
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0446712Z ##[group]Runner Image Provisioner
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0447805Z Hosted Compute Agent
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0448452Z Version: 20260828.587
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0449184Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0449984Z Build Date: 2026-08-28T16:44:25Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0450668Z Worker ID: {aca0d17b-3521-4e8a-8922-587806d2765b}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0451475Z Azure Region: northcentralus
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0452135Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0453675Z ##[group]Operating System
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0454364Z Ubuntu
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0454875Z 24.04.5
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0455507Z LTS
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0456030Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0456616Z ##[group]Runner Image
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0457277Z Image: ubuntu-24.04
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0458301Z Version: 20260907.300.1
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0459679Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0461290Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0462330Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0463537Z ##[group]GITHUB_TOKEN Permissions
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0465410Z Contents: read
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0466023Z Metadata: read
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0466748Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0468969Z Secret source: Actions
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0469991Z Cache mode: write
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0470741Z Prepare workflow directory
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0811736Z Prepare all required actions
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.0859612Z Getting action download info
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.3426581Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.4483791Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.6288507Z Complete job name: Derived artifacts reproduce from their sources
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7061626Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7070424Z ##[group]Run actions/checkout@v4
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7071177Z with:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7071642Z   repository: rmusser01/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7075356Z   token: ***
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7075802Z   ssh-strict: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7076253Z   ssh-user: git
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7076717Z   persist-credentials: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7077217Z   clean: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7077875Z   sparse-checkout-cone-mode: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7078412Z   fetch-depth: 1
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7078857Z   fetch-tags: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7079310Z   show-progress: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7079769Z   lfs: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7080220Z   submodules: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7080684Z   set-safe-directory: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7081208Z   allow-unsafe-pr-checkout: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.7081993Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8038398Z Syncing repository: rmusser01/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8040417Z ##[group]Getting Git version info
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8041236Z Working directory is '<home>/work/tldw_chatbook/tldw_chatbook'
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8042306Z [command]/usr/bin/git version
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8131874Z git version 2.55.0
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8159246Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8166431Z Temporarily overriding HOME='<home>/work/_temp/04927082-e52c-4727-8d27-76b8ec4dc57a' before making global git config changes
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8169717Z Adding repository directory to the temporary git global config as a safe directory
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8171933Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8222828Z Deleting the contents of '<home>/work/tldw_chatbook/tldw_chatbook'
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8227647Z ##[group]Initializing the repository
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8231535Z [command]/usr/bin/git init <home>/work/tldw_chatbook/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8365078Z hint: Using 'master' as the name for the initial branch. This default branch name
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8367024Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8368600Z hint: to use in all of your new repositories, which will suppress this warning,
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8370244Z hint: call:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8370864Z hint:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8372024Z hint: 	git config --global init.defaultBranch <name>
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8373671Z hint:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8374644Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8375742Z hint: 'development'. The just-created branch can be renamed via this command:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8376596Z hint:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8377079Z hint: 	git branch -m <name>
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8377811Z hint:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8379001Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8380278Z Initialized empty Git repository in <home>/work/tldw_chatbook/tldw_chatbook/.git/
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8382218Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8435634Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8436416Z ##[group]Disabling automatic garbage collection
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8439551Z [command]/usr/bin/git config --local gc.auto 0
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8466657Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8467715Z ##[group]Setting up auth
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8473722Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8504874Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8877014Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.8908705Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9121972Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9153259Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9366184Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9398086Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9398968Z ##[group]Fetching the repository
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:19.9406655Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1f8c7eb70022ff356b5af57e39f461650d54c292:refs/remotes/pull/2722/merge
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1897773Z From https://github.com/rmusser01/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1899420Z  * [new ref]           1f8c7eb70022ff356b5af57e39f461650d54c292 -> pull/2722/merge
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1903862Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1905527Z ##[group]Determining the checkout info
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1907175Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1910015Z [command]/usr/bin/git sparse-checkout disable
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1960724Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1990743Z ##[group]Checking out the ref
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:33.1994630Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2722/merge
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.2505329Z Updating files:  37% (8889/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.3832561Z Updating files:  38% (8990/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.4922043Z Updating files:  39% (9227/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.6089025Z Updating files:  40% (9463/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.6300927Z Updating files:  41% (9700/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.6759083Z Updating files:  42% (9936/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.7036056Z Updating files:  43% (10173/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.7322620Z Updating files:  44% (10410/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.7641972Z Updating files:  45% (10646/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.7874967Z Updating files:  46% (10883/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.8114896Z Updating files:  47% (11119/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.8526980Z Updating files:  48% (11356/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.8780733Z Updating files:  49% (11592/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.9069665Z Updating files:  50% (11829/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.9231182Z Updating files:  51% (12066/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.9436320Z Updating files:  52% (12302/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.9675683Z Updating files:  53% (12539/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:34.9934072Z Updating files:  54% (12775/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.0175033Z Updating files:  55% (13012/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.0395857Z Updating files:  56% (13248/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.0669826Z Updating files:  57% (13485/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.0911411Z Updating files:  58% (13722/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.1207953Z Updating files:  59% (13958/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.1544313Z Updating files:  60% (14195/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.1845247Z Updating files:  61% (14431/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2088756Z Updating files:  62% (14668/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2215336Z Updating files:  63% (14904/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2312914Z Updating files:  63% (15043/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2512779Z Updating files:  64% (15141/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2689436Z Updating files:  65% (15378/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.2961462Z Updating files:  66% (15614/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3104349Z Updating files:  67% (15851/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3259111Z Updating files:  68% (16087/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3389483Z Updating files:  69% (16324/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3533113Z Updating files:  70% (16560/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3691252Z Updating files:  71% (16797/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3840446Z Updating files:  72% (17034/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.3992129Z Updating files:  73% (17270/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4139049Z Updating files:  74% (17507/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4327022Z Updating files:  75% (17743/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4578475Z Updating files:  76% (17980/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4639474Z Updating files:  77% (18216/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4814393Z Updating files:  78% (18453/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.4974938Z Updating files:  79% (18690/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.5155739Z Updating files:  80% (18926/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.5291171Z Updating files:  81% (19163/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.5420446Z Updating files:  82% (19399/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.5554801Z Updating files:  83% (19636/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.6219024Z Updating files:  84% (19872/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.6378689Z Updating files:  85% (20109/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.6506773Z Updating files:  86% (20346/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.6894845Z Updating files:  87% (20582/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.7285767Z Updating files:  88% (20819/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.7596639Z Updating files:  89% (21055/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.7855707Z Updating files:  90% (21292/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.8151084Z Updating files:  91% (21528/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.8429969Z Updating files:  92% (21765/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.8672599Z Updating files:  93% (22002/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.8958482Z Updating files:  94% (22238/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.9524230Z Updating files:  95% (22475/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.9722099Z Updating files:  96% (22711/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:35.9999577Z Updating files:  97% (22948/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.0254231Z Updating files:  98% (23184/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.0849650Z Updating files:  99% (23421/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.0850366Z Updating files: 100% (23657/23657)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.0850742Z Updating files: 100% (23657/23657), done.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4594412Z Note: switching to 'refs/remotes/pull/2722/merge'.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4595184Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4596168Z You are in 'detached HEAD' state. You can look around, make experimental
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4597957Z changes and commit them, and you can discard any commits you make in this
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4598868Z state without impacting any branches by switching back to a branch.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4599417Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4599937Z If you want to create a new branch to retain commits you create, you may
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4600945Z do so (now or later) by using -c with the switch command. Example:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4601660Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4602166Z   git switch -c <new-branch-name>
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4602741Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4603085Z Or undo this operation with:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4603586Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4603918Z   git switch -
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4604338Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4604929Z Turn off this advice by setting config variable advice.detachedHead to false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4605753Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4606681Z HEAD is now at 1f8c7eb7 Merge b42368fd9a8bf7803353018b0414d0fb210c9d7f into 3722a857480b94b30fd4755f3f8e3002bd163ec3
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4733479Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4790797Z [command]/usr/bin/git log -1 --format=%H
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.4808128Z 1f8c7eb70022ff356b5af57e39f461650d54c292
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5092315Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5094053Z ##[group]Run actions/setup-python@v5
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5094562Z with:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5094927Z   python-version: 3.12.11
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5095473Z   check-latest: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5100247Z   token: ***
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5100612Z   update-environment: true
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5101054Z   allow-prereleases: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5101452Z   freethreaded: false
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.5102029Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.6452246Z ##[group]Installed versions
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.6661065Z Version 3.12.11 was not found in the local cache
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.6817016Z (node:2238) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:36.6817986Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:37.3236585Z Version 3.12.11 is available for downloading
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:37.3238981Z Download from "https://github.com/actions/python-versions/releases/download/3.12.11-15433310049/python-3.12.11-linux-24.04-x64.tar.gz"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:38.1043865Z Extract downloaded archive
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:38.1189041Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C <home>/work/_temp/720f4596-d943-4fda-a6a8-2587f99170a5 -f <home>/work/_temp/96fbd167-0376-4f9c-ad03-b390f20a401d
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.1437401Z Execute installation script
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.1531701Z Check if Python hostedtoolcache folder exist...
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.1532258Z Create Python 3.12.11 folder
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.1545774Z Copy Python binaries to hostedtoolcache folder
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.6485427Z Create additional symlinks (Required for the UsePythonVersion Azure Pipelines task and the setup-python GitHub Action)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:40.6526568Z Upgrading pip...
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:43.0680953Z Looking in links: <tmp>/tmpxkqhv780
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:43.0685066Z Requirement already satisfied: pip in /opt/hostedtoolcache/Python/3.12.11/x64/lib/python3.12/site-packages (25.0.1)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.0778254Z Collecting pip
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1090271Z Downloading pip-26.2.1-py3-none-any.whl.metadata (4.6 kB)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1201812Z Downloading pip-26.2.1-py3-none-any.whl (1.8 MB)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1612633Z ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 62.2 MB/s eta 0:00:00
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1618727Z
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1776701Z Installing collected packages: pip
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1779509Z Attempting uninstall: pip
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.1801281Z Found existing installation: pip 25.0.1
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.2155423Z Uninstalling pip-25.0.1:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:44.2211391Z Successfully uninstalled pip-25.0.1
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.0675004Z Successfully installed pip-26.2.1
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1098699Z Create complete file
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1135979Z Successfully set up CPython (3.12.11)
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1137218Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1340359Z ##[group]Run echo "PR Fast Lane result: failure"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1340789Z [36;1mecho "PR Fast Lane result: failure"[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1341202Z [36;1mecho "::error::The required PR fast lane did not succeed."[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1341568Z [36;1mexit 1[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1383525Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1383809Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1384097Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1384564Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1385004Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1385412Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1385824Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1386243Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1386575Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1466638Z PR Fast Lane result: failure
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1482546Z ##[error]The required PR fast lane did not succeed.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1493429Z ##[error]Process completed with exit code 1.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1542404Z ##[group]Run # Rebuilds both bundles into a temp dir and diffs them against the
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1543000Z [36;1m# Rebuilds both bundles into a temp dir and diffs them against the[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1543473Z [36;1m# committed sheets, naming any drifted MODULE block.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1543864Z [36;1mpython tldw_chatbook/css/check_bundle_sync.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1576282Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1576543Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1576821Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1577287Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1578036Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1578424Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1578816Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1579243Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:45.1579574Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5683158Z CSS bundle reproduces from its source modules.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5683784Z widget_defaults_self.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5684279Z widget_defaults_scoped.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5684749Z screen_css_self.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5685182Z screen_css_scoped.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5685633Z screen_agentic_library.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5686137Z screen_agentic_settings.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5686610Z screen_feature_evals.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5687088Z screen_feature_scheduling.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5687980Z screen_feature_workflows.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5688487Z screen_feature_watchlists.tcss reproduces from its Python sources.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5840010Z ##[group]Run # Downloads only the exact hash/size-pinned public inputs into a
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5840600Z [36;1m# Downloads only the exact hash/size-pinned public inputs into a[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5841087Z [36;1m# temporary directory, runs the existing offline build there, and[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5841581Z [36;1m# compares its complete output closure with packaged static bytes.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5842042Z [36;1mpython scripts/check_canvas_mermaid_assets.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5879583Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5879844Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5880122Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5880582Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5881034Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5881434Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5881859Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5882255Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:48.5882595Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1565582Z Canvas Mermaid assets reproduce: 6 outputs
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1749577Z ##[group]Run # Prints path:line:context:expression:reason for every unapproved
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1750194Z [36;1m# Prints path:line:context:expression:reason for every unapproved[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1750678Z [36;1m# occurrence of a historical profile-owned path root.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1751132Z [36;1mpython scripts/check_profile_owned_path_inventory.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1787860Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1788116Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1788392Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1788845Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1789290Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1789705Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1790105Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1790530Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:20:50.1790866Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6359046Z profile-owned path census verified: 54 executable occurrence(s) across 22 file(s), all matched by 51 approved exceptions.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6561695Z ##[group]Run # On drift this prints the full committed-vs-rebuild report -- rows
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6562311Z [36;1m# On drift this prints the full committed-vs-rebuild report -- rows[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6562778Z [36;1m# only-in-committed / only-in-rebuild / changed with[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6563255Z [36;1m# old_count/old_digest -> new_count/new_digest, sink-topology deltas,[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6563761Z [36;1m# and the exact next command. Read the rows before regenerating: the[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6564266Z [36;1m# artifact exists to make an unreviewed --write impossible to do by[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6564648Z [36;1m# accident.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6564963Z [36;1mpython scripts/check_persistent_diagnostic_inventory.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6600240Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6600502Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6600784Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6601267Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6601713Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6602118Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6602507Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6602895Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:21:38.6603224Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2473238Z diagnostic inventory verified: 604 owners, 1360 TASK-492 calls, 55 TASK-31551 calls, 7699 TASK-494 calls, 14 sink files
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2635676Z ##[group]Run # Same check backlog-guard.yml runs; carried here too so it is covered
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2636294Z [36;1m# Same check backlog-guard.yml runs; carried here too so it is covered[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2636791Z [36;1m# by the one required status check rather than by a path-filtered[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2637182Z [36;1m# workflow nobody is gated on.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2637848Z [36;1mpython scripts/check_backlog_task_ids.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2673502Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2673759Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2674035Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2674500Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2674935Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2675319Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2675735Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2676131Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:27.2676460Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.0950532Z No duplicate task IDs across 4306 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1042148Z ##[group]Run # TASK-20971. Statically scans the CREATE TABLE statements in
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1042690Z [36;1m# TASK-20971. Statically scans the CREATE TABLE statements in[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1043181Z [36;1m# DB/migrations/chachanotes_*.sql and in ChaChaNotes_DB.py's SQL[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1043668Z [36;1m# string literals, and fails when VALID_TABLES['chachanotes'] does[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1044149Z [36;1m# not list one of them (or lists one nothing creates). Prints the[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1044631Z [36;1m# exact lines to paste. No database is built; runtime is milliseconds,[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1045103Z [36;1m# so this does not move the ~90 s budget this job depends on.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1045516Z [36;1mpython scripts/check_schema_table_allowlist.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1081107Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1081362Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1081634Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1082109Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1082567Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1082970Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1083361Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1083752Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.1084082Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6822576Z chachanotes: 116 declared tables, all present in VALID_TABLES['chachanotes'].
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6942323Z ##[group]Run # TASK-21593. No DB module in this repo runs ANALYZE, so no user's
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6942902Z [36;1m# TASK-21593. No DB module in this repo runs ANALYZE, so no user's[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6943484Z [36;1m# database has a sqlite_stat1 and the planner can ignore a textbook[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6943969Z [36;1m# index entirely -- TASK-21126 shipped 5 MB of dead index that way,[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6944456Z [36;1m# with a green "the index exists" test. This scans the CREATE INDEX[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6944895Z [36;1m# names in DB/ and fails when one is missing from[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6945337Z [36;1m# scripts/index_plan_pin_census.tsv, so adding an index has to stop[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6945823Z [36;1m# at "plan-pinned or pre-convention?". Pure text scan, no database[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6946298Z [36;1m# built; milliseconds, so it does not move this job's ~90 s budget.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6946736Z [36;1mpython scripts/check_index_plan_pins.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6981933Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6982197Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6982474Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6982931Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6983365Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6983762Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6984149Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6984539Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:28.6985034Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9271280Z index plan pins: 304 index names declared under tldw_chatbook/DB, 304 census rows, 86 plan-pinned.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9271978Z check_index_plan_pins: OK
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9391146Z ##[group]Run # TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9391757Z [36;1m# TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9392252Z [36;1m# review were one defect class with no guard: a synchronous callable[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9392728Z [36;1m# handed to run_worker (Worker._run_async raises, exit_on_error[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9393194Z [36;1m# defaults to True, the app exits), and a query_one that resumes[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9393675Z [36;1m# after an await into a subtree something else removed. W001 is a[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9394144Z [36;1m# hard gate -- the tree has zero violations, so any new one is real.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9394622Z [36;1m# W002 is a census ratchet over the 279 pre-existing post-await[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9395093Z [36;1m# lookups, because whether one can crash is not statically decidable[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9395610Z [36;1m# and failing on all of them would be a guard that gets muted. Pure[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9396007Z [36;1m# AST scan, stdlib only; seconds.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9396347Z [36;1mpython scripts/check_textual_worker_contract.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9431938Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9432198Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9432474Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9432935Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9433397Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9433799Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9434189Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9434592Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:29.9434930Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.2926816Z textual worker contract: no synchronous run_worker targets; 269 post-await DOM lookup(s) in 136 function(s), none new; 3 baseline lookup(s) resolved.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3165291Z ##[group]Run # ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3165892Z [36;1m# ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3166411Z [36;1m# forbidden, and naive datetime.now().isoformat() writers are pinned[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3166917Z [36;1m# in scripts/timestamp_writer_census.tsv as a ratchet that only[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3167626Z [36;1m# shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3168146Z [36;1m# or grown naive-timestamp writer. Pure AST scan, no database built.[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3168586Z [36;1mpython scripts/check_timestamp_writers.py[0m
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3203678Z shell: /usr/bin/bash -e {0}
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3203940Z env:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3204218Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3204680Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3205167Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3205577Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3205980Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3206388Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:23:53.3206728Z ##[endgroup]
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.7431813Z timestamp writers: 0 datetime.utcnow() site(s), 0 naive datetime.now().isoformat() occurrence(s) (0 pinned).
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.7432715Z check_timestamp_writers: OK
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.7714280Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.7715749Z Post job cleanup.
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8541923Z [command]/usr/bin/git version
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8580564Z git version 2.55.0
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8617668Z Temporarily overriding HOME='<home>/work/_temp/d3492499-e5d4-451e-adc7-4dc29347dec9' before making global git config changes
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8619189Z Adding repository directory to the temporary git global config as a safe directory
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8624290Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8661965Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8696384Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8966765Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.8989670Z http.https://github.com/.extraheader
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.9000156Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.9031804Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.9266344Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.9296208Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:11.9669463Z Cleaning up orphan processes
+Derived artifacts reproduce from their sources	UNKNOWN STEP	2026-09-22T04:24:12.0055962Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

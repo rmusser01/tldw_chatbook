@@ -16241,6 +16241,18 @@ And run the callers' suites, not just the changed module's: the collapse
 was pinned by the dismissal suite while the two interaction suites that
 actually pressed the renamed buttons never ran.
 
+## A synthetic mouse click can race the inspector's focus scroll (PR2722)
+
+PR2722 CI failed five Test Tool cases after readiness guidance stopped consuming
+space above detail. Local direct runs passed, but a diagnostic run adding 35ms
+between Pilot pauses reproduced a missed Run click: its row moved from 14 to 10
+while the mouse sequence was in flight, and no execution reached the fake service.
+The built-in case similarly moved from row 8 to 5. Worker completion alone did
+not settle focus scrolling. The shared test Run-click helper now waits for
+scheduled animations and asserts the unchanged Pilot mouse click actually hits.
+No retry or direct-handler bypass is involved. Also assert a Failed outcome in
+redaction tests: absence-only checks had accepted the empty, never-run result.
+
 ### A workflow that names your tests is not a gate (TASK-32908)
 
 **What happened.** `Tests/UI` — 25,917 collected tests, the largest directory
