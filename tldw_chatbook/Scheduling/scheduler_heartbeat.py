@@ -116,8 +116,6 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
                 handle.write(payload)
             os.replace(tmp, path)
         except Exception:
-            with open(os.devnull, "w"):
-                pass
             try:
                 os.unlink(tmp)
             except OSError:
