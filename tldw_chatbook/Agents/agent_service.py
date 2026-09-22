@@ -5758,7 +5758,10 @@ class AgentService:
                                 discard=admission_refused,
                             )
                         except Exception:
-                            pass
+                            logger.warning(
+                                "could not retire agent worktree routing for handle {}",
+                                handle.handle_id,
+                            )
                         current = fleet.get(handle.handle_id)
                         child_run_id = current.run_id if current is not None else None
                         if child_run_id:
@@ -5836,7 +5839,10 @@ class AgentService:
                         try:
                             self._retire_agent_worktree(child_run_id, handle.handle_id, discard=True)
                         except Exception:
-                            pass
+                            logger.warning(
+                                "could not retire agent worktree routing for handle {}",
+                                handle.handle_id,
+                            )
                     self._fleet_cancels.pop(handle.handle_id, None)
                     if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
                         my_handle_ids.pop()

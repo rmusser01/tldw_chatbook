@@ -1328,7 +1328,6 @@ class ConsoleVideoController:
         """
         import shutil
 
-        from tldw_chatbook.Utils.input_validation import escape_markup
 
         store = self._ensure_console_chat_store()
         try:
