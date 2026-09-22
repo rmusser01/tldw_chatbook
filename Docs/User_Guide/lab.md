@@ -33,14 +33,23 @@ mode strip, then:
    call count for the chosen depth before anything is spent (quick 0,
    standard 16 with a worst case of 32, deep 67 with a worst case of 84 —
    the maximum counts each judge cell's one retry).
-3. Press **Run**. Progress ticks per completed call; **Cancel** keeps the
-   partial results.
+3. Press **Run**. Progress ticks per completed call; **Stop run** (armed
+   only while a run is in flight) keeps the partial results. Every pick —
+   subject, depth, and both models — is saved as you make it, so
+   navigating away and back loses nothing; **Escape** on the panel closes
+   it. If no eval models exist yet, the panel says so and names the two
+   ways to create one ("+ New target" in a bench editor, or "Create
+   sample bench" once).
 
 When the run finishes it appears as a group in the library rail; selecting
 it opens the skill-eval report: the composite score with letter grade and
 confidence label (Estimated / Assessed / Certified by depth), per-dimension
 bars, layer statistics (judge rubrics and trigger F1; simulation activation,
-consistency and failure rates with confidence intervals), and any
-anti-pattern findings with their remediation text. A preflight check blocks
+consistency and failure rates with confidence intervals), any
+anti-pattern findings with their remediation text, and — expanding the old
+artifact count — one read-only line per captured judge/simulation cell.
+**Run again** reruns the bench from its saved configuration, and when an
+earlier run of the same bench exists, **Compare with previous** shows the
+composite and per-dimension deltas between the two reports. A preflight check blocks
 the run early if the chosen models aren't configured. Skill bodies longer
 than 8,000 characters are truncated in the prompts and the report says so.
