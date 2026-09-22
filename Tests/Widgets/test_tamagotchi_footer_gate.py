@@ -222,3 +222,32 @@ async def test_background_pet_neither_decays_nor_writes_back(monkeypatch):
 
         assert pet.happiness == 42, "a background pet kept decaying"
         assert not pet._state_authoritative, "a background pet still claims authority"
+
+
+@pytest.mark.asyncio
+async def test_pet_stays_off_for_a_config_that_predates_the_section(monkeypatch):
+    """An existing user upgrading has no ``[tamagotchi]`` section at all.
+
+    The other gate tests either set ``enabled`` explicitly or assert the shipped
+    *template* says ``false`` -- neither exercises the code default, which is the
+    only thing standing between an upgrading user and a pet appearing unbidden in
+    their footer. Their ``config.toml`` was written before this section existed,
+    so ``get_cli_setting`` falls through to the caller's default and the template
+    is irrelevant to them.
+
+    Passing no values to ``_patch_gate`` reproduces exactly that: the fake
+    returns ``values.get(key, default)``, so the call site's own default decides.
+
+    This test is born red against ``get_cli_setting("tamagotchi", "enabled", True)``
+    -- verified by flipping it -- which the template-based check is not.
+    """
+    _patch_gate(monkeypatch)  # deliberately empty: no section, no keys
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(AppFooterStatus)
+
+        assert footer._tamagotchi is None
+        assert not app.query(BaseTamagotchi)
+        assert not [n for n in _live_timer_names(app) if "tamagotchi" in n]
