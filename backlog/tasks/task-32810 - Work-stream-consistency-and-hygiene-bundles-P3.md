@@ -1,7 +1,7 @@
 ---
 id: TASK-32810
 title: 'Work stream: consistency and hygiene bundles (P3)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-18 16:47'
 labels:
