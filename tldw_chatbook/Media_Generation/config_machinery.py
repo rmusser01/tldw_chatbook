@@ -139,6 +139,49 @@ def coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def coerce_bool_flag_or_warn(
+    value: Any, default: bool, *, section: str, key: str
+) -> bool:
+    """Coerce a feature-flag setting, warning when a *present* value is malformed.
+
+    ``Utils.coerce_bool_flag`` substitutes ``default`` for anything outside its
+    vocabulary, which is right for a UI preference but hides a typo'd TOML gate:
+    ``allow_uploads = "yess"`` reads exactly like an unset key, so the user sets
+    a gate and nothing happens. Config loading still must never raise (same
+    contract as :func:`warn_unknown_top_level_keys`), so the bad value is logged
+    and the default used.
+
+    Absence is not malformed: only a non-``None`` value is inspected, and the
+    vocabulary itself accepts ``0``/``False``/``"off"``, so a deliberate
+    switch-off never warns.
+
+    Args:
+        value: Raw config value (``None`` when the key is absent).
+        default: Fallback used when the value is absent or unrecognized.
+        section: TOML section label for the warning, e.g. ``video_generation.minimax``.
+        key: TOML key name for the warning.
+
+    Returns:
+        The coerced boolean, or ``default`` when the value is absent/malformed.
+    """
+    from tldw_chatbook.Utils.Utils import coerce_bool_flag  # ADR-097: lazy
+
+    if value is None:
+        return default
+    # Probing both defaults detects a fallback without restating the true/false
+    # vocabulary here -- coerce_bool_flag stays its single source of truth.
+    if coerce_bool_flag(value, True) != coerce_bool_flag(value, False):
+        # The rejected spelling is what makes the warning actionable, but it is
+        # user-typed config text going to a persistent sink -- bound it, the way
+        # the unknown-key scan logs only the short key token.
+        logger.warning(
+            f"[{section}] {key} = {repr(value)[:40]} is not a recognized boolean "
+            f"(true/false/1/0/yes/no/on/off) -- ignored, using {default}"
+        )
+        return default
+    return coerce_bool_flag(value, default)
+
+
 def coerce_choice(value: Any, *, default: str, allowed: set[str]) -> str:
     """Normalize a string choice to lowercase and return ``default`` when invalid."""
     raw = str(value or "").strip().lower()
