@@ -16286,3 +16286,77 @@ stash intact. Check `git stash list` before and after to prove it.
 tree it reads. A failure from a half-written file looks exactly like a real
 regression, and the only way to tell is to run it again on a quiet tree --
 which is what the batch comparison was supposed to save you.
+### A workflow that names your tests is not a gate (TASK-32908)
+
+**What happened.** `Tests/UI` — 25,917 collected tests, the largest directory
+in the tree — was understood to be covered twice: `test.yml` has a dedicated
+12-shard `ui-tests` job, and `nightly-deep.yml` runs `pytest ./Tests/`. The
+investigation opened by asking why `test.yml:121` excludes it
+(`pytest Tests --ignore=Tests/UI`). That line turned out to be irrelevant: it
+is just the split between the core job and the UI job in the same workflow.
+The actual reason nothing was gated is four lines higher —
+`on: push: branches: ["main"]` plus `workflow_dispatch`. **`test.yml` does not
+accept `pull_request` events at all**, so neither its core shards nor its UI
+shards have ever gated a PR. `gh pr checks` on the most recently merged PR
+confirmed it: `PR Fast Lane`, `Derived artifacts`, and the evidence
+workflows — no `Tests` check of any kind.
+
+The nightly was worse than not-a-gate. `nightly-deep.yml` runs `pytest ./Tests/`
+with no `--continue-on-collection-errors`, so one unimportable test file aborts
+the entire session. Run 35706024071 reads `collected 101851 items / 1 error`
+then `Interrupted: 1 error during collection` — **8 skipped, 0 executed**, and
+the same on the six preceding nights. The single bad import was
+`Tests/Chat/test_google_native_tools.py` importing `_google_tools_payload`,
+which commit 0ea2906e99 deleted from `LLM_API_Calls.py` while leaving its call
+site at line 3435 — a live `NameError` on the Google native-tools path, hidden
+behind a red nightly everyone reads as "the nightly is always red".
+
+The cost was concrete and already in the tree.
+`Tests/UI/test_console_library_tool_setting.py:229` asserted
+`service._collections is app.local_library_collections_service` against a
+`LocalLibraryToolService` whose `_collections` attribute 5dd1077df6 had
+removed; the only occurrence of the string left in that module is in a
+comment. The assertion could not pass, blocked nothing, and while it sat red
+the *sibling copy* of that same factory in `Chat/console_runtime.py:681` kept
+passing a `collections_service=` keyword the constructor no longer accepts —
+`TypeError`, on every Console-direct Library tool build, for three weeks.
+
+**What to do.** Before concluding *why* a suite does not gate, confirm *where*
+the gate is: read the workflow's `on:` block first, and then check a real
+merged PR with `gh pr checks`. A job's existence, its name, and even its
+green square say nothing about whether a merge waited for it. And treat a
+perpetually-red scheduled job as an outage, not as background noise — grep its
+log for `Interrupted` / `error during collection` before trusting it as a
+safety net, because a collection abort and a suite of genuine failures look
+identical from the run list, and only one of them is running any tests.
+
+### A mutation that changes no behaviour is not a negative control (TASK-32908)
+
+**What happened.** The new `ui-fast-lane` gate needed proof it goes red when a
+product regression appears, so a censused test was picked --
+`test_raw_shell_dedicated_view_does_not_expand_the_generic_summary_budget`,
+which asserts `len(rendered) <= 80` -- and the obvious constant was mutated:
+`_ARGS_SUMMARY_LIMIT` 80 -> 200 in `chat_approval_card.py`. The full 120-file
+census was then run against the mutated tree: **851 passed, exit 0.**
+
+The first reading was "the gate does not work". It was wrong. Printing the
+actual value showed `_summarize_arguments({"command": "x" * 500})` renders to
+**46** characters, nowhere near the 80 cap -- the length is bounded by a
+*second* constant, `_ARGS_VALUE_LIMIT = 34`. Raising only the outer cap changed
+nothing observable, so there was no regression for the gate to catch. Raising
+only the inner one landed on exactly 80, still passing, because the outer cap
+then clamped it. Both had to move before `len(rendered)` became 400 and the
+assertion broke.
+
+Had that first green run been taken at face value it would have produced the
+exact error this review exists to name, inverted: a guard declared broken on no
+evidence, and then "fixed" or abandoned.
+
+**What to do.** Before running a negative control, prove the mutation is
+observable *at the assertion's own level* -- call the function and print the
+value the test measures. If the mutated value equals the unmutated value, the
+control tests nothing, and its green result is about your mutation, not about
+the guard. Beware assertions guarded by more than one constant: clamped or
+`min()`-bounded code paths absorb a single-constant mutation silently, which is
+precisely the shape that makes a mutation look like a valid control while being
+inert.
