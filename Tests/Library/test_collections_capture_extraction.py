@@ -261,3 +261,77 @@ def test_extraction_transitions_require_active_claim_and_valid_state(
         )
     assert caught.value.reason == "empty_extraction_content"
     assert repository.get_detail(capture.identity) == claimed
+
+
+def test_an_interrupted_extraction_settles_and_can_be_retried(
+    repository: CollectionsCaptureRepository,
+) -> None:
+    """(TASK-32893) ``interrupted`` is a legal ``fail_extraction`` reason.
+
+    It was missing from the repository's hand-maintained
+    ``_EXTRACTION_FAILURE_REASONS``, so the one caller that emits it
+    (``collections_capture_service._run_extraction``'s ``CancelledError``
+    handler) got ``invalid_extraction_failure_reason`` back and silently
+    dropped it -- the capture stayed wedged at ``processing``, holding its
+    lease, with no repair path short of the stale-claim sweep.
+    """
+    capture = _save(repository, "interrupted").capture
+    repository.claim_extraction(capture.identity, owner_token="worker-a")
+
+    failed = repository.fail_extraction(
+        capture.identity,
+        owner_token="worker-a",
+        reason="interrupted",
+    )
+
+    assert failed.processing_state == "failed"
+    assert failed.last_fetch_error == "interrupted"
+    # ... and the settled row is retryable, which a wedged one is not.
+    retried = repository.retry_extraction(
+        capture.identity,
+        expected_revision=failed.revision,
+    )
+    assert retried.processing_state == "queued"
+    assert retried.last_fetch_error is None
+
+
+def test_every_failure_reason_the_capture_service_emits_is_allowed() -> None:
+    """(TASK-32893) Drift guard for a hand-maintained allowlist.
+
+    ``_EXTRACTION_FAILURE_REASONS`` has no enumerating producer: the reasons
+    are string literals in ``collections_capture_service``. Read them back out
+    of the source so a new one that is never added to the set fails here
+    instead of being swallowed at runtime.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Library import collections_capture_service
+    from tldw_chatbook.Library.collections_capture_repository import (
+        _EXTRACTION_FAILURE_REASONS,
+    )
+
+    tree = ast.parse(inspect.getsource(collections_capture_service))
+    emitted = {
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword)
+        and node.arg == "reason"
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    emitted |= {
+        node.value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_settle_failed_extraction"
+        for node in call.args
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+
+    assert emitted, "the scan found no reason literals -- it has stopped working"
+    assert emitted <= set(_EXTRACTION_FAILURE_REASONS), (
+        f"reasons the service emits but the repository refuses: "
+        f"{sorted(emitted - set(_EXTRACTION_FAILURE_REASONS))}"
+    )
