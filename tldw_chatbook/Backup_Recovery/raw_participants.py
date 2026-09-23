@@ -16,7 +16,11 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
-from ..Utils.file_durability import flush_directory, fsync_parent_directory
+from ..Utils.file_durability import (
+    flush_directory,
+    flush_file,
+    fsync_parent_directory,
+)
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 from . import bootstrap
 from . import chat_source_participants as chat_sources
@@ -877,7 +881,19 @@ def _file(operation, path, mode):
         finally:
             try:
                 io.TextIOWrapper.close(text)
+                if mode in {"w", "a"}:
+                    # Closing the wrapper only pushes user-space buffers into
+                    # the descriptor. _replace goes on to fsync the destination
+                    # DIRECTORY, so without this the entry was made durable
+                    # while the blocks it points at were not -- the classic
+                    # rename-without-fsync corruption, on the user's own MCP,
+                    # chat-source and dictionary state. The descriptor is still
+                    # the verified one here; _close_descriptor retires it in the
+                    # outer finally, after this.
+                    flush_file(fd)
             except BaseException:
+                # A flush failure is unresolved evidence like any other: mark
+                # the operation uncertain so publication cannot proceed.
                 state.uncertain = True
                 raise
             if not text.closed or not native.closed:

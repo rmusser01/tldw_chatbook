@@ -37,7 +37,24 @@ UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
 
 
 def flush_file(fd: int) -> None:
-    """Persist file contents and metadata using the host's native barrier."""
+    """Persist file contents and metadata using the host's native barrier.
+
+    On Darwin this is ``fsync`` followed by ``F_FULLFSYNC``: a plain ``fsync``
+    returns before the drive's own write cache reaches the platter, so it is
+    not a durability barrier there at all.
+
+    Args:
+        fd: An OPEN file descriptor for a regular file, opened for writing.
+            The caller keeps ownership; this never closes it. User-space
+            buffers must already have been flushed into it (``f.flush()``) --
+            this barrier only moves what the kernel holds.
+
+    Raises:
+        OSError: The barrier failed. Never tolerated: unlike a directory
+            fsync, there is no filesystem on which a file fsync is merely
+            unsupported, so a failure here is a real durability failure and
+            the caller must treat the write as unpersisted.
+    """
     if os.name == "nt":
         from .windows_files import flush_file as native_flush
 
@@ -51,7 +68,20 @@ def flush_file(fd: int) -> None:
 
 
 def flush_directory(fd: int) -> None:
-    """Persist directory changes; failures remain ambiguous to journal callers."""
+    """Persist directory changes; failures remain ambiguous to journal callers.
+
+    Args:
+        fd: An OPEN descriptor for a DIRECTORY (POSIX: ``os.open`` with
+            ``O_RDONLY | O_DIRECTORY``). The caller keeps ownership.
+
+    Raises:
+        OSError: The barrier failed. Raised unfiltered here -- deciding which
+            errnos mean "this filesystem cannot do it" is
+            :func:`fsync_parent_directory`'s job, because only a caller that
+            opened the directory itself knows whether the failure is
+            recoverable. A journal caller must treat a failure as an
+            AMBIGUOUS publication, not as a completed or an abandoned one.
+    """
     if os.name == "nt":
         from .windows_files import flush_directory as native_flush
 
@@ -68,6 +98,19 @@ def fsync_parent_directory(directory: str | os.PathLike[str]) -> None:
     open a directory via ``os.open``, so the barrier is skipped there rather
     than crashing; filesystems that reject a directory fsync outright are
     tolerated via ``UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS``.
+
+    Args:
+        directory: The directory whose entries must be persisted -- for a
+            publication, the PARENT of the renamed file, not the file. It is
+            opened read-only and closed again here.
+
+    Raises:
+        OSError: The directory barrier genuinely failed, i.e. the errno is not
+            in ``UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS``. Because this runs AFTER
+            ``os.replace``, such a failure means the new file is already
+            visible and only its survival across a power loss is unconfirmed;
+            a caller that reports it as a failed write must not also claim the
+            old contents are intact.
     """
     if os.name == "nt":
         return

@@ -508,8 +508,15 @@ class VoiceprintStore:
 
         Raises:
             StoreUnavailable: The key file exists with unsafe permissions.
-            OSError: The record could not be written (the previous file is
-                left intact -- the write is a temp file plus a rename).
+            OSError: The record could not be written. Almost always the
+                previous file is left intact -- the write is a temp file plus
+                a rename, and everything up to the rename fails harmlessly.
+                The ONE exception is the durability barrier that runs after
+                the rename: if persisting the directory entry fails, the NEW
+                record is already in place and only its survival across a
+                power loss is unconfirmed. That failure is raised rather than
+                swallowed on purpose, so do not read this exception as "the
+                store is unchanged" without checking.
             Exception: Whatever the keyring backend raises when it cannot
                 mint or store a key.
         """
