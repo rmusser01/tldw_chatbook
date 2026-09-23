@@ -1,0 +1,25 @@
+19	%Y-%m-%d %H:%M
+18	%Y%m%d_%H%M%S
+15	%Y-%m-%d
+10	%Y-%m-%d %H:%M:%S
+6	%H:%M
+6	%H:%M:%S
+5	%Y-%m-%dT%H:%M:%f
+4	%Y-%m-%dT%H:%M:%S.%f
+3	%Y-%m-%dT%H:%M:%SZ
+3	%b %d, %Y
+2	%w
+2	%B %d, %Y
+2	%Y-%m-%d %H:%M %Z
+2	%Y%m%d-%H%M%S
+2	observed %Y-%m-%d %H:%M UTC
+1	%Y-%m-%d %H:00
+1	%Y-%m-%d_%H%M
+1	%Y%m%dT%H%M%SZ
+1	%Y-%m-%d %H:%M UTC
+1	%H
+1	%I:%M %p
+1	%b %d
+1	%Y%m%dT%H%M%S%fZ
+1	%Y%m%d-%H%M%S-%f
+1	%Y-%m-%dT%H:%M:%S.%fZ
