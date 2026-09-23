@@ -2660,8 +2660,47 @@ class EvalsScreen(LabScreen):
                         )
                 save_report(db, run_id, report, status=status)
 
+            def _persistence_outcome(done: "asyncio.Future[None]") -> None:
+                """Retrieve an orphaned persistence failure so it is logged.
+
+                Only reachable when the await below was cancelled and the
+                shielded write then failed on its own; without this the
+                exception is never retrieved and asyncio merely warns.
+                """
+                if done.cancelled():
+                    return
+                failure = done.exception()
+                if failure is not None:
+                    # Type only -- see the `except Exception` clause below.
+                    logger.warning(
+                        "Skill eval persistence failed "
+                        "(exception_category={}).",
+                        type(failure).__name__,
+                    )
+
             persist_started = True
-            await asyncio.to_thread(_persist)
+            if db.is_memory_db:
+                # `EvalsDB` hands each thread its own `threading.local`
+                # connection, and for `:memory:` a new connection is a new,
+                # EMPTY database -- measured directly: 20 tables on the
+                # calling thread, 0 on an `asyncio.to_thread` worker, so the
+                # first `save_artifact` died with `OperationalError` and the
+                # run never reached a terminal status. The hop exists to keep
+                # 108-137 ms of *file* I/O off the loop; an in-memory store
+                # has no such cost, so it stays on this thread.
+                _persist()
+            else:
+                # Shielded: cancelling this await does NOT cancel the work.
+                # `asyncio.to_thread` submits to an executor, and a
+                # `concurrent.futures.Future` still sitting in the queue
+                # cancels successfully -- so an unshielded teardown could
+                # discard the write entirely, leaving the run stuck at
+                # `running` forever while the clause below skipped its stamp.
+                # Shielding lets the thread finish and write its own terminal
+                # status, which is what `persist_started` already assumes.
+                persistence = asyncio.ensure_future(asyncio.to_thread(_persist))
+                persistence.add_done_callback(_persistence_outcome)
+                await asyncio.shield(persistence)
             finished_ok = True
         except asyncio.CancelledError:
             # Re-raised, never swallowed -- Textual's worker bookkeeping

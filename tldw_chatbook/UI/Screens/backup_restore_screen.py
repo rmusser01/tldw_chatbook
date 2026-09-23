@@ -504,7 +504,7 @@ class BackupRestoreScreen(Screen):
         self._poller = self.set_interval(0.2, self._refresh_status)
         self._refresh_status()
 
-    def on_screen_suspend(self):
+    def on_screen_suspend(self) -> None:
         """Pause the 5 Hz status poll while this screen is covered.
 
         Tier-2 review S19. This screen pushes ``FileOpen``/``FileSave``/
@@ -517,7 +517,7 @@ class BackupRestoreScreen(Screen):
         if self._poller is not None:
             self._poller.pause()
 
-    def on_screen_resume(self):
+    def on_screen_resume(self) -> None:
         """Restart the poll and repaint immediately, so no stale text shows.
 
         No ``super().on_screen_resume()``: Textual dispatches to every

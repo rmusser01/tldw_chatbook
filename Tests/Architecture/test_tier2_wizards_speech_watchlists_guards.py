@@ -6,7 +6,9 @@ boots the app, so `Backup_Recovery`'s ADR-126 recovery gate never runs.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 from typing import Any
 
 import pytest
@@ -154,3 +156,100 @@ async def test_retiring_an_absent_or_finished_timer_is_a_no_op() -> None:
     host._progress_timer_task = task
     await host._retire_progress_timer()
     assert host._progress_timer_task is None
+
+
+def _playback_mixin_tree() -> ast.Module:
+    from tldw_chatbook.UI.Speech import speech_playback_mixin
+
+    return ast.parse(inspect.getsource(speech_playback_mixin))
+
+
+def _statement_blocks(tree: ast.AST):
+    """Every statement list in the tree, so 'next statement' is meaningful."""
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if isinstance(block, list) and block and isinstance(block[0], ast.stmt):
+                yield block
+
+
+@pytest.mark.unit
+def test_the_new_release_is_installed_with_no_await_before_the_old_timer_dies():
+    """Nothing may suspend between installing the lease and retiring the timer.
+
+    Qodo review of #2813 reported this as a live bug: the old progress timer
+    releases whatever currently sits in `_active_playback_release` when it
+    sees an idle or finished player, so if it resumed *after* the replacement
+    callback was installed it would securely delete the new PCM copy mid-play.
+
+    It cannot resume there today -- `_play_audio_async` installs the new
+    callback and calls `_retire_progress_timer` with only a plain assignment
+    between them, and `cancel()` is synchronous, so the old loop's next
+    resumption raises `CancelledError` and takes the `except` branch instead
+    of the release branch. The safety is entirely that adjacency, which is one
+    stray `await` away from being untrue. This pins it.
+    """
+    for block in _statement_blocks(_playback_mixin_tree()):
+        for index, statement in enumerate(block):
+            if not (
+                isinstance(statement, ast.Assign)
+                and any(
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "_active_playback_release"
+                    for target in statement.targets
+                )
+            ):
+                continue
+            for follower in block[index + 1 :]:
+                dumped = ast.dump(follower)
+                if "Await" not in dumped:
+                    continue
+                assert "_retire_progress_timer" in dumped, (
+                    "an await now separates installing _active_playback_release "
+                    "from retiring the old progress timer; the old timer can "
+                    "reach its release branch in that window and free the NEW "
+                    f"artifact (line {follower.lineno})"
+                )
+                break
+
+
+@pytest.mark.unit
+def test_every_replacement_progress_timer_retires_its_predecessor():
+    """The barrier is only worth having if the start sites actually use it.
+
+    Covers the wiring between the public playback paths and
+    `_retire_progress_timer`, which the helper's own unit tests cannot see.
+    """
+    tree = _playback_mixin_tree()
+    starts = 0
+    for block in _statement_blocks(tree):
+        for index, statement in enumerate(block):
+            if not (
+                isinstance(statement, ast.Assign)
+                and any(
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "_progress_timer_task"
+                    for target in statement.targets
+                )
+                and "_update_progress_timer" in ast.dump(statement)
+            ):
+                continue
+            starts += 1
+            preceding = ast.dump(ast.Module(body=block[:index], type_ignores=[]))
+            assert "_retire_progress_timer" in preceding, (
+                f"a progress timer is started at line {statement.lineno} without "
+                "first awaiting _retire_progress_timer; the outgoing loop's exit "
+                "block repaints the same three widgets the new one writes"
+            )
+    assert starts == 2, f"expected both start sites, found {starts}"
+
+    # And no site may go back to cancelling it by hand.
+    cancels = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "cancel"
+        and "_progress_timer_task" in ast.dump(node.func)
+    ]
+    assert cancels == [], "cancel-and-hope replaced the awaited barrier"
