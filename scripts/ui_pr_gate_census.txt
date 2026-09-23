@@ -75,9 +75,7 @@ Tests/UI/test_library_rag_legacy_chunk_report.py
 Tests/UI/test_library_url_ingest_submit.py
 Tests/UI/test_llm_screen_ollama_probe_nonblocking.py
 Tests/UI/test_markdown_hygiene_1995.py
-Tests/UI/test_media_handoffs.py
 Tests/UI/test_media_runtime_state.py
-Tests/UI/test_media_v88_simple.py
 Tests/UI/test_media_viewer_prompt_search_15477.py
 Tests/UI/test_notes_scope_models.py
 Tests/UI/test_personas_avatar_render.py

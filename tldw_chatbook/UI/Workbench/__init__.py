@@ -29,11 +29,8 @@ __all__ = (
     "WorkbenchMode",
     "WorkbenchPane",
     "WorkbenchPaneState",
-    "WorkbenchRouteCoverage",
     "WorkbenchState",
     "WorkbenchStatus",
-    "WORKBENCH_ROUTE_OWNERS",
-    "build_workbench_route_coverage",
 )
 
 
@@ -57,9 +54,6 @@ _EXPORT_MODULES = {
     "WorkbenchActionRequested": "tldw_chatbook.UI.Workbench.workbench_widgets",
     "WorkbenchFrame": "tldw_chatbook.UI.Workbench.workbench_widgets",
     "WorkbenchPane": "tldw_chatbook.UI.Workbench.workbench_widgets",
-    "WorkbenchRouteCoverage": "tldw_chatbook.UI.Workbench.route_inventory",
-    "WORKBENCH_ROUTE_OWNERS": "tldw_chatbook.UI.Workbench.route_inventory",
-    "build_workbench_route_coverage": "tldw_chatbook.UI.Workbench.route_inventory",
 }
 
 
