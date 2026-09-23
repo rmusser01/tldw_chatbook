@@ -248,10 +248,15 @@ def _cached_keyring_read(store: Any) -> str | None:
     try:
         value = store.keyring_backend.get_password(store.service_name, store._account)
     except Exception as exc:
-        result: tuple[float, Any] = (now + _KEYRING_FAILURE_TTL_SECONDS, exc)
+        # Expiry starts when the read RETURNS: a locked keyring can block for
+        # longer than either window (Qodo review on #2820).
+        result: tuple[float, Any] = (
+            time.monotonic() + _KEYRING_FAILURE_TTL_SECONDS,
+            exc,
+        )
         raise
     else:
-        result = (now + _KEYRING_READ_TTL_SECONDS, value)
+        result = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
         return value
     finally:
         # A read that raced this store's own write must not re-cache the

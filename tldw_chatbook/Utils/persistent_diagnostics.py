@@ -118,6 +118,7 @@ _INTEGER_FIELDS = frozenset(
         "raise_line",
         "site_line",
         "caller_line",
+        "leaf_line",
     }
 )
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})

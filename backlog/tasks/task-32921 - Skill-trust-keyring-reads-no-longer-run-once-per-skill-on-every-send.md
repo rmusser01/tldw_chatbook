@@ -43,6 +43,8 @@ Security: `load_manifest` requires an exact generation+digest match against the 
 Not changed: `_scan_skill` still hashes skill files per skill on the loop; the mount/resume skill-context fetch remains a non-threaded worker.
 
 Files: `Skills_Interop/skill_trust_store.py`, `Tests/Skills/test_skill_trust_store.py`.
+
+Qodo review fixes: expiry now starts when the read RETURNS, not before it; a locked keyring slower than the 2 s failure window used to store an already-expired failure. Integration test: the real `SkillTrustService.status_for_skill` over 10 skills does one keyring read (10 before).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -488,3 +488,49 @@ def test_read_racing_a_write_does_not_recache_the_replaced_marker():
     fake.get_password = get_then_write_lands
     assert marker.load_marker()["generation"] == 1  # the racing read itself
     assert marker.load_marker() == {"generation": 2, "manifest_digest": "new"}
+
+
+def test_slow_failed_read_is_cached_from_when_it_returned(monkeypatch):
+    """Qodo review on #2820: expiry was computed before the (possibly
+    blocking) read, so a locked keyring slower than the failure window
+    stored an already-expired entry and every skill re-read it."""
+    from tldw_chatbook.Skills_Interop import skill_trust_store
+
+    clock = [100.0]
+    monkeypatch.setattr(skill_trust_store.time, "monotonic", lambda: clock[0])
+    fake = CountingSecureKeyring()
+    real_get = fake.get_password
+
+    def slow_locked(service_name, username):
+        clock[0] += 5  # longer than the 2 s failure window
+        fake.fail = True
+        return real_get(service_name, username)
+
+    fake.get_password = slow_locked
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake)
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            marker.load_marker()
+    assert fake.reads == 1
+
+
+def test_trust_status_for_many_skills_reads_the_keyring_once(tmp_path):
+    """Qodo review on #2820 (integration): the real per-skill status loop that
+    runs on every send and Chat visit, with no trust manifest (the common
+    case), must cost one keyring read, not one per installed skill."""
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+
+    fake = CountingSecureKeyring()
+    (tmp_path / "trust").mkdir()
+    (tmp_path / "skills").mkdir()
+    service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake),
+        ),
+        key_cache=None,
+    )
+    statuses = [service.status_for_skill(f"skill-{i}") for i in range(10)]
+    assert len(statuses) == 10
+    assert fake.reads == 1

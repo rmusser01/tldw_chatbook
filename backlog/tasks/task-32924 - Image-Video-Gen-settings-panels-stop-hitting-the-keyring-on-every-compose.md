@@ -35,6 +35,8 @@ The Image and Video Gen settings panels resolve backend secrets in compose(), on
 `Media_Generation/config_machinery.keyring_get` (shared by image and video config) caches per (namespace, backend) for 10 s, including failed lookups. The app never writes these entries, so a TTL is the only invalidation; a key added with `keyring set` appears within the window (`ponytail:`). Tests keep patching `_keyring_get` above the cache, so no cross-test leakage. The panels still resolve config in `compose()`; moving that to a worker was skipped as a larger restructure than the cache warrants.
 
 Files: `Media_Generation/config_machinery.py`, `Tests/Image_Generation/test_keyring_read_cache.py`.
+
+Qodo review fixes: expiry starts after the lookup returns; Google-style docstring added. Integration test: repeated real `get_image_generation_config(reload=True)` (what compose() calls) adds no keyring reads. Moving the compose-time read itself off the UI thread is TASK-32926.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

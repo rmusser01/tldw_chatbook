@@ -36,6 +36,8 @@ Sends await a serving-metadata probe (1 s timeout). Failures were cached for onl
 `METADATA_FAILURE_TTL` now equals `METADATA_SUCCESS_TTL` (60 s), and `openrouter` is dropped from the probe families: its model list measured 748,851 bytes against the 256 KB cap, so the probe could only fail; `resolve_context_window` already resolves OpenRouter via the catalog/upstream split. The send path still awaits the first probe by design -- a local server's real `n_ctx` must govern the budget.
 
 Files: `Chat/console_context_window.py`, `Tests/Chat/test_console_context_window.py`.
+
+Qodo review: integration test through the real `ConsoleProviderGateway.resolve_for_send`. Sends spread over 40 s make no extra probe; the test fails with the old 5 s failure TTL.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

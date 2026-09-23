@@ -403,8 +403,11 @@ def build_default_server_credential_store(
 # hit, so every server API call re-read the keyring on the UI loop -- one
 # SecretService D-Bus round trip per call on Linux. Reads are cached briefly;
 # any write or delete through this store drops the whole cache.
-# ponytail: a secret rotated by ANOTHER process is seen within this window.
-_SECRET_READ_TTL_SECONDS = 30.0
+# Kept short (Qodo review on #2820): tldw_server drops a rotated key at once,
+# so a key rotated by ANOTHER process can fail requests for up to this window.
+# ponytail: bounded staleness; invalidate-and-retry on 401 would need a hook
+# in every server service -- add one if rotation from other processes grows.
+_SECRET_READ_TTL_SECONDS = 5.0
 
 
 class KeyringServerCredentialStore:
@@ -432,7 +435,9 @@ class KeyringServerCredentialStore:
         generation = self._read_generation
         value = self._keyring.get_password(self.service_name, username)
         if generation == self._read_generation:
-            self._reads[username] = (now + _SECRET_READ_TTL_SECONDS, value)
+            # Expiry starts when the (possibly prompting) read returns.
+            expires = time.monotonic() + _SECRET_READ_TTL_SECONDS
+            self._reads[username] = (expires, value)
         return value
 
     def _drop_cached_reads(self) -> None:

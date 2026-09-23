@@ -236,7 +236,17 @@ _KEYRING_READS: dict[tuple[str, str], tuple[float, str | None]] = {}
 
 
 def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
-    """Namespaced keyring lookup through a short-lived cache; never raises."""
+    """Namespaced keyring lookup through a short-lived cache; never raises.
+
+    Args:
+        backend: Backend id, used as the keyring username.
+        tables: The modality's config tables (supplies the keyring service).
+
+    Returns:
+        The stored secret, or None when absent or when the keyring backend
+        failed. Either result is reused for ``_KEYRING_READ_TTL_SECONDS``
+        after the lookup returns.
+    """
     key = (tables.keyring_namespace, backend)
     now = time.monotonic()
     hit = _KEYRING_READS.get(key)
@@ -252,7 +262,8 @@ def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
             type(e).__name__,
         )
         value = None
-    _KEYRING_READS[key] = (now + _KEYRING_READ_TTL_SECONDS, value)
+    # Expiry starts when the (possibly blocking) lookup returns.
+    _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
     return value
 
 

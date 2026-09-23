@@ -44,6 +44,8 @@ Watchdog daemon thread (`ui-stall-watchdog`) in `Utils/ui_responsiveness.py`, st
 Verified live: a headless real-app boot (the boot-census harness, isolated profile) with an induced 1.6 s loop block persisted `lag_ms=1069 leaf_function=load_marker_like_block`; an earlier run also caught a genuine 460 ms boot stall attributed to `Backup_Recovery.native_files.pinned_directory` via `qualification.qualified_for:259` (one sample marks where the loop was at the threshold crossing -- precise for one long call, representative for a run of short ones; not yet investigated).
 
 Files: `Utils/ui_responsiveness.py`, `Utils/persistent_diagnostics.py`, `Tests/Utils/test_ui_responsiveness_stall_persist.py`, `Tests/Performance/test_boot_worker_census.py` (allowlist row).
+
+Qodo review fixes: records now carry `leaf_line` (allowlisted); `arm()` starts the watchdog where `app.py` installs the heartbeat timer, so a stall before the first heartbeat is attributed (a test blocks between arm and the first beat).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

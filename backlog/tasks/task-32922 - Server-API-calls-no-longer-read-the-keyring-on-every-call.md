@@ -37,6 +37,8 @@ In server mode, build_client resolves the auth token before its client cache can
 `KeyringServerCredentialStore.get_scoped_secret` now reads through a per-entry 30 s cache. `set_scoped_secret` and `delete_scoped_secret` (and so `clear_server`/`clear_all`) drop it AFTER the write in a `finally`, bumping a generation counter so a read in flight across a write can never re-cache the old secret. Failures are not cached (they surface as credentials-unavailable; recovery is re-auth). A secret rotated by another process is seen within the window (`ponytail:`).
 
 Files: `runtime_policy/server_credentials.py`, `Tests/RuntimePolicy/test_server_credentials.py`.
+
+Qodo review fixes: expiry starts after the read returns. TTL cut from 30 s to 5 s, because tldw_server drops a rotated key immediately, so a key rotated by another process could fail requests for the whole window. There is no central auth-rejection hook across the ~50 server services, so invalidate-and-retry on 401 is noted `ponytail:`. Test: an external rotation is picked up within the window.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

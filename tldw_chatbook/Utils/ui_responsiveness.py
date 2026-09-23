@@ -284,15 +284,25 @@ class UIResponsivenessMonitor:
         self.record_heartbeat_delta(lag_seconds)
         self._last_heartbeat = now
         self._stall_sample = None
-        if self.enabled and self._watchdog_thread is None:
-            self._loop_thread_id = threading.get_ident()
-            with self._diagnostic_lock:
-                if self._diagnostic_closed:
-                    return
-                self._watchdog_thread = threading.Thread(
-                    target=self._watch_loop, name="ui-stall-watchdog", daemon=True
-                )
-                self._watchdog_thread.start()
+        self.arm()
+
+    def arm(self) -> None:
+        """Start stall attribution for the calling (event-loop) thread.
+
+        Called where the heartbeat timer is installed so a stall before the
+        first heartbeat is attributed too; ``heartbeat`` arms lazily as a
+        fallback. Idempotent, and a no-op when disabled or closed.
+        """
+        if not self.enabled or self._watchdog_thread is not None:
+            return
+        self._loop_thread_id = threading.get_ident()
+        with self._diagnostic_lock:
+            if self._diagnostic_closed:
+                return
+            self._watchdog_thread = threading.Thread(
+                target=self._watch_loop, name="ui-stall-watchdog", daemon=True
+            )
+            self._watchdog_thread.start()
 
     def _watch_loop(self) -> None:
         """Sample the loop thread's stack once per stall, off the loop."""
@@ -340,6 +350,7 @@ def _sample_stack(thread_id: int | None) -> dict[str, object]:
     sample: dict[str, object] = {
         "leaf_module": frame.f_globals.get("__name__", ""),
         "leaf_function": frame.f_code.co_name,
+        "leaf_line": frame.f_lineno,
     }
     slots = ("site", "caller")
     while frame is not None and slots:

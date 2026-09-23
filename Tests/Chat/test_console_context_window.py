@@ -482,3 +482,45 @@ async def test_openrouter_is_not_probed():
         result = await ContextWindowCache().resolve(target, client)
     assert calls == []
     assert result.tokens == 200000  # upstream provider fallback, as before
+
+
+@pytest.mark.asyncio
+async def test_send_boundary_does_not_reprobe_a_failing_server_per_send(
+    monkeypatch,
+):
+    """Qodo review on #2820 (integration): drive the real send boundary, not
+    the cache directly. A local server whose metadata probe fails must not be
+    re-probed on every send within the cache window."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    probes = []
+
+    async def handler(request):
+        if request.url.path == "/props":
+            probes.append(request)
+            return httpx.Response(503)
+        return httpx.Response(200, json={"status": "ok"})
+
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        base_url="http://localhost:9000",
+        explicit_model="selected",
+        max_tokens=1024,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        resolution = await gateway.resolve_for_send(selection)
+        after_first_send = len(probes)
+        from tldw_chatbook.Chat import console_context_window
+
+        clock = [console_context_window.monotonic()]
+        monkeypatch.setattr(console_context_window, "monotonic", lambda: clock[0])
+        for _ in range(4):
+            clock[0] += 10  # 40 s of sends: past the old 5 s, inside 60 s
+            resolution = await gateway.resolve_for_send(selection)
+    assert resolution.ready
+    assert after_first_send >= 1
+    assert len(probes) == after_first_send

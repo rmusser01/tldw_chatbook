@@ -242,7 +242,31 @@ class TestStallAttribution:
         assert "site_function=load_marker" in message
         assert f"site_line={load_marker.__code__.co_firstlineno + 1}" in message
         assert "caller_function=status_for_skill" in message
+        # Qodo review on #2820: the innermost frame carries its line too.
+        assert f"leaf_line={load_marker.__code__.co_firstlineno + 1}" in message
         assert "invalid" not in message
+
+    def test_a_stall_before_the_first_heartbeat_is_attributed(
+        self, monkeypatch
+    ) -> None:
+        """Qodo review on #2820: the watchdog started at the first heartbeat,
+        so a stall between timer install and that beat went unattributed.
+        ``arm()`` is called where the heartbeat timer is installed."""
+        persisted = _patch_persist(monkeypatch)
+        namespace: dict = {"__name__": "tldw_chatbook.fake_trust", "time": time}
+        for fn in (load_marker, status_for_skill):
+            namespace[fn.__name__] = types.FunctionType(fn.__code__, namespace)
+        monitor = UIResponsivenessMonitor(
+            stall_threshold_ms=150, heartbeat_interval_seconds=0.05
+        )
+        try:
+            monitor.arm()
+            namespace["status_for_skill"]()  # stall before any heartbeat
+            monitor.heartbeat()
+            _drain(monitor, expected=1)
+        finally:
+            monitor.close()
+        assert persisted[0]["site_function"] == "load_marker"
 
     def test_no_attribution_without_a_live_stall(self, monkeypatch) -> None:
         persisted = _patch_persist(monkeypatch)
