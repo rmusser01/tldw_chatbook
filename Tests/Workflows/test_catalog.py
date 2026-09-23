@@ -36,7 +36,25 @@ def test_discovery_is_memoized_so_labels_do_not_rebuild_the_catalog():
     """
     assert catalog.discover() is catalog.discover()
     assert catalog.discover(show_all=True) is catalog.discover(show_all=True)
-    assert catalog.discover(query="model") is catalog.discover(query="model")
     # Distinct arguments still produce distinct, correct inventories.
     assert catalog.discover() is not catalog.discover(show_all=True)
     assert {item.step_type for item in catalog.discover(query="Call model")} == {"llm"}
+
+
+def test_search_text_never_becomes_a_cache_key():
+    """Typing must not grow a process-lifetime cache.
+
+    The chooser calls ``discover`` from ``Input.Changed``, so the first cut of
+    the memo above -- ``lru_cache(maxsize=None)`` over the whole signature --
+    retained one entry per distinct keystroke value, forever. The cache is now
+    keyed on ``show_all`` alone, which has exactly two values.
+    """
+    catalog._inventory.cache_clear()
+    for keystroke in ("c", "ca", "cal", "call", "call ", "call m", "call mo"):
+        catalog.discover(query=keystroke)
+
+    assert catalog._inventory.cache_info().currsize == 1
+    assert catalog._inventory.cache_info().maxsize == 2
+    # Filtering still works, and still comes off the one built inventory.
+    assert {item.step_type for item in catalog.discover(query="Call model")} == {"llm"}
+    assert catalog.discover(query="") is catalog._inventory(False)

@@ -303,8 +303,8 @@ def load_local_persona_portrait(
             sha256=hashlib.sha256(image).hexdigest(),
             data=image,
         )
-    except Exception:
-        logger.opt(exception=True).debug("Persona buddy portrait build failed")
+    except Exception as exc:
+        logger.debug("Persona buddy portrait build failed: {}", type(exc).__name__)
         return None
 
 
@@ -1104,9 +1104,10 @@ class PersonaBuddyController:
                 if callable(self._reduced_motion)
                 else self._reduced_motion
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Persona buddy reduced-motion preference unreadable; assuming on"
+        except Exception as exc:
+            logger.debug(
+                "Persona buddy reduced-motion preference unreadable; assuming on: {}",
+                type(exc).__name__,
             )
             return True
         return value if type(value) is bool else True
@@ -1149,9 +1150,15 @@ class PersonaBuddyController:
                 if buddy is None
                 else _LocalPersona(None, buddy.revision, buddy_id=buddy.id)
             )
-        except Exception:  # noqa: BLE001 - reject invalid private library authority without paths
-            logger.opt(exception=True).debug(
-                "Persona buddy private library authority rejected"
+        except Exception as exc:  # noqa: BLE001 - reject invalid private library authority without paths
+            # Bounded on purpose: this call is built over ``self._profile_root``,
+            # so the exception's own message routinely carries the user's private
+            # profile path (an OSError filename, a PrivatePathError). The class
+            # name says what broke; attaching the payload would break the promise
+            # this handler's comment has made since before logging existed here.
+            logger.debug(
+                "Persona buddy private library authority rejected: {}",
+                type(exc).__name__,
             )
             return None
 
@@ -1181,8 +1188,10 @@ class PersonaBuddyController:
             if portrait is not None and type(portrait) is not PersonaVisualPortrait:
                 portrait = None
             return _LocalPersona(persona_id, revision, portrait)
-        except Exception:
-            logger.opt(exception=True).debug("Persona buddy local persona unreadable")
+        except Exception as exc:
+            logger.debug(
+                "Persona buddy local persona unreadable: {}", type(exc).__name__
+            )
             return None
 
     def _read_graph(
@@ -1197,8 +1206,10 @@ class PersonaBuddyController:
                 if buddy_id is not None
                 else repository.get_active_persona_pack(persona_id)
             )
-        except Exception:
-            logger.opt(exception=True).debug("Persona buddy visual graph unreadable")
+        except Exception as exc:
+            logger.debug(
+                "Persona buddy visual graph unreadable: {}", type(exc).__name__
+            )
             return None
 
     def _resolve_runtime(
@@ -1226,9 +1237,10 @@ class PersonaBuddyController:
                 portrait=persona.portrait,
                 reduced_motion=reduced_motion,
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Persona buddy visual runtime could not be resolved"
+        except Exception as exc:
+            logger.debug(
+                "Persona buddy visual runtime could not be resolved: {}",
+                type(exc).__name__,
             )
             return None
 

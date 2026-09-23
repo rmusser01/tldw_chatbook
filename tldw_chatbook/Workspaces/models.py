@@ -113,6 +113,12 @@ def registry_now_iso() -> str:
     adopting the canonical one looked like an import fix while silently
     writing a second shape into a lexically-ordered column (TASK-32901).
     Switching shapes requires a read-side migration, not a rename.
+
+    Returns:
+        The current instant as an aware UTC ISO-8601 string carrying an
+        explicit ``+00:00`` offset (``"2026-09-22T21:04:05.123456+00:00"``),
+        at microsecond precision -- not the canonical fixed-width millisecond
+        ``Z`` form.
     """
 
     return datetime.now(timezone.utc).isoformat()

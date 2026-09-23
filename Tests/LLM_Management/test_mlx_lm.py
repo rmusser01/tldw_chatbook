@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_mlx_lm
 from tldw_chatbook.config import RuntimeConfigSnapshot

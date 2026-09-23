@@ -73,3 +73,27 @@ def test_a_following_keystroke_cancels_the_pending_search():
 
     stub.callbacks[-1]()
     assert stub.loads == [(0, "bi")]
+
+
+def test_the_stub_surface_matches_the_real_textual_timer_api():
+    """The stub above is only evidence if it imitates the real API.
+
+    These tests drive ``search_page`` unbound against ``_Stub``, so a rename
+    in Textual -- ``set_timer`` losing its ``(delay, callback) -> Timer``
+    shape, or ``Timer.stop`` becoming ``cancel`` -- would leave them green
+    while production raised ``AttributeError`` on the first keystroke. A timed
+    pilot test would catch that too, but only by sleeping past a 0.25s
+    debounce on every run; pinning the two API facts the stub depends on
+    catches the same drift without the flake.
+    """
+    import inspect
+
+    from textual.message_pump import MessagePump
+    from textual.timer import Timer
+
+    assert callable(Timer.stop)
+    assert list(inspect.signature(Timer.stop).parameters) == ["self"]
+
+    parameters = inspect.signature(MessagePump.set_timer).parameters
+    assert list(parameters)[1:3] == ["delay", "callback"]
+    assert parameters["delay"].annotation == "float"

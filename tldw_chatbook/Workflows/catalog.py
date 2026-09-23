@@ -344,7 +344,33 @@ _LABELS = {
 }
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=2)
+def _inventory(show_all: bool) -> tuple[DiscoveryEntry, ...]:
+    """Build the query-independent inventory, memoized on its only two keys.
+
+    ``query`` is deliberately not part of this cache key. The step chooser
+    calls :func:`discover` from an ``Input.Changed`` handler -- once per
+    keystroke -- so keying on it would retain every string the user ever typed,
+    plus a result tuple each, for the life of the process (TASK-32901 review).
+    Filtering 130 built rows is not the cost this memo exists to avoid;
+    rebuilding and re-sorting them is.
+    """
+    entries = []
+    for step_type, family, disposition in DISCOVERY:
+        available = step_type in _LABELS
+        label, example, group = _LABELS.get(
+            step_type,
+            (step_type.replace("_", " ").capitalize(), "Schema unverified", family),
+        )
+        if show_all or available:
+            entries.append(
+                DiscoveryEntry(step_type, group, disposition, label, example, available)
+            )
+    return tuple(
+        sorted(entries, key=lambda item: (not item.available, item.family, item.label))
+    )
+
+
 def discover(*, show_all: bool = False, query: str = "") -> tuple[DiscoveryEntry, ...]:
     """Read bundled pinned inventory without performing I/O or admission.
 
@@ -357,22 +383,17 @@ def discover(*, show_all: bool = False, query: str = "") -> tuple[DiscoveryEntry
         Immutable discovery entries ordered by availability, family and label.
         Listing a type does not admit a definition or authorize execution.
 
-    Memoized: the inventory is built from module constants, and ``step_label``
-    calls this once per step on two surfaces per refresh (TASK-32901).
+    The inventory half is memoized (``step_label`` calls this once per step on
+    two surfaces per refresh, TASK-32901); the query filter is not, so search
+    text never becomes a cache key.
     """
-    entries = []
-    for step_type, family, disposition in DISCOVERY:
-        available = step_type in _LABELS
-        label, example, group = _LABELS.get(
-            step_type,
-            (step_type.replace("_", " ").capitalize(), "Schema unverified", family),
-        )
-        if (show_all or available) and query.casefold() in (
-            label + " " + step_type + " " + group
-        ).casefold():
-            entries.append(
-                DiscoveryEntry(step_type, group, disposition, label, example, available)
-            )
+    inventory = _inventory(show_all)
+    if not query:
+        return inventory
+    needle = query.casefold()
     return tuple(
-        sorted(entries, key=lambda item: (not item.available, item.family, item.label))
+        item
+        for item in inventory
+        if needle
+        in (item.label + " " + item.step_type + " " + item.family).casefold()
     )
