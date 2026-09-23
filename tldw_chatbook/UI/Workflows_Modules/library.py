@@ -189,6 +189,14 @@ class PagedChoiceModal(ChoiceModal):
         search_query: Query of the last successfully loaded page.
     """
 
+    #: Keystroke-to-query delay. ``load_page``'s ``exclusive=True`` cancels the
+    #: awaiting worker, not the scan already running inside ``to_thread``, so
+    #: an undebounced query queued one full ``workflow_heads`` scan per
+    #: character (TASK-32901). Matches the repo's existing search debounce.
+    SEARCH_DEBOUNCE_SECONDS: ClassVar[float] = 0.25
+
+    _search_timer = None
+
     def __init__(
         self,
         title: str,
@@ -299,6 +307,9 @@ class PagedChoiceModal(ChoiceModal):
     def search_page(self, event: Input.Changed) -> None:
         """Consume a search edit and schedule its first result page.
 
+        The query is deferred by ``SEARCH_DEBOUNCE_SECONDS`` and each further
+        keystroke restarts that wait, so a typed word costs one scan.
+
         Args:
             event: Change to the page-search input.
 
@@ -306,7 +317,12 @@ class PagedChoiceModal(ChoiceModal):
             None.
         """
         event.stop()
-        self.load_page(0, event.value)
+        query = event.value
+        if self._search_timer is not None:
+            self._search_timer.stop()
+        self._search_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, lambda: self.load_page(0, query)
+        )
 
     def select_option(self, option: Option) -> None:
         """Load a neighboring page or dismiss with the selected item's ID.

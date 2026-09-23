@@ -225,7 +225,7 @@ class JSONStorage(StorageAdapter):
                 with raw._file(raw._local.operation, self.filepath, "r") as f:
                     return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            print(f"Error reading JSON storage: {e}")
+            logger.error("Error reading JSON storage: %s", e)
         return {}
 
     @pet_operation
@@ -239,7 +239,7 @@ class JSONStorage(StorageAdapter):
             raw._replace(operation, temporary, self.filepath)
             return True
         except IOError as e:
-            print(f"Error writing JSON storage: {e}")
+            logger.error("Error writing JSON storage: %s", e)
             return False
         finally:
             raw._remove_temporary(operation, temporary)
@@ -493,7 +493,7 @@ class SQLiteStorage(StorageAdapter):
             return True
 
         except Exception as e:
-            print(f"Error saving to SQLite: {e}")
+            logger.error("Error saving to SQLite: %s", e)
             return False
 
     def delete(self, pet_id: str) -> bool:
@@ -505,7 +505,7 @@ class SQLiteStorage(StorageAdapter):
                 )
                 return cursor.rowcount > 0
         except Exception as e:
-            print(f"Error deleting from SQLite: {e}")
+            logger.error("Error deleting from SQLite: %s", e)
             return False
 
     def list_pets(self) -> list[str]:
@@ -517,7 +517,7 @@ class SQLiteStorage(StorageAdapter):
                 )
                 return [row[0] for row in cursor.fetchall()]
         except Exception as e:
-            print(f"Error listing pets: {e}")
+            logger.error("Error listing pets: %s", e)
             return []
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -577,7 +577,7 @@ class SQLiteStorage(StorageAdapter):
                 return stats
 
         except Exception as e:
-            print(f"Error getting statistics: {e}")
+            logger.error("Error getting statistics: %s", e)
             return {}
 
 
