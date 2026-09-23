@@ -117,12 +117,69 @@ jobs:
             --timeout=300 \
             --tb=short
 
+  ui-fast-lane:
+    # TASK-32908. Until now `Tests/UI` -- 25,917 collected tests, the biggest
+    # directory in the tree -- gated NOTHING on a pull request.
+    #
+    # It looks covered twice over and is covered neither time:
+    #   * test.yml has a 12-shard `ui-tests` job, but that workflow is
+    #     `on: push: branches: ["main"]` + workflow_dispatch. It does not accept
+    #     pull_request events, so nothing in it is a PR gate.
+    #   * nightly-deep.yml runs `pytest ./Tests/` on a schedule -- with no
+    #     --continue-on-collection-errors, so one bad import aborts the session.
+    #     It has been doing exactly that: run 35706024071 (2026-09-22) reported
+    #     `collected 101851 items / 1 error` then `Interrupted`, ZERO tests
+    #     executed, six consecutive nights.
+    #
+    # The whole directory cannot come into the gate: measured 25,917 tests /
+    # ~5.5 CPU-hours. What comes in is a verified-green subset, listed in
+    # scripts/ui_pr_gate_census.txt.
+    #
+    # Deliberately SERIAL and on the same minimal dependency set as
+    # pr-fast-lane. No xdist, no pytest-randomly in requirements-test.txt, and
+    # a pinned file ORDER -- so the run CI performs is the same run the census
+    # was verified against. A gate whose green was only ever observed under a
+    # different plugin set and a different test order is a gate that lands red,
+    # and a red gate trains people to ignore it.
+    #
+    # Its own job rather than another step on pr-fast-lane: that lane measured
+    # ~20 min against a 30-min cap, and spending its last headroom here would
+    # make the required check fail on a timeout the first time either half grew.
+    name: UI Fast Lane
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose: the census is verified against
+      # this dependency set. Adding a package here can only be done by
+      # re-verifying the census under it.
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
+      - name: Run the gated Tests/UI slice
+        run: |
+          # Census order is the run order; see the checker for why it may not
+          # silently shrink.
+          mapfile -t UI_FILES < <(grep -vE '^\s*(#|$)' scripts/ui_pr_gate_census.txt)
+          echo "Gating ${#UI_FILES[@]} Tests/UI files."
+          pytest "${UI_FILES[@]}" \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     # This job's name is the string the owner enters under branch protection ->
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane]
+    needs: [pr-fast-lane, ui-fast-lane]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -141,6 +198,17 @@ jobs:
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
+          exit 1
+
+      # TASK-32908: same shape as the step above. Without it the new UI job
+      # would report its own red square while the REQUIRED check stayed green,
+      # which is the "guard nobody is gated on" failure this workflow exists to
+      # avoid.
+      - name: Require successful UI fast lane
+        if: ${{ github.event_name == 'pull_request' && needs.ui-fast-lane.result != 'success' }}
+        run: |
+          echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
+          echo "::error::The required UI fast lane did not succeed."
           exit 1
 
       # Every step below is `if: '!cancelled()'` rather than the default
@@ -236,4 +304,16 @@ jobs:
           # shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new
           # or grown naive-timestamp writer. Pure AST scan, no database built.
           python scripts/check_timestamp_writers.py
+
+      - name: The gated Tests/UI census is intact
+        if: ${{ !cancelled() }}
+        run: |
+          # TASK-32908. The ui-fast-lane job above is the ratchet on BEHAVIOUR
+          # -- a censused file that goes red turns it red. This is the ratchet
+          # on the census itself: every listed path must still exist (a renamed
+          # file makes pytest collect less while still exiting 0), and the list
+          # may not fall below its pinned floor, so "delete the line" stops
+          # being the cheapest way to make the gate green. Pure path check;
+          # milliseconds.
+          python scripts/check_ui_pr_gate_census.py
 
