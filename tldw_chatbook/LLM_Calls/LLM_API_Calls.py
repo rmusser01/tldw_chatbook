@@ -1255,6 +1255,10 @@ def _anthropic_tools_payload(tools: list) -> list:
             )
             continue
         function = entry.get("function")
+        if entry.get("type") == "function" and not isinstance(function, dict):
+            # OpenAI-shaped but malformed: drop it locally rather than passing an
+            # unconverted entry through to Gemini.
+            continue
         if entry.get("type") == "function" and isinstance(function, dict):
             name = str(function.get("name") or "").strip()
             if not name:
@@ -3227,6 +3231,10 @@ def _google_tools_payload(tools: list) -> list:
         if not isinstance(entry, dict):
             continue
         function = entry.get("function")
+        if entry.get("type") == "function" and not isinstance(function, dict):
+            # OpenAI-shaped but malformed. Drop it locally rather than letting an
+            # unconverted entry reach Gemini as if it were native.
+            continue
         if entry.get("type") == "function" and isinstance(function, dict):
             name = str(function.get("name") or "").strip()
             if not name:
@@ -3272,7 +3280,9 @@ def _google_function_response(name: str, content) -> dict:
         if isinstance(parsed, dict):
             response = parsed
     if response is None:
-        response = {"result": str(content or "")}
+        # `content is None`, not falsiness: a tool returning 0 or False must
+        # not be sent to Gemini as an empty string.
+        response = {"result": "" if content is None else str(content)}
     return {"functionResponse": {"name": name, "response": response}}
 
 
