@@ -29,7 +29,9 @@ from .provider_endpoint_contract import resolve_provider_endpoint
 METADATA_MAX_BYTES = 256 * 1024
 METADATA_CHUNK_BYTES = 64 * 1024
 METADATA_SUCCESS_TTL = 60
-METADATA_FAILURE_TTL = 5
+# TASK-32923: a 5 s failure TTL re-probed an unreachable or slow endpoint on
+# nearly every send, each costing up to the 1 s timeout before the message left.
+METADATA_FAILURE_TTL = METADATA_SUCCESS_TTL
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +161,9 @@ class ContextWindowCache:
             "aphrodite",
             "koboldcpp",
             "oobabooga",
-            "openrouter",
+            # Not "openrouter": its model list (~750 KB) always exceeds
+            # METADATA_MAX_BYTES, so the probe could only fail; the model
+            # catalog resolves OpenRouter windows instead (TASK-32923).
         }
         if family not in supported:
             return None

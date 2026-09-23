@@ -436,3 +436,49 @@ async def test_real_http_transport_reads_serving_capacity(
             assert b"model=local%2Fmodel" in requests[0]
         finally:
             await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_is_not_retried_on_every_send(monkeypatch):
+    """TASK-32923: failures were cached for 5 s, so an unreachable or slow
+    metadata endpoint added up to the 1 s probe timeout to nearly every send.
+    """
+    from tldw_chatbook.Chat import console_context_window
+
+    clock = [1000.0]
+    monkeypatch.setattr(console_context_window, "monotonic", lambda: clock[0])
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(500)
+
+    target = ContextWindowTarget("custom", "custom", "http://localhost:9000", "m")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        cache = ContextWindowCache()
+        await cache.resolve(target, client)
+        clock[0] += 30
+        await cache.resolve(target, client)
+        assert len(calls) == 1
+        clock[0] += 31
+        await cache.resolve(target, client)
+        assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_openrouter_is_not_probed():
+    """OpenRouter's model list (~750 KB) always exceeds the 256 KB cap, so the
+    probe could only ever download 256 KB and fail; the catalog answers."""
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, content=b"x" * 262145)
+
+    target = ContextWindowTarget(
+        "openrouter", "openrouter", "https://openrouter.ai/api/v1", "anthropic/claude-x"
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await ContextWindowCache().resolve(target, client)
+    assert calls == []
+    assert result.tokens == 200000  # upstream provider fallback, as before
