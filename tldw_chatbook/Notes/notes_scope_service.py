@@ -1664,10 +1664,13 @@ class NotesScopeService:
             return deleted
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.delete_server_note(note_id, version)
+        # (TASK-32893) ``version`` is deliberately NOT forwarded here: unlike
+        # the local and server-note scopes above, the workspace-notes DELETE
+        # endpoint has no compare-and-set to forward it to. It used to be
+        # passed and silently discarded, which read like a guard that existed.
         return await self.server_service.delete_workspace_note(
             self._require_workspace_id(workspace_id),
             note_id,
-            version,
         )
 
     async def restore_note(

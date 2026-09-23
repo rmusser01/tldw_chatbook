@@ -59,10 +59,11 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
     - Validate reference audio files
     - Backup and restore profiles
 
-    The single-JSON store, cache, backups-on-save, and the shared
-    update/delete/get CRUD live in VoiceManagerBase (TASK-32863); this
-    class keeps the Higgs-specific create/list/export/import shapes,
-    audio validation/analysis, and backup retention.
+    The single-JSON store, cache, backups-on-save (including naming and
+    retention), and the shared update/delete/get CRUD live in
+    VoiceManagerBase (TASK-32863/32893); this class keeps the
+    Higgs-specific create/list/export/import shapes, audio
+    validation/analysis, and restore-from-backup.
     """
 
     profiles_filename = "voice_profiles.json"
@@ -78,9 +79,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
             voice_samples_dir: Directory for storing voice samples and profiles.
         """
         super().__init__(voice_samples_dir)
-
-    def _backup_before_save(self) -> None:
-        self._create_backup()
 
     @voice_files.call
     def create_profile(
@@ -451,26 +449,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
         return characteristics
 
     @voice_files.call
-    def _create_backup(self):
-        """Create backup of current profiles"""
-        try:
-            if self.profiles_file.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_file = (
-                    self.backup_dir / f"voice_profiles_backup_{timestamp}.json"
-                )
-                voice_files.copy(self, self.profiles_file, backup_file)
-
-                # Keep only last 10 backups
-                backups = sorted(self.backup_dir.glob("voice_profiles_backup_*.json"))
-                if len(backups) > 10:
-                    for old_backup in backups[:-10]:
-                        voice_files.unlink(self, old_backup)
-
-        except Exception as e:
-            logger.warning(f"Failed to create backup: {e}")
-
-    @voice_files.call
     def restore_from_backup(
         self, backup_file: Optional[str] = None
     ) -> Tuple[bool, str]:
@@ -479,8 +457,12 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
             if backup_file:
                 backup_path = Path(backup_file)
             else:
-                # Use most recent backup
-                backups = sorted(self.backup_dir.glob("voice_profiles_backup_*.json"))
+                # (TASK-32893) Most recent by PARSED timestamp. This was
+                # sorted(glob(...)), i.e. filename-byte order, which is not
+                # chronological across a DST boundary or a legacy/UTC name
+                # mix -- so "restore the latest backup" could restore an
+                # older one over the user's newer profiles.
+                backups = self._list_backups()
                 if not backups:
                     return False, "No backups found"
                 backup_path = backups[-1]
