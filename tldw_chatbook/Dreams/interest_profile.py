@@ -91,26 +91,62 @@ def merge_signals(signal_lists: list[list[dict]], *, top_n: int = 30) -> list[di
     return ranked[:top_n]
 
 
-def snapshot(db: DreamsDB, *, now_epoch: float) -> dict:
+#: Feedback offset per net reaction (ruling R19; spec §feedback loop) and
+#: the bounds a feedback-adjusted weight is clamped to -- the same ones decay
+#: converges to.
+FEEDBACK_STEP = 0.1
+WEIGHT_FLOOR = 0.05
+WEIGHT_CEILING = 1.0
+
+#: Topics a snapshot carries into query synthesis and every story prompt.
+#: Profile rows are never pruned, so without a cap the egress (and token
+#: cost) grows with every cycle's merged signals.
+SNAPSHOT_TOPIC_CAP = 20
+
+
+def snapshot(
+    db: DreamsDB,
+    *,
+    now_epoch: float,
+    feedback: dict[str, int] | None = None,
+) -> dict:
     """Read the profile's topics, decay them, and pair them with the region.
 
-    Only ``facet == "topic"`` rows join the snapshot (goals ride along in
-    later cycle steps, undecayed); ``last_boosted_at`` is stored as an ISO
-    string or NULL and is converted to epoch floats for the decay math.
+    Only searchable ``facet == "topic"`` rows join the snapshot (goals ride
+    along in later cycle steps, undecayed); ``last_boosted_at`` is stored as
+    an ISO string or NULL and is converted to epoch floats for the decay
+    math. Feedback is applied here as an OFFSET over the decayed weight
+    (``FEEDBACK_STEP`` per net reaction, clamped) instead of being written
+    back into the stored weight: a stored write would re-apply the same
+    reactions every cycle of their window, and the signal refresh would
+    clobber it on derived rows.
 
     Args:
         db: Dreams database to read the interest profile from.
         now_epoch: Current time as seconds since the epoch.
+        feedback: Net reaction count per normalized topic text (see
+            ``cycle_service._feedback_net``); None applies no offset.
 
     Returns:
-        ``{"topics": [decayed topic rows], "region": str}`` where ``region``
-        comes from ``dreams_setting("region")`` (empty when unset).
+        ``{"topics": [decayed topic rows, heaviest first, at most
+        SNAPSHOT_TOPIC_CAP], "region": str}`` where ``region`` comes from
+        ``dreams_setting("region")`` (empty when unset).
     """
-    rows = [row for row in db.list_profile() if row.get("facet") == "topic"]
+    rows = [
+        row for row in db.list_profile()
+        if row.get("facet") == "topic" and int(row.get("searchable") or 0)
+    ]
     for row in rows:
         row["last_boosted_at"] = _epoch(row.get("last_boosted_at"))
     topics = decay_weights(rows, now_epoch=now_epoch)
-    return {"topics": topics, "region": str(dreams_setting("region", ""))}
+    for topic in topics:
+        net = (feedback or {}).get(str(topic.get("text", "")).strip().lower(), 0)
+        if net:
+            topic["weight"] = min(WEIGHT_CEILING, max(
+                WEIGHT_FLOOR, float(topic["weight"]) + FEEDBACK_STEP * net))
+    topics.sort(key=lambda topic: float(topic["weight"]), reverse=True)
+    return {"topics": topics[:SNAPSHOT_TOPIC_CAP],
+            "region": str(dreams_setting("region", ""))}
 
 
 def _epoch(value: Any) -> float:

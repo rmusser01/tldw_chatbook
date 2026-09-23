@@ -113,7 +113,8 @@ async def synthesize_queries(
             return lines
         logger.debug("Dreams query synthesis returned {} usable lines; falling back", len(lines))
     except Exception as exc:  # noqa: BLE001 - degradation, not a crash path
-        logger.warning("Dreams query synthesis chat call failed; using fallback: {}", exc)
+        logger.warning("Dreams query synthesis chat call failed; using fallback: {}",
+                       type(exc).__name__)
     return _fallback_queries(topics, count)
 
 

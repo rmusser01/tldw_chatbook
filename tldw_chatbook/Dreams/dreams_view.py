@@ -48,6 +48,9 @@ def list_recent_dreams(dreams_db: Any, *, limit: int = 10) -> list[dict[str, Any
         ``{"label": f"Cycle {date}: failed", "status": "failed",
         "kind": "unknown", "collection_date": date, "synthetic": True}``.
     """
+    from tldw_chatbook.DB.Dreams_DB import clamp_limit
+
+    limit = clamp_limit(limit)
     stories_by_date: dict[str, list[dict[str, Any]]] = {}
     for story in dreams_db.list_recent_stories(limit=limit):
         shaped = dict(story)
@@ -83,6 +86,12 @@ def format_dream_row(story: Mapping[str, Any]) -> str:
 
     Matches the Reports row idiom on the Artifacts screen (``"> Report:
     {label}"`` + ``" · kept"``).
+
+    Args:
+        story: One ``list_recent_dreams`` row.
+
+    Returns:
+        The row's display text (render it literally, never as markup).
     """
     label = f"> Dream: {story.get('label', '')}"
     if story.get("kept"):

@@ -207,8 +207,8 @@ def generate_story(
             location=location, status="complete", error=None,
         )
     except Exception as exc:  # noqa: BLE001 - every failure is a row, not a raise
-        logger.warning("Dreams story generation failed for {}: {}",
-                       candidate.url, type(exc).__name__)
+        logger.warning("Dreams story generation failed: {}",
+                       type(exc).__name__)
         return StoryResult(
             title=title, body="", kind="content", event_date=None,
             location=None, status="failed", error=str(exc),

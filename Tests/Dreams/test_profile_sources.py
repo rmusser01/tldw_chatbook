@@ -26,6 +26,34 @@ def test_locked_personal_context_returns_cached_distillate(tmp_path, monkeypatch
     assert [t["text"] for t in out] == ["visit japan"]
 
 
+def test_corrupt_cache_entries_are_dropped(tmp_path):
+    cache = tmp_path / "pc_distillate.json"
+    cache.write_text(json.dumps([1, "x", None, {"facet": "topic"},
+                                 {"facet": "bogus", "text": "t", "weight": 1},
+                                 {"facet": "topic", "text": "ok", "weight": 1.0}]))
+    out = read_personal_context_topics(LockedService(), cache_path=cache)
+    assert [t["text"] for t in out] == ["ok"]
+
+
+def test_workspace_only_profile_reads_no_scopes(tmp_path):
+    from types import SimpleNamespace
+
+    seen = []
+
+    class WorkspaceOnly:
+        def list_scopes(self):
+            return [SimpleNamespace(scope_id="ws-1", kind="workspace")]
+
+        def list_records(self, *, scope_ids, include_archived=False):
+            seen.append(tuple(scope_ids))
+            return []
+
+    read_personal_context_topics(WorkspaceOnly(),
+                                 cache_path=tmp_path / "c.json")
+    # Workspace context never enters discovery, even with no global scope.
+    assert seen == [()]
+
+
 def test_successful_read_refreshes_cache(tmp_path):
     class OkService:
         def list_records(self, *, scope_ids, include_archived=False):

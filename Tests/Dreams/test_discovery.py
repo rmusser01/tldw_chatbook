@@ -9,12 +9,15 @@ from tldw_chatbook.Dreams.discovery import (
     Candidate,
     dedupe_and_rank,
     fetch_watchlist_candidates,
+    normalize_url,
     run_queries,
 )
 
 CANDS = [
     Candidate("Rust TUI guide", "https://a.x/Rust-Tui/", "…", "web"),
-    Candidate("Dup", "https://a.x/rust-tui?utm=1", "…", "web"),
+    # Same page: host case, a tracking parameter, and the trailing slash
+    # differ -- none of them identify content.
+    Candidate("Dup", "https://A.X/Rust-Tui?utm_source=feed", "…", "web"),
     Candidate("Jazz near Seattle", "https://b.x/jazz", "…", "watchlist"),
     Candidate("Seen already", "https://c.x/old", "…", "web"),
     Candidate("In library", "https://d.x/lib", "…", "web"),
@@ -31,6 +34,21 @@ def test_dedupe_and_rank_drops_seen_library_and_duplicates_and_ranks_by_overlap(
     )
     urls = [c.url for c in ranked]
     assert urls == ["https://a.x/Rust-Tui/", "https://b.x/jazz", "https://e.x/taxes"]
+
+
+def test_normalize_url_keeps_identifying_query_params():
+    # Regression: dropping the whole query string collapsed every YouTube
+    # video into one key, so a single library video hid all of them.
+    assert normalize_url("https://www.youtube.com/watch?v=A") != \
+        normalize_url("https://www.youtube.com/watch?v=B")
+    assert normalize_url("https://Ex.com/Path/?utm_medium=x&fbclid=1&id=7#top") \
+        == "https://ex.com/Path?id=7"
+    ranked = dedupe_and_rank(
+        [Candidate("v1", "https://www.youtube.com/watch?v=A", "", "web"),
+         Candidate("v2", "https://www.youtube.com/watch?v=B", "", "web")],
+        seen_urls=set(), library_urls={"https://www.youtube.com/watch?v=C"},
+        topics=[], limit=5)
+    assert [c.title for c in ranked] == ["v1", "v2"]
 
 
 def test_ranking_falls_back_to_original_order_on_no_overlap():
@@ -99,6 +117,10 @@ def test_fetch_watchlist_candidates_returns_only_fresh_new_items(tmp_path):
                     (sub_id, "https://example.test/stale", "Stale",
                      "2026-09-20T10:00:00+00:00", "new",
                      "2026-09-20 10:05:00", "2026-09-20 10:05:00"),
+                    # Stamped in the future: not fresh before publication.
+                    (sub_id, "https://example.test/future", "Future",
+                     "2026-09-23T10:00:00+00:00", "new",
+                     "2026-09-22 10:05:00", "2026-09-22 10:05:00"),
                     # Inside the window but already read.
                     (sub_id, "https://example.test/reviewed", "Already read",
                      "2026-09-22T10:00:00+00:00", "reviewed",
@@ -112,7 +134,19 @@ def test_fetch_watchlist_candidates_returns_only_fresh_new_items(tmp_path):
         assert "https://example.test/naive" in urls
         assert "https://example.test/stale" not in urls
         assert "https://example.test/reviewed" not in urls
+        assert "https://example.test/future" not in urls
         assert all(c.source == "watchlist" for c in out)
         assert {c.url: c.title for c in out}["https://example.test/fresh"] == "Fresh"
+        # The item's stored content rides along as source material.
+        with subs.transaction() as conn:
+            conn.execute("UPDATE subscription_items SET content = ?"
+                         " WHERE url = ?",
+                         ("Full article text " * 100,
+                          "https://example.test/fresh"))
+        out = fetch_watchlist_candidates(subs, freshness_hours=24,
+                                         now_epoch=now_epoch)
+        fresh = {c.url: c for c in out}["https://example.test/fresh"]
+        assert fresh.snippet.startswith("Full article text")
+        assert len(fresh.snippet) == 800
     finally:
         subs.close_all_connections()

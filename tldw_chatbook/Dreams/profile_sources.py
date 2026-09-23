@@ -171,11 +171,12 @@ def _dreams_scope_ids(pc_service: Any) -> tuple[str, ...]:
     kinds — ``global``/``workspace`` only (packages/tldw_profile_core/
     src/tldw_profile_core/enums.py) — so there is no dedicated interests
     scope to pick; the user-level GLOBAL scope is the interests-like one,
-    and workspace scopes (job-local context) are left out. A profile with
-    no GLOBAL scope yet falls back to every scope rather than reading
-    nothing. A service without ``list_scopes`` (narrow test doubles) reads
-    with no scope ids, which ``list_records`` treats as a successful empty
-    read.
+    and workspace scopes (job-local context) are left out -- always. A
+    profile with no GLOBAL scope yet reads nothing: falling back to every
+    scope would send workspace context into discovery queries and persist
+    it in the distillate cache. A service without ``list_scopes`` (narrow
+    test doubles) reads with no scope ids, which ``list_records`` treats as
+    a successful empty read.
     """
     list_scopes = getattr(pc_service, "list_scopes", None)
     if list_scopes is None:
@@ -184,14 +185,11 @@ def _dreams_scope_ids(pc_service: Any) -> tuple[str, ...]:
         scopes = tuple(list_scopes())
     except Exception:  # noqa: BLE001 - scope discovery must not block the read
         return ()
-    global_ids = tuple(
+    return tuple(
         str(scope.scope_id)
         for scope in scopes
         if str(getattr(scope, "kind", "")) == "global"
     )
-    if global_ids:
-        return global_ids
-    return tuple(str(scope.scope_id) for scope in scopes)
 
 
 def _record_to_topic(record: Any) -> dict | None:
@@ -221,13 +219,32 @@ def _record_to_topic(record: Any) -> dict | None:
 
 
 def _load_cache(cache_path: Path) -> list[dict]:
-    """Read the distillate cache through the private-path discipline."""
+    """Read the distillate cache through the private-path discipline.
+
+    The file is outside input: every entry is re-validated to the shape
+    ``_record_to_topic`` writes, and malformed ones are dropped, so a
+    corrupt cache degrades to less signal instead of crashing the merge.
+    """
     try:
         with open_private_binary(cache_path) as pinned:
             cached = json.loads(pinned.stream.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 - missing or corrupt cache == no signal
         return []
-    return cached if isinstance(cached, list) else []
+    if not isinstance(cached, list):
+        return []
+    return [entry for entry in cached if _valid_cached_topic(entry)]
+
+
+def _valid_cached_topic(entry: Any) -> bool:
+    """Whether one cached entry has the shape ``_record_to_topic`` writes."""
+    return (
+        isinstance(entry, dict)
+        and entry.get("facet") in ("topic", "goal")
+        and isinstance(entry.get("text"), str)
+        and bool(entry["text"].strip())
+        and isinstance(entry.get("weight"), (int, float))
+        and not isinstance(entry.get("weight"), bool)
+    )
 
 
 def _store_cache(cache_path: Path, topics: list[dict]) -> None:
@@ -235,8 +252,7 @@ def _store_cache(cache_path: Path, topics: list[dict]) -> None:
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_private_write_text(cache_path, json.dumps(topics))
-    except Exception:  # noqa: BLE001 - the cache is an optimization
-        logger.opt(lazy=True).debug(
-            "Dreams PC distillate cache write failed: {}",
-            lambda: str(cache_path),
-        )
+    except Exception as exc:  # noqa: BLE001 - the cache is an optimization
+        # Type name only: the cache path sits under the private data root.
+        logger.debug("Dreams PC distillate cache write failed: {}",
+                     type(exc).__name__)

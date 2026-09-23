@@ -16,6 +16,7 @@ import pytest
 
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.cycle_service import CycleDeps, run_catchup_if_due, run_cycle
+from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 NOW = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
 
@@ -283,9 +284,9 @@ async def test_append_with_exhausted_budget_records_note_and_appends_nothing(
     row = dreams_db.get_collection_by_date(_today())
     assert row["degradation_notes"] and "llm budget" in row["degradation_notes"]
     assert len(dreams_db.list_stories(row["id"])) == 3
-    # Only the synthesis call re-spent; no story rows, no phantom bumps.
+    # The budget is checked BEFORE synthesis: nothing re-spent at all.
     assert dreams_db.usage_get(_today()) == {
-        "searches": 6, "llm_calls": 5}
+        "searches": 6, "llm_calls": 4}
 
 
 @pytest.mark.asyncio
@@ -512,10 +513,10 @@ async def test_cycle_refreshes_profile_signals_from_all_three_sources(
     facts = _profile_facts(dreams_db)
     # Two note touches -> 0.5; merged rows land per origin with fresh decay
     # clocks (last_boosted_at stamped) so snapshot() does not floor them.
-    assert facts[("topic", "rust tui")] == (0.5, "notes", NOW.isoformat())
-    assert facts[("topic", "jazz guitar")] == (0.5, "media", NOW.isoformat())
+    assert facts[("topic", "rust tui")] == (0.5, "notes", to_utc_iso(NOW))
+    assert facts[("topic", "jazz guitar")] == (0.5, "media", to_utc_iso(NOW))
     assert facts[("topic", "visit japan")] == (
-        1.0, "personal_context", NOW.isoformat())
+        1.0, "personal_context", to_utc_iso(NOW))
     # The pre-seeded user row keeps its weight, source, and boost stamp.
     assert facts[("topic", "user topic")] == (0.7, "user", None)
 
@@ -580,100 +581,219 @@ async def test_pc_cache_path_failure_skips_source_with_note(
 
 
 # --- Feedback loop (Ruling R19) ----------------------------------------------
+#
+# Feedback is netted per topic over the trailing window and applied by the
+# snapshot as an OFFSET -- the stored weight is never rewritten, so a
+# reaction counts once per cycle and never compounds.
 
 
-@pytest.mark.asyncio
-async def test_apply_feedback_more_raises_topic_weight_and_stamps_boost(
-        dreams_db, settings):
-    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+def _snapshot_weight(db, text, feedback):
+    from tldw_chatbook.Dreams.interest_profile import snapshot
 
-    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
-                                   searchable=1, source="notes")
+    snap = snapshot(db, now_epoch=NOW.timestamp(), feedback=feedback)
+    return {t["text"]: t["weight"] for t in snap["topics"]}.get(text)
+
+
+def _net(db):
+    from tldw_chatbook.Dreams.cycle_service import _feedback_net
+
+    return _feedback_net(db, now=NOW)
+
+
+def _fresh_topic(db, text, weight, *, source="notes", facet="topic"):
+    """A topic whose decay clock is NOW, so the snapshot keeps its weight."""
+    db.upsert_profile_entry(facet, text, weight=weight, searchable=1,
+                            source=source)
+    with db.transaction() as conn:
+        conn.execute("UPDATE dream_interest_profile SET last_boosted_at = ?"
+                     " WHERE facet = ? AND text = ?",
+                     (NOW.isoformat(), facet, text))
+
+
+def test_feedback_more_and_less_offset_the_snapshot_weight(dreams_db, settings):
+    _fresh_topic(dreams_db, "rust tui", 0.5)
+    _fresh_topic(dreams_db, "jazz guitar", 0.5)
     _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
-    await _apply_feedback(_deps(dreams_db), NOW)
-    row = _profile_row(dreams_db, "rust tui")
-    assert row["weight"] == pytest.approx(0.6)
-    assert row["last_boosted_at"] == NOW.isoformat()
+    _seed_story_with_feedback(dreams_db, matched=["Jazz Guitar"], kind="less")
+    net = _net(dreams_db)
+    assert net == {"rust tui": 1, "jazz guitar": -1}
+    assert _snapshot_weight(dreams_db, "rust tui", net) == pytest.approx(0.6)
+    assert _snapshot_weight(dreams_db, "jazz guitar", net) == \
+        pytest.approx(0.4)
+    # The stored weight is untouched.
+    assert _profile_row(dreams_db, "rust tui")["weight"] == pytest.approx(0.5)
 
 
-@pytest.mark.asyncio
-async def test_apply_feedback_less_lowers_weight_without_new_stamp(
-        dreams_db, settings):
-    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+def test_feedback_adjusts_user_topics_but_never_goals(dreams_db, settings):
+    from tldw_chatbook.Dreams.interest_profile import snapshot
 
-    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
-                                   searchable=1, source="notes")
-    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="less")
-    await _apply_feedback(_deps(dreams_db), NOW)
-    row = _profile_row(dreams_db, "rust tui")
-    assert row["weight"] == pytest.approx(0.4)
-    assert row["last_boosted_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_apply_feedback_adjusts_user_topics_but_never_goals(
-        dreams_db, settings):
-    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
-
-    # Spec contract: feedback adjusts TOPIC weights generally -- user-seeded
-    # topics included; only facet='goal' rows are immune.
-    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
-                                   searchable=1, source="user")
-    dreams_db.upsert_profile_entry("goal", "rust tui", weight=0.9,
-                                   searchable=1, source="seed")
+    _fresh_topic(dreams_db, "rust tui", 0.5, source="user")
+    _fresh_topic(dreams_db, "rust tui", 0.9, source="seed", facet="goal")
     _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
-    await _apply_feedback(_deps(dreams_db), NOW)
-    topic = _profile_row(dreams_db, "rust tui", facet="topic")
-    goal = _profile_row(dreams_db, "rust tui", facet="goal")
-    assert topic["weight"] == pytest.approx(0.6)
-    assert topic["last_boosted_at"] == NOW.isoformat()
-    assert goal["weight"] == pytest.approx(0.9)
-    assert goal["last_boosted_at"] is None
+    snap = snapshot(dreams_db, now_epoch=NOW.timestamp(),
+                    feedback=_net(dreams_db))
+    assert [t["facet"] for t in snap["topics"]] == ["topic"]
+    assert snap["topics"][0]["weight"] == pytest.approx(0.6)
+    assert _profile_row(dreams_db, "rust tui", facet="goal")["weight"] == \
+        pytest.approx(0.9)
 
 
-@pytest.mark.asyncio
-async def test_apply_feedback_clamps_weight_bounds(
-        dreams_db, settings):
-    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
-
-    dreams_db.upsert_profile_entry("topic", "ceil topic", weight=0.95,
-                                   searchable=1, source="notes")
-    dreams_db.upsert_profile_entry("topic", "floor topic", weight=0.1,
-                                   searchable=1, source="notes")
+def test_feedback_offset_is_clamped(dreams_db, settings):
+    _fresh_topic(dreams_db, "ceil topic", 0.95)
+    _fresh_topic(dreams_db, "floor topic", 0.1)
     _seed_story_with_feedback(dreams_db, matched=["ceil topic"], kind="more")
     _seed_story_with_feedback(dreams_db, matched=["floor topic"], kind="less")
-    await _apply_feedback(_deps(dreams_db), NOW)
-    assert _profile_row(dreams_db, "ceil topic")["weight"] == \
-        pytest.approx(1.0)
-    assert _profile_row(dreams_db, "floor topic")["weight"] == \
+    net = _net(dreams_db)
+    assert _snapshot_weight(dreams_db, "ceil topic", net) == pytest.approx(1.0)
+    assert _snapshot_weight(dreams_db, "floor topic", net) == \
         pytest.approx(0.05)
 
 
-@pytest.mark.asyncio
-async def test_apply_feedback_ignores_old_and_neutral_feedback(
-        dreams_db, settings):
-    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
-
-    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
-                                   searchable=1, source="notes")
+def test_feedback_ignores_old_and_neutral_reactions(dreams_db, settings):
     _seed_story_with_feedback(
         dreams_db, matched=["rust tui"], kind="more",
         created_at=(NOW - timedelta(days=15)).isoformat())
     _seed_story_with_feedback(dreams_db, matched=["rust tui"],
                               kind="exported")
-    await _apply_feedback(_deps(dreams_db), NOW)
-    row = _profile_row(dreams_db, "rust tui")
-    assert row["weight"] == pytest.approx(0.5)
-    assert row["last_boosted_at"] is None
+    assert _net(dreams_db) == {}
 
 
 @pytest.mark.asyncio
-async def test_cycle_applies_feedback_at_cycle_time(dreams_db, settings):
+async def test_feedback_never_compounds_across_cycles(dreams_db, settings):
+    """Regression: one reaction used to re-add +0.1 on EVERY cycle."""
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="user")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    for _ in range(3):
+        await run_cycle(_deps(dreams_db), trigger="manual")
+    assert _profile_row(dreams_db, "rust tui")["weight"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_cycle_feeds_feedback_into_the_snapshot(dreams_db, settings,
+                                                      monkeypatch):
+    from tldw_chatbook.Dreams import interest_profile
+
+    seen = []
+    real = interest_profile.snapshot
+
+    def spy(db, *, now_epoch, feedback=None):
+        seen.append(feedback)
+        return real(db, now_epoch=now_epoch, feedback=feedback)
+
+    monkeypatch.setattr(interest_profile, "snapshot", spy)
     dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
                                    searchable=1, source="user")
     _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
     result = await run_cycle(_deps(dreams_db), trigger="manual")
     assert result["status"] == "complete"
-    row = _profile_row(dreams_db, "rust tui")
-    assert row["weight"] == pytest.approx(0.6)
-    assert row["last_boosted_at"] == NOW.isoformat()
+    assert seen == [{"rust tui": 1}]
+
+
+# --- Budget / pool / ledger regressions (Qodo review) -------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_collection_refresh_spends_nothing(dreams_db, settings):
+    _seed_topics(dreams_db)
+    first = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert first["stories"] == 5
+    before = dreams_db.usage_get(_today())
+    calls = []
+
+    def counting_chat(**kwargs):
+        calls.append(kwargs)
+        return _fake_chat(**kwargs)
+
+    second = await run_cycle(_deps(dreams_db, chat=counting_chat),
+                             trigger="refresh")
+    assert second == {"collection_id": first["collection_id"],
+                      "status": "complete", "stories": 5}
+    assert calls == []
+    assert dreams_db.usage_get(_today()) == before
+
+
+@pytest.mark.asyncio
+async def test_zero_llm_budget_makes_no_synthesis_call(dreams_db, settings):
+    _seed_topics(dreams_db)
+    settings["max_llm_calls_per_day"] = 0
+    calls = []
+
+    def counting_chat(**kwargs):
+        calls.append(kwargs)
+        return _fake_chat(**kwargs)
+
+    await run_cycle(_deps(dreams_db, chat=counting_chat), trigger="manual")
+    assert calls == []
+    assert dreams_db.usage_get(_today())["llm_calls"] == 0
+    row = dreams_db.get_collection_by_date(_today())
+    assert "llm budget exhausted" in row["degradation_notes"]
+
+
+@pytest.mark.asyncio
+async def test_watchlist_pool_survives_an_exhausted_search_budget(
+        dreams_db, settings, monkeypatch):
+    from tldw_chatbook.Dreams import cycle_service, discovery
+
+    _seed_topics(dreams_db)
+    settings["max_searches_per_day"] = 0
+    item = discovery.Candidate("rust tui watch item",
+                               "https://watch.test/1", "", "watchlist")
+    monkeypatch.setattr(discovery, "fetch_watchlist_candidates",
+                        lambda *a, **k: [item])
+    deps = _deps(dreams_db)
+    deps.subs_db_getter = lambda: object()
+    await cycle_service.run_cycle(deps, trigger="manual")
+    row = dreams_db.get_collection_by_date(_today())
+    assert [s["url"] for s in dreams_db.list_stories(row["id"])] == \
+        ["https://watch.test/1"]
+
+
+@pytest.mark.asyncio
+async def test_cycle_prunes_the_seen_ledger_by_ttl(dreams_db, settings):
+    settings["seen_item_ttl_days"] = 30
+    dreams_db.seen_upsert([("https://old.test/a", "d")])
+    with dreams_db.transaction() as conn:
+        conn.execute("UPDATE dream_seen_items SET last_seen = ?",
+                     ((NOW - timedelta(days=31)).isoformat(),))
+    await run_cycle(_deps(dreams_db), trigger="manual")
+    assert dreams_db.seen_filter_unseen(["https://old.test/a"]) == \
+        {"https://old.test/a"}
+
+
+@pytest.mark.asyncio
+async def test_seen_ledger_catches_url_variants(dreams_db, settings):
+    _seed_topics(dreams_db)
+    dreams_db.seen_upsert([("https://dreams.test/rust-tui-news/0", "d")])
+
+    def variant_perform(search_engine, search_query, **kwargs):
+        return {"results": [{
+            "title": "rust tui variant",
+            "url": "https://DREAMS.test/rust-tui-news/0/?utm_source=x",
+            "content": "rust tui"}]}
+
+    await run_cycle(_deps(dreams_db, perform=variant_perform),
+                    trigger="manual")
+    row = dreams_db.get_collection_by_date(_today())
+    assert dreams_db.list_stories(row["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_story_does_not_repeat_next_day(dreams_db, settings):
+    _seed_topics(dreams_db)
+
+    def dead_perform(search_engine, search_query, **kwargs):
+        return {"results": [], "processing_error": "down"}
+
+    await run_cycle(_deps(dreams_db, perform=dead_perform), trigger="manual")
+    day_one = dreams_db.get_collection_by_date(_today())
+    urls = {s["url"] for s in dreams_db.list_stories(day_one["id"])}
+    assert urls and all(u.startswith("dreams://llm/") for u in urls)
+
+    tomorrow = NOW + timedelta(days=1)
+    deps = _deps(dreams_db, perform=dead_perform)
+    deps.now = lambda: tomorrow
+    await run_cycle(deps, trigger="manual")
+    day_two = dreams_db.get_collection_by_date(
+        tomorrow.astimezone().strftime("%Y-%m-%d"))
+    assert not urls & {s["url"] for s in dreams_db.list_stories(day_two["id"])}

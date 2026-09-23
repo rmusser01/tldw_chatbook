@@ -25,6 +25,16 @@ DREAMS_DEFAULTS: dict[str, Any] = {
 
 
 def dreams_setting(key: str, default: Any = None) -> Any:
+    """Read one ``[dreams]`` key live from the CLI config.
+
+    Args:
+        key: Setting name (see ``DREAMS_DEFAULTS``).
+        default: Fallback when the key is unset; ``None`` means the
+            ``DREAMS_DEFAULTS`` value for ``key``.
+
+    Returns:
+        The configured value, else the default.
+    """
     if default is None and key in DREAMS_DEFAULTS:
         default = DREAMS_DEFAULTS[key]
     return get_cli_setting("dreams", key, default)

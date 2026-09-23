@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -29,6 +30,11 @@ _DEFAULT_OUTPUT_LANG = "en"
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+#: Watchlist pool bounds: leading item content carried as the snippet, and
+#: how many fresh items one cycle considers.
+_WATCHLIST_SNIPPET_CHARS = 800
+_WATCHLIST_POOL_LIMIT = 200
+
 
 @dataclass(slots=True)
 class Candidate:
@@ -37,7 +43,7 @@ class Candidate:
     Attributes:
         title: Result headline / item title.
         url: Source URL (original, un-normalized).
-        snippet: Search-result snippet (``""`` for watchlist items).
+        snippet: Search-result snippet, or a watchlist item's leading content.
         source: Which pool produced it: ``'web'`` or ``'watchlist'``.
     """
 
@@ -47,14 +53,38 @@ class Candidate:
     source: str  # 'web' | 'watchlist'
 
 
-def _normalize_url(url: str) -> str:
-    """Dedupe identity: lowercase, drop the query string, strip trailing slash.
+#: Query parameters that only track the click, never identify the page.
+_TRACKING_PARAMS = frozenset({
+    "fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "ref",
+    "ref_src", "igshid", "si",
+})
 
-    ``https://a.x/Rust-Tui/`` and ``https://a.x/rust-tui?utm=1`` are the
-    same page; the surviving candidate keeps its original URL verbatim and
-    only the comparison key is normalized.
+
+def normalize_url(url: str) -> str:
+    """Dedupe identity: case-folded host, no fragment/tracking/trailing slash.
+
+    ``https://A.x/rust-tui/?utm_source=feed`` and ``https://a.x/rust-tui``
+    are the same page. The path keeps its case and non-tracking query
+    parameters survive: ``youtube.com/watch?v=A`` and ``?v=B`` are different
+    videos (dropping the whole query string collapsed every video into one
+    key, so one library video hid all of them). Used for both in-pool
+    dedupe and the cross-cycle seen ledger, so the two agree.
+
+    Args:
+        url: Candidate URL, verbatim.
+
+    Returns:
+        The comparison key; the candidate keeps its original URL.
     """
-    return url.lower().split("?")[0].rstrip("/")
+    parts = urlsplit(url.strip())
+    query = urlencode([
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+        and key.lower() not in _TRACKING_PARAMS
+    ])
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(),
+                       parts.path.rstrip("/"), query, ""))
 
 
 def _extract_results(payload: Any) -> list[dict]:
@@ -132,7 +162,9 @@ async def run_queries(
                 date_range=date_range,
             )
         except Exception as exc:  # noqa: BLE001 - one dead engine is degradation
-            logger.warning("Dreams search for {!r} failed: {}", query, exc)
+            # Type name only: the query is built from the user's interest
+            # profile (notes keywords, Personal Context), never logged.
+            logger.warning("Dreams search failed: {}", type(exc).__name__)
             continue
         for item in _extract_results(payload):
             candidates.append(Candidate(
@@ -158,6 +190,10 @@ def fetch_watchlist_candidates(
     ``SubscriptionsDB.get_unread_items_count_since`` uses, because stored
     ``published_date`` strings are mixed naive/aware and cannot be
     compared raw (the documented trap in ``Subscriptions/item_dates.py``).
+    The window is bounded above by ``now`` too: a feed item stamped in the
+    future is not "fresh" before it is published. The item's stored content
+    (bounded) rides along as the snippet so the story step has source
+    material, not just a headline.
 
     Args:
         subs_db: Subscriptions database to read the item pool from.
@@ -166,24 +202,29 @@ def fetch_watchlist_candidates(
             determinism).
 
     Returns:
-        Candidates freshest-first; ``snippet`` is ``""`` (the watchlist
-        pool has no search snippet — the story step reads the item).
+        Candidates freshest-first (at most ``_WATCHLIST_POOL_LIMIT``);
+        ``snippet`` is the item's leading content, ``""`` when it has none.
     """
     cutoff = datetime.fromtimestamp(
         now_epoch - freshness_hours * 3600.0, tz=UTC
     ).isoformat()
+    upper = datetime.fromtimestamp(now_epoch, tz=UTC).isoformat()
     with subs_db.transaction() as conn:
         rows = conn.execute(
-            "SELECT i.url AS url, i.title AS title"
+            "SELECT i.url AS url, i.title AS title,"
+            " substr(COALESCE(i.content, ''), 1, ?) AS snippet"
             " FROM subscription_items AS i"
             " JOIN subscriptions AS s ON s.id = i.subscription_id"
-            " WHERE i.status = 'new' AND i.effective_date >= datetime(?)"
-            " ORDER BY i.effective_date DESC, i.id ASC",
-            (cutoff,),
+            " WHERE i.status = 'new'"
+            " AND i.effective_date >= datetime(?)"
+            " AND i.effective_date <= datetime(?)"
+            " ORDER BY i.effective_date DESC, i.id ASC"
+            " LIMIT ?",
+            (_WATCHLIST_SNIPPET_CHARS, cutoff, upper, _WATCHLIST_POOL_LIMIT),
         ).fetchall()
     return [
         Candidate(title=str(row["title"] or ""), url=str(row["url"] or ""),
-                  snippet="", source="watchlist")
+                  snippet=str(row["snippet"] or ""), source="watchlist")
         for row in rows
         if row["url"]
     ]
@@ -225,8 +266,8 @@ def dedupe_and_rank(
 ) -> list[Candidate]:
     """Drop seen/library/duplicate URLs, rank by topic overlap, cap at ``limit``.
 
-    Pure — inputs are never mutated. URL identity is normalized (lowercase,
-    query string dropped, trailing slash stripped) for both the
+    Pure — inputs are never mutated. URL identity is ``normalize_url``
+    (host case-folded, tracking parameters dropped, trailing slash stripped) for both the
     seen/library membership checks and exact-duplicate detection; the
     surviving candidate keeps its original URL verbatim and the FIRST
     occurrence wins. Ranking is lexical topic overlap (see
@@ -243,12 +284,12 @@ def dedupe_and_rank(
     Returns:
         The top ``limit`` candidates, best-overlap first.
     """
-    excluded = {_normalize_url(u) for u in seen_urls}
-    excluded |= {_normalize_url(u) for u in library_urls}
+    excluded = {normalize_url(u) for u in seen_urls}
+    excluded |= {normalize_url(u) for u in library_urls}
     kept: list[Candidate] = []
     seen_keys: set[str] = set()
     for cand in candidates:
-        key = _normalize_url(cand.url)
+        key = normalize_url(cand.url)
         if key in excluded or key in seen_keys:
             continue
         seen_keys.add(key)

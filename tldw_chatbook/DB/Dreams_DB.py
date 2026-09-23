@@ -7,16 +7,29 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Union
 
+from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
 
 
+#: Upper bound for any list read the UI pages through.
+MAX_LIST_LIMIT = 200
+
+
+def clamp_limit(limit: int) -> int:
+    """Bound a caller-supplied page size to ``1..MAX_LIST_LIMIT``.
+
+    SQLite reads a negative ``LIMIT`` as "no limit", so an unchecked value
+    would turn a page read into a whole-table read.
+    """
+    return max(1, min(int(limit), MAX_LIST_LIMIT))
+
+
 def _utc_now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    """Return the current UTC time in the canonical stored shape (ADR-173)."""
+    return utc_now_iso()
 
 
 class DreamsSchemaError(RuntimeError):
@@ -139,15 +152,21 @@ class DreamsDB(BaseDB):
             llm_calls INTEGER NOT NULL DEFAULT 0
         )
         """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_dream_feedback_story
-            ON dream_feedback(story_id)
-        """,
+        # No index on dream_feedback(story_id): no Phase 1 query looks
+        # feedback up by story (the feedback loop scans by created_at, and
+        # nothing deletes stories, so the FK cascade never runs). Add one
+        # with a plan pin when a per-story read or story deletion lands.
     )
 
     def __init__(
         self, database_path: Union[str, Path], client_id: str | None = None
     ) -> None:
+        # Connections are per THREAD, and every ":memory:" connection is its
+        # own empty database: cycle stages running under asyncio.to_thread
+        # would see no schema. Refuse it rather than fail mid-cycle.
+        if str(database_path) == ":memory:":
+            raise ValueError("DreamsDB needs a file path; ':memory:' is not "
+                             "shared across its per-thread connections")
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
         self._thread_local = threading.local()
@@ -309,7 +328,14 @@ class DreamsDB(BaseDB):
             return int(cursor.lastrowid)
 
     def get_collection_by_date(self, local_date: str) -> dict | None:
-        """Return the collection row for a local date, or None."""
+        """Return the collection row for a local date.
+
+        Args:
+            local_date: Local calendar date (``YYYY-MM-DD``).
+
+        Returns:
+            The ``dreams_collections`` row as a dict, or None.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM dreams_collections WHERE local_date = ?",
@@ -326,6 +352,7 @@ class DreamsDB(BaseDB):
         model: str | None = None,
         degradation_notes: str | None = None,
         completed_at: str | None = None,
+        story_count: int | None = None,
     ) -> None:
         """Update a cycle's outcome fields; unpassed fields keep their value.
 
@@ -337,6 +364,7 @@ class DreamsDB(BaseDB):
             model: Model that generated the stories, when known.
             degradation_notes: Degradations observed during the cycle.
             completed_at: Completion timestamp, when the cycle finished.
+            story_count: The collection's total story rows, when known.
         """
         with self.transaction() as conn:
             conn.execute(
@@ -345,10 +373,11 @@ class DreamsDB(BaseDB):
                 " provider = COALESCE(?, provider),"
                 " model = COALESCE(?, model),"
                 " degradation_notes = COALESCE(?, degradation_notes),"
-                " completed_at = COALESCE(?, completed_at)"
+                " completed_at = COALESCE(?, completed_at),"
+                " story_count = COALESCE(?, story_count)"
                 " WHERE id = ?",
                 (status, provider, model, degradation_notes, completed_at,
-                 collection_id),
+                 story_count, collection_id),
             )
 
     def fail_stale_generating(self, cutoff_iso: str) -> int:
@@ -468,6 +497,7 @@ class DreamsDB(BaseDB):
             Story dicts (see :meth:`list_stories`) with ``local_date``
             added.
         """
+        limit = clamp_limit(limit)
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT s.*, c.local_date AS local_date"
