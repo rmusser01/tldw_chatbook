@@ -16,6 +16,11 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
+from ..Utils.file_durability import (
+    flush_directory,
+    flush_file,
+    fsync_parent_directory,
+)
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 from . import bootstrap
 from . import chat_source_participants as chat_sources
@@ -876,7 +881,19 @@ def _file(operation, path, mode):
         finally:
             try:
                 io.TextIOWrapper.close(text)
+                if mode in {"w", "a"}:
+                    # Closing the wrapper only pushes user-space buffers into
+                    # the descriptor. _replace goes on to fsync the destination
+                    # DIRECTORY, so without this the entry was made durable
+                    # while the blocks it points at were not -- the classic
+                    # rename-without-fsync corruption, on the user's own MCP,
+                    # chat-source and dictionary state. The descriptor is still
+                    # the verified one here; _close_descriptor retires it in the
+                    # outer finally, after this.
+                    flush_file(fd)
             except BaseException:
+                # A flush failure is unresolved evidence like any other: mark
+                # the operation uncertain so publication cannot proceed.
                 state.uncertain = True
                 raise
             if not text.closed or not native.closed:
@@ -937,6 +954,11 @@ def _replace(operation, temporary, destination):
         _check_temporary_identity(state, temporary)
         if state.route == mcp_sources.ROUTE:
             mcp_sources.check_destination(state, destination)
+        # task-32896: the rename is atomic but was not durable -- this
+        # module had zero fsync calls while writing the user's live config.
+        # Barrier placement and the no-tolerance failure mode match
+        # config_binding.py's flush_directory-after-replace convention: an
+        # unpersisted publication is a recovery event, not a warning.
         if state.pinned:
             os.replace(
                 temporary.name,
@@ -944,8 +966,10 @@ def _replace(operation, temporary, destination):
                 src_dir_fd=state.pins[temporary.parent],
                 dst_dir_fd=state.pins[destination.parent],
             )
+            flush_directory(state.pins[destination.parent])
         else:
             os.replace(temporary, destination)
+            fsync_parent_directory(destination.parent)
         # Publication consumes this exact temporary object. A following process
         # may now create its own same-name sidecar; our cleanup cannot own it.
         identity = state.created_files.pop(temporary)

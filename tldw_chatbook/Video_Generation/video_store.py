@@ -38,6 +38,10 @@ import portalocker
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.generated_media_lifetime import participant
+from tldw_chatbook.Utils.file_durability import (
+    flush_file,
+    fsync_parent_directory,
+)
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
     get_video_store_policy,
@@ -129,6 +133,16 @@ class VideoStoreSaveError(RuntimeError):
 
 class VideoStoreBusyError(VideoStoreSaveError):
     """The root-scoped capacity lease was not acquired in time."""
+
+
+class _DurabilityUnconfirmed(OSError):
+    """The rename COMPLETED; only the directory barrier afterwards failed.
+
+    Distinct because the two mean opposite things to the caller. A failure
+    before the rename leaves nothing behind; this one leaves a fully
+    published file that the store must still account for -- it just cannot
+    promise the directory entry survives a power loss.
+    """
 
 
 class VideoPublicationGate:
@@ -360,6 +374,7 @@ class VideoStore:
                 self._ensure_safe_root(create=True)
                 self._cleanup_orphan_stages_unlocked()
                 self._ensure_slug_absent(message_id, slug)
+                unconfirmed: _DurabilityUnconfirmed | None = None
                 try:
                     self._atomic_publish(
                         content,
@@ -367,6 +382,13 @@ class VideoStore:
                         expected_size=size_bytes,
                         publication_gate=publication_gate,
                     )
+                except _DurabilityUnconfirmed as exc:
+                    # The file IS on disk under its final name. Falling
+                    # straight through to the caller here skipped the capacity
+                    # transaction entirely, so a reported failure left the
+                    # store permanently over its configured capacity with
+                    # nothing to re-run it. Enforce first, report after.
+                    unconfirmed = exc
                 except (OSError, VideoStoreSaveError) as exc:
                     raise VideoStoreSaveError("managed video publication failed") from exc
 
@@ -379,6 +401,11 @@ class VideoStore:
                     raise VideoStoreSaveError(
                         "managed video capacity enforcement failed"
                     ) from exc
+
+                if unconfirmed is not None:
+                    raise VideoStoreSaveError(
+                        "managed video published but not confirmed durable"
+                    ) from unconfirmed
 
         return path
 
@@ -412,6 +439,7 @@ class VideoStore:
                     self._ensure_safe_root(create=True)
                     self._cleanup_orphan_stages_unlocked()
                     self._ensure_slug_absent(message_id, slug)
+                    unconfirmed: _DurabilityUnconfirmed | None = None
                     try:
                         self._atomic_publish(
                             stream,
@@ -419,6 +447,12 @@ class VideoStore:
                             expected_size=size_bytes,
                             publication_gate=publication_gate,
                         )
+                    except _DurabilityUnconfirmed as exc:
+                        # Same shape as save(): published, so the eviction
+                        # below still has to run over it. Skipping it left the
+                        # oversized file AND every video it was meant to
+                        # replace.
+                        unconfirmed = exc
                     except Exception as exc:
                         raise VideoStoreSaveError(
                             "managed video publication failed"
@@ -445,6 +479,10 @@ class VideoStore:
                             "oversized video adoption failed"
                         ) from exc
                     self._prune_empty_dirs_unlocked()
+                    if unconfirmed is not None:
+                        raise VideoStoreSaveError(
+                            "managed video published but not confirmed durable"
+                        ) from unconfirmed
             return path
         finally:
             try:
@@ -720,15 +758,11 @@ class VideoStore:
                 else:
                     shutil.copyfileobj(source, staged)
                 staged.flush()
-                # `flush()` reaches the page cache only. This store's model is
-                # "the file IS the artefact", so a crash between the rename
-                # below and writeback leaves a published video of zero or
-                # partial length. Declining `Utils/atomic_file_ops` here is
-                # deliberate (this site needs the root lease, the expected_size
-                # re-check and the publication gate) -- the fsync went with it.
-                # ponytail: file fsync only; a missing parent-directory fsync
-                # costs at most the newest publish, not the bytes.
-                os.fsync(staged.fileno())
+                # task-32896: not Utils.atomic_file_ops -- this streams from a
+                # BinaryIO, verifies the staged size against the caller's
+                # expectation, and commits inside a publication gate. The
+                # barriers go in place instead.
+                flush_file(staged.fileno())
                 actual_size = os.fstat(staged.fileno()).st_size
                 if actual_size != expected_size:
                     raise VideoStoreSaveError("managed video source size changed")
@@ -741,7 +775,20 @@ class VideoStore:
                             "managed video publication cancelled"
                         )
                     self._commit_sibling(sibling, target)
+            # Cleared first: the sibling name is consumed by the rename, so
+            # the finally below must not treat it as an unpublished leftover
+            # if the durability barrier then fails.
             sibling = None
+            try:
+                fsync_parent_directory(target.parent)
+            except OSError as exc:
+                # Raised, never swallowed -- but tagged, because the target is
+                # already published and the caller's capacity transaction has
+                # to run over it anyway.
+                raise _DurabilityUnconfirmed(
+                    "managed video published but its directory entry is not "
+                    "confirmed durable"
+                ) from exc
         finally:
             if sibling is not None:
                 try:

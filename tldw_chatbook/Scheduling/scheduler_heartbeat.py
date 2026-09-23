@@ -12,13 +12,13 @@ interval so a deliberately long interval is not mistaken for a stall.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
+
+from ..Utils.atomic_file_ops import atomic_write_text
 
 #: Liveness verdict is stale once the last tick is older than the poll
 #: interval times this factor -- a couple of missed polls, not one late one.
@@ -110,19 +110,9 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
                 "tick_count": heartbeat.tick_count,
             }
         )
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".heartbeat-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-            os.replace(tmp, path)
-        except Exception:
-            with open(os.devnull, "w"):
-                pass
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        # private=True keeps the owner-only mode this writer already had
+        # (mkstemp opens at 0o600 and nothing chmod'd it wider).
+        atomic_write_text(path, payload, private=True)
     except Exception as exc:  # noqa: BLE001 -- observation never breaks the loop
         logger.debug(f"scheduler heartbeat write failed: {exc!r}")
 
