@@ -781,3 +781,53 @@ async def test_service_selection_and_reorder_return_post_write_refetched_version
         ("selection", "workspace-1", ["source-1"]),
         ("reorder", "workspace-1", ["source-2", "source-1"]),
     ]
+
+
+class DeleteRecordingClient:
+    def __init__(self):
+        self.calls = []
+
+    async def delete_workspace_note(self, workspace_id, note_id):
+        self.calls.append(("workspace", workspace_id, note_id))
+        return {"deleted": True}
+
+    async def delete_server_note(self, note_id, expected_version):
+        self.calls.append(("server", note_id, expected_version))
+        return {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_workspace_note_delete_does_not_advertise_a_guard_it_cannot_honour():
+    """(TASK-32893) ``delete_workspace_note`` took a ``version`` and dropped it.
+
+    Callers -- ``notes_scope_service.delete_note`` among them -- passed the
+    note's version believing the delete was compare-and-set, exactly as the
+    server-note sibling really is. It was not: the client method has no
+    version parameter and the workspaces API carries no ``expected-version``
+    header, so the DELETE was always unconditional. The parameter is gone, and
+    this pins that it stays gone until there is a real guard behind it.
+    """
+    client = DeleteRecordingClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    parameters = set(
+        inspect.signature(service.delete_workspace_note).parameters
+    )
+    assert not parameters & {"version", "expected_version"}, (
+        "a version parameter here is a concurrency guard that does not exist"
+    )
+
+    await service.delete_workspace_note("workspace-1", 11)
+
+    # Positive control: the server-note sibling DOES have the guard, and
+    # forwards it -- so this test pins a real asymmetry, not "fewer args".
+    server_parameters = set(
+        inspect.signature(service.delete_server_note).parameters
+    )
+    assert "version" in server_parameters
+    await service.delete_server_note("note-1", 4)
+
+    assert client.calls == [
+        ("workspace", "workspace-1", 11),
+        ("server", "note-1", 4),
+    ]

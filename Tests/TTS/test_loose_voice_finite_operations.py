@@ -392,7 +392,7 @@ else:
     for number in range(11):
         (root/'backups'/f'voice_profiles_backup_000{number:02}.json').write_text('{}')
     target=sorted((root/'backups').glob('*.json'))[0]
-    invoke=manager._create_backup
+    invoke=manager._backup_before_save
 original_close=os.close; original_parent=private_paths._open_verified_parent
 failed_fd=None; traversing=False
 
