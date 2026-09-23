@@ -25,8 +25,8 @@ anywhere. This module is a thin adapter that:
 IMPORT BOUNDARY (load-bearing -- see
 ``Tests/Model_Artifacts/test_credentials_and_boundaries.py::
 test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch``):
-``Local_Ingestion.transcription_service`` is a synchronous, worker-side
-module that must never import
+``Local_Ingestion.transcription_service`` is a
+synchronous, worker-side module that must never import
 ``Model_Artifacts.acquisition`` or ``Model_Artifacts.fetch`` (both
 ``import httpx`` at module scope -- see ``Model_Artifacts/__init__.py``'s own
 docstring). This module therefore imports only ``Model_Artifacts.service``

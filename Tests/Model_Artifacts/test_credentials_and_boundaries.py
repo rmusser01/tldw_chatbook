@@ -510,10 +510,10 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
     modules are forbidden.
 
     TASK-1696: also imports the ``Local_Ingestion.parakeet_v2_artifact``
-    adapter ``transcription_service`` now reaches transitively -- the
-    managed-first model-directory resolver it provides. (Its second consumer,
-    ``Audio.console_dictation``, was deleted as dead code by the tier-2
-    review; the import boundary it shared is still covered here.)
+    adapter ``transcription_service`` reaches transitively -- the managed-
+    first model-directory resolver that worker-side module uses. (TASK-32899
+    deleted the other consumer, the unreachable ``Audio.console_dictation``,
+    so only ``transcription_service`` exercises the boundary now.)
     ``parakeet_v2_artifact`` itself imports only ``Model_Artifacts.service``
     at module scope (its ``ArtifactAcquisitionService``-based orchestration
     helpers import ``.acquisition`` locally, inside their own function

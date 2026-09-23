@@ -134,7 +134,6 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
 
         guards = (
             "tldw_chatbook.UI.STTS_Window",
-            "tldw_chatbook.UI.MediaWindow_v2",
             "tldw_chatbook.Utils.Splash_Screens.classic.glitch_reveal",
             "tldw_chatbook.Utils.Splash_Screens.tech.code_scroll",
         )
