@@ -1,0 +1,109 @@
+tldw_chatbook/Audio/dictation_metrics.py	305	%Y-%m-%d %H:00
+tldw_chatbook/Audio/meeting_owner.py	1221	%Y-%m-%d_%H%M
+tldw_chatbook/Backup_Recovery/settings_file_participants.py	169	%Y%m%d_%H%M%S
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	225	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	3445	%Y-%m-%d %H:%M
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	3628	%Y-%m-%d %H:%M
+tldw_chatbook/Chatbooks/chatbook_creator.py	340	%Y%m%d_%H%M%S
+tldw_chatbook/Chatbooks/chatbook_creator.py	2108	%Y-%m-%d %H:%M
+tldw_chatbook/Chatbooks/conflict_resolver.py	204	%Y-%m-%d %H:%M
+tldw_chatbook/Chatbooks/server_chatbook_service.py	30	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/Evals/eval_orchestrator.py	528	%Y%m%d_%H%M%S
+tldw_chatbook/Evals/exporters.py	237	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Evals/exporters.py	476	%Y-%m-%d %H:%M:%S
+tldw_chatbook/LLM_Management/snapshot_store.py	70	%Y-%m-%dT%H:%M:%SZ
+tldw_chatbook/LLM_Management/snapshot_store.py	259	%Y%m%dT%H%M%SZ
+tldw_chatbook/LLM_Management/snapshot_store.py	471	%Y-%m-%dT%H:%M:%SZ
+tldw_chatbook/Library/library_notes_session.py	451	%H:%M
+tldw_chatbook/Library/library_notes_state.py	765	%Y-%m-%d %H:%M
+tldw_chatbook/Library/library_notes_state.py	770	%Y-%m-%d %H:%M
+tldw_chatbook/Library/library_notes_state.py	909	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Library/library_notes_state.py	979	%Y-%m-%d
+tldw_chatbook/Library/library_notes_state.py	980	%H:%M
+tldw_chatbook/Library/library_notes_state.py	981	%Y-%m-%d %H:%M
+tldw_chatbook/Library/library_notes_tree_state.py	673	%H:%M
+tldw_chatbook/Library/library_rechunk_service.py	229	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/Library/library_rechunk_service.py	259	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	2272	%Y-%m-%d
+tldw_chatbook/Local_Ingestion/audio_processing.py	1206	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Local_Ingestion/local_file_ingestion.py	1914	%Y-%m-%dT%H:%M:%S.%f
+tldw_chatbook/Local_Ingestion/local_file_ingestion.py	2032	%Y-%m-%d
+tldw_chatbook/Local_Ingestion/transcription_service.py	4024	%H:%M:%S
+tldw_chatbook/Local_Ingestion/transcription_service.py	4025	%H:%M:%S
+tldw_chatbook/Media/local_media_reading_service.py	6289	%Y-%m-%d %H:%M UTC
+tldw_chatbook/Media_Creation/image_generation_service.py	339	%Y%m%d_%H%M%S
+tldw_chatbook/Media_Creation/image_generation_service.py	410	%Y%m%d_%H%M%S
+tldw_chatbook/Research_Interop/academic_providers.py	921	%Y-%m-%d
+tldw_chatbook/Research_Interop/academic_providers.py	921	%Y-%m-%d
+tldw_chatbook/Scheduling/db/migrations/v6_to_v7.py	40	%Y-%m-%dT%H:%M:%f
+tldw_chatbook/Scheduling/db/migrations/v6_to_v7.py	56	%Y-%m-%dT%H:%M:%f
+tldw_chatbook/Scheduling/db/migrations/v6_to_v7.py	58	%Y-%m-%dT%H:%M:%f
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	2534	%Y-%m-%dT%H:%M:%f
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	2602	%Y-%m-%dT%H:%M:%f
+tldw_chatbook/Stats/user_statistics.py	146	%Y-%m-%d
+tldw_chatbook/Stats/user_statistics.py	147	%Y-%m-%d
+tldw_chatbook/Stats/user_statistics.py	149	%b %d, %Y
+tldw_chatbook/Stats/user_statistics.py	149	%b %d, %Y
+tldw_chatbook/Stats/user_statistics.py	534	%H
+tldw_chatbook/Stats/user_statistics.py	568	%w
+tldw_chatbook/Stats/user_statistics.py	581	%w
+tldw_chatbook/Stats/user_statistics.py	705	%B %d, %Y
+tldw_chatbook/Subscriptions/briefing_export.py	414	%b %d, %Y
+tldw_chatbook/Subscriptions/daily_reports_view.py	64	%Y-%m-%d %H:%M %Z
+tldw_chatbook/Subscriptions/item_dates.py	131	%I:%M %p
+tldw_chatbook/Subscriptions/item_dates.py	135	%b %d
+tldw_chatbook/Subscriptions/item_dates.py	136	%Y-%m-%d
+tldw_chatbook/Subscriptions/item_dates.py	155	%B %d, %Y
+tldw_chatbook/TTS/backends/chatterbox_voice_manager.py	273	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	319	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	459	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/profile_repository.py	3771	%Y%m%dT%H%M%S%fZ
+tldw_chatbook/UI/ChatbookCreationWindow.py	362	%Y%m%d_%H%M%S
+tldw_chatbook/UI/ChatbookExportManagementWindow.py	926	%Y-%m-%d
+tldw_chatbook/UI/ChatbookExportManagementWindow.py	974	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Chatbooks_Window_Improved.py	108	%Y-%m-%d
+tldw_chatbook/UI/CodeRepoCopyPasteWindow.py	1038	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Dictation_Window_Improved.py	993	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Dictation_Window_Improved.py	1017	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Dictation_Window_Improved.py	1023	%Y-%m-%d %H:%M:%S
+tldw_chatbook/UI/Evals/library_rail.py	264	%H:%M
+tldw_chatbook/UI/Screens/chat_screen.py	20402	%Y%m%d-%H%M%S
+tldw_chatbook/UI/Screens/llm_screen.py	884	%H:%M
+tldw_chatbook/UI/Screens/personas_screen.py	5706	%Y%m%d-%H%M%S
+tldw_chatbook/UI/Screens/personas_screen.py	13567	%Y%m%d-%H%M%S-%f
+tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py	120	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/forms/reminder_form.py	726	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py	323	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/task_detail.py	220	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/task_detail.py	235	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/task_detail.py	1646	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/unified_rows.py	168	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/unified_rows.py	253	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/unified_rows.py	380	%Y-%m-%d %H:%M
+tldw_chatbook/UI/Screens/scheduling/unified_rows.py	389	%H:%M
+tldw_chatbook/UI/Screens/trajectory_screen.py	175	%H:%M:%S
+tldw_chatbook/UI/Screens/watchlists_collections_screen.py	10348	%Y-%m-%d %H:%M %Z
+tldw_chatbook/UI/Speech/speech_runtime_status.py	340	observed %Y-%m-%d %H:%M UTC
+tldw_chatbook/UI/Speech/speech_runtime_status.py	368	observed %Y-%m-%d %H:%M UTC
+tldw_chatbook/UI/Tools_Settings_Window.py	5924	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Tools_Settings_Window.py	6164	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Tools_Settings_Window.py	6238	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Tools_Settings_Window.py	6324	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Watchlists_Modules/humane_time.py	87	%Y-%m-%d
+tldw_chatbook/UI/Widgets/trajectory_timeline.py	111	%H:%M:%S
+tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py	669	%Y%m%d_%H%M%S
+tldw_chatbook/UI/Wizards/ChatbookImportWizard.py	429	%Y-%m-%d %H:%M
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	846	%Y-%m-%d
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	1178	%Y-%m-%d
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	1630	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Web_Scraping/Confluence/confluence_main.py	341	%Y-%m-%d
+tldw_chatbook/Web_Scraping/WebSearch_APIs.py	1870	%Y-%m-%d
+tldw_chatbook/Web_Server/artifact_share_server.py	415	%Y-%m-%dT%H:%M:%SZ
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1466	%Y-%m-%d %H:%M
+tldw_chatbook/Widgets/activity_log.py	82	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/activity_log.py	284	%H:%M:%S
+tldw_chatbook/Widgets/activity_log.py	500	%Y%m%d_%H%M%S
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	47	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	370	%Y-%m-%d %H:%M:%S
+tldw_chatbook/Widgets/status_widget.py	56	%H:%M:%S
+tldw_chatbook/Workspaces/change_retention.py	102	%Y-%m-%dT%H:%M:%S.%fZ
