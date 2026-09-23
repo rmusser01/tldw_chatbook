@@ -231,7 +231,11 @@ collection exists for today's local date and the cadence says one is due, the
 cycle runs then. The date-bucket unique index plus an in-flight run lock makes
 scheduler fire + catch-up + manual trigger race-free: the first trigger wins
 the date; later triggers within the same date **append** stories (up to budget)
-rather than regenerate.
+rather than regenerate. A cycle killed mid-run must not wedge the date: a
+collection row stuck in `generating` older than a reclaim timeout (15 minutes)
+is treated as crashed, marked `failed`, and the date becomes eligible for
+catch-up regeneration. All timestamps use the shared UTC-helper convention
+(ADR-173); `local_date` remains the user's local calendar date for bucketing.
 
 **Blocking-IO discipline**: `perform_websearch` and `chat_api_call` are
 synchronous network calls; all Dreams async paths run them under
@@ -365,7 +369,7 @@ NOT EXISTS` style:
   ('web','watchlist','llm')), kind CHECK(kind IN ('content','event','deal',
   'social_opportunity','unknown')), event_date TEXT NULL, location TEXT NULL,
   matched_topics TEXT(JSON), query TEXT, kept INTEGER DEFAULT 0, kept_at,
-  error TEXT NULL, created_at)`.
+  error TEXT NULL, created_at)` — unique index on `(collection_id, url)`.
 - `dream_feedback(id, story_id FK, kind CHECK(kind IN ('more','less','kept',
   'dived','exported','ingested','tracked')), created_at)`.
 - `dream_seen_items(url TEXT PRIMARY KEY, title_digest, first_seen,
@@ -495,6 +499,13 @@ lands — keeps each plan reviewable).
 
 ## Follow-ups (out of scope, filed as future tasks)
 
+- **Guardian × Dreams wellbeing tie-in**
+  ([TASK-32902](../../../backlog/tasks/task-32902%20-%20Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md)):
+  bidirectional port with tldw_server's Guardian self-monitoring —
+  trend/topic/fixation analysis over configured "topics of consideration"
+  surfacing humane course-correct notices; Dreams' interest profile and
+  feedback loop are the natural signal seams. User-enabled and user-configured
+  only; see the task for grounding in the Guardian design doc.
 - Conversation-derived interest signals (needs its own privacy pass).
 - Home-screen "today's dreams" card.
 - Watchlists-screen surfacing of dream-created sources (badge/label).
