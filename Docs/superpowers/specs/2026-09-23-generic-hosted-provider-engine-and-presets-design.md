@@ -144,10 +144,16 @@ only) importable by `config.py`; the engine lives in `LLM_Calls/` beside
 `hosted_chat.py`; presets are data consumed by the engine and registered by
 callers.
 
-### 1. `tldw_chatbook/provider_registry.py` — identity catalog (new)
+### 1. `tldw_chatbook/provider_registry.py` — provider registry (new, leaf)
 
-One frozen dataclass record per provider (built-in hand-written providers get
-opaque records too — the registry covers *identity*, not implementation):
+One stdlib-only module (no internal imports — `config.py` already imports 30
+internal modules, so it must consume registry data without cycle risk) holding
+one frozen dataclass record per provider. Built-in hand-written providers get
+opaque identity records; engine-driven providers get a **preset-variant
+record** carrying identity *and* wire data, so there is exactly one record
+(not two overlapping ones) per provider:
+
+Identity fields (every provider):
 
 | Field | Purpose |
 | --- | --- |
@@ -202,23 +208,13 @@ registry (§1) — behavior lives here, data lives in the leaf, and `config.py`
 never imports from `LLM_Calls/`.
 ### 2. `LLM_Calls/hosted_provider_engine.py` + `hosted_provider_presets.py` (new)
 
-`build_hosted_chat_handler(preset) -> chat_with_*` returns a handler with the
+`build_hosted_chat_handler(record) -> chat_with_*` returns a handler with the
 same signature and param surface the dispatch expects (mirrors
 `chat_with_zai`'s signature so `PROVIDER_PARAM_MAP` entries stay uniform —
-engine providers share one param-map constant).
-
-`HostedProviderPreset` holds everything provider-specific as data:
-
-| Field | Examples |
-| --- | --- |
-| `key`, `display_name` | `"databricks"`, `"Databricks"` |
-| `base_url_rule` | Default URL + normalization (append `/openai/v1` when the user pasted a bare Databricks workspace host; reject terminal `/chat/completions` paths — reuse `normalize_hosted_chat_base_url`) |
-| `api_key_env_candidates` | `("DATABRICKS_TOKEN",)` |
-| `finish_reasons` | allowed terminals `{stop, tool_calls, length}`; provider-terminal-error reasons → `ChatProviderError(502)` |
-| `payload_flags` | temperature / top_p / stop / response_format (incl. `json_schema`) / `reasoning_effort` key name / extra body fields |
-| `reasoning_disposition` | `"displayable" \| "proprietary" \| "ignored"` (per `HostedChatFinishPolicy`) |
-| `auth_scheme` | `"bearer"` (Phase 1–2) \| `"api_key_header"` (Phase 3, Azure) |
-| `capability_hints` | native tools, streaming, reasoning effort (mirror registry flags; registry is authoritative) |
+engine providers share one param-map constant, exactly as `zai`/`moonshot`
+each carry one today). The engine reads preset-variant records from the leaf
+registry (§1) — behavior lives here, data lives in the leaf, and `config.py`
+never imports from `LLM_Calls/`.
 
 The engine absorbs, once, the boilerplate duplicated today: config/env
 resolution (`_resolve_api_key`, `_resolve_base_url`, numeric/streaming
@@ -337,7 +333,9 @@ and reasoning-effort copy change.
 3. **Model auto-refresh:** catalog service resolves Databricks via the
    engine's `resolve_request` entry point (strict-hosted branch), discovers
    models (see open item O-1), consent-gated write-through to `[providers]`
-   per ADR-020. Manual `[providers].Databricks` seeding works regardless.
+   per ADR-020. No shipped model seed — gateway model availability is
+   workspace-dependent, so `[providers].Databricks` starts empty and fills
+   via discovery or manual seeding.
 4. **Cost ticker:** preset `pricing_seeds` where prices are known; unknown
    models are simply omitted (pricing is already optional).
 
@@ -400,6 +398,15 @@ Azure's `prompt_filter_results`, vLLM/Together extras). Rules:
 - Allowances and the tolerant profile never bypass required-shape
   validation (choices present, tool-call shape, usage shape when present),
   output bounds, or redaction.
+  preset's `response_allowances`. Allowances are recorded from a live-probe
+  envelope capture during the provider's phase — never guessed.
+- **Long tail (Phase 2 custom-ep family):** a deliberately *tolerant*
+  profile — unknown-but-shape-safe top-level/event keys are ignored;
+  required-shape validation (choices, message, tool calls, usage) is never
+  relaxed. This is a documented weakening, scoped only to user-registered
+  endpoints, recorded in ADR-179.
+- Allowances and the tolerant profile never bypass required-shape
+  validation, output bounds, or redaction.
 
 ## Credentials and security (ADR-012 boundary intact)
 
@@ -501,6 +508,12 @@ Acceptance criteria:
       `custom-ep:<slug>` identity, cached models, and credential precedence
       (env → stored). Evidence-gated swap with parity tests against the old
       path.
+- [ ] Keyless endpoints keep working: a `custom-ep` entry with no credential
+      executes via `auth_scheme="none"`, and curated cloud presets still
+      hard-require keys (parity-tested).
+- [ ] The long-tail tolerant profile (see *Response variance and
+      strictness*) is implemented and covered by tests: unknown-but-shape-safe
+      fields ignored, required shapes still fail closed.
 
 ### Phase 3 — Enterprise, key-based
 
