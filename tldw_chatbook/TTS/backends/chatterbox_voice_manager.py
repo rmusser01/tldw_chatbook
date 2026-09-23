@@ -30,6 +30,9 @@ class ChatterboxVoiceManager(VoiceManagerBase):
     profiles_filename = "chatterbox_profiles.json"
     store_log_label = "Chatterbox voice"
     action_log_label = "Chatterbox "
+    # (TASK-32893) Chatterbox had no pre-write backup at all, while every save
+    # replaces the whole store -- one bad edit took every profile with it.
+    keep_backups = True
 
     @voice_files.call
     def __init__(self, voice_samples_dir: Path):

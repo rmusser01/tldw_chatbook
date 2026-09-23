@@ -77,10 +77,18 @@ def test_create_refuses_duplicate_and_invalid_audio(manager, sample):
     assert not ok and "Invalid audio file" in message
 
 
-def test_no_backup_directory_unless_enabled(manager, sample):
+def test_saving_backs_up_the_store_it_is_about_to_replace(manager, sample):
+    """(TASK-32893) Inverted: this pinned ``keep_backups`` staying off here.
+
+    Every save rewrites the whole store, so with no backup one bad profile
+    edit took every Chatterbox profile with it. Higgs already kept backups;
+    Chatterbox now sets ``keep_backups`` too. The durability properties
+    themselves are pinned in ``test_voice_profile_store_safety.py``.
+    """
     manager.create_profile("voice", str(sample))
     manager.create_profile("voice2", str(sample))
-    assert not (manager.voice_samples_dir / "backups").exists()
+    # Only the second save had a prior file to preserve.
+    assert len(manager._list_backups()) == 1
 
 
 def test_delete_never_escapes_the_samples_root(manager, sample, tmp_path):

@@ -28,13 +28,30 @@ W001 (hard gate, zero tolerance)
 
 W002 (census ratchet, not a gate)
     A ``query_one``/``query_exactly_one`` that is reached after an ``await``
-    inside an ``async def``, with no enclosing ``try``. Whether this crashes
-    depends on whether the awaited work can remove the subtree, which is not
-    statically decidable -- there are 279 such sites today and the vast
-    majority are fine. Failing on all of them would be exactly the guard that
-    cries wolf and gets muted, which ``scripts/preflight.sh`` warns about in
-    its own header. So the existing sites are recorded in a census and the
-    check fails only when a site appears that is not in it. Shrinking the
+    inside an ``async def``, with no enclosing ``try`` **body whose handlers
+    can catch it**. Both qualifiers are load-bearing, and the check shipped
+    with neither:
+
+    * "body" -- a lookup in an ``except``/``else``/``finally`` clause is a
+      child of the same ``Try`` node while sitting outside the region its own
+      handlers cover; an exception there propagates straight out. Treating any
+      ``ast.Try`` ancestor as protection hid 50 sites across 21 functions
+      (269 reported vs 319 real) behind a green check.
+    * "can catch it" -- ``try``/``finally`` with no handler, and
+      ``except ValueError``, do not catch the ``NoMatches`` a failed lookup
+      raises. Counting them as protection hid a further 24 occurrences across
+      14 functions (319 vs 343), among them
+      ``Widgets/Persona_Widgets/petdex_import_review.py::_load``, whose five
+      post-``push_screen_wait`` lookups sit under ``except (ValueError,
+      OSError, RuntimeError)``.
+
+    Whether this crashes depends on whether the awaited work can remove the
+    subtree, which is not statically decidable -- there are 346 such sites
+    today and the vast majority are fine. Failing on all of them would be
+    exactly the guard that cries wolf and gets muted, which
+    ``scripts/preflight.sh`` warns about in its own header. So the existing
+    sites are recorded in a census and the check fails only when a site
+    appears that is not in it. Shrinking the
     census is always allowed; growing it is a deliberate act.
 
     The census rows are a *baseline*, not an endorsement: they were captured
@@ -187,25 +204,109 @@ def collect_w001(tree: ast.Module, path: Path) -> list[str]:
     return violations
 
 
+#: Exception names whose handler can catch a failed DOM lookup. ``query_one``
+#: raises ``NoMatches``/``TooManyMatches``/``WrongType`` -- all ``QueryError``
+#: and so ``Exception`` subclasses -- and nothing else. An ``except
+#: ValueError`` around the lookup is not protection; it is noise between the
+#: failure and the worker boundary.
+LOOKUP_CATCHERS = {
+    "Exception",
+    "BaseException",
+    "QueryError",
+    "NoMatches",
+    "TooManyMatches",
+    "WrongType",
+}
+
+
+def _catches_lookup_failure(node: ast.Try | ast.TryStar) -> bool:
+    """Whether this ``try``'s own handlers can catch a failed DOM lookup.
+
+    Args:
+        node: The ``try`` statement whose ``body`` holds the lookup.
+
+    Returns:
+        True for a bare ``except:``, or any handler naming a class in
+        :data:`LOOKUP_CATCHERS` (including inside an ``except (A, B):``
+        tuple). A ``try``/``finally`` with no handlers, or one handling only
+        unrelated exceptions, returns False: the lookup propagates out of it
+        exactly as if the ``try`` were not there.
+    """
+    for handler in node.handlers:
+        if handler.type is None:  # bare `except:`
+            return True
+        caught = (
+            handler.type.elts
+            if isinstance(handler.type, ast.Tuple)
+            else [handler.type]
+        )
+        for entry in caught:
+            if isinstance(entry, ast.Attribute):
+                name: str | None = entry.attr
+            elif isinstance(entry, ast.Name):
+                name = entry.id
+            else:
+                name = None
+            if name in LOOKUP_CATCHERS:
+                return True
+    return False
+
+
+def _own_nodes(func: ast.AST) -> tuple[list[ast.AST], dict[ast.AST, ast.AST]]:
+    """The nodes belonging to ``func`` itself, and each one's parent.
+
+    A nested ``async def`` is walked *out*: the module-level scan enumerates
+    it separately, so descending into it here emitted every unguarded lookup
+    inside it twice -- once under the inner function, once misattributed to
+    this one. A nested plain ``def`` or ``lambda`` is deliberately **not**
+    excluded: nothing else ever scans those, and a dialog callback
+    dereferencing a screen the await let go is the W002 defect class itself.
+
+    Args:
+        func: The ``async def`` being scanned.
+
+    Returns:
+        ``(nodes, parents)`` -- the reachable nodes, and a child-to-parent
+        map over exactly those nodes for the guard-ancestor walk.
+    """
+    nodes: list[ast.AST] = [func]
+    parents: dict[ast.AST, ast.AST] = {}
+    stack: list[ast.AST] = [func]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+            nodes.append(child)
+            if not isinstance(child, ast.AsyncFunctionDef):
+                stack.append(child)
+    return nodes, parents
+
+
 def collect_w002(tree: ast.Module, path: Path) -> list[str]:
-    """DOM lookups reached after an await, with no enclosing ``try``."""
+    """DOM lookups reached after an await, with no ``try`` able to catch them.
+
+    Args:
+        tree: The parsed module to scan.
+        path: That module's path -- both the non-UI-package skip and the
+            census key are derived from it.
+
+    Returns:
+        One ``"<relative path>::<function name>"`` census key per offending
+        lookup, repeated when one function holds several (the census pins a
+        count per function). Empty for a module outside :data:`UI_PACKAGES`.
+    """
     if not UI_PACKAGES & set(path.parts):
         return []
     sites: list[str] = []
     for func in [
         node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
     ]:
-        parents: dict[ast.AST, ast.AST] = {}
-        for node in ast.walk(func):
-            for child in ast.iter_child_nodes(node):
-                parents[child] = node
-        awaits = [
-            node.lineno for node in ast.walk(func) if isinstance(node, ast.Await)
-        ]
+        own, parents = _own_nodes(func)
+        awaits = [node.lineno for node in own if isinstance(node, ast.Await)]
         if not awaits:
             continue
         first_await = min(awaits)
-        for node in ast.walk(func):
+        for node in own:
             if not (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
@@ -215,11 +316,31 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
             if node.lineno <= first_await:
                 continue
             guarded = False
-            cursor = parents.get(node)
+            child: ast.AST = node
+            cursor = parents.get(child)
             while cursor is not None and cursor is not func:
-                if isinstance(cursor, ast.Try):
+                # Two conditions, and the check shipped with neither.
+                #
+                # `Try.body`: a lookup in an `except`/`else`/`finally` clause
+                # is a *child* of the same `Try` node while sitting OUTSIDE
+                # the region its handlers cover -- an exception there
+                # propagates straight out. Treating any `Try` ancestor as
+                # protection hid 50 sites across 21 functions.
+                #
+                # ...and a handler that can catch it: `try`/`finally` with no
+                # handler at all, and `except ValueError`, are both "no `try`"
+                # as far as a `NoMatches` is concerned.
+                #
+                # Keep ascending when either fails: an OUTER try may still
+                # legitimately cover this lookup.
+                if (
+                    isinstance(cursor, (ast.Try, ast.TryStar))
+                    and any(child is stmt for stmt in cursor.body)
+                    and _catches_lookup_failure(cursor)
+                ):
                     guarded = True
                     break
+                child = cursor
                 cursor = parents.get(cursor)
             if guarded:
                 continue
@@ -254,7 +375,8 @@ def _tally(sites: list[str]) -> dict[str, int]:
 def _write_census(sites: list[str]) -> None:
     header = (
         "# Baseline census for W002: `query_one` reached after an `await` with no\n"
-        "# enclosing `try`, in UI/ and Widgets/. Generated by\n"
+        "# enclosing `try` body whose handlers can catch a NoMatches, in UI/ and\n"
+        "# Widgets/. Generated by\n"
         "# scripts/check_textual_worker_contract.py --write\n"
         "#\n"
         "# These rows are a BASELINE, not an endorsement: they were captured\n"

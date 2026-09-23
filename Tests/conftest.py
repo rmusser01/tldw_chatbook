@@ -3,6 +3,7 @@ Root conftest.py for shared test fixtures and configuration.
 This file provides common fixtures used across the test suite.
 """
 
+import importlib
 import os
 import shutil
 import tempfile
@@ -140,6 +141,36 @@ if str(PROJECT_ROOT) not in sys.path:
 from Tests import network_guard  # noqa: E402
 
 network_guard.install()
+
+# TASK-32908: force the frozen-at-import config read in Chunk_Lib NOW, while
+# the bootstrap profile above is still the selected config, and before any
+# test's per-test env redirect.
+#
+# `Chunking/Chunk_Lib.py` snapshots `summarize_system_prompt` from the prompt
+# registry at MODULE IMPORT time (deliberately -- the legacy frozen-at-import
+# channel, pinned by Tests/Internal_Prompts/test_summarization_migration.py).
+# That snapshot calls get_cli_setting, which goes through the config-participant
+# admission (ADR-126).
+#
+# The module is imported LAZILY from inside the media-DB v6->v7 migration
+# (DB/Client_Media_DB_v2.py::_apply_migration_v6_to_v7). So the first test that
+# builds a media DB pays that import INSIDE an already-open raw-participant
+# scope, under the per-test TLDW_CONFIG_PATH redirect -- the bound config
+# selection no longer matches and admission fails closed with
+# RecoveryRequired("raw_source_selection_changed"). The failure lands on
+# whichever test happens to migrate first, and on every later test in the
+# process, which is why it reads as a mass fixture-setup failure rather than as
+# one broken test.
+#
+# Importing here costs ~0.26 s once per process and is NOT a behaviour change:
+# it only fixes WHEN the snapshot is taken. Do not "optimize" this into a lazy
+# import -- being eager is the entire point.
+#
+# NB: this must stay INSIDE the conftest, after the bootstrap env above. Doing
+# the same import from a wrapper before pytest starts binds the participant to
+# the developer's REAL ~/.config/tldw_cli/config.toml and then fails at
+# collection instead.
+importlib.import_module("tldw_chatbook.Chunking")
 
 
 # Hypothesis: no per-example deadline (TASK-1260).
