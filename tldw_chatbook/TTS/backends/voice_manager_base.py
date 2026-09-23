@@ -20,7 +20,19 @@ from tldw_chatbook.Utils.timestamps import utc_now, utc_now_iso
 
 #: Backup filename stamp: UTC, ``Z``-suffixed, and filename-safe -- ADR-173's
 #: canonical stored shape carries ``:``, which a path component cannot.
-BACKUP_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+#:
+#: MICROSECONDS, not ADR-173's milliseconds, because this stamp is also the
+#: backup's IDENTITY: at second precision every save inside the same second
+#: resolved to one path, which ``voice_files.copy`` then replaced, so a burst
+#: of edits (an import, a multi-select delete) kept ONE recovery point instead
+#: of ``BACKUP_KEEP``. Copying the store takes far longer than a microsecond,
+#: so consecutive saves are now collision-free without an existence-check loop.
+BACKUP_STAMP_FORMAT = "%Y%m%dT%H%M%S.%fZ"
+
+#: Second-precision stamps written before that fix -- parsed rather than
+#: discarded, because a user upgrading mid-rotation has both shapes in one
+#: backup directory and the older ones are still real recovery points.
+_SUPERSEDED_BACKUP_STAMP_FORMATS = ("%Y%m%dT%H%M%SZ",)
 
 #: How many rotated backups a profile store keeps.
 BACKUP_KEEP = 10
@@ -42,16 +54,16 @@ def _backup_moment(path: Path) -> datetime:
         The instant the backup was taken, as an aware UTC ``datetime``.
     """
     stamp = path.stem.rsplit("_backup_", 1)[-1]
-    try:
-        return datetime.strptime(stamp, BACKUP_STAMP_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        # A pre-TASK-32893 name carries a naive LOCAL stamp that cannot be
-        # placed on a timeline without the writer's offset. The file's own
-        # mtime can: ``shutil.copy`` does not preserve mtime, so the mtime IS
-        # the moment the backup was taken.
-        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    for fmt in (BACKUP_STAMP_FORMAT, *_SUPERSEDED_BACKUP_STAMP_FORMATS):
+        try:
+            return datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    # A pre-TASK-32893 name carries a naive LOCAL stamp that cannot be placed
+    # on a timeline without the writer's offset. The file's own mtime can:
+    # ``shutil.copy`` does not preserve mtime, so the mtime IS the moment the
+    # backup was taken.
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
 
 
 #######################################################################################################################

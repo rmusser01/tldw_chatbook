@@ -2806,6 +2806,37 @@ class LocalMediaReadingService:
         include_notes: bool = True,
         format: str = "jsonl",
     ) -> Any:
+        """Export saved reading items, refusing filters this store cannot honour.
+
+        Args:
+            status: Reading states to export. Only ``"saved"`` exists locally.
+            tags: Keywords every exported item must carry.
+            favorite: Favorite filter. Only ``False``/``None`` are expressible.
+            q: Full-text query narrowing the scope.
+            domain: Substring matched against each item's URL. Applied in
+                Python to one page, so it needs a page that reaches the end of
+                the scope.
+            page: 1-based page of the scope to export.
+            size: Rows per page; also the export's ceiling.
+            include_metadata: Include the per-item metadata block.
+            include_clean_html: Include the cleaned article HTML.
+            include_text: Include the extracted plain text.
+            include_highlights: Include stored highlights.
+            include_notes: Include attached notes.
+            format: ``"jsonl"`` or ``"zip"`` -- the only two this store
+                writes.
+
+        Returns:
+            The export response: its encoded ``content`` plus the filename and
+            media type chosen for ``format``.
+
+        Raises:
+            ValueError: ``status`` names anything but ``"saved"``;
+                ``favorite`` is ``True``; ``domain`` is given for a page that
+                does not reach the end of the scope; or ``format`` is not a
+                supported export format. Every one of these would otherwise
+                produce a short export the caller could not tell was short.
+        """
         # (TASK-32893) Three filters this local store cannot honour used to
         # produce a SILENT truncation instead of an error: an unsupported
         # ``status``/``favorite`` returned an empty export -- indistinguishable
@@ -2839,16 +2870,28 @@ class LocalMediaReadingService:
         )
         rows = list(payload.get("items", []))
         if domain:
-            if len(rows) == page_size:
-                # The domain match runs here, not in SQL, so it only ever sees
-                # this page. A FULL page means matches may exist beyond it and
-                # the caller has no way to know the export stopped early.
+            # The domain match runs here, not in SQL, so it only ever sees this
+            # page; rows BEYOND the page would be dropped without a word. What
+            # settles it is the search's own unpaged ``total``, not the page
+            # being full: a scope that happens to be an exact multiple of
+            # ``size`` -- the plain case being ``size`` set to the number of
+            # saved items -- fills its last page and has nothing after it.
+            # A total of an unexpected shape is treated as unknown rather than
+            # as zero, so a payload change cannot silently disarm the guard.
+            total = payload.get("total")
+            unseen = (
+                offset + len(rows) < total
+                if isinstance(total, int) and not isinstance(total, bool)
+                else len(rows) == page_size
+            )
+            if unseen:
                 raise ValueError(
                     "Local reading export applies the domain filter to one "
-                    f"page at a time and page {max(int(page), 1)} came back "
-                    f"full ({page_size} rows), so a domain-filtered export "
-                    "would silently omit later matches. Raise `size` past the "
-                    "number of saved items, or narrow the export with `q`."
+                    f"page at a time and page {max(int(page), 1)} does not "
+                    "reach the end of the saved items, so a domain-filtered "
+                    "export would silently omit later matches. Raise `size` "
+                    "past the number of saved items, or narrow the export "
+                    "with `q`."
                 )
             normalized_domain = str(domain).strip().lower()
             rows = [

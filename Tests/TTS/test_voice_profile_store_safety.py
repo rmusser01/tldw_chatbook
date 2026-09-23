@@ -30,8 +30,9 @@ from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileMana
 
 _PROFILES = {"keeper": {"display_name": "Keeper", "reference_audio": "keeper.wav"}}
 
-#: ``%Y%m%dT%H%M%SZ`` -- UTC, ``Z``-suffixed (ADR-173), filename-safe.
-_UTC_BACKUP_NAME = re.compile(r"_backup_\d{8}T\d{6}Z\.json$")
+#: ``%Y%m%dT%H%M%S.%fZ`` -- UTC, ``Z``-suffixed (ADR-173), filename-safe. The
+#: sub-second field is what stops two saves in one second sharing a path.
+_UTC_BACKUP_NAME = re.compile(r"_backup_\d{8}T\d{6}\.\d{6}Z\.json$")
 
 
 @pytest.fixture(params=["chatterbox", "higgs"])
@@ -138,3 +139,22 @@ def test_the_newest_backup_is_chosen_by_timestamp_not_by_glob_order(
 
     assert ok is True, message
     assert manager.load_profiles() == {"newest": {}}
+
+
+def test_a_burst_of_saves_keeps_one_backup_per_save(manager) -> None:
+    """Three saves inside one second must leave three distinct backups.
+
+    The stamp used to be second-precision, so every save in the same second
+    resolved to the SAME backup path and ``voice_files.copy`` replaced it.
+    A burst of edits -- an import, a multi-select delete -- therefore kept one
+    recovery point instead of the configured ten.
+    """
+    assert manager.save_profiles({"first": {}}) is True
+    assert manager.save_profiles({"second": {}}) is True
+    assert manager.save_profiles({"third": {}}) is True
+
+    backups = manager._list_backups()
+    assert [json.loads(path.read_text(encoding="utf-8")) for path in backups] == [
+        {"first": {}},
+        {"second": {}},
+    ], "each overwriting save must preserve the state it replaced"

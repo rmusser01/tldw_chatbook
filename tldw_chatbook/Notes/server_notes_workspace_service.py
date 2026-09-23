@@ -742,6 +742,18 @@ class ServerNotesWorkspaceService:
         sending one would be speculative and would re-create the same false
         guarantee the moment the server ignored it. With no parameter, the
         absence of the guard is visible at every call site instead.
+
+        Args:
+            workspace_id: The workspace holding the note.
+            note_id: The note to delete, as identified within that workspace.
+
+        Returns:
+            The server's deletion response, forwarded unchanged.
+
+        Raises:
+            PolicyDeniedError: The ``notes.delete.workspace`` action is not
+                permitted by the runtime policy.
+            ValueError: No server client (or client provider) is configured.
         """
         self._enforce_policy(self._note_action_id("delete", "workspace"))
         client = self._require_client()

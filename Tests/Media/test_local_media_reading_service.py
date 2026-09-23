@@ -3193,6 +3193,34 @@ def test_local_reading_export_refuses_a_domain_filter_it_can_only_half_apply(
     assert len(rows) == 3
 
 
+def test_a_full_but_final_page_still_exports_with_a_domain_filter(memory_db_factory):
+    """A full page is only truncated when the search's ``total`` says so.
+
+    The refusal used to trip on ``len(rows) == page_size`` alone, so an export
+    whose scope happened to be an exact multiple of the page size -- the plain
+    case being ``size`` chosen to equal the number of saved items -- was
+    refused even though the page had already seen every row there is.
+    """
+    db = memory_db_factory()
+    for index in range(2):
+        media_id, _, _ = db.add_media_with_keywords(
+            title=f"Item {index}",
+            content=f"Body {index}",
+            media_type="article",
+            url=f"https://example.com/{index}",
+            keywords=[],
+        )
+        db.save_media_to_read_it_later(media_id)
+    service = LocalMediaReadingService(db)
+
+    # Exactly two saved items and a page size of two: full, and also final.
+    exported = service.export_reading_items(domain="example.com", size=2)
+    rows = [
+        json.loads(line) for line in exported["content"].decode("utf-8").splitlines()
+    ]
+    assert len(rows) == 2, "a page that reached the end of the scope is complete"
+
+
 def test_local_reading_export_fails_rather_than_dropping_an_items_body(
     memory_db_factory, monkeypatch
 ):
