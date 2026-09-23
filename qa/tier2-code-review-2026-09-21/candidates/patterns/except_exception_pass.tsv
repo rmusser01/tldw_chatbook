@@ -16,6 +16,8 @@ tldw_chatbook/Audio/voice_turn_coordinator.py	1746
 tldw_chatbook/Audio/voice_turn_coordinator.py	1750	
 tldw_chatbook/Audio/voice_turn_coordinator.py	1756	
 tldw_chatbook/Audio/voice_turn_coordinator.py	1890	
+tldw_chatbook/Backup_Recovery/persona_visual_participants.py	465	
+tldw_chatbook/Backup_Recovery/visual_identity_participants.py	557	
 tldw_chatbook/Canvas/compiler.py	729	
 tldw_chatbook/Canvas/gateway.py	1412	
 tldw_chatbook/Chunking/Chunk_Lib.py	206	
@@ -154,7 +156,12 @@ tldw_chatbook/UI/Screens/chat_screen.py	2598
 tldw_chatbook/UI/Screens/chat_screen.py	3549	
 tldw_chatbook/UI/Screens/chat_screen.py	19651	
 tldw_chatbook/UI/Screens/chat_screen.py	24568	
-tldw_chatbook/UI/Screens/evals_screen.py	2793	
+tldw_chatbook/UI/Screens/evals_screen.py	2239	
+tldw_chatbook/UI/Screens/evals_screen.py	2243	
+tldw_chatbook/UI/Screens/evals_screen.py	2250	
+tldw_chatbook/UI/Screens/evals_screen.py	2260	
+tldw_chatbook/UI/Screens/evals_screen.py	2285	
+tldw_chatbook/UI/Screens/evals_screen.py	3206	
 tldw_chatbook/UI/Screens/home_screen.py	867	
 tldw_chatbook/UI/Screens/home_screen.py	887	
 tldw_chatbook/UI/Screens/library_screen.py	689	

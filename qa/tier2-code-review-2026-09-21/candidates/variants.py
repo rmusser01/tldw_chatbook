@@ -1,7 +1,18 @@
 """For each cluster name: group definitions by exact body (docstring stripped) and by anonymized shape; print distinct variants."""
 import ast, pathlib, sys, collections, copy, hashlib, textwrap
-WT = pathlib.Path("/Users/macbook-dev/Documents/GitHub/tldw-review-t2"); PKG = WT/"tldw_chatbook"
-names = sys.argv[1].split(",")
+USAGE = "usage: variants.py <comma-separated-symbol-names> [repo-root]"
+if len(sys.argv) not in (2, 3):
+    sys.exit(USAGE)
+# The repo root used to be hard-coded to one reviewer's worktree, so this script
+# only ran on that machine and silently analysed a stale tree elsewhere. Default
+# to the repo this file lives in; allow an explicit override.
+WT = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) == 3 else pathlib.Path(__file__).resolve().parents[3]
+PKG = WT / "tldw_chatbook"
+if not PKG.is_dir():
+    sys.exit(f"{USAGE}\n  no tldw_chatbook/ under: {WT}")
+names = [n for n in (x.strip() for x in sys.argv[1].split(",")) if n]
+if not names:
+    sys.exit(f"{USAGE}\n  no symbol names given")
 class Anon(ast.NodeTransformer):
     def visit_Name(self, n): n.id="_"; return n
     def visit_arg(self, n): n.arg="_"; return n

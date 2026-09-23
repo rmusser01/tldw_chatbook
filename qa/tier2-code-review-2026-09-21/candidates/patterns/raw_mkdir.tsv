@@ -5,6 +5,7 @@ tldw_chatbook/Audio/meeting_session.py	1087
 tldw_chatbook/Audio/system_audio_tap.py	234	
 tldw_chatbook/Audio/voiceprint.py	247	
 tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py	173	
+tldw_chatbook/Backup_Recovery/mcp_source_participants.py	301	
 tldw_chatbook/Canvas/archive.py	229	
 tldw_chatbook/Chatbooks/chatbook_creator.py	703	
 tldw_chatbook/Chatbooks/chatbook_creator.py	1110	

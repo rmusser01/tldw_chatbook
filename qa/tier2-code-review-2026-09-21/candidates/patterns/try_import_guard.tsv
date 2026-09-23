@@ -16,6 +16,9 @@ tldw_chatbook/Audio/recording_service.py	69	module handlers=['Exception'] option
 tldw_chatbook/Audio/system_audio_tap.py	312	in probe handlers=['Exception'] optional_deps_imported=False
 tldw_chatbook/Audio/voiceprint.py	315	in _read handlers=['Exception'] optional_deps_imported=False
 tldw_chatbook/Audio/voiceprint.py	748	in _has_real_keyring_backend handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/age_worker.py	18	module handlers=['(ImportError, OSError)'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/dictionary_source_job.py	154	in _work handlers=['BaseException'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/launcher.py	43	in startup_preflight handlers=['(\n        OSError,\n        ValueError,\n        RuntimeError,\n        ImportError,\n        EOFError,\n        KeyboardInterrupt,\n    )'] optional_deps_imported=False
 tldw_chatbook/Canvas/web_auth.py	166	in resolve_web_access_token handlers=['Exception'] optional_deps_imported=False
 tldw_chatbook/Character_Chat/Character_Chat_Lib.py	846	in _get_default_chachanotes_db handlers=['Exception'] optional_deps_imported=False
 tldw_chatbook/Character_Chat/Character_Chat_Lib.py	880	in fetch_all_dictionaries handlers=['Exception'] optional_deps_imported=False
@@ -238,9 +241,9 @@ tldw_chatbook/TTS/backends/higgs.py	53	module handlers=['ImportError'] optional_
 tldw_chatbook/TTS/backends/higgs.py	253	in _load_model handlers=['Exception'] optional_deps_imported=False
 tldw_chatbook/TTS/backends/higgs.py	257	in _load_model handlers=['ImportError'] optional_deps_imported=False
 tldw_chatbook/TTS/backends/higgs.py	1126	in _prepare_messages handlers=['Exception'] optional_deps_imported=False
-tldw_chatbook/TTS/backends/higgs_voice_manager.py	21	module handlers=['ImportError'] optional_deps_imported=False
-tldw_chatbook/TTS/backends/higgs_voice_manager.py	29	module handlers=['ImportError'] optional_deps_imported=False
-tldw_chatbook/TTS/backends/higgs_voice_manager.py	37	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	22	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	30	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	38	module handlers=['ImportError'] optional_deps_imported=False
 tldw_chatbook/TTS/backends/kokoro.py	29	module handlers=['ImportError'] optional_deps_imported=False
 tldw_chatbook/TTS/backends/kokoro.py	38	module handlers=['ImportError'] optional_deps_imported=False
 tldw_chatbook/TTS/backends/kokoro.py	257	in __init__ handlers=['ImportError'] optional_deps_imported=False

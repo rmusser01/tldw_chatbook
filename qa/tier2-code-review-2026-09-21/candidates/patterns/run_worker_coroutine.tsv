@@ -151,10 +151,11 @@ tldw_chatbook/UI/Screens/chunking_lab_screen.py	711	self._safe(self._save("B"))
 tldw_chatbook/UI/Screens/chunking_lab_screen.py	967	self._safe(self._menu_action(action))
 tldw_chatbook/UI/Screens/chunking_lab_screen.py	1205	self._safe(self._action(identity))
 tldw_chatbook/UI/Screens/chunking_lab_screen.py	1247	self._safe(self.run_candidates(True))
-tldw_chatbook/UI/Screens/evals_screen.py	523	self._swap_selection_regions(
+tldw_chatbook/UI/Screens/evals_screen.py	529	self._swap_selection_regions(
                 revision=self.
-tldw_chatbook/UI/Screens/evals_screen.py	2029	self._feed_skill_eval_subjects(panel)
-tldw_chatbook/UI/Screens/evals_screen.py	2518	self._delete_bench_flow(selection.id, name)
+tldw_chatbook/UI/Screens/evals_screen.py	2313	self._feed_skill_eval_subjects(panel)
+tldw_chatbook/UI/Screens/evals_screen.py	2390	self._probe_store_skills_presence()
+tldw_chatbook/UI/Screens/evals_screen.py	2929	self._delete_bench_flow(selection.id, name)
 tldw_chatbook/UI/Screens/library_screen.py	5321	self._reload_library_notes_browse_return_receipt(receipt, gu
 tldw_chatbook/UI/Screens/library_screen.py	7578	self._persist_library_reader_preference(
                    

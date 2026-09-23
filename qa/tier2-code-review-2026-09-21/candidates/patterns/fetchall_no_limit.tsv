@@ -1,5 +1,10 @@
 tldw_chatbook/Actor_Packs/repository.py	123	get_identity_by_portable_uuid :: SELECT actor_kind, local_actor_id, portable_uuid, source_portable_uuid, version FROM actor
 tldw_chatbook/Actor_Packs/repository.py	314	list_persona_intents :: SELECT intent_id, persona_id, operation, state, old_profile_json, new_profile_json, old_pr
+tldw_chatbook/Backup_Recovery/recovered_media.py	833	recover :: SELECT asset_id,kind FROM operations
+tldw_chatbook/Backup_Recovery/recovered_media.py	1267	relocate_restore :: SELECT r.message,r.slug,r.media_type,r.asset_id,a.state FROM refs r JOIN assets a USING(as
+tldw_chatbook/Backup_Recovery/recovered_media.py	1585	message_image_metadata (fstring) :: SELECT r.message,a.asset_id,a.digest,a.size,a.state,r.media_type FROM refs r JOIN assets a
+tldw_chatbook/Backup_Recovery/recovered_media.py	1632	resolve_message_image :: SELECT asset_id,media_type FROM refs WHERE profile=? AND message=? AND media_type LIKE 'im
+tldw_chatbook/Backup_Recovery/sqlite_validation.py	440	_check :: PRAGMA quick_check
 tldw_chatbook/Canvas/archive.py	85	export_canvas_archive (fstring) :: SELECT document.id, document.conversation_id, document.created_at, document.deleted_at, re
 tldw_chatbook/Canvas/archive.py	161	export_canvas_archive (fstring) :: SELECT hint.conversation_id, hint.last_canvas_id FROM canvas_conversation_hints AS hint JO
 tldw_chatbook/Canvas/repository.py	464	list_identities (fstring) :: SELECT document.id, document.conversation_id, document.created_at, document.deleted_at FRO

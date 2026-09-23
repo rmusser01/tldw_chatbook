@@ -1,4 +1,5 @@
 tldw_chatbook/Audio/recording_service.py	118	AudioRecordingService._preroll_frames bases=[]
+tldw_chatbook/Backup_Recovery/qualification.py	40	_StatFS._fields_ bases=['ctypes.Structure']
 tldw_chatbook/Chunking/engine/strategies/tokens.py	277	TokenChunkingStrategy._failed_tokenizers bases=['BaseChunkingStrategy']
 tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py	1057	ComfyUIImageAdapter.supported_formats bases=[]
 tldw_chatbook/Image_Generation/adapters/fal_image_adapter.py	187	FalImageAdapter.supported_formats bases=[]

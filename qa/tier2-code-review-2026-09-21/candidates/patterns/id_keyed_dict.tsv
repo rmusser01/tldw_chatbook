@@ -3,6 +3,13 @@ tldw_chatbook/Audio/voice_process_lifetime.py	391
 tldw_chatbook/Audio/voice_process_protocol.py	1381	
 tldw_chatbook/Audio/voice_process_protocol.py	1391	
 tldw_chatbook/Audio/voice_process_protocol.py	1398	
+tldw_chatbook/Backup_Recovery/persona_visual_participants.py	231	
+tldw_chatbook/Backup_Recovery/persona_visual_participants.py	763	
+tldw_chatbook/Backup_Recovery/runtime_maintenance.py	193	
+tldw_chatbook/Backup_Recovery/runtime_maintenance.py	195	
+tldw_chatbook/Backup_Recovery/visual_identity_participants.py	307	
+tldw_chatbook/Backup_Recovery/visual_identity_participants.py	785	
+tldw_chatbook/Backup_Recovery/visual_identity_participants.py	1056	
 tldw_chatbook/Canvas/compiler.py	827	
 tldw_chatbook/Canvas/compiler.py	828	
 tldw_chatbook/Canvas/compiler.py	900	

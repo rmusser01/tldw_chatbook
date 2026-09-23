@@ -1,5 +1,6 @@
 tldw_chatbook/Audio/dictation_metrics.py	305	%Y-%m-%d %H:00
 tldw_chatbook/Audio/meeting_owner.py	1221	%Y-%m-%d_%H%M
+tldw_chatbook/Backup_Recovery/settings_file_participants.py	169	%Y%m%d_%H%M%S
 tldw_chatbook/Character_Chat/Character_Chat_Lib.py	225	%Y-%m-%d %H:%M:%S
 tldw_chatbook/Character_Chat/Character_Chat_Lib.py	3445	%Y-%m-%d %H:%M
 tldw_chatbook/Character_Chat/Character_Chat_Lib.py	3628	%Y-%m-%d %H:%M
@@ -53,9 +54,9 @@ tldw_chatbook/Subscriptions/item_dates.py	131	%I:%M %p
 tldw_chatbook/Subscriptions/item_dates.py	135	%b %d
 tldw_chatbook/Subscriptions/item_dates.py	136	%Y-%m-%d
 tldw_chatbook/Subscriptions/item_dates.py	155	%B %d, %Y
-tldw_chatbook/TTS/backends/chatterbox_voice_manager.py	373	%Y%m%d_%H%M%S
-tldw_chatbook/TTS/backends/higgs_voice_manager.py	426	%Y%m%d_%H%M%S
-tldw_chatbook/TTS/backends/higgs_voice_manager.py	566	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/backends/chatterbox_voice_manager.py	273	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	319	%Y%m%d_%H%M%S
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	459	%Y%m%d_%H%M%S
 tldw_chatbook/TTS/profile_repository.py	3771	%Y%m%dT%H%M%S%fZ
 tldw_chatbook/UI/ChatbookCreationWindow.py	362	%Y%m%d_%H%M%S
 tldw_chatbook/UI/ChatbookExportManagementWindow.py	926	%Y-%m-%d

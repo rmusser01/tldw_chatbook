@@ -1,10 +1,50 @@
-"""Phase 1c: mechanical pattern candidates over Tier-1 files. One TSV per pattern."""
+"""Phase 1c: mechanical pattern candidates over the Tier-2 files. One TSV per pattern.
+
+The scanned path list is READ FROM ``slice_paths.txt`` rather than hard-coded.
+It used to be a literal list, which silently drifted out of date: the coverage
+fix that added ``Backup_Recovery``, ``Workflows`` and ``UI/Workflows_Modules``
+to ``slice_paths.txt`` never reached this file, so every candidate TSV it
+produced was missing those packages while the report presented the tables as
+covering the whole Tier-2 surface. Deriving the list makes that divergence
+impossible rather than merely fixed once.
+"""
 import ast, re, sys, pathlib, collections
-root = pathlib.Path(sys.argv[1]); out = pathlib.Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
+
+USAGE = "usage: pattern_greps.py <repo-root> <output-dir>"
+if len(sys.argv) != 3:
+    sys.exit(USAGE)
+root = pathlib.Path(sys.argv[1]).resolve()
+out = pathlib.Path(sys.argv[2]).resolve()
+if not (root / "tldw_chatbook").is_dir():
+    sys.exit(f"{USAGE}\n  <repo-root> has no tldw_chatbook/: {root}")
+out.mkdir(parents=True, exist_ok=True)
 pkg = root / "tldw_chatbook"
-T1 = ['Notes', 'TTS', 'Library', 'tldw_api', 'Audio', 'STT', 'Subscriptions', 'Scheduling', 'Character_Chat', 'Prompt_Management', 'Internal_Prompts', 'Chunking', 'Embeddings', 'RAG_Admin', 'Evals', 'Local_Ingestion', 'Media', 'Media_Creation', 'Media_Playback', 'Image_Generation', 'Video_Generation', 'Canvas', 'Workspaces', 'Research_Workspace', 'Personal_Context', 'Web_Scraping', 'WebClipper', 'Web_Server', 'Model_Artifacts', 'LLM_Management', 'LLM_Provider_Catalog', 'Local_Inference', 'Models', 'Persona_Visual', 'Persona_Buddy', 'Actor_Packs', 'Petdex', 'Widgets/Tamagotchi', 'Chatbooks', 'Sharing', 'Outputs', 'Notifications', 'Metrics', 'Stats', 'state', 'Terminal', 'Tool_Packs', 'Home', 'Coding', 'Config_Files', 'UI/Screens', 'UI/Wizards', 'UI/Speech', 'UI/Watchlists_Modules', 'UI/Evals', 'UI/LLM_Management', 'UI/CCP_Modules', 'UI/Research_Workspace_Modules', 'UI/Widgets', 'UI/Study_Modules', 'UI/Workbench', 'UI/Chunking_Lab_Modules', 'UI/Lab_Modules', 'UI/Views', 'UI/Writing_Modules', 'UI/Research_Modules', 'UI/Subscription_Modules', 'Widgets/Media', 'Widgets/Prompts', 'Widgets/TTS', 'Widgets/NewIngest', 'Widgets/ModelArtifacts', 'Widgets/Coding_Widgets', 'Widgets/Writing', 'Widgets/Note_Widgets', 'Widgets/Home', 'Widgets/Study', 'Widgets/Evals', 'UI/__init__.py', 'UI/character_display_text.py', 'UI/ChatbookCreationWindow.py', 'UI/ChatbookExportManagementWindow.py', 'UI/Chatbooks_Window_Improved.py', 'UI/Chatbooks_Window.py', 'UI/ChatbookTemplatesWindow.py', 'UI/CodeRepoCopyPasteWindow.py', 'UI/console_command_provider.py', 'UI/destination_recovery.py', 'UI/Dictation_Window_Improved.py', 'UI/focus_ownership.py', 'UI/image_gen_command_provider.py', 'UI/LLM_Management_Window.py', 'UI/Logs_Window.py', 'UI/MediaWindow_v2.py', 'UI/MediaWindowV88.py', 'UI/Outputs_Panel.py', 'UI/Research_Window.py', 'UI/server_chatbook_service_lease.py', 'UI/Sharing_Panel.py', 'UI/SiteConfigSettings.py', 'UI/stable_command_palette.py', 'UI/Stats_Window.py', 'UI/stts_playground_catalog.py', 'UI/stts_profile_library.py', 'UI/STTS_Window.py', 'UI/Study_Window.py', 'UI/tools_settings_messages.py', 'UI/Tools_Settings_Window.py', 'UI/tts_profile_recovery.py', 'UI/Voice_Cloning_Window.py', 'UI/Writing_Window.py', 'Widgets/__init__.py', 'Widgets/activity_log.py', 'Widgets/AppFooterStatus.py', 'Widgets/audio_troubleshooting_dialog.py', 'Widgets/base_components.py', 'Widgets/cancel_confirmation_dialog.py', 'Widgets/chat_message_enhanced.py', 'Widgets/chunk_preview.py', 'Widgets/compact_model_bar.py', 'Widgets/confirmation_dialog.py', 'Widgets/conversation_selection_dialog.py', 'Widgets/custom_list_items.py', 'Widgets/delete_confirmation_dialog.py', 'Widgets/destination_rail.py', 'Widgets/destination_workbench.py', 'Widgets/detail_value_row.py', 'Widgets/detailed_progress.py', 'Widgets/dictation_performance_widget.py', 'Widgets/diff_widgets.py', 'Widgets/document_generation_modal.py', 'Widgets/emoji_picker.py', 'Widgets/empty_state.py', 'Widgets/enhanced_file_picker.py', 'Widgets/enhanced_sidebar.py', 'Widgets/feedback_dialog.py', 'Widgets/file_extraction_dialog.py', 'Widgets/file_list_item_enhanced.py', 'Widgets/file_picker_dialog.py', 'Widgets/form_components.py', 'Widgets/glyph_fallback.py', 'Widgets/lazy_widgets.py', 'Widgets/llamacpp_snapshot_manager.py', 'Widgets/loading_states.py', 'Widgets/media_details_widget.py', 'Widgets/modal_dismissal.py', 'Widgets/model_search_picker.py', 'Widgets/password_dialog.py', 'Widgets/pausable_progress.py', 'Widgets/project_skills_import_modal.py', 'Widgets/prune_safe_select.py', 'Widgets/reader_scroll.py', 'Widgets/recompose_capture_guard.py', 'Widgets/settings_advanced_config_panel.py', 'Widgets/settings_agents_panel.py', 'Widgets/settings_image_gen_panel.py', 'Widgets/settings_internal_prompts_editor_modal.py', 'Widgets/settings_internal_prompts_panel.py', 'Widgets/settings_splash_screen_viewer.py', 'Widgets/settings_theme_editor.py', 'Widgets/settings_video_gen_panel.py', 'Widgets/settings_web_search_panel.py', 'Widgets/splash_screen.py', 'Widgets/status_dashboard.py', 'Widgets/status_widget.py', 'Widgets/template_selector.py', 'Widgets/toast_notification.py', 'Widgets/tool_message_widgets.py', 'Widgets/tooltip.py', 'Widgets/voice_blend_dialog.py', 'Widgets/voice_input_widget.py', 'Widgets/voice_profile_dialog.py', 'Widgets/workbench_focus.py', 'Widgets/workspace_create_modal.py', 'Widgets/workspace_persona_default.py', 'ACP_Interop', 'Audio_Services_Interop', 'Auth_Account_Interop', 'Chat_Grammars_Interop', 'Claims_Interop', 'Collections_Interop', 'Companion_Interop', 'Evaluations_Interop', 'External_Connectors_Interop', 'Feedback_Interop', 'Kanban_Interop', 'MCP_Governance_Interop', 'Meetings_Interop', 'Outputs_Interop', 'Personalization_Interop', 'Prompt_Studio_Interop', 'Research_Interop', 'Server_Runtime_Interop', 'Sharing_Interop', 'Skills_Interop', 'Study_Interop', 'Sync_Interop', 'Text2SQL_Interop', 'Tools_Interop', 'Translation_Interop', 'User_Governance_Interop', 'UX_Interop', 'Voice_Assistant_Interop', 'Web_Clipper_Interop', 'Web_Scraping_Interop', 'Writing_Interop', 'css']
+
+SLICE_PATHS = root / "qa" / "tier2-code-review-2026-09-21" / "slice_paths.txt"
+if not SLICE_PATHS.is_file():
+    sys.exit(f"{USAGE}\n  missing the authoritative path list: {SLICE_PATHS}")
+
+
+def _tier2_paths() -> list[str]:
+    """Every path claimed by a Tier-2 slice, i.e. everything after the tier-1 block."""
+    lines = SLICE_PATHS.read_text(encoding="utf-8").splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines) if l.startswith("# S01"))
+    except StopIteration:
+        sys.exit(f"{SLICE_PATHS} has no '# S01...' marker; cannot tell tier 1 from tier 2")
+    paths = []
+    for line in lines[start:]:
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        # slice_paths.txt is repo-relative and prefixed with the package name
+        paths.append(line[len("tldw_chatbook/"):] if line.startswith("tldw_chatbook/") else line)
+    return paths
+
+
+T2 = _tier2_paths()
 files = []
-for t in T1:
+for t in T2:
     p = pkg / t
     if p.is_file(): files += [p]
     elif p.is_dir(): files += [f for f in p.rglob("*.py") if "Splash_Screens" not in f.parts]

@@ -13,6 +13,7 @@ tldw_chatbook/Research_Interop/local_research_service.py	909	list_sessions
 tldw_chatbook/Research_Interop/local_research_service.py	1070	list_runs
 tldw_chatbook/Subscriptions/briefing_selection.py	250	_window_rows
 tldw_chatbook/Subscriptions/briefing_selection.py	331	_curated_rows
+tldw_chatbook/Workflows/document_service.py	983	_workflow_summaries
 tldw_chatbook/Workspaces/registry_service.py	761	list_workspaces
 tldw_chatbook/Writing_Interop/local_writing_service.py	1252	list_projects
 tldw_chatbook/Writing_Interop/local_writing_service.py	1397	list_chapters

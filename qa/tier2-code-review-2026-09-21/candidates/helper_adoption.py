@@ -1,7 +1,12 @@
 """Phase 1b: count importing files for every public def/class in the shared-helper modules."""
 import ast, sys, pathlib, collections, re
-root = pathlib.Path(sys.argv[1])  # repo root
+USAGE = "usage: helper_adoption.py <repo-root> <output-tsv>"
+if len(sys.argv) != 3:
+    sys.exit(USAGE)
+root = pathlib.Path(sys.argv[1]).resolve()
 pkg = root / "tldw_chatbook"
+if not pkg.is_dir():
+    sys.exit(f"{USAGE}\n  no tldw_chatbook/ under: {root}")
 HELPER_MODULES = sorted([p for p in (pkg/"Utils").glob("*.py") if p.name != "__init__.py"]) + [
     pkg/"DB/base_db.py", pkg/"DB/sql_validation.py", pkg/"Widgets/form_components.py"]
 def modname(p): return ".".join(p.relative_to(root).with_suffix("").parts)
@@ -49,7 +54,7 @@ for p in files:
     for local, m in aliases.items():
         for s in helpers[m]:
             if re.search(rf"\b{re.escape(local)}\.{re.escape(s)}\b", src): sym_importers[(m,s)].add(str(p))
-out = pathlib.Path(sys.argv[2]); out.parent.mkdir(parents=True, exist_ok=True)
+out = pathlib.Path(sys.argv[2]).resolve(); out.parent.mkdir(parents=True, exist_ok=True)
 rows = []
 for m, syms in helpers.items():
     for s, kind in syms.items():
