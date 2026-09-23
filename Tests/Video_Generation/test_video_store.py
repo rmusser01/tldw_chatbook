@@ -768,6 +768,39 @@ def test_save_never_calls_startup_retention_or_evaluates_age(
     assert newest.exists()
 
 
+def test_directory_barrier_failure_still_enforces_capacity(tmp_path, monkeypatch):
+    """A failure AFTER the rename must not skip the capacity transaction.
+
+    ``_atomic_publish`` commits the sibling and only then runs the directory
+    barrier, so a real barrier OSError reached ``save`` before
+    ``_enforce_save_capacity`` ever ran. The caller was told the save failed
+    while the file sat committed on disk and the store quietly grew past its
+    configured capacity -- and stayed past it, because nothing re-runs the
+    transaction for a save that "failed".
+    """
+    import errno
+
+    from tldw_chatbook.Video_Generation import video_store as module
+    from tldw_chatbook.Video_Generation.video_store import VideoStoreSaveError
+
+    store = VideoStore(root=tmp_path / "gv", config=_config(max_store_mb=1))
+    older = store.root / "old" / "clip.mp4"
+    older.parent.mkdir(parents=True)
+    older.write_bytes(b"o" * 900_000)
+    os.utime(older, (1, 1))
+
+    def failing_barrier(directory):
+        raise OSError(errno.EIO, "directory barrier failed")
+
+    monkeypatch.setattr(module, "fsync_parent_directory", failing_barrier)
+
+    with pytest.raises(VideoStoreSaveError):
+        store.save("new", "clip", b"n" * 500_000, extension="mp4")
+
+    # The write is committed, so the store must still honour its capacity.
+    assert sum(item.size_bytes for item in store.iter_stored()) <= store.capacity_bytes
+
+
 def test_oversized_save_returns_frozen_capacity_outcome_without_managed_write(tmp_path):
     store = VideoStore(root=tmp_path / "gv", config=_config(max_store_mb=1))
     outcome_type = video_store_module.VideoCapacityExceeded

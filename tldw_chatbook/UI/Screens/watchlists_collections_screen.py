@@ -7924,7 +7924,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         if source_id is not None:
                             sources_pane.select_source_by_id(str(source_id))
                 except Exception:
-                    pass
+                    # The guard exists for an unmounted pane, but it also
+                    # covers four reactive pushes that each run a watcher --
+                    # a failure in one of those leaves the Sources table
+                    # stale, so it must not be silent (tier-2 review S18 P3).
+                    logger.opt(exception=True).debug(
+                        "Failed to push loaded watchlist sources into the pane."
+                    )
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlist sources.")
             if callable(notify):

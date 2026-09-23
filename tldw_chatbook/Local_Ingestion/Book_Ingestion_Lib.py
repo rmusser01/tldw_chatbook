@@ -2384,9 +2384,12 @@ def process_mobi(
         )
 
         try:
-            # Try to read as binary and extract readable text
-            with open(file_path, "rb") as f:
-                binary_content = f.read()
+            # The fallback below reads the whole file and then walks it one
+            # byte at a time in Python, so an unbounded read here is the
+            # expensive kind. Same cap the plaintext/HTML ingest path uses.
+            from .local_file_ingestion import read_ingest_file_bytes
+
+            binary_content = read_ingest_file_bytes(file_path)
 
             # Simple text extraction - look for readable ASCII/UTF-8 sequences
             # This is a very basic approach and won't preserve formatting

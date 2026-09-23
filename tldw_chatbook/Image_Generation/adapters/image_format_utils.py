@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -137,12 +138,50 @@ def content_type_for_format(fmt: str) -> str:
     return "application/octet-stream"
 
 
+def _reject_decompression_bomb(content: bytes) -> None:
+    """Refuse backend image bytes that decode to more pixels than Pillow allows.
+
+    A byte cap says nothing about the decode: Pillow only *warns* above
+    ``Image.MAX_IMAGE_PIXELS`` and decodes anyway, so an 87 KB PNG reaches
+    ~90 M pixels and converts successfully. Escalating that warning is the
+    guard already used by ``request_validation`` and ``comfyui_image_adapter``
+    in this same package.
+
+    Args:
+        content: Raw image bytes about to be decoded.
+
+    Raises:
+        ImageGenerationError: The header declares more pixels than the ceiling.
+    """
+    if Image is None:
+        return
+    try:
+        with warnings.catch_warnings():
+            # Pillow warns above the ceiling and raises above twice it, so
+            # both arms have to mean the same thing here.
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(content)):
+                pass
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageGenerationError(
+            "image has too many pixels to decode safely"
+        ) from exc
+    except Exception:
+        return  # unreadable here; the caller fails informatively
+
+
 def maybe_convert_format(
     content: bytes,
     content_type: str,
     actual_format: str | None,
     requested_format: str,
 ) -> tuple[bytes, str]:
+    # Before the early return, not after it: the pixel ceiling is a property of
+    # the CONTENT, and whether that content also needs transcoding is beside
+    # the point. Guarding only the conversion arm meant a backend answering PNG
+    # to a PNG request -- the ordinary case, not the exotic one -- reached every
+    # adapter with its declared pixel count never looked at.
+    _reject_decompression_bomb(content)
     if requested_format == actual_format:
         return content, content_type or content_type_for_format(requested_format)
     if requested_format not in {"png", "jpg", "webp"}:
