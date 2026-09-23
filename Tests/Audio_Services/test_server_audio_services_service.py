@@ -18,11 +18,18 @@ from tldw_chatbook.tldw_api import (
     SubmitAudioJobRequest,
     VoiceEncodeRequest,
 )
+from tldw_chatbook.tldw_api.exceptions import APIResponseError
 
 
 class FakeAudioClient:
-    def __init__(self):
+    def __init__(self, role="admin"):
         self.calls = []
+        self.role = role
+        self.diagnostic_error = None
+
+    async def get_current_user_profile(self, **kwargs):
+        self.calls.append(("get_current_user_profile", kwargs))
+        return {"user": {"role": self.role} if self.role else None}
 
     async def get_tts_health(self):
         self.calls.append(("get_tts_health",))
@@ -30,6 +37,8 @@ class FakeAudioClient:
 
     async def get_stt_health(self, **kwargs):
         self.calls.append(("get_stt_health", kwargs))
+        if self.diagnostic_error:
+            raise self.diagnostic_error
         return {"status": "healthy", "model": kwargs.get("model")}
 
     async def list_tts_providers(self):
@@ -66,6 +75,8 @@ class FakeAudioClient:
 
     async def test_audio_streaming(self):
         self.calls.append(("test_audio_streaming",))
+        if self.diagnostic_error:
+            raise self.diagnostic_error
         return {"status": "success", "test_passed": True, "message": "ok"}
 
     async def create_speech_chat(self, request_data):
@@ -205,6 +216,47 @@ class FakeAudioClient:
     async def delete_custom_voice(self, voice_id):
         self.calls.append(("delete_custom_voice", voice_id))
         return {"message": "Voice deleted successfully", "voice_id": voice_id}
+
+
+@pytest.mark.asyncio
+async def test_server_audio_diagnostics_require_current_server_admin():
+    client = FakeAudioClient(role="user")
+    service = ServerAudioServicesService(client=client)
+
+    assert (await service.get_stt_health(warm=False))["status"] == "healthy"
+    with pytest.raises(PolicyDeniedError, match="administrator") as warm_denial:
+        await service.get_stt_health(warm=True)
+    with pytest.raises(PolicyDeniedError, match="administrator") as test_denial:
+        await service.test_audio_streaming()
+
+    assert warm_denial.value.reason_code == "admin_required"
+    assert test_denial.value.reason_code == "admin_required"
+    assert client.calls == [
+        ("get_stt_health", {"model": None, "warm": False}),
+        ("get_current_user_profile", {"sections": "identity"}),
+        ("get_current_user_profile", {"sections": "identity"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_audio_diagnostics_translate_revoked_admin_403():
+    client = FakeAudioClient(role="admin")
+    client.diagnostic_error = APIResponseError(403, "Forbidden")
+    service = ServerAudioServicesService(client=client)
+
+    with pytest.raises(PolicyDeniedError) as warm_denial:
+        await service.get_stt_health(warm=True)
+    with pytest.raises(PolicyDeniedError) as test_denial:
+        await service.test_audio_streaming()
+
+    assert warm_denial.value.reason_code == "admin_required"
+    assert test_denial.value.reason_code == "admin_required"
+    assert [call[0] for call in client.calls] == [
+        "get_current_user_profile",
+        "get_stt_health",
+        "get_current_user_profile",
+        "test_audio_streaming",
+    ]
 
 
 @pytest.mark.asyncio

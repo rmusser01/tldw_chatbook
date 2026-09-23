@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Literal, Mapping, Optional
+from collections.abc import AsyncGenerator, Mapping
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+from ..tldw_api.exceptions import APIResponseError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
+        AudiobookJobRequest,
+        AudiobookParseRequest,
         AudioTokenizerDecodeRequest,
         AudioTokenizerEncodeRequest,
         AudioTranscriptionRequest,
         AudioTranslationRequest,
-        AudiobookJobRequest,
-        AudiobookParseRequest,
         OpenAISpeechRequest,
         SpeechChatRequest,
         SubmitAudioJobRequest,
@@ -33,7 +35,7 @@ class ServerAudioServicesService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: TLDWAPIClient | None,
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -48,7 +50,7 @@ class ServerAudioServicesService:
         app_config: Mapping[str, Any],
         *,
         policy_enforcer: Any | None = None,
-    ) -> "ServerAudioServicesService":
+    ) -> ServerAudioServicesService:
         return cls(
             client=None,
             client_provider=build_runtime_api_client_provider_from_config(app_config),
@@ -61,7 +63,7 @@ class ServerAudioServicesService:
         provider: Any,
         *,
         policy_enforcer: Any | None = None,
-    ) -> "ServerAudioServicesService":
+    ) -> ServerAudioServicesService:
         return cls(
             client=None,
             client_provider=provider,
@@ -112,6 +114,24 @@ class ServerAudioServicesService:
             return dict(response)
         return response
 
+    @staticmethod
+    def _admin_required(action_id: str) -> PolicyDeniedError:
+        return PolicyDeniedError(
+            action_id=action_id,
+            reason_code="admin_required",
+            user_message="A server administrator is required for this audio diagnostic.",
+            effective_source="server",
+            authority_owner="server",
+        )
+
+    async def _require_server_admin(
+        self, client: TLDWAPIClient, action_id: str
+    ) -> None:
+        profile = self._dump(await client.get_current_user_profile(sections="identity"))
+        user = profile.get("user") if isinstance(profile, dict) else None
+        if not isinstance(user, dict) or user.get("role") != "admin":
+            raise self._admin_required(action_id)
+
     async def get_tts_health(self) -> dict[str, Any]:
         self._enforce("audio.health.observe.server")
         return self._dump(await self._require_client().get_tts_health())
@@ -119,10 +139,17 @@ class ServerAudioServicesService:
     async def get_stt_health(
         self, *, model: str | None = None, warm: bool = False
     ) -> dict[str, Any]:
-        self._enforce("audio.health.observe.server")
-        return self._dump(
-            await self._require_client().get_stt_health(model=model, warm=warm)
-        )
+        action_id = "audio.health.observe.server"
+        self._enforce(action_id)
+        client = self._require_client()
+        if warm:
+            await self._require_server_admin(client, action_id)
+        try:
+            return self._dump(await client.get_stt_health(model=model, warm=warm))
+        except APIResponseError as exc:
+            if warm and exc.status_code == 403:
+                raise self._admin_required(action_id) from exc
+            raise
 
     async def list_tts_providers(self) -> dict[str, Any]:
         self._enforce("audio.providers.list.server")
@@ -143,8 +170,16 @@ class ServerAudioServicesService:
         return self._dump(await self._require_client().get_audio_streaming_limits())
 
     async def test_audio_streaming(self) -> dict[str, Any]:
-        self._enforce("audio.streaming.launch.server")
-        return self._dump(await self._require_client().test_audio_streaming())
+        action_id = "audio.streaming.launch.server"
+        self._enforce(action_id)
+        client = self._require_client()
+        await self._require_server_admin(client, action_id)
+        try:
+            return self._dump(await client.test_audio_streaming())
+        except APIResponseError as exc:
+            if exc.status_code == 403:
+                raise self._admin_required(action_id) from exc
+            raise
 
     async def create_speech_chat(
         self, request_data: SpeechChatRequest
