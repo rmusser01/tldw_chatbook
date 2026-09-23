@@ -6,7 +6,7 @@ from __future__ import annotations
 # Imports
 import io
 import os
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Sequence, Union
 import tempfile
 from loguru import logger
 
@@ -68,6 +68,84 @@ def escape_ffmetadata(value: str) -> str:
         be re-escaped.
     """
     return str(value).translate(_FFMETADATA_ESCAPES)
+
+
+def build_ffmetadata_document(
+    metadata: Optional[Dict[str, str]],
+    chapter_titles: Sequence[str],
+    chapter_times: Sequence[int],
+    total_ms: int,
+) -> str:
+    """Render one FFMETADATA1 document from user text and chapter offsets.
+
+    Split out of ``AudioService.create_m4b_with_chapters`` so the escaping
+    can be tested where it is actually *applied*, rather than only on
+    ``escape_ffmetadata`` in isolation: that method needs pydub and an
+    ffmpeg binary, so an end-to-end test of it would skip on most machines
+    and cover nothing (TASK-32901 review).
+
+    Args:
+        metadata: Audiobook-level tags; both keys and values are user text.
+        chapter_titles: One title per chapter, user text.
+        chapter_times: Chapter start offsets in ms, with a trailing end
+            offset -- i.e. ``len(chapter_titles) + 1`` entries.
+        total_ms: Fallback end offset for a trailing chapter with no
+            recorded end.
+
+    Returns:
+        The complete document, every user-controlled field escaped.
+    """
+    document = ";FFMETADATA1\n"
+    if metadata:
+        for key, value in metadata.items():
+            document += f"{escape_ffmetadata(key)}={escape_ffmetadata(value)}\n"
+    for index, (title, start_time) in enumerate(
+        zip(chapter_titles, chapter_times[:-1])
+    ):
+        end_time = (
+            chapter_times[index + 1]
+            if index + 1 < len(chapter_times)
+            else total_ms
+        )
+        document += "\n[CHAPTER]\n"
+        document += "TIMEBASE=1/1000\n"
+        document += f"START={start_time}\n"
+        document += f"END={end_time}\n"
+        document += f"title={escape_ffmetadata(title)}\n"
+    return document
+
+
+def write_ffmetadata_file(document: str) -> str:
+    """Write an FFMETADATA1 document for ffmpeg and return its path.
+
+    ``newline="\n"`` and ``encoding="utf-8"`` are both load-bearing, and
+    this file was opened in default text mode without either
+    (TASK-32901 review).
+
+    Default newline translation rewrites every ``\n`` to ``os.linesep``,
+    so on Windows an escaped newline -- backslash immediately followed by
+    LF, which is what makes it a continuation -- becomes backslash, CR, LF.
+    The backslash then escapes the CR instead, the LF ends the record, and
+    a description carrying ``[CHAPTER]`` opens a real chapter in the user's
+    audiobook. That is the exact injection ``escape_ffmetadata`` exists to
+    prevent, reintroduced one layer down.
+
+    The default encoding is the platform's preferred one, not UTF-8: a
+    Japanese or emoji chapter title would raise ``UnicodeEncodeError`` on a
+    cp1252 Windows box, and ffmpeg expects UTF-8 regardless.
+
+    Returns:
+        Path to the written temporary file. The caller owns deletion.
+    """
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        delete=False,
+        encoding="utf-8",
+        newline="\n",
+    ) as handle:
+        handle.write(document)
+        return handle.name
 
 
 class AudioService:
@@ -375,36 +453,11 @@ class AudioService:
                 chapter_times.append(len(combined))
 
             # Create metadata file for chapters (FFmpeg format)
-            metadata_content = ";FFMETADATA1\n"
-
-            # Add general metadata
-            if metadata:
-                for key, value in metadata.items():
-                    metadata_content += (
-                        f"{escape_ffmetadata(key)}={escape_ffmetadata(value)}\n"
-                    )
-
-            # Add chapters
-            for i, (title, start_time) in enumerate(
-                zip(chapter_titles, chapter_times[:-1])
-            ):
-                end_time = (
-                    chapter_times[i + 1]
-                    if i + 1 < len(chapter_times)
-                    else len(combined)
+            metadata_path = write_ffmetadata_file(
+                build_ffmetadata_document(
+                    metadata, chapter_titles, chapter_times, len(combined)
                 )
-                metadata_content += "\n[CHAPTER]\n"
-                metadata_content += "TIMEBASE=1/1000\n"
-                metadata_content += f"START={start_time}\n"
-                metadata_content += f"END={end_time}\n"
-                metadata_content += f"title={escape_ffmetadata(title)}\n"
-
-            # Write metadata to temporary file
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False
-            ) as f:
-                f.write(metadata_content)
-                metadata_path = f.name
+            )
 
             # Export with metadata using ffmpeg
             try:
