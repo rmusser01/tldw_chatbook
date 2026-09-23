@@ -5394,16 +5394,30 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             return
         self._sync_running = True
-        self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
+        self.run_worker(
+            self._run_sync,
+            exclusive=True,
+            group="schedules-sync-now",
+            # TASK-32892: a raise in this worker must not exit the app. The
+            # `finally:` guard below covers the teardown race it was written
+            # for, but not an unforeseen one -- and this is the same worker
+            # whose own comment describes that default taking the app down.
+            exit_on_error=False,
+        )
 
     async def _run_sync(self) -> None:
         service = self._service()
         if service is None:
             self._sync_running = False
             return
-        for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
-            self.query_one(btn_id, Button).disabled = True
         try:
+            # Inside the `try`, not above it: the worker's first slice can
+            # run after the user has already navigated away, and a
+            # `NoMatches` here skipped the `finally:` entirely -- leaving
+            # `_sync_running` set and the Sync action refused for the rest
+            # of the session, the exact wedge this block exists to prevent.
+            for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
+                self.query_one(btn_id, Button).disabled = True
             owner_id = service.owner_id
             # task-23105 review F3: the engine swallows server errors into
             # persisted sync-error state, so its returned SyncOutcome is

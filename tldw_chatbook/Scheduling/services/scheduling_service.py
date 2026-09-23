@@ -1177,20 +1177,24 @@ class SchedulingService:
         With no server connected there is nothing to re-scope, so the view's
         own owner is returned unchanged and the sync stays a local no-op.
 
+        A server-scoped candidate buys no exemption: it is not automatically
+        the scope of the server this session is now talking to. The service
+        outlives any one connection and ``set_owner("server:u1")`` sticks,
+        while `SchedulingServerClient.list_reminders()` takes no owner at all
+        -- it reaches whatever server the notifications service currently
+        points at. So once the active server became u2, returning the
+        candidate unchanged mirrored u2's reminders and automation results
+        under u1's scope (Qodo review of #2799). The connected server always
+        wins; the caller's own scope is the fallback, not the override.
+
         Args:
             owner_id: Caller-supplied scope, or ``None`` for the current view.
 
         Returns:
-            The server-scoped owner when a server is connected, else the
+            The connected server's scope when one is resolved, else the
             caller's own scope.
         """
-        from tldw_chatbook.Scheduling.scheduler.queue import (
-            is_server_scoped_owner,
-        )
-
         candidate = owner_id if owner_id is not None else self.owner_id
-        if is_server_scoped_owner(candidate):
-            return candidate
         return self._active_server_owner_id() or candidate
 
     def _active_server_owner_id(self) -> str | None:

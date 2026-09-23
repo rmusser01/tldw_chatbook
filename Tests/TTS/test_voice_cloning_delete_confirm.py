@@ -18,18 +18,24 @@ import asyncio
 from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
 
 
-def _drive_delete(profile: str) -> object:
-    """Run `_delete_profile` far enough to capture the pushed dialog."""
+def _drive_delete(profile: str, *, answer: bool = False, manager=None) -> object:
+    """Run `_delete_profile` far enough to capture the pushed dialog.
+
+    `answer` is what the confirmation resolves to, so the same seam drives
+    both branches of `if confirmed:`.
+    """
     window = VoiceCloningWindow.__new__(VoiceCloningWindow)
     window.selected_profile = profile
-    window.backend_managers = {}
-    window.current_backend = "none"
+    window.backend_managers = {"vc": manager} if manager is not None else {}
+    window.current_backend = "vc" if manager is not None else "none"
+    window.notify = lambda *_a, **_k: None
+    window._load_profiles = lambda: None
     pushed: list[object] = []
 
     class _App:
         async def push_screen_wait(self, screen):
             pushed.append(screen)
-            return False
+            return answer
 
     original_app = VoiceCloningWindow.app
     VoiceCloningWindow.app = property(lambda _self: _App())
@@ -55,3 +61,30 @@ def test_delete_confirmation_names_the_profile_it_was_built_for():
     # would otherwise name the wrong profile in an irreversible prompt.
     assert "narrator-01" in getattr(_drive_delete("[old] narrator-01"), "message", "")
 
+
+
+class _Manager:
+    """Records whether the irreversible half actually ran."""
+
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    def delete_profile(self, name: str):
+        self.deleted.append(name)
+        return True, f"Deleted {name}"
+
+
+def test_declining_the_confirmation_deletes_nothing():
+    """Qodo review of #2799: the confirm/cancel branch was never driven --
+    the fake always answered False and nothing asserted about the backend,
+    so a `_delete_profile` that deleted regardless of the answer would have
+    passed. That is the failure mode a confirmation dialog exists to stop."""
+    manager = _Manager()
+    _drive_delete("narrator-01", answer=False, manager=manager)
+    assert manager.deleted == []
+
+
+def test_confirming_deletes_exactly_the_named_profile():
+    manager = _Manager()
+    _drive_delete("narrator-01", answer=True, manager=manager)
+    assert manager.deleted == ["narrator-01"]
