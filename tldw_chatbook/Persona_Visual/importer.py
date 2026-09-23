@@ -43,6 +43,7 @@ from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
     ALLOWED_ASSET_ROLES,
     MAX_ASSET_COUNT,
+    MAX_ASSET_DECODED_PIXELS,
     MAX_ASSET_DIMENSION,
     MAX_ASSET_TOTAL_BYTES,
     MAX_FRAMES_PER_ANIMATION,
@@ -777,6 +778,11 @@ def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int
             raise ValueError
         frame_count = int(getattr(image, "n_frames", 1))
         if frame_count < 1 or frame_count > MAX_FRAMES_PER_ANIMATION:
+            raise ValueError
+        # Bound the whole decode, not just one frame: the loop below decodes
+        # every frame, and the per-frame and frame-count caps multiply out to
+        # 60x this on their own (TASK-32901). Matches assets.py's check.
+        if image.width * image.height * frame_count > MAX_ASSET_DECODED_PIXELS:
             raise ValueError
         duration = 0
         for index in range(frame_count):
