@@ -49,9 +49,17 @@ def held_capacity(path: Path) -> Callable[[int], None]:
         path: The destination whose volume is checked. Resolved once.
 
     Returns:
-        A callable taking the bytes about to be written, raising
-        ``ValueError("insufficient_space")`` on the same predicate
-        ``require_capacity`` uses.
+        A callable taking the bytes about to be written.
+
+    Raises:
+        ValueError: ``"invalid_capacity_requirement"`` if ``path`` is not an
+            absolute ``Path`` -- raised here at resolution time, and again
+            from the returned callable for a requirement that is not a
+            non-negative ``int``; ``"capacity_volume_unavailable"`` if no
+            existing ancestor directory can be resolved;
+            ``"insufficient_space"`` from the returned callable when free
+            space is below the requirement plus the margin, on the same
+            predicate ``require_capacity`` uses.
     """
     _require(path, 0)
     _, ancestor = _volume(path)

@@ -202,6 +202,22 @@ def dev_helper_path(data_dir: Path) -> Path:
     return Path(data_dir) / "bin" / f"{HELPER_NAME}-{digest}"
 
 
+def _discard_partial_helper(target) -> None:
+    """Remove a compile output that was never proven complete.
+
+    ``ensure_helper`` short-circuits on ``target.exists()``, so an output
+    ``swiftc`` had already begun writing when the compile timed out (or
+    failed after producing something) would be accepted by every later
+    call -- Meetings would relaunch the same truncated helper forever
+    instead of recompiling it. Best effort: a target we cannot remove is
+    no worse than before.
+    """
+    try:
+        target.unlink()
+    except OSError:
+        pass
+
+
 def ensure_helper(
     data_dir: Path,
     *,
@@ -249,12 +265,14 @@ def ensure_helper(
         logger.warning(
             "audiotap helper compile timed out after {}s", SWIFTC_COMPILE_TIMEOUT_SECONDS
         )
+        _discard_partial_helper(target)
         return None
     if getattr(result, "returncode", 1) != 0 or not target.exists():
         logger.warning(
             "audiotap helper compile failed: {}",
             redact_user_paths(str(getattr(result, "stderr", ""))),
         )
+        _discard_partial_helper(target)
         return None
     return target
 

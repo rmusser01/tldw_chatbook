@@ -76,9 +76,7 @@ tldw_chatbook/TTS/
 │   └── higgs_voice_manager.py # Voice profile management for Higgs
 └── utils/                   # Utility modules
     ├── __init__.py
-    ├── download_models.py   # Model download utilities
-    ├── voice_utils.py       # Voice mixing utilities
-    └── performance.py       # Performance tracking
+    └── voice_utils.py       # Voice mixing utilities
 ```
 
 ### Core Components
@@ -1037,15 +1035,27 @@ Local TTS installs:
 - onnxruntime: ONNX model inference
 
 ### Kokoro Model Setup
-1. Download the model files:
-   - Model: `kokoro-v0_19.onnx` (~300MB)
-   - Voices: `voices.json`
 
-2. Place them in your configured paths or use the download utility:
-   ```python
-   from tldw_chatbook.TTS.utils.download_models import download_kokoro_model
-   await download_kokoro_model()
-   ```
+Acquisition is manual. `TTS/utils/download_models.py` used to offer
+`download_kokoro_model()`; it was unreachable from the app (no caller
+anywhere, and the Settings screen only ever pointed *here*) and was removed
+with the rest of the dead `TTS/utils` modules, so do not reintroduce it as an
+instruction without a caller to go with it.
+
+1. Download the two files:
+   - Model: `kokoro-v0_19.onnx` (~311 MB) --
+     `https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.onnx`
+     (the int8 `kokoro-v0_23-int8.onnx` from
+     `https://huggingface.co/hexgrad/Kokoro-82M-ONNX` also works and is smaller)
+   - Voices: `voices.json` (~10 KB) --
+     `https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.1.0/voices.json`
+
+2. Put them anywhere you like, then set both paths in **Settings ▸ Speech &
+   TTS ▸ Kokoro** -- the "ONNX model file" and "Voices JSON file" fields.
+   That screen owns these keys; it is the supported way to set them, and it
+   is where the Settings guidance text points. The shipped default is the
+   placeholder `path/to/your/downloaded/kokoro-v0_19.onnx`, so Kokoro stays
+   unavailable until both fields are filled in.
 
 ## Usage
 

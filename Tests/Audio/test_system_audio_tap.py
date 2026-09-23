@@ -324,3 +324,64 @@ def test_build_tap_by_kind():
         sat.build_tap(sat.TapMode("native_wasapi", "x", device_index=1), recorder_factory=_Recorder),
         sat.DeviceTap,
     )
+
+
+def test_a_timed_out_compile_does_not_poison_the_next_attempt(tmp_path):
+    """Qodo review on PR #2811: a partial output must not be accepted forever.
+
+    `ensure_helper` short-circuits on `target.exists()`, and a swiftc that
+    timed out may already have begun writing its `-o` target. Without
+    discarding it, every later preparation returns that truncated file and
+    Meetings relaunches it instead of recompiling.
+    """
+    data = tmp_path / "data"
+
+    def stalling_run_that_started_writing(args, **kwargs):
+        Path(args[args.index("-o") + 1]).write_bytes(b"\x00partial")
+        raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 1))
+
+    assert sat.ensure_helper(
+        data, run=stalling_run_that_started_writing,
+        which=lambda name: "/usr/bin/swiftc",
+        executable=str(tmp_path / "nowhere"),
+    ) is None
+
+    recompiles: list[list[str]] = []
+
+    def good_run(args, **kwargs):
+        recompiles.append(args)
+        Path(args[args.index("-o") + 1]).write_text("")
+        return subprocess.CompletedProcess(args, 0)
+
+    assert sat.ensure_helper(
+        data, run=good_run, which=lambda name: "/usr/bin/swiftc",
+        executable=str(tmp_path / "nowhere"),
+    ) is not None
+    assert recompiles, "the partial target was accepted instead of recompiled"
+
+
+def test_a_failed_compile_that_produced_output_is_also_discarded(tmp_path):
+    """The non-zero-returncode branch has the same partial-output problem."""
+    data = tmp_path / "data"
+
+    def failing_run(args, **kwargs):
+        Path(args[args.index("-o") + 1]).write_bytes(b"\x00partial")
+        return subprocess.CompletedProcess(args, 1, stderr="boom")
+
+    assert sat.ensure_helper(
+        data, run=failing_run, which=lambda name: "/usr/bin/swiftc",
+        executable=str(tmp_path / "nowhere"),
+    ) is None
+
+    recompiles: list[list[str]] = []
+
+    def good_run(args, **kwargs):
+        recompiles.append(args)
+        Path(args[args.index("-o") + 1]).write_text("")
+        return subprocess.CompletedProcess(args, 0)
+
+    assert sat.ensure_helper(
+        data, run=good_run, which=lambda name: "/usr/bin/swiftc",
+        executable=str(tmp_path / "nowhere"),
+    ) is not None
+    assert recompiles, "the partial target was accepted instead of recompiled"

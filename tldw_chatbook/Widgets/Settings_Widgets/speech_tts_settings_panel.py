@@ -3467,7 +3467,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 yield Static(
                     "Model files: kokoro-v0_19.onnx (~300 MB) plus voices.json. "
                     "Set their paths below — see Docs ▸ Development ▸ TTS ▸ "
-                    "Kokoro Model Setup for the download utility and expected "
+                    "Kokoro Model Setup for the download links and expected "
                     "filenames.",
                     id="settings-speech-kokoro-model-guidance",
                     classes="settings-detail-row",

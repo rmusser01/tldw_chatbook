@@ -99,6 +99,17 @@ class LazyLiveDictationService:
 
     # Audio buffer settings
     BUFFER_DURATION_MS = 500  # Default, now configurable
+    #: Behavioural ceiling on the buffer duration, enforced identically on the
+    #: config path (`_resolve_buffer_duration_ms`) and the UI path
+    #: (`set_buffer_duration`). Above it, `chunk_size = duration * 16` becomes
+    #: an absurd per-buffer allocation in the recorder. Named because the two
+    #: paths must not drift: a value one accepted and the other rejected would
+    #: mean the Input's clamp and config disagreed about the same key.
+    MAX_BUFFER_DURATION_MS = 2000
+    #: The UI Input's own floor -- an ergonomics choice, not a device
+    #: constraint, which is why the config path's floor is 1 (see
+    #: `_resolve_buffer_duration_ms`).
+    MIN_UI_BUFFER_DURATION_MS = 100
     MIN_SPEECH_DURATION_MS = 300
 
     #: How long `stop_dictation()` waits for the processing thread to drain
@@ -498,8 +509,9 @@ class LazyLiveDictationService:
         clamp already guarded the UI path (`set_buffer_duration`); only the
         config path was open.
 
-        The ceiling is `set_buffer_duration`'s own (and the owning widget's
-        documented 100..2000 Input range): above it, `chunk_size` becomes an
+        The ceiling is `MAX_BUFFER_DURATION_MS`, shared with
+        `set_buffer_duration` (and the owning widget's documented
+        100..MAX_BUFFER_DURATION_MS Input range): above it, `chunk_size` becomes an
         absurd per-buffer allocation. The FLOOR is deliberately 1, not
         `set_buffer_duration`'s 100 -- 100 ms is a UI ergonomics choice, not a
         device constraint, and a smaller buffer is perfectly usable (
@@ -509,7 +521,8 @@ class LazyLiveDictationService:
         `chunk_size <= 0`.
 
         Returns:
-            A positive buffer duration in milliseconds, at most 2000.
+            A positive buffer duration in milliseconds, at most
+            `MAX_BUFFER_DURATION_MS`.
         """
         raw = get_cli_setting("dictation.buffer_duration_ms", cls.BUFFER_DURATION_MS)
         try:
@@ -526,10 +539,11 @@ class LazyLiveDictationService:
                 cls.BUFFER_DURATION_MS,
             )
             return cls.BUFFER_DURATION_MS
-        if not 1 <= duration_ms <= 2000:
+        if not 1 <= duration_ms <= cls.MAX_BUFFER_DURATION_MS:
             logger.warning(
                 "dictation.buffer_duration_ms must be a positive integer of at "
-                "most 2000 (got {!r}); using {}",
+                "most {} (got {!r}); using {}",
+                cls.MAX_BUFFER_DURATION_MS,
                 raw,
                 cls.BUFFER_DURATION_MS,
             )
@@ -1483,8 +1497,9 @@ class LazyLiveDictationService:
         in-memory value.
         """
         self.buffer_duration_ms = max(
-            100, min(2000, duration_ms)
-        )  # Clamp between 100-2000ms
+            self.MIN_UI_BUFFER_DURATION_MS,
+            min(self.MAX_BUFFER_DURATION_MS, duration_ms),
+        )
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):

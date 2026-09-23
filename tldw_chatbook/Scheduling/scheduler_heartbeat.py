@@ -131,6 +131,21 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
             except OSError:
                 pass
             raise
+        # The barrier above makes the CONTENTS durable; this makes the NAME
+        # durable. Placed after the cleanup block on purpose: the publish has
+        # already succeeded here, so a failure to flush the directory must not
+        # route through the unlink-the-temp path. Best effort -- a platform
+        # with no directory descriptor (Windows) simply skips it, and the
+        # residual it leaves is a heartbeat up to one poll interval stale,
+        # never a truncated one.
+        try:
+            directory = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except Exception as exc:  # noqa: BLE001 -- observation never breaks the loop
         logger.debug(f"scheduler heartbeat write failed: {exc!r}")
 

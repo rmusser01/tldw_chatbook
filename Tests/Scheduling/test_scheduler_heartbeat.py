@@ -314,5 +314,42 @@ def test_heartbeat_contents_are_fsynced_before_the_rename(tmp_path, monkeypatch)
         SchedulerHeartbeat(last_tick_at=_t(0), last_success_at=_t(0), tick_count=3),
     )
 
-    assert events == ["fsync", "replace"], events
+    # Qodo review on PR #2811: the contents barrier alone left the RENAME
+    # undurable, so the directory entry could be lost after a power loss --
+    # on a first write that means no heartbeat file at all. Full order:
+    # contents, publish, then the directory that names it.
+    assert events == ["fsync", "replace", "fsync"], events
     assert read_heartbeat(tmp_path / "heartbeat.json").tick_count == 3
+
+
+def test_a_directory_flush_failure_still_leaves_the_heartbeat_published(
+    tmp_path, monkeypatch
+):
+    """The never-raise contract outranks the barrier.
+
+    The publish has already succeeded by the time the directory is flushed,
+    so a failure there must neither propagate nor take the temp-file cleanup
+    path that would now target a name that no longer exists.
+    """
+    from tldw_chatbook.Scheduling import scheduler_heartbeat
+
+    real_fsync = scheduler_heartbeat.os.fsync
+    seen: list[int] = []
+
+    def fsync_that_fails_on_the_directory(fd):
+        seen.append(fd)
+        if len(seen) > 1:  # the directory descriptor, not the file's
+            raise OSError("no directory flush here")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(
+        scheduler_heartbeat.os, "fsync", fsync_that_fails_on_the_directory
+    )
+
+    write_heartbeat(
+        tmp_path / "heartbeat.json",
+        SchedulerHeartbeat(last_tick_at=_t(0), last_success_at=_t(0), tick_count=7),
+    )
+
+    assert len(seen) == 2, "the directory flush was never attempted"
+    assert read_heartbeat(tmp_path / "heartbeat.json").tick_count == 7
