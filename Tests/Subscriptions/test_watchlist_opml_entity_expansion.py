@@ -53,11 +53,6 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: `test_known_unhardened_entries_are_still_unhardened` deletes the register
 #: as each one is fixed, so it cannot rot into folklore.
 _KNOWN_UNHARDENED: dict[str, str] = {
-    "Local_Ingestion/XML_Ingestion.py": (
-        "Parses user-supplied .xml files chosen for ingestion -- the same "
-        "threat shape as the OPML importer fixed by TASK-19558 (a file the "
-        "user did not write, imported on their behalf)."
-    ),
     "Media/local_media_reading_service.py": (
         "`ET.iterparse` over stored media documents. iterparse streams "
         "elements but still expands internal entities, so a byte cap on the "

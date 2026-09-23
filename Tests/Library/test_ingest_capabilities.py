@@ -959,10 +959,11 @@ def test_scope_nouns_exist_for_every_group() -> None:
 
 def test_get_type_group_xml_is_unsupported_task_3308() -> None:
     """task-3308 (defer ruling, task-3310 notes): ``.xml`` stays unmapped in
-    ``detect_file_type``, so pre-flight must classify it unsupported -- the
-    honest state while ``XML_Ingestion.py`` remains unwired. If someone
-    wires XML through (extension -> group -> parse), this pin goes red on
-    purpose: retire it together with the deferral."""
+    ``detect_file_type``, so pre-flight must classify it unsupported. The
+    never-wired ``XML_Ingestion.py`` that the deferral was waiting on was
+    deleted in TASK-32899 (it could not even be imported), so this is now
+    simply the permanent state. If someone wires XML through (extension ->
+    group -> parse), this pin goes red on purpose: retire it then."""
     assert get_type_group("/tmp/feed.xml") == "unsupported"
     assert get_type_group("/tmp/FEED.XML") == "unsupported"
 
