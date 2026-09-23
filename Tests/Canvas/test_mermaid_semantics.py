@@ -23,7 +23,7 @@ def test_admitted_models_use_quickjs(source):
 
 
 CASES = json.loads(
-    (Path(__file__).parent / "fixtures/mermaid/semantics.json").read_text()
+    (Path(__file__).parent / "fixtures/mermaid/semantics.json").read_text(encoding="utf-8")
 )
 
 
