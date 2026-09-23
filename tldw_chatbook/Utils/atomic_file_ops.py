@@ -13,6 +13,14 @@ from typing import Union, Optional
 import shutil
 from loguru import logger
 
+from .file_durability import flush_file, fsync_parent_directory
+
+
+#: Mode a ``private=True`` write is created at. ``tempfile.mkstemp`` already
+#: opens ``O_CREAT|O_EXCL|O_NOFOLLOW`` at exactly this mode, so a private write
+#: is never observable at a wider one -- provided nothing chmods it afterwards.
+PRIVATE_MODE = 0o600
+
 
 def _resolve_target_mode(
     file_path: Path, mode: int, preserve_existing_mode: bool
@@ -47,6 +55,7 @@ def atomic_write_text(
     preserve_existing_mode: bool = False,
     privacy_safe_log: bool = False,
     overwrite: bool = True,
+    private: bool = False,
 ) -> None:
     """
     Write text content to a file atomically.
@@ -72,6 +81,11 @@ def atomic_write_text(
             publish the completed temporary file with an atomic no-clobber
             link and raise ``FileExistsError`` if another writer created the
             destination first.
+        private: Publish owner-only (0o600). The temporary file is already
+            created ``O_CREAT|O_EXCL|O_NOFOLLOW`` at 0o600 by ``mkstemp``, so
+            this simply suppresses the widening ``chmod`` that would otherwise
+            follow -- the file is never observable at a wider mode. ``mode``
+            and ``preserve_existing_mode`` are ignored when True.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -83,7 +97,11 @@ def atomic_write_text(
     # Ensure parent directory exists
     parent_dir.mkdir(parents=True, exist_ok=True)
 
-    target_mode = _resolve_target_mode(file_path, mode, preserve_existing_mode)
+    target_mode = (
+        PRIVATE_MODE
+        if private
+        else _resolve_target_mode(file_path, mode, preserve_existing_mode)
+    )
 
     # Create temporary file in the same directory (for atomic rename)
     fd = None
@@ -98,12 +116,16 @@ def atomic_write_text(
         # Write content to temp file
         with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(content)
-            # Ensure data is written to disk
+            # Ensure data is written to disk, through the host's native
+            # barrier (Darwin F_FULLFSYNC -- a plain fsync leaves the drive
+            # write cache unflushed).
             f.flush()
-            os.fsync(f.fileno())
+            flush_file(f.fileno())
 
-        # Set file permissions
-        os.chmod(temp_path, target_mode)
+        # Set file permissions. A private write skips this: mkstemp already
+        # opened at 0o600, and chmod'ing would only ever widen.
+        if not private:
+            os.chmod(temp_path, target_mode)
 
         if overwrite:
             # Atomic rename (on POSIX) or replace (cross-platform).
@@ -116,6 +138,9 @@ def atomic_write_text(
             os.link(temp_path, file_path)
             os.unlink(temp_path)
         temp_path = None
+        # The rename/link is atomic but not durable until the directory entry
+        # itself is persisted.
+        fsync_parent_directory(parent_dir)
 
         if privacy_safe_log:
             logger.debug("atomic_write_succeeded")
@@ -137,7 +162,10 @@ def atomic_write_text(
 
 
 def atomic_write_bytes(
-    file_path: Union[str, Path], content: bytes, mode: int = 0o644
+    file_path: Union[str, Path],
+    content: bytes,
+    mode: int = 0o644,
+    private: bool = False,
 ) -> None:
     """
     Write binary content to a file atomically.
@@ -148,7 +176,9 @@ def atomic_write_bytes(
     Args:
         file_path: Path to the target file
         content: Binary content to write
-        mode: File permissions (default: 0o644)
+        mode: File permissions (default: 0o644), ignored when ``private``
+        private: Publish owner-only (0o600) with no widening ``chmod`` -- see
+            ``atomic_write_text``.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -173,15 +203,18 @@ def atomic_write_bytes(
         # Write content to temp file
         with os.fdopen(fd, "wb") as f:
             f.write(content)
-            # Ensure data is written to disk
+            # Ensure data is written to disk (native barrier, see above)
             f.flush()
-            os.fsync(f.fileno())
+            flush_file(f.fileno())
 
-        # Set file permissions
-        os.chmod(temp_path, mode)
+        # Set file permissions (a private write is already at 0o600)
+        if not private:
+            os.chmod(temp_path, mode)
 
         # Atomic rename (on POSIX) or replace (cross-platform)
         os.replace(temp_path, str(file_path))
+        temp_path = None
+        fsync_parent_directory(parent_dir)
 
         logger.debug(f"Atomically wrote {len(content)} bytes to {file_path}")
 
@@ -280,8 +313,18 @@ def atomic_copy(
         if mode is not None:
             os.chmod(temp_path, mode)
 
+        # shutil.copy2 does not persist anything; without this the copy is
+        # neither durable nor, after the rename, recoverable.
+        copied_fd = os.open(temp_path, os.O_RDONLY)
+        try:
+            flush_file(copied_fd)
+        finally:
+            os.close(copied_fd)
+
         # Atomic rename
         os.replace(temp_path, str(dst_path))
+        temp_path = None
+        fsync_parent_directory(parent_dir)
 
         logger.debug(f"Atomically copied {src_path} to {dst_path}")
 
