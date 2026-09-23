@@ -697,9 +697,24 @@ class SpeechPlaybackMixin:
                     logger.debug(f"Stop result: {stop_result}")
                     self._release_playback_artifact()
 
-                    # Small delay to ensure clean state
                     import asyncio
 
+                    # Retire the OUTGOING progress timer here -- immediately
+                    # after the old player is stopped and its artifact
+                    # released, and before anything of the replacement is
+                    # prepared (Qodo #2813 finding 2). It used to be retired
+                    # only after `play()` succeeded, which left the old loop
+                    # alive across the PCM copy and the play() await; the
+                    # loop releases whatever sits in `_active_playback_release`
+                    # when it sees an idle player, so the only thing keeping
+                    # it off the REPLACEMENT lease was the accident that no
+                    # `await` separated the install below from the retire.
+                    # Retiring first makes the safety structural: no timer
+                    # from the previous playback is alive while the next one
+                    # is being set up, so none can free the new PCM copy.
+                    await self._retire_progress_timer()
+
+                    # Small delay to ensure clean state
                     await asyncio.sleep(0.2)
 
                     # Check state after stop
@@ -754,13 +769,12 @@ class SpeechPlaybackMixin:
                     logger.debug(f"Play result: {success}")
 
                     if success:
+                        # Safe to install now: the outgoing timer was retired
+                        # to completion above, before play() was even called,
+                        # so nothing can observe an idle player and release
+                        # this lease out from under the audio that is playing.
                         self._active_playback_release = release_artifact
                         release_artifact = None
-
-                        # Retire any existing progress timer to completion
-                        # before starting a new one -- see
-                        # `_retire_progress_timer`.
-                        await self._retire_progress_timer()
 
                         # Start new progress timer
                         self._progress_timer_task = asyncio.create_task(

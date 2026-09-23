@@ -16360,3 +16360,31 @@ the guard. Beware assertions guarded by more than one constant: clamped or
 `min()`-bounded code paths absorb a single-constant mutation silently, which is
 precisely the shape that makes a mutation look like a valid control while being
 inert.
+
+### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
+
+**What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
+pinned that every replacement progress timer in `speech_playback_mixin.py` is
+preceded by the awaited cancellation barrier. It did that by dumping every
+earlier statement in the block and substring-searching for
+`_retire_progress_timer`. Qodo pointed out the hole, and it reproduced exactly:
+dropping the `await` from `_pause_audio_async`'s
+`await self._retire_progress_timer()` -- a five-character edit that leaves the
+coroutine created and never driven, so the cancel-and-join never runs at all --
+left the guard **10 passed, exit 0**. The name is still in the dump either way.
+
+The second guard in the same file had the same shape and the same hole.
+
+**What to do.** When a guard's subject is *how* something is called, match the
+AST node that encodes it, not the text. `await f()` is an `ast.Await` wrapping
+an `ast.Call`; `f()` is a bare `ast.Expr(ast.Call)`. Collect the awaited call
+nodes and compare identities (`id(node.value)`) -- a substring of
+`ast.dump(...)` cannot tell the two apart, and neither can a `"await" in
+source` check, because some *other* await in the same block satisfies it.
+
+More generally: an AST guard is the wrong instrument for an ordering invariant
+that spans control-flow blocks. The replacement here had to become a
+behavioural drive (start the real loop, run the real coroutine, assert the old
+task is dead at the moment the new playback starts); the AST guard was kept only
+for the one thing it is actually good at -- "no site may call this without
+`await`".

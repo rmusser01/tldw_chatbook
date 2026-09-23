@@ -17,8 +17,103 @@ import pytest
 _PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 
 
+def _bare_snippet_editor(monkeypatch, notices: list[Any]) -> tuple[Any, dict[str, Any]]:
+    """A `SnippetEditor` with no app behind it, and the two seams the import
+    now crosses made observable: `run_worker` (which really does run the work
+    on a thread) and `app.call_from_thread` (the way back)."""
+    import threading
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Evals.snippet_editor import SnippetEditor
+
+    record: dict[str, Any] = {"worker_kwargs": None, "marshalled": []}
+
+    def _call_from_thread(callback, *args, **kwargs):
+        record["marshalled"].append(callback.__name__)
+        return callback(*args, **kwargs)
+
+    app = MagicMock()
+    app.call_from_thread = _call_from_thread
+    # `app` is a read-only property on MessagePump, so shadow it on the class.
+    monkeypatch.setattr(SnippetEditor, "app", app, raising=False)
+
+    def _run_worker(work, **kwargs):
+        record["worker_kwargs"] = kwargs
+        thread = threading.Thread(target=work)
+        thread.start()
+        thread.join()
+        return object()
+
+    editor = SnippetEditor.__new__(SnippetEditor)
+    editor._notify = lambda message, **kw: notices.append(  # type: ignore[method-assign]
+        (message, kw.get("severity"))
+    )
+
+    class _ViewModel:
+        db = None
+
+    editor._view_model = _ViewModel()
+    editor._dataset_id = "ds-1"
+    editor._import_worker = None
+    editor.run_worker = _run_worker  # type: ignore[method-assign]
+    return editor, record
+
+
 @pytest.mark.unit
-def test_snippet_import_refuses_a_file_over_the_cap(tmp_path) -> None:
+def test_snippet_import_reads_the_picked_file_off_the_ui_thread(
+    tmp_path, monkeypatch
+) -> None:
+    """Qodo #2813 finding 5: a `push_screen` callback IS the UI thread.
+
+    S22 put a 2 MiB ceiling on this read, which bounds MEMORY but not
+    LATENCY: the picked path can be on a slow or network-backed volume, and
+    the whole read still happened inline in the selection callback, holding
+    rendering and input behind it. CLAUDE.md's rule is "workers for
+    operations >100ms", so the read belongs on a worker thread with only the
+    parse, the write and the notifications marshalled back.
+    """
+    import threading
+
+    from tldw_chatbook.UI.Evals import snippet_editor as module
+
+    picked = tmp_path / "snippets.txt"
+    picked.write_text("one snippet\n", encoding="utf-8")
+
+    read_threads: list[int] = []
+    real_read = module.read_bounded_import_text
+
+    def _recording_read(file_path):
+        read_threads.append(threading.get_ident())
+        return real_read(file_path)
+
+    monkeypatch.setattr(module, "read_bounded_import_text", _recording_read)
+
+    notices: list[Any] = []
+    editor, record = _bare_snippet_editor(monkeypatch, notices)
+    ui_thread = threading.get_ident()
+
+    editor._handle_import_file_selected(str(picked))
+
+    assert read_threads, "the picked file was never read"
+    assert ui_thread not in read_threads, (
+        f"the snippet import read the picked file on the UI thread "
+        f"({ui_thread}); a slow or network-backed picker path freezes "
+        "rendering and input behind it"
+    )
+    kwargs = record["worker_kwargs"]
+    assert kwargs is not None, "no worker was scheduled for the import read"
+    assert kwargs.get("thread") is True, "the import read must be a THREAD worker"
+    assert kwargs.get("group"), (
+        "run_worker without group= -- this repo's rule (see task-222)"
+    )
+    assert "_apply_import_content" in record["marshalled"], (
+        "the parse/write half must come back to the UI thread via "
+        "call_from_thread, not run on the worker thread"
+    )
+
+
+@pytest.mark.unit
+def test_snippet_import_refuses_a_file_over_the_cap(tmp_path, monkeypatch) -> None:
     """S22 P2: the snippet import read a user-picked file with no ceiling.
 
     `file_path.read_text()` ran inside a `push_screen` callback -- the UI
@@ -28,10 +123,7 @@ def test_snippet_import_refuses_a_file_over_the_cap(tmp_path) -> None:
     2 MiB and refuses with a message rather than reading.
     """
     from tldw_chatbook.UI.Chunking_Lab_Modules.sample_region import SAMPLE_BYTES
-    from tldw_chatbook.UI.Evals.snippet_editor import (
-        _IMPORT_MAX_BYTES,
-        SnippetEditor,
-    )
+    from tldw_chatbook.UI.Evals.snippet_editor import _IMPORT_MAX_BYTES
 
     assert _IMPORT_MAX_BYTES == SAMPLE_BYTES, (
         "the two user-picked-text-file caps in this repo must agree"
@@ -44,17 +136,8 @@ def test_snippet_import_refuses_a_file_over_the_cap(tmp_path) -> None:
     small = tmp_path / "small.txt"
     small.write_text("one snippet\n", encoding="utf-8")
 
-    editor = SnippetEditor.__new__(SnippetEditor)
-    notices: list[tuple[str, Any]] = []
-    editor._notify = lambda message, **kw: notices.append(  # type: ignore[method-assign]
-        (message, kw.get("severity"))
-    )
-
-    class _ViewModel:
-        db = None
-
-    editor._view_model = _ViewModel()
-    editor._dataset_id = "ds-1"
+    notices: list[Any] = []
+    editor, _record = _bare_snippet_editor(monkeypatch, notices)
 
     editor._handle_import_file_selected(str(oversized))
     assert notices, "an over-cap file must produce a message"
