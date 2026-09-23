@@ -10,7 +10,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 REDACTED = "***"
 
 _SECRET_KEY_RE = re.compile(
-    r"(?i)(token|secret|passwd|password|api[-_]?key|authorization|bearer|credential)"
+    r"(?i)(token|secret|passwd|password|api[-_]?key|private[-_]?key"
+    r"|authorization|bearer|credential)"
 )
 _INLINE_ARG_RE = re.compile(r"^(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)$")
 
