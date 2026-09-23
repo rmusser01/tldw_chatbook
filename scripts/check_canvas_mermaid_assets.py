@@ -307,6 +307,17 @@ def check_assets(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Rebuild the Canvas Mermaid closure and compare it to the packaged bytes.
+
+    Args:
+        argv: Command-line arguments, defaulting to ``sys.argv[1:]``. Only
+            ``--input-dir`` is recognised; it overrides the pinned-input
+            source that ``TLDW_CANVAS_MERMAID_INPUT_DIR`` otherwise supplies.
+
+    Returns:
+        0 when every output reproduces exactly, 1 when an input fails its
+        pinned digest or a regenerated output differs from the committed one.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", type=Path)
     args = parser.parse_args(argv)

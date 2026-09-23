@@ -29,7 +29,11 @@ Kinds matched:
 3. ``offset_now_iso`` — ``datetime.now(<tz>).isoformat()``, which emits
    ``+00:00`` where ADR-173 mandates ``Z``. A call whose result is immediately
    ``.replace("+00:00", "Z")``-ed is *not* counted: that is the conforming
-   idiom the shared helper uses.
+   idiom the shared helper uses. The exemption requires the replacement to
+   actually run -- exactly two arguments (``replace("+00:00", "Z", 0)`` and
+   ``count=0`` replace nothing yet matched an ``args[:2]`` check), against a
+   UTC-spelled ``now()`` (against another zone the replacement is a no-op and
+   the value still ships ``+05:30``).
 
 4. ``strftime_iso`` — a hand-rolled ISO-8601 ``strftime`` shape
    (``"%Y-%m-%dT%H:%M:%S.%f"``, ``"%Y%m%dT%H%M%SZ"``, …). Only ``T``-separated
@@ -90,6 +94,62 @@ _EXCLUDE = {
 
 Occurrence = tuple[str, str, str]  # (module, symbol, kind)
 
+#: Spellings of UTC accepted as the ``tz`` argument of ``now(...)``.
+#: ``ZoneInfo("UTC")`` is deliberately not among them -- it is equivalent but
+#: not statically distinguishable from ``ZoneInfo("Asia/Kolkata")``, and the
+#: safe direction for a ratcheted census is one extra pinned row, never a
+#: silent exemption. Nothing in the package writes it.
+_UTC_SPELLINGS = {"utc", "UTC"}
+
+
+def _replaces_offset(call: ast.Call) -> bool:
+    """Whether a ``.replace(...)`` call really rewrites ``+00:00`` to ``Z``.
+
+    Args:
+        call: The ``.replace(...)`` call wrapping an ``isoformat()`` result.
+
+    Returns:
+        True only for exactly the two-argument canonical form. A third
+        argument -- ``replace("+00:00", "Z", 0)``, or ``count=0`` -- caps the
+        replacements and can leave the offset untouched, and the check
+        inspected only ``args[:2]``, so such a call bought a full exemption
+        while still emitting ``+00:00``.
+    """
+    if call.keywords or len(call.args) != 2:
+        return False
+    return [
+        arg.value for arg in call.args if isinstance(arg, ast.Constant)
+    ] == ["+00:00", "Z"]
+
+
+def _emits_utc_offset(receiver: ast.AST) -> bool:
+    """Whether ``receiver.isoformat()`` can produce the ``+00:00`` being replaced.
+
+    Args:
+        receiver: The expression ``isoformat()`` is called on.
+
+    Returns:
+        False only for a ``now(<non-UTC tz>)`` receiver, where the
+        replacement is a no-op and the value still ships its own offset
+        (``+05:30``) -- the very ``offset_now_iso`` shape the census exists
+        to track. True otherwise, including for receivers this guard does not
+        classify at all (a bare name, ``astimezone(...)``), which the
+        ``offset_now_iso`` predicate never matches anyway.
+    """
+    if not (
+        isinstance(receiver, ast.Call)
+        and isinstance(receiver.func, ast.Attribute)
+        and receiver.func.attr == "now"
+    ):
+        return True
+    args = [*receiver.args, *(keyword.value for keyword in receiver.keywords)]
+    if len(args) != 1:
+        return False
+    tz = args[0]
+    if isinstance(tz, ast.Attribute):
+        return tz.attr in _UTC_SPELLINGS
+    return isinstance(tz, ast.Name) and tz.id in _UTC_SPELLINGS
+
 
 class _Visitor(ast.NodeVisitor):
     """Collect timestamp-writer occurrences with their enclosing qualname."""
@@ -124,15 +184,16 @@ class _Visitor(ast.NodeVisitor):
             self.hits[(self.module, self._symbol, KIND_UTCNOW)] += 1
 
         # <...>.isoformat().replace("+00:00", "Z") is the conforming idiom:
-        # exempt the inner call before we descend into it.
+        # exempt the inner call before we descend into it. The exemption must
+        # only cover a replacement that actually RUNS -- see _replaces_offset.
         if (
             isinstance(func, ast.Attribute)
             and func.attr == "replace"
             and isinstance(func.value, ast.Call)
             and isinstance(func.value.func, ast.Attribute)
             and func.value.func.attr == "isoformat"
-            and [a.value for a in node.args[:2] if isinstance(a, ast.Constant)]
-            == ["+00:00", "Z"]
+            and _replaces_offset(node)
+            and _emits_utc_offset(func.value.func.value)
         ):
             self._canonicalised.add(id(func.value))
 
@@ -206,6 +267,15 @@ def read_census() -> Counter[Occurrence]:
 
 
 def write_census(hits: Counter[Occurrence]) -> None:
+    """Overwrite the committed census with `hits`, discarding the old pins.
+
+    Destructive by design and only reached via ``--write``: every previous
+    pin is replaced, so a shape that regressed since the last regeneration is
+    silently re-baselined. Read the rows the check named before running it.
+
+    Args:
+        hits: The occurrences to pin, as scanned from the current tree.
+    """
     lines = [
         "# Timestamp-writer census (ADR-173 / TASK-32803.1). Every row emits a",
         "# shape other than the canonical YYYY-MM-DDTHH:MM:SS.mmmZ. Ratchet:",
@@ -219,6 +289,13 @@ def write_census(hits: Counter[Occurrence]) -> None:
 
 
 def main() -> int:
+    """Scan the package and compare it against the committed census.
+
+    Returns:
+        0 when clean (or when ``--write`` regenerated the census), 1 when a
+        ``datetime.utcnow()`` site exists or a ratcheted shape is new or has
+        grown. A malformed census row exits 2 from :func:`read_census`.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--write", action="store_true", help="regenerate the census from the tree"

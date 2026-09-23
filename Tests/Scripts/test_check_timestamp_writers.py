@@ -73,6 +73,49 @@ def test_does_not_flag_the_canonicalising_replace_idiom():
     assert not _scan(src)
 
 
+@pytest.mark.parametrize("count", ["0", "1", "count=0"])
+def test_a_replace_that_cannot_replace_everything_is_still_flagged(count):
+    """`replace("+00:00", "Z", 0)` performs NO replacement and still emits
+    `+00:00`; the guard checked only `args[:2]` and handed it the exemption.
+    Any explicit count is rejected -- the canonical idiom passes exactly two
+    arguments."""
+    src = (
+        "import datetime\nfrom datetime import timezone\n"
+        "def f():\n"
+        "    return datetime.now(timezone.utc).isoformat()"
+        f".replace('+00:00', 'Z', {count})\n"
+    )
+    hits = _scan(src)
+    assert hits[("m", "f", _mod.KIND_OFFSET_NOW_ISO)] == 1
+
+
+def test_a_replace_on_a_non_utc_now_is_still_flagged():
+    """`.replace("+00:00", "Z")` only fires on a UTC offset. Against
+    `now(ZoneInfo("Asia/Kolkata"))` it is a no-op and the value still ships
+    `+05:30` -- the exact `offset_now_iso` shape, exempted by an idiom that
+    never ran."""
+    src = (
+        "import datetime\nfrom zoneinfo import ZoneInfo\n"
+        "def f():\n"
+        "    return datetime.now(ZoneInfo('Asia/Kolkata')).isoformat()"
+        ".replace('+00:00', 'Z')\n"
+    )
+    hits = _scan(src)
+    assert hits[("m", "f", _mod.KIND_OFFSET_NOW_ISO)] == 1
+
+
+@pytest.mark.parametrize("tz", ["timezone.utc", "UTC", "datetime.timezone.utc"])
+def test_the_canonicalising_replace_is_exempt_for_every_utc_spelling(tz):
+    """...and the narrowing must not break the idiom it exists to permit."""
+    src = (
+        "import datetime\nfrom datetime import timezone, UTC\n"
+        "def f():\n"
+        f"    return datetime.now({tz}).isoformat(timespec='milliseconds')"
+        ".replace('+00:00', 'Z')\n"
+    )
+    assert not _scan(src)
+
+
 def test_a_replace_that_is_not_the_canonicalising_one_is_still_flagged():
     """Only the exact ("+00:00", "Z") pair exempts; `.replace("T", " ")`
     produces a different shape entirely and must not buy an exemption."""

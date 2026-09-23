@@ -170,3 +170,129 @@ class S:
 """
     assert _run_main(monkeypatch, tmp_path, source, "# empty\n") == 1
     assert "without thread=True" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# A `try` body only protects when a handler can actually catch the failure
+# (TASK-32897 follow-up). `query_one` raises `NoMatches(QueryError(Exception))`.
+# --------------------------------------------------------------------------
+
+_TRY_FINALLY_NO_HANDLER = """
+class S:
+    async def run(self):
+        try:
+            await self.work()
+            self.query_one("#target")
+        finally:
+            self.cleanup()
+"""
+
+_TRY_UNRELATED_HANDLER = """
+class S:
+    async def run(self):
+        try:
+            await self.work()
+            self.query_one("#target")
+        except ValueError:
+            pass
+"""
+
+
+@pytest.mark.parametrize(
+    "shape, source",
+    [
+        ("try/finally", _TRY_FINALLY_NO_HANDLER),
+        ("except ValueError", _TRY_UNRELATED_HANDLER),
+    ],
+)
+def test_a_try_body_whose_handlers_cannot_catch_is_not_protection(shape, source):
+    """`finally:` runs but re-raises, and `except ValueError` never sees a
+    `NoMatches` -- both propagate out of the worker exactly like no `try` at
+    all. Treating placement in `Try.body` as protection hid them."""
+    assert _w002(source) == ["tldw_chatbook/UI/sample.py::run"], shape
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        "except Exception:",
+        "except BaseException:",
+        "except:",
+        "except NoMatches:",
+        "except QueryError:",
+        "except query.NoMatches:",
+        "except (ValueError, NoMatches):",
+    ],
+)
+def test_a_handler_that_can_catch_the_lookup_still_protects_its_body(handler):
+    """The fix must not turn the check into "every try is worthless"."""
+    source = f"""
+class S:
+    async def run(self):
+        try:
+            await self.work()
+            self.query_one("#target")
+        {handler}
+            pass
+"""
+    assert _w002(source) == [], handler
+
+
+def test_an_outer_catching_try_protects_a_non_catching_inner_one():
+    """The ascent must continue past a `try` that cannot catch, not stop at
+    it: the outer `except Exception` legitimately covers the inner body."""
+    source = """
+class S:
+    async def run(self):
+        try:
+            try:
+                await self.work()
+                self.query_one("#target")
+            except ValueError:
+                pass
+        except Exception:
+            pass
+"""
+    assert _w002(source) == []
+
+
+# --------------------------------------------------------------------------
+# Nested `async def`s are scanned once, under their own name
+# --------------------------------------------------------------------------
+
+
+def test_a_nested_async_function_is_censused_once_under_its_own_name():
+    """`ast.walk` reaches an inner `async def` from the outer function too, so
+    an unguarded lookup in it was emitted twice -- once misattributed to the
+    enclosing function. The inner function gets its own scan; the outer must
+    not claim its sites."""
+    source = """
+class S:
+    async def run(self):
+        await self.work()
+
+        async def inner():
+            await self.work()
+            try:
+                pass
+            finally:
+                self.query_one("#target")
+
+        self.run_worker(inner)
+"""
+    assert _w002(source) == ["tldw_chatbook/UI/sample.py::inner"]
+
+
+def test_a_lookup_in_a_nested_sync_callback_still_belongs_to_its_async_owner():
+    """Only *async* nested defs get their own scan. A lambda or plain `def`
+    callback is never scanned separately, so dropping it from the enclosing
+    function's census would silently delete real coverage -- a dialog
+    callback dereferencing a screen that resolved after the await is exactly
+    the W002 defect class."""
+    source = """
+class S:
+    async def run(self):
+        await self.work()
+        self.push_screen(Modal(), lambda _: self.query_one("#target"))
+"""
+    assert _w002(source) == ["tldw_chatbook/UI/sample.py::run"]
