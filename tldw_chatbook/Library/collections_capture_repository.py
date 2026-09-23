@@ -73,11 +73,25 @@ _STRIPPED_UPDATE_FIELDS = frozenset(
 _CONTENT_UPDATE_FIELDS = frozenset(
     {"freeform_note", "text_content", "clean_html"}
 )
+# Bounded, content-free reasons ``fail_extraction`` will store. This is a
+# hand-maintained allowlist with no enumerating producer: only two of its
+# members are actually emitted today (``interrupted`` and ``unknown``, both
+# string literals in ``collections_capture_service._run_extraction``), the rest
+# are reserved for extractors that do not yet report a reason. Because nothing
+# enumerates it, a new reason drifts out of the set silently -- which is
+# TASK-32893: ``interrupted`` was missing, so cancelling an extraction raised
+# ``invalid_extraction_failure_reason`` and the service swallowed it, leaving
+# the row wedged at ``processing`` until its lease expired. The mitigation for
+# the next drift is that the service now LOGS the refusal rather than dropping
+# it (``collections_capture_service``) and
+# ``Tests/Library/test_collections_capture_extraction.py`` pins every reason
+# the service emits against this set.
 _EXTRACTION_FAILURE_REASONS = frozenset(
     {
         "dependency_missing",
         "empty_extraction",
         "fetch_failed",
+        "interrupted",
         "invalid_url",
         "network_error",
         "redirect_limit",
