@@ -19,7 +19,7 @@
 #   Tests/UI/test_theme_contrast.py.
 from pathlib import Path
 
-from textual.theme import Theme
+from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
 
 
@@ -1929,6 +1929,17 @@ ALL_THEMES = [
 for _shipped_theme in ALL_THEMES:
     ensure_readable_text_hues(_shipped_theme)
 del _shipped_theme
+
+# TASK-32901: and so do Textual's own built-ins. App.__init__ registers
+# BUILTIN_THEMES itself and app.py's switcher offers them by name, so they
+# were the one registered set the guard never saw -- five failed AA,
+# textual-light's text-accent among them, and it is the only light theme in
+# the app's hard-coded list. The guard is idempotent and leaves an explicit
+# per-theme `variables` entry alone, so running it over shared Theme objects
+# is safe; ANSI palettes have no hex to measure and are returned untouched.
+for _builtin_theme in BUILTIN_THEMES.values():
+    ensure_readable_text_hues(_builtin_theme)
+del _builtin_theme
 
 # Example of a theme with the 'variables' attribute as shown in Textual docs:
 # MY_THEMES["arctic_example"] = Theme(

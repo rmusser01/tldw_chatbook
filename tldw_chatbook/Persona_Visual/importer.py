@@ -779,9 +779,9 @@ def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int
         frame_count = int(getattr(image, "n_frames", 1))
         if frame_count < 1 or frame_count > MAX_FRAMES_PER_ANIMATION:
             raise ValueError
-        # The loop below LOADS every frame, so the cap has to be checked
-        # before it runs -- same shape as ``assets._decode_selected_frame``,
-        # which this path otherwise bypasses entirely.
+        # Bound the whole decode, not just one frame: the loop below decodes
+        # every frame, and the per-frame and frame-count caps multiply out to
+        # 60x this on their own (TASK-32901). Matches assets.py's check.
         if image.width * image.height * frame_count > MAX_ASSET_DECODED_PIXELS:
             raise ValueError
         duration = 0

@@ -58,11 +58,11 @@ MAX_TRIGGER_DURATION_MS = 30_000
 MAX_ASSET_COUNT = 256
 MAX_ASSET_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_ASSET_DIMENSION = 4096
-# Decoded-pixel ceiling for one asset, frames included. MAX_ASSET_DIMENSION
-# bounds a single frame at 16.7 Mpx, but an animation multiplies that by its
-# frame count -- at MAX_FRAMES_PER_ANIMATION an archive member that costs a
-# few KB on disk decodes to 4.0e9 pixels. Lives here (not in ``assets``)
-# because both the load path and the pack-import path have to agree on it.
+#: Aggregate decoded pixels allowed across one asset's frames. Per-frame
+#: dimensions and the frame count are each bounded, but their product is
+#: not, so an animation can cost 60x this without either cap firing
+#: (TASK-32901). Lives here, not in assets.py, so every decode site can
+#: reach it -- the import path could not, and did not enforce it.
 MAX_ASSET_DECODED_PIXELS = MAX_ASSET_DIMENSION**2 * 4
 
 INVALID_MANIFEST_REASON = "persona_visual_manifest_invalid"
@@ -328,6 +328,7 @@ __all__ = [
     "ALLOWED_STATE_CATALOG_KINDS",
     "ALLOWED_TRIGGER_SOURCES",
     "MAX_ASSET_COUNT",
+    "MAX_ASSET_DECODED_PIXELS",
     "MAX_ASSET_DIMENSION",
     "MAX_ASSET_TOTAL_BYTES",
     "MAX_CUSTOM_STATES",

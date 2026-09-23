@@ -473,3 +473,46 @@ async def test_archive_receipt_survives_source_switch_for_originating_authority(
     assert restored.status == "reading"
     database_a.close()
     database_b.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_extractions_actually_settles_the_capture(tmp_path: Path) -> None:
+    """(TASK-32893) ``cancel_extractions`` must leave no capture at ``processing``.
+
+    Its docstring says "cancel and settle", but the ``CancelledError`` handler
+    asked the repository to record ``reason="interrupted"`` -- a reason the
+    repository's allowlist did not contain -- and then swallowed the resulting
+    ``CollectionsCaptureError`` with a bare ``pass``. The capture stayed wedged
+    at ``processing`` holding its lease, and nothing was logged.
+    """
+    started = threading.Event()
+    release = threading.Event()
+
+    def extractor(_url: str) -> dict[str, str]:
+        started.set()
+        release.wait(timeout=10)
+        return {"content": "never delivered"}
+
+    authority, database, repository, service = _local_service(
+        tmp_path, extractor=extractor
+    )
+    try:
+        outcome = await service.save_capture(
+            CaptureSaveRequest(authority.key, "https://example.test/cancelled")
+        )
+        assert outcome.capture is not None
+        assert await asyncio.to_thread(started.wait, 10)
+
+        await service.cancel_extractions()
+
+        detail = await asyncio.to_thread(
+            repository.get_detail, outcome.capture.identity
+        )
+        assert detail is not None
+        assert detail.processing_state != "processing", (
+            "a cancelled extraction must not stay wedged at processing"
+        )
+        assert detail.last_fetch_error == "interrupted"
+    finally:
+        release.set()
+        database.close()
