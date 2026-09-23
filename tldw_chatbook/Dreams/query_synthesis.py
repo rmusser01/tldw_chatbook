@@ -117,6 +117,26 @@ async def synthesize_queries(
     return _fallback_queries(topics, count)
 
 
+def preview_queries(topics: list[str], count: int) -> list[str]:
+    """Public preview seam over the fallback list (Task 7's modal only).
+
+    The Artifacts story-detail modal renders a "what we'll look for"
+    preview of the NEXT cycle's queries without ever calling an LLM from
+    the UI, so it shows exactly what a degraded cycle would search. That
+    is this function: the deterministic fallback, exposed publicly so the
+    modal never imports the private helper (controller-authorized wrapper,
+    Task 7).
+
+    Args:
+        topics: Current snapshot topic texts, heaviest first.
+        count: The cycle's query budget (``queries_per_cycle``).
+
+    Returns:
+        The same list ``_fallback_queries`` builds.
+    """
+    return _fallback_queries(topics, count)
+
+
 def _fallback_queries(topics: list[str], count: int) -> list[str]:
     """Deterministic degraded-cycle queries straight from the top topics.
 

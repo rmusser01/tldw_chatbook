@@ -20,6 +20,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Click
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 
@@ -121,7 +122,14 @@ ARTIFACTS_CHATBOOK_TARGET_MISSING_RECOVERY = DestinationRecoveryState(
 class ArtifactsScreen(BaseAppScreen):
     """Generated outputs, portable bundles, reports, datasets, and Chatbooks."""
 
-    BINDINGS = [Binding("s", "share_artifacts", "Share")]
+    # `enter` is hidden (ADR-031: advertised ⊆ bound): it opens the Dreams
+    # story modal only when a dreams row is focused, and stays silent
+    # otherwise. Focusable controls (Button/Input/Select/...) own Enter
+    # before this screen-level binding is ever consulted.
+    BINDINGS = [
+        Binding("s", "share_artifacts", "Share"),
+        Binding("enter", "open_dreams_story", show=False),
+    ]
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "artifacts", **kwargs)
@@ -384,6 +392,63 @@ class ArtifactsScreen(BaseAppScreen):
             return
         self._dreams = rows
         self.refresh(recompose=True)
+
+    # --- Dreams Phase 1 (Task 7): row click / Enter opens the story modal ---
+
+    def on_click(self, event: Click) -> None:
+        """Open the Dreams story modal when a dreams row is clicked.
+
+        Dreams rows are bare Statics (Task 6's idiom), so the click is
+        dispatched here after bubbling; unrelated clicks fall through
+        untouched.
+
+        Args:
+            event: The bubbled click; stopped only on a dreams row.
+        """
+        widget_id = getattr(event.widget, "id", None) or ""
+        if not widget_id.startswith("artifacts-dream-row-"):
+            return
+        event.stop()
+        self._open_dreams_story_row(widget_id)
+
+    def action_open_dreams_story(self) -> None:
+        """Open the focused dreams row's story modal (hidden `enter` binding)."""
+        focused_id = getattr(self.focused, "id", None) or ""
+        if not focused_id.startswith("artifacts-dream-row-"):
+            return
+        self._open_dreams_story_row(focused_id)
+
+    def _open_dreams_story_row(self, widget_id: str) -> None:
+        """Push the story modal for one dreams row (story or synthetic).
+
+        The DB handle is read lazily through the getter (the modal calls
+        it at action time), and ``on_changed`` re-reads the list rows so
+        keep/unkeep badges flip as soon as the modal acts.
+        """
+        key = widget_id.removeprefix("artifacts-dream-row-")
+        story = next(
+            (
+                row
+                for row in self._dreams
+                if key in (f"{row.get('id')}", f"cycle-{row.get('collection_date')}")
+            ),
+            None,
+        )
+        if story is None:
+            return
+        # Lazy import (ADR-097 census note at the top of this file): the
+        # modal chain stays out of the module import set until first use.
+        from .artifacts_dreams_modal import DreamsStoryModal
+
+        self.app.push_screen(
+            DreamsStoryModal(
+                story,
+                dreams_db_getter=lambda: getattr(
+                    self.app_instance, "dreams_db", None
+                ),
+                on_changed=self._start_dreams_refresh,
+            )
+        )
 
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
 
@@ -1097,10 +1162,15 @@ class ArtifactsScreen(BaseAppScreen):
                                 # the widget id keys on the cycle's collection
                                 # date (unique per date by schema).
                                 row_id = f"cycle-{story.get('collection_date')}"
-                            yield Static(
+                            # Focusable pre-yield (same pre-mount mutation
+                            # idiom as the share-stop button below) so Enter
+                            # can open the Task-7 story modal from the row.
+                            dream_row = Static(
                                 self._literal_text(format_dream_row(story)),
                                 id=f"artifacts-dream-row-{row_id}",
                             )
+                            dream_row.can_focus = True
+                            yield dream_row
                     elif self._dreams_enabled:
                         yield Static(
                             "> Dreams: none yet", id="artifacts-list-dreams"
