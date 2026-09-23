@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
@@ -3169,28 +3169,28 @@ def test_digest_retention_purge_survives_more_rows_than_sqlite_variables():
     """
     from datetime import datetime, timezone
 
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
-    connection.execute(
-        "CREATE TABLE local_reading_digest_outputs ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id TEXT NOT NULL,"
-        " created_at TEXT NOT NULL)"
-    )
-    over_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) + 10
-    connection.executemany(
-        "INSERT INTO local_reading_digest_outputs (schedule_id, created_at)"
-        " VALUES (?, ?)",
-        [("sched-1", "2020-01-01T00:00:00+00:00") for _ in range(over_limit)],
-    )
-    connection.commit()
-    service = LocalMediaReadingService(_BareConnectionDB(connection))
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE local_reading_digest_outputs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id TEXT NOT NULL,"
+            " created_at TEXT NOT NULL)"
+        )
+        over_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) + 10
+        connection.executemany(
+            "INSERT INTO local_reading_digest_outputs (schedule_id, created_at)"
+            " VALUES (?, ?)",
+            [("sched-1", "2020-01-01T00:00:00+00:00") for _ in range(over_limit)],
+        )
+        connection.commit()
+        service = LocalMediaReadingService(_BareConnectionDB(connection))
 
-    service._purge_expired_reading_digest_outputs(
-        {"id": "sched-1", "retention_days": 1},
-        run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
+        service._purge_expired_reading_digest_outputs(
+            {"id": "sched-1", "retention_days": 1},
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
 
-    remaining = connection.execute(
-        "SELECT COUNT(*) FROM local_reading_digest_outputs"
-    ).fetchone()[0]
-    assert remaining == 0
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM local_reading_digest_outputs"
+        ).fetchone()[0]
+        assert remaining == 0

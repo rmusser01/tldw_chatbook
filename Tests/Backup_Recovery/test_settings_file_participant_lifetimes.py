@@ -993,3 +993,41 @@ def test_published_bytes_are_fsynced_before_the_rename(
     assert json.loads(selected.read_text())["templates"]["durable"] == {
         "title": "Durable"
     }
+
+
+def test_writeback_failure_does_not_wedge_the_operation_file_list(
+    tmp_path, local_root, monkeypatch
+):
+    """A rejected fsync must not leave a closed wrapper in `state.files`.
+
+    `_file` removed the wrapper only *after* `os.fsync(fd)`, so a writeback
+    error jumped straight to descriptor cleanup with the already-closed
+    wrapper still listed as live. `_retire` gates on `state.files`, so that
+    stale entry -- not the durability failure -- was what permanently refused
+    to release the operation's pins and leases, and it did so with
+    `state.uncertain` still False, i.e. outside this module's one deliberate
+    fail-closed signal. Rejecting an unprovable write is intended; leaking a
+    pinned directory descriptor and a live `_states` entry per failure is not.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Notes.template_store import merge_templates
+
+    monkeypatch.setattr(
+        config, "_get_effective_config_path", lambda: tmp_path / "config.toml"
+    )
+
+    real_fsync = raw.os.fsync
+
+    def refuse(fd):
+        # Only this module's own writes: storage admission fsyncs its own
+        # bookkeeping through the same module object during fixture setup.
+        if getattr(raw._local, "operation", None) is not None:
+            raise OSError("writeback failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(raw.os, "fsync", refuse)
+    with pytest.raises(OSError, match="writeback failed"):
+        merge_templates([("durable", {"title": "Durable"})])
+
+    assert not raw._states
