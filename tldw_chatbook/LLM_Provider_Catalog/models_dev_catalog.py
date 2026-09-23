@@ -19,13 +19,13 @@ constraints from the ACs:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from loguru import logger
+
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 
 #: The upstream aggregate catalog.
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -131,20 +131,14 @@ class ModelsDevCache:
 
 
 def _write_cache_file(disk_path: Path, body: Any, etag: str | None) -> None:
+    # TASK-32901: this used to mkstemp/write/os.replace with no flush and no
+    # fsync, so a power loss between the write and writeback published a
+    # zero-length file under the real name -- and `load` treats a corrupt
+    # cache as merely "rejected", so the loss is silent.
     disk_path = Path(disk_path)
     disk_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"etag": etag, "body": body}, ensure_ascii=False)
-    fd, tmp = tempfile.mkstemp(dir=disk_path.parent, prefix=".models-dev-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-        os.replace(tmp, disk_path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(disk_path, payload)
 
 
 def fetch_models_dev(

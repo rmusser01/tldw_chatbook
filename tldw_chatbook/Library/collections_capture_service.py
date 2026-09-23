@@ -9,6 +9,8 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Protocol
 
+from loguru import logger
+
 from .collections_capture_models import (
     CAPTURE_ANNOTATION_PAGE_SIZE,
     CAPTURE_CAPABILITY_NAMES,
@@ -323,29 +325,43 @@ class LocalCollectionsCaptureService:
             stopped.set()
             if not heartbeat.done():
                 await heartbeat
-            try:
-                await self._call(
-                    self.repository.fail_extraction,
-                    claimed.identity,
-                    owner_token=owner,
-                    reason="interrupted",
-                )
-            except CollectionsCaptureError:
-                pass
+            await self._settle_failed_extraction(claimed, owner, "interrupted")
             raise
         except Exception:
             stopped.set()
             if not heartbeat.done():
                 await heartbeat
-            try:
-                await self._call(
-                    self.repository.fail_extraction,
-                    claimed.identity,
-                    owner_token=owner,
-                    reason="unknown",
-                )
-            except CollectionsCaptureError:
-                pass
+            await self._settle_failed_extraction(claimed, owner, "unknown")
+
+    async def _settle_failed_extraction(
+        self, claimed: CaptureDetail, owner: str, reason: str
+    ) -> None:
+        """Record an extraction failure, LOGGING a repository refusal.
+
+        (TASK-32893) Both callers used to ``except CollectionsCaptureError:
+        pass``. A refusal there means the row never left ``processing`` -- it
+        stays wedged, holding its lease, until ``interrupt_stale_extractions``
+        sweeps it -- and nothing said so. The refusal that actually shipped was
+        ``invalid_extraction_failure_reason``: ``"interrupted"`` was missing
+        from the repository's hand-maintained
+        ``_EXTRACTION_FAILURE_REASONS``. The reason is now in the set, and the
+        next drift is at least visible.
+        """
+        try:
+            await self._call(
+                self.repository.fail_extraction,
+                claimed.identity,
+                owner_token=owner,
+                reason=reason,
+            )
+        except CollectionsCaptureError as exc:
+            logger.warning(
+                "Capture {} could not be settled as failed (reason={!r}): {}; "
+                "the row stays in its current processing state.",
+                claimed.identity.capture_id,
+                reason,
+                exc,
+            )
 
     async def _heartbeat(
         self,
