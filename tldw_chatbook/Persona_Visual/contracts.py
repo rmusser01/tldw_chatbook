@@ -58,6 +58,12 @@ MAX_TRIGGER_DURATION_MS = 30_000
 MAX_ASSET_COUNT = 256
 MAX_ASSET_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_ASSET_DIMENSION = 4096
+#: Aggregate decoded pixels allowed across one asset's frames. Per-frame
+#: dimensions and the frame count are each bounded, but their product is
+#: not, so an animation can cost 60x this without either cap firing
+#: (TASK-32901). Lives here, not in assets.py, so every decode site can
+#: reach it -- the import path could not, and did not enforce it.
+MAX_ASSET_DECODED_PIXELS = MAX_ASSET_DIMENSION**2 * 4
 
 INVALID_MANIFEST_REASON = "persona_visual_manifest_invalid"
 UNSUPPORTED_CAPABILITY_REASON = "persona_visual_capability_unsupported"
@@ -322,6 +328,7 @@ __all__ = [
     "ALLOWED_STATE_CATALOG_KINDS",
     "ALLOWED_TRIGGER_SOURCES",
     "MAX_ASSET_COUNT",
+    "MAX_ASSET_DECODED_PIXELS",
     "MAX_ASSET_DIMENSION",
     "MAX_ASSET_TOTAL_BYTES",
     "MAX_CUSTOM_STATES",

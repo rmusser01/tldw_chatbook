@@ -383,5 +383,13 @@ class ModelCatalogDiskStore:
             raise ValueError("model catalog cache exceeds disk bounds")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        tmp_path.write_bytes(encoded)
+        # TASK-32901: write_bytes + os.replace published the rename without
+        # ever reaching the platter, so a crash could leave a truncated
+        # catalog that `load_into` silently rejects -- the user loses their
+        # discovered models with no error. The pid-scoped temp name is a
+        # separate, pinned contract (one writer per process).
+        with open(tmp_path, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp_path, self.path)

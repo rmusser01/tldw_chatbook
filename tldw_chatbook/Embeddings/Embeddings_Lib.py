@@ -569,7 +569,7 @@ def _openai_embedder(
                 arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)
                 latency = time.perf_counter() - t0
                 logger.debug(
-                    "openai_embed[%s] %d texts in %.3fs via %s",
+                    "openai_embed[{}] {} texts in {:.3f}s via {}",
                     cfg.model_name_or_path,
                     len(texts),
                     latency,
@@ -579,14 +579,14 @@ def _openai_embedder(
             except requests.RequestException as exc:
                 if attempt == len(_BACKOFF):
                     logger.error(
-                        "openai_embed failed after %d retries for %s: %s",
+                        "openai_embed failed after {} retries for {}: {}",
                         attempt,
                         embeddings_endpoint,
                         exc,
                     )
                     raise
                 logger.warning(
-                    "openai_embed retry %d/%d after %s for %s: %s",
+                    "openai_embed retry {}/{} after {} for {}: {}",
                     attempt,
                     len(_BACKOFF),
                     wait,
@@ -645,7 +645,7 @@ class EmbeddingFactory:
         self._cache: "OrderedDict[str, CacheRecord]" = OrderedDict()
         self._lock = threading.Lock()
         logger.debug(
-            "factory initialised max_cached=%d idle=%ds", max_cached, idle_seconds
+            "factory initialised max_cached={} idle={}s", max_cached, idle_seconds
         )
 
     def _get_spec(self, model_id: str) -> ModelCfg:
@@ -654,7 +654,7 @@ class EmbeddingFactory:
         except KeyError:
             if self._allow_dynamic_hf:
                 logger.info(
-                    "dynamic HF model %s (model_id used as model_name_or_path)",
+                    "dynamic HF model {} (model_id used as model_name_or_path)",
                     model_id,
                 )
                 # This assumes any unknown model_id passed when allow_dynamic_hf is True
@@ -886,7 +886,7 @@ class EmbeddingFactory:
                     continue
                 # Note: This can temporarily exceed max_cached, which is acceptable for a startup operation.
                 self._cache[mid] = self._build(mid)
-            logger.info("prefetched %s", mid)
+            logger.info("prefetched {}", mid)
 
     def close(self) -> None:
         """Close all models and clear the cache."""
@@ -1032,7 +1032,10 @@ def get_common_embedding_models() -> Dict[str, ModelCfg]:
             provider="huggingface",
             model_name_or_path="Qwen/Qwen3-Embedding-4B",
             dimension=4096,  # Flexible up to 4096
-            trust_remote_code=True,
+            # TASK-32901: this entry shipped trust_remote_code=True with no
+            # revision, unlike the pinned sibling above. Qwen3 is a native
+            # transformers architecture, so remote code is not required;
+            # re-adding it needs a pinned commit, never a bare HEAD download.
             max_length=32768,  # 32k context
             batch_size=4,
         ),
