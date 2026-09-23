@@ -32,6 +32,7 @@ Dependencies:
 
 #
 # Import necessary libraries
+import asyncio
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -39,10 +40,6 @@ import json
 import os
 import random
 from typing import Any, Dict, List, Union, Optional, Tuple
-
-#
-# 3rd-Party Imports
-import asyncio
 from urllib.parse import urljoin, urlparse
 from xml.dom import minidom
 # Stdlib ElementTree for document BUILDING only (`Element`/
@@ -54,6 +51,9 @@ from xml.dom import minidom
 # sitemap is a billion-laughs vector that `MAX_FETCH_BYTES_SITEMAP`
 # cannot bound, because amplification is the whole point.
 import xml.etree.ElementTree as xET
+
+#
+# 3rd-Party Imports
 from defusedxml.ElementTree import fromstring as _safe_fromstring
 from defusedxml.ElementTree import parse as _safe_parse
 # A refusal is NOT an `xET.ParseError`: `DefusedXmlException` subclasses
@@ -180,6 +180,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter  # n
 from tldw_chatbook.Logging_Config import logging  # noqa: E402
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
 from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
+from tldw_chatbook.Utils.path_validation import validate_path_simple  # noqa: E402
 from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
 from tldw_chatbook.Utils.egress import (  # noqa: E402
     EgressBlockedError,
@@ -887,12 +888,21 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     """
     Scrape articles from a sitemap file, applying an additional filter function.
 
-    :param sitemap_file: Path to the sitemap file
+    :param sitemap_file: Path to the sitemap file. Caller-supplied, so it goes
+        through the central validator before the parser opens it: without that
+        step `../../` walked out of the intended directory and an embedded NUL
+        escaped as an uncaught ValueError from `open()`.
     :param filter_function: A function that takes a URL and returns True if it should be scraped
     :return: List of scraped articles
     """
     try:
-        tree = _safe_parse(sitemap_file)
+        sitemap_path = validate_path_simple(sitemap_file, require_exists=True)
+    except ValueError:
+        logging.error("Refusing to parse sitemap: rejected path")
+        return []
+
+    try:
+        tree = _safe_parse(str(sitemap_path))
         root = tree.getroot()
 
         articles = []

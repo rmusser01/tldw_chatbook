@@ -23,6 +23,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from tldw_chatbook.Utils.input_validation import validate_request_endpoint_path
+from tldw_chatbook.tldw_api import client as client_module
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.exceptions import APIRequestError
 
@@ -88,3 +90,41 @@ async def test_an_ordinary_token_still_reaches_the_server_unchanged():
     assert len(seen) == 1
     assert seen[0].url.path.endswith("/aXb-cYd_eZf012345678901")
     assert seen[0].url.query == b""
+
+
+# ---------------------------------------------------------------------------
+# Qodo review on PR #2806: the policy itself belongs to the shared input
+# boundary, not to a one-off copy inside the API client -- five request
+# primitives depend on it, so a later change made in only one of the two
+# places would diverge silently.
+# ---------------------------------------------------------------------------
+
+
+def test_the_shared_validator_owns_the_policy():
+    """`Utils.input_validation` refuses, and the client reuses that function."""
+    for bad in ("tok?a=1", "tok#f", "a/../b"):
+        with pytest.raises(ValueError):
+            validate_request_endpoint_path(bad)
+
+    assert validate_request_endpoint_path("/api/v1/x/y") == "/api/v1/x/y"
+    assert (
+        client_module.validate_request_endpoint_path
+        is validate_request_endpoint_path
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_request_primitive_calls_the_shared_validator(monkeypatch):
+    """Identity is not use: prove the endpoint actually goes through it."""
+    seen: list[str] = []
+
+    def spy(endpoint: str) -> str:
+        seen.append(endpoint)
+        return endpoint
+
+    monkeypatch.setattr(client_module, "validate_request_endpoint_path", spy)
+    client, _ = _client()
+
+    await client._request("GET", "/api/v1/sharing/public/tok")
+
+    assert seen == ["/api/v1/sharing/public/tok"]

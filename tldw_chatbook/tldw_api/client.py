@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 #
 # Local Imports
+from ..Utils.input_validation import validate_request_endpoint_path
 from .schemas import (
     ProcessVideoRequest,
     ProcessAudioRequest,
@@ -1104,41 +1105,27 @@ def _workspace_source_path_id(value: Any, field_name: str) -> str:
 
 
 def _reject_unsafe_endpoint(endpoint: str) -> str:
-    """Refuse a request path that an interpolated value has escaped.
+    """Route the assembled request path through the shared input boundary.
 
-    Methods here build paths with f-strings (``f"/api/v1/sharing/public/
-    {token}"``); 334 of those segments are `str`-annotated parameters that
-    reach no ``quote()``. httpx resolves the path via ``base_url.join()``,
-    which treats ``?``/``#`` as delimiters and normalises ``..`` -- so a
-    pasted share token containing ``?`` appends attacker-chosen query
-    parameters to an authenticated request, and one containing ``../``
-    walks out of the API namespace with ``X-API-KEY`` still attached.
-
-    One choke point, not 334 call sites. Fails CLOSED: no endpoint in this
-    package carries a literal ``?``/``#``. It deliberately does not
-    re-encode ``/`` -- per-segment quoting (``_workspace_source_path_id``
-    is the shape) remains the complete fix.
+    The delimiter/traversal policy itself lives in
+    ``Utils.input_validation.validate_request_endpoint_path``; this is the
+    one adapter that restates its refusal in this package's exception
+    family. One choke point, not 334 call sites: every request primitive
+    passes its endpoint through here before httpx resolves it.
 
     Args:
         endpoint: The request path assembled by the calling method.
 
     Returns:
-        The endpoint, unchanged, when it is safe to send.
+        The validated endpoint, unchanged, when it is safe to send.
 
     Raises:
         APIRequestError: On a query/fragment delimiter or a ``..`` segment.
     """
-    if "?" in endpoint or "#" in endpoint:
-        raise APIRequestError(
-            "Refusing to send a request path containing '?' or '#': a value "
-            "interpolated into the endpoint escaped its path segment."
-        )
-    if ".." in endpoint.split("/"):
-        raise APIRequestError(
-            "Refusing to send a request path containing a '..' segment: a "
-            "value interpolated into the endpoint escaped its path segment."
-        )
-    return endpoint
+    try:
+        return validate_request_endpoint_path(endpoint)
+    except ValueError as exc:
+        raise APIRequestError(str(exc)) from exc
 
 
 def _raise_api_error_from(error: httpx.HTTPStatusError) -> NoReturn:

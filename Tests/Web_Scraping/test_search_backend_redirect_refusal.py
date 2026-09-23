@@ -44,7 +44,7 @@ from tldw_chatbook.Web_Scraping import WebSearch_APIs
 _PAYLOAD = {"web": {"results": []}, "organic": [], "results": [], "webPages": {}}
 
 
-class _FakeResponse:
+class FakeResponse:
     status_code = 200
     headers = {"Content-Type": "application/json"}
     text = ""
@@ -57,7 +57,7 @@ class _FakeResponse:
         return None
 
 
-class _RecordingRequests:
+class RecordingRequests:
     """Stands in for the module's `requests`, recording every call."""
 
     exceptions = real_requests.exceptions
@@ -65,27 +65,27 @@ class _RecordingRequests:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
-        return _FakeResponse()
+        return FakeResponse()
 
-    def post(self, url: str, **kwargs: Any) -> _FakeResponse:
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
-        return _FakeResponse()
+        return FakeResponse()
 
-    def Session(self) -> "_RecordingSession":  # noqa: N802 - mirrors requests
-        return _RecordingSession(self)
+    def Session(self) -> "RecordingSession":  # noqa: N802 - mirrors requests
+        return RecordingSession(self)
 
 
-class _RecordingSession:
-    def __init__(self, parent: _RecordingRequests) -> None:
+class RecordingSession:
+    def __init__(self, parent: RecordingRequests) -> None:
         self._parent = parent
         self.verify = True
 
     def mount(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
-    def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
         return self._parent.get(url, **kwargs)
 
 
@@ -102,8 +102,8 @@ _SETTINGS = {
 
 
 @pytest.fixture
-def recording(monkeypatch: pytest.MonkeyPatch) -> _RecordingRequests:
-    fake = _RecordingRequests()
+def recording(monkeypatch: pytest.MonkeyPatch) -> RecordingRequests:
+    fake = RecordingRequests()
     monkeypatch.setattr(WebSearch_APIs, "requests", fake)
     # Never read the user's real config (and never dial out).
     monkeypatch.setattr(WebSearch_APIs, "initialize_config", lambda: _SETTINGS)
@@ -135,7 +135,7 @@ def recording(monkeypatch: pytest.MonkeyPatch) -> _RecordingRequests:
     ],
 )
 def test_a_credentialed_provider_call_refuses_to_follow_a_redirect(
-    call, recording: _RecordingRequests
+    call, recording: RecordingRequests
 ) -> None:
     call()
 
