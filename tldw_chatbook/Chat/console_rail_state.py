@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
+from tldw_chatbook.Utils.Utils import coerce_bool_flag
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
@@ -94,8 +95,6 @@ CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY = "character_disclosure_explicit"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-_TRUE_STRINGS = {"true", "yes", "1", "on"}
-_FALSE_STRINGS = {"false", "no", "0", "off"}
 _WORKSPACE_FALLBACK_LABELS = {
     "local",
     "default",
@@ -332,20 +331,6 @@ def collect_prunable_console_rail_keys(
     return prunable
 
 
-def _coerce_bool(value: Any, fallback: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in _TRUE_STRINGS:
-            return True
-        if normalized in _FALSE_STRINGS:
-            return False
-    return fallback
-
-
 def console_rail_right_open_explicit(stored_preferences: Any) -> bool:
     """Return whether a stored payload marks ``right_open`` as user-toggled.
 
@@ -383,7 +368,7 @@ def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
         ``True`` only when the payload carries a truthy
         ``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``.
     """
-    return isinstance(stored_preferences, Mapping) and _coerce_bool(
+    return isinstance(stored_preferences, Mapping) and coerce_bool_flag(
         stored_preferences.get(CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY), False
     )
 
@@ -391,7 +376,7 @@ def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
 def console_character_disclosure_explicit(stored_preferences: Any) -> bool:
     """Return whether Character openness came from an explicit user toggle."""
 
-    return isinstance(stored_preferences, Mapping) and _coerce_bool(
+    return isinstance(stored_preferences, Mapping) and coerce_bool_flag(
         stored_preferences.get(CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY), False
     )
 
@@ -420,27 +405,27 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     # a preference this app writes any more.
     legacy_seed = raw.get("session_open")
     return ConsoleRailPreferences(
-        left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
-        right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
-        workspace_open=_coerce_bool(
+        left_open=coerce_bool_flag(raw.get("left_open"), defaults.left_open),
+        right_open=coerce_bool_flag(raw.get("right_open"), defaults.right_open),
+        workspace_open=coerce_bool_flag(
             raw.get("workspace_open"),
-            _coerce_bool(legacy_seed, defaults.workspace_open),
+            coerce_bool_flag(legacy_seed, defaults.workspace_open),
         ),
-        conversations_open=_coerce_bool(
+        conversations_open=coerce_bool_flag(
             raw.get("conversations_open"),
-            _coerce_bool(legacy_seed, defaults.conversations_open),
+            coerce_bool_flag(legacy_seed, defaults.conversations_open),
         ),
-        model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
-        details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
-        agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
-        character_open=_coerce_bool(raw.get("character_open"), defaults.character_open),
-        inspector_more_open=_coerce_bool(
+        model_open=coerce_bool_flag(raw.get("model_open"), defaults.model_open),
+        details_open=coerce_bool_flag(raw.get("details_open"), defaults.details_open),
+        agent_open=coerce_bool_flag(raw.get("agent_open"), defaults.agent_open),
+        character_open=coerce_bool_flag(raw.get("character_open"), defaults.character_open),
+        inspector_more_open=coerce_bool_flag(
             raw.get("inspector_more_open"), defaults.inspector_more_open
         ),
-        environment_open=_coerce_bool(
+        environment_open=coerce_bool_flag(
             raw.get("environment_open"), defaults.environment_open
         ),
-        tasks_open=_coerce_bool(raw.get("tasks_open"), defaults.tasks_open),
+        tasks_open=coerce_bool_flag(raw.get("tasks_open"), defaults.tasks_open),
     )
 
 
