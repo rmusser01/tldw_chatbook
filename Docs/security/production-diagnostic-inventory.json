@@ -1296,6 +1296,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "3a2686fa6b970d69635c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Library/collections_capture_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 4,
       "diagnostic_digest": "d7e85acdb99de3005f73",
       "owner": "TASK-494",
@@ -2360,8 +2367,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "cfc6f6a77e5b64862f3c",
+      "call_count": 9,
+      "diagnostic_digest": "d2dc9d87899e398bfb1b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/higgs_voice_manager.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2382,7 +2389,7 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "80a7d14d35d0035765a7",
+      "diagnostic_digest": "0da66b254a3e381e5100",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/voice_manager_base.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11394,7 +11401,7 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 602,
+    "owner_files": 603,
     "path_privacy_candidate_calls": 694,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
