@@ -61,7 +61,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #: saying why in the commit message. This is deliberately a literal rather
 #: than "len(census) at HEAD" -- a floor derived from the file it guards
 #: guards nothing.
-MINIMUM_FILES = 120  # TASK-32908: 120 files / 851 tests, verified green
+# TASK-32908 set this to 120 (120 files / 851 tests, verified green).
+# TASK-32899 lowered it to 118: Tests/UI/test_media_handoffs.py and
+# Tests/UI/test_media_v88_simple.py were removed because their SUBJECT was
+# removed -- both import tldw_chatbook.UI.MediaWindow_v2 (and V88), which
+# that task deleted as dead code. This is the one shrink the floor is not
+# meant to stop: no behaviour went uncovered, the covered thing is gone.
+MINIMUM_FILES = 118
 
 
 def read_census(path: Path) -> list[str]:
