@@ -3,13 +3,12 @@
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock
 
 import pytest
 
 import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as dictionary_lib
 import tldw_chatbook.Prompt_Management.Prompts_Interop as prompts_interop
-import tldw_chatbook.UI.CodeRepoCopyPasteWindow as code_repo_window
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
 
@@ -53,7 +52,6 @@ def test_config_children_follow_effective_profile(
         prompts_interop._default_prompt_import_directory()
         == config_path.parent / "prompts"
     )
-    assert code_repo_window._github_config_guidance_path() == config_path
     assert settings_screen._theme_save_target() == config_path.parent / "themes"
     assert settings_screen._internal_prompts_save_target() == config_path
 
@@ -72,7 +70,6 @@ def test_config_children_retain_default_profile_layout(
         prompts_interop._default_prompt_import_directory()
         == config_path.parent / "prompts"
     )
-    assert code_repo_window._github_config_guidance_path() == config_path
     assert settings_screen._theme_save_target() == config_path.parent / "themes"
     assert settings_screen._internal_prompts_save_target() == config_path
 
@@ -149,20 +146,3 @@ def test_settings_internal_prompt_copy_uses_effective_profile_path(
         == f"Save target: {config_path}  [internal_prompts]"
         for row in rows
     )
-
-
-@pytest.mark.asyncio
-async def test_github_token_guidance_uses_effective_config_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """GitHub token guidance points at the selected profile's config file."""
-    config_path = tmp_path / "gamma" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *_args: "")
-    window = MagicMock(spec=code_repo_window.CodeRepoCopyPasteWindow)
-    window.notify = Mock()
-
-    await code_repo_window.CodeRepoCopyPasteWindow.configure_token(window, object())
-
-    assert str(config_path) in window.notify.call_args.args[0]

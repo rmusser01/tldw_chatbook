@@ -104,7 +104,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
 #: that they never need scaling.
 MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
     "UI/Chunking_Lab_Modules/dialogs.py": "chunking-lab dev dialogs -- follow-up wave",
-    "UI/CodeRepoCopyPasteWindow.py": "full-viewport paste surface, no width rule",
     "UI/Library_Modules/library_character_repair_controller.py": "repair dialog (base width 76) -- follow-up wave",
     "UI/Library_Modules/skill_import_choice_modal.py": "choice dialog (base width 88) -- follow-up wave",
     "UI/Navigation/character_conversation_navigation.py": "navigation dialogs (base 72) -- follow-up wave",
