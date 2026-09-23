@@ -35,6 +35,9 @@ import logging
 import time
 from typing import List, Set, Callable
 from urllib.parse import urlparse, urljoin
+
+#
+# Third-Party Libraries
 # defusedxml, not stdlib ElementTree: this module only PARSES (a
 # fetched sitemap), never builds. `MAX_FETCH_BYTES_SITEMAP` does not
 # bound an entity-expansion payload -- amplification is the point --
@@ -42,8 +45,6 @@ from urllib.parse import urlparse, urljoin
 # unchanged. `EntitiesForbidden` subclasses `ValueError`.
 import defusedxml.ElementTree as ET
 
-#
-# Third-Party Libraries
 # Handle optional aiohttp dependency
 try:
     import aiohttp

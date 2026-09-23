@@ -36,11 +36,28 @@ import tldw_chatbook.tldw_api.client  # noqa: F401
 print(sorted(m for m in sys.modules if m.startswith("tldw_chatbook.STT")))
 """
 
+# `_normalize_transcription_provenance(None)` returns on its first line and
+# never reaches the deferred import, so the probe it used to run was vacuous:
+# it stayed green with the import removed entirely. A non-`None` value is what
+# gets past that early return. The document is then rejected by
+# `STT.persistence`'s own validator -- which is the point: reaching a
+# `ValueError` raised inside that module, with the module now in
+# `sys.modules`, is direct evidence the deferred import resolved. An
+# `ImportError` propagates and fails the subprocess.
 _PROBE_STILL_WORKS = """
+import sys
 from tldw_chatbook.tldw_api.media_reading_schemas import (
     _normalize_transcription_provenance,
 )
-print(_normalize_transcription_provenance(None))
+
+assert not [m for m in sys.modules if m.startswith("tldw_chatbook.STT")], (
+    "STT was already imported before the validator ran"
+)
+try:
+    _normalize_transcription_provenance({})
+except ValueError:
+    pass
+print(sorted(m for m in sys.modules if m == "tldw_chatbook.STT.persistence"))
 """
 
 
@@ -79,4 +96,9 @@ def test_importing_the_api_client_does_not_import_the_stt_subsystem(tmp_path):
 
 def test_the_deferred_import_still_resolves_when_the_validator_runs(tmp_path):
     """Anti-vacuity: a deferred import that does not resolve is worse."""
-    assert _run(_PROBE_STILL_WORKS, tmp_path) == "None"
+    assert (
+        _run(_PROBE_STILL_WORKS, tmp_path) == "['tldw_chatbook.STT.persistence']"
+    ), (
+        "the validator body ran without resolving its deferred "
+        "tldw_chatbook.STT.persistence import"
+    )

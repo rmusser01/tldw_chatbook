@@ -102,3 +102,79 @@ def test_document_building_still_uses_stdlib_elementtree():
     from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as m
 
     assert m.xET.__name__ == "xml.etree.ElementTree"
+
+
+# ---------------------------------------------------------------------------
+# The PUBLIC entry points, not just the parser bindings.
+#
+# Qodo review on PR #2806: hardening the parsers turned a refusal into an
+# `EntitiesForbidden` escaping both public sitemap functions, because both
+# caught only `xET.ParseError` -- and a refusal is not one of those
+# (`DefusedXmlException` -> `ValueError`; `ParseError` -> `SyntaxError`).
+# Both document an empty result for input they cannot use, so a hostile
+# sitemap must produce `[]`, not abort the caller.
+# ---------------------------------------------------------------------------
+
+
+def test_the_local_sitemap_entry_point_returns_empty_on_a_refused_document(
+    tmp_path,
+):
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as m
+
+    sitemap = tmp_path / "sitemap.xml"
+    sitemap.write_text(BILLION_LAUGHS_SITEMAP, encoding="utf-8")
+
+    assert m.scrape_from_filtered_sitemap(str(sitemap), lambda url: True) == []
+
+
+def test_the_local_sitemap_entry_point_still_returns_empty_on_malformed_xml(
+    tmp_path,
+):
+    """Anti-regression: the pre-existing `ParseError` arm still works."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as m
+
+    sitemap = tmp_path / "sitemap.xml"
+    sitemap.write_text("<urlset><url>", encoding="utf-8")
+
+    assert m.scrape_from_filtered_sitemap(str(sitemap), lambda url: True) == []
+
+
+def test_the_fetched_sitemap_entry_point_returns_empty_on_a_refused_document(
+    monkeypatch,
+):
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as m
+
+    class _Response:
+        content = BILLION_LAUGHS_SITEMAP.encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        m, "guarded_fetch_requests", lambda *a, **k: _Response()
+    )
+    monkeypatch.setattr(m, "scrape_article", lambda *a, **k: None)
+
+    assert m.scrape_from_sitemap("https://example.invalid/sitemap.xml") == []
+
+
+def test_the_fetched_sitemap_entry_point_still_scrapes_a_benign_document(
+    monkeypatch,
+):
+    """Anti-vacuity: the empty result above is the refusal, not the mock."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as m
+
+    class _Response:
+        content = BENIGN_SITEMAP.encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        m, "guarded_fetch_requests", lambda *a, **k: _Response()
+    )
+    monkeypatch.setattr(m, "scrape_article", lambda url, *a, **k: {"url": url})
+
+    assert m.scrape_from_sitemap("https://example.invalid/sitemap.xml") == [
+        {"url": "https://example.invalid/a"}
+    ]

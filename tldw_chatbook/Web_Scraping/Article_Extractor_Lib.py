@@ -56,6 +56,12 @@ from xml.dom import minidom
 import xml.etree.ElementTree as xET
 from defusedxml.ElementTree import fromstring as _safe_fromstring
 from defusedxml.ElementTree import parse as _safe_parse
+# A refusal is NOT an `xET.ParseError`: `DefusedXmlException` subclasses
+# `ValueError`, `ParseError` subclasses `SyntaxError`. Both sitemap entry
+# points below document an empty result for bad input, so both must catch
+# it -- otherwise hardening the parser converted "hostile sitemap" from a
+# silent success into an uncaught exception in the caller.
+from defusedxml.common import DefusedXmlException
 
 #
 # External Libraries
@@ -897,8 +903,8 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
                     articles.append(article_data)
 
         return articles
-    except xET.ParseError as e:
-        logging.error(f"Error parsing sitemap: {e}")
+    except (xET.ParseError, DefusedXmlException) as e:
+        logging.error(f"Error parsing sitemap: {type(e).__name__}")
         return []
 
 
@@ -1061,7 +1067,9 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             user-intended. Applied to the sitemap fetch alone.
 
     Returns:
-        The scraped articles, or ``[]`` if the sitemap could not be fetched.
+        The scraped articles, or ``[]`` if the sitemap could not be fetched
+        or could not be parsed (malformed, or refused by the hardened
+        parser).
     """
     try:
         response = guarded_fetch_requests(
@@ -1085,6 +1093,10 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
         return []
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
+        return []
+    except (xET.ParseError, DefusedXmlException) as e:
+        # Never the payload: a refused document is attacker-chosen content.
+        logging.error(f"Error parsing sitemap: {type(e).__name__}")
         return []
 
 
