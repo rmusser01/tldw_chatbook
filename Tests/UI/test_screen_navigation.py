@@ -195,7 +195,6 @@ from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.runtime_policy.server_capabilities import (
     ActiveServerCapabilityService,
 )
@@ -437,15 +436,14 @@ def test_media_route_resolves_to_library_screen():
     Library already reimplements full media browsing/management as its own
     canvas (rail row "media", ``LIBRARY_ROW_BROWSE_MEDIA``) -- the standalone
     ``MediaScreen`` (nav: Media Types / All Media / Analysis Review /
-    Collections-Tags / Multi-Item Review) is a dead-end duplicate that used
+    Collections-Tags / Multi-Item Review) was a dead-end duplicate that used
     to render UNDER the active Library tab highlight (the "media" legacy
     route folds into the "library" shell destination for nav-bar purposes,
     but its screen route pointed at a completely different screen). The
-    legacy "media" route id must resolve to ``LibraryScreen`` instead of
-    ``MediaScreen``, mirroring the "notes"/"prompts"/"skills"/"research"
-    compatibility aliases above. ``MediaScreen`` itself is not deleted --
-    its save_state/restore_state contracts stay directly exercised by their
-    own unit tests below, mirroring the "skills" precedent.
+    legacy "media" route id must resolve to ``LibraryScreen``, mirroring the
+    "notes"/"prompts"/"skills"/"research" compatibility aliases above.
+    TASK-32899 deleted ``MediaScreen``/``MediaWindow_v2`` and the shadowed
+    ScreenRoute; the test below keeps the guard.
     """
     from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -4024,22 +4022,6 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.prompt_chatbook_scope_service, PromptChatbookScopeService)
 
 
-def test_media_screen_constructs_destination_local_runtime_state():
-    app = _build_test_app()
-    screen = MediaScreen(app)
-
-    widgets = list(screen.compose_content())
-
-    assert len(widgets) == 2  # destination header + media window
-    assert not hasattr(app, "media_runtime_state")
-    assert not hasattr(screen, "media_runtime_state")
-    assert screen.media_window is widgets[1]
-    assert (
-        screen.media_window.runtime_state.runtime_backend
-        == app.get_authoritative_runtime_source()
-    )
-
-
 @pytest.mark.asyncio
 async def test_main_navigation_exposes_all_routed_primary_screens():
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -4854,61 +4836,6 @@ async def test_search_route_round_trips_to_the_library_rag_row():
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
-
-
-# --- Media/Search unit-style save_state/restore_state contracts -----------
-
-
-def test_media_screen_save_state_returns_expected_keys():
-    app = _build_test_app()
-    screen = MediaScreen(app)
-    list(screen.compose_content())  # populate screen.media_window
-    screen.media_window.active_media_type = "all-media"
-    screen.media_window.selected_media_id = "media-7"
-    screen.media_window.search_panel = SimpleNamespace(
-        search_term="alpha", keyword_filter="beta"
-    )
-
-    state = screen.save_state()
-
-    assert state["media_active_type"] == "all-media"
-    assert state["media_selected_id"] == "media-7"
-    assert state["media_search_term"] == "alpha"
-    assert state["media_keyword_filter"] == "beta"
-
-
-def test_media_screen_save_state_never_raises_when_window_unset():
-    app = _build_test_app()
-    screen = MediaScreen(app)  # compose_content never ran -- media_window is None
-
-    state = screen.save_state()
-
-    assert "media_active_type" not in state
-
-
-def test_media_screen_restore_state_stashes_pending_dict_for_on_mount():
-    """``restore_state`` runs on a fresh, not-yet-mounted instance -- the
-    MediaWindow it will compose does not exist yet, so it can only stash the
-    values for ``on_mount`` to apply once ``compose_content`` has run.
-    """
-    app = _build_test_app()
-    screen = MediaScreen(app)
-
-    screen.restore_state(
-        {
-            "media_active_type": "video",
-            "media_selected_id": "media-9",
-            "media_search_term": "q",
-            "media_keyword_filter": "kw",
-        }
-    )
-
-    assert screen._pending_media_restore == {
-        "active_media_type": "video",
-        "selected_media_id": "media-9",
-        "search_term": "q",
-        "keyword_filter": "kw",
-    }
 
 
 def test_the_retired_ingest_route_resolves_to_library():

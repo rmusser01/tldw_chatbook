@@ -87,43 +87,6 @@ HANDOFFS = frozenset(
 # newly added `subprocess.run` reachable from that same handler -- the very bug
 # TASK-1373 fixed here -- would have been silently accepted.
 BASELINE: dict[tuple[str, str, str], str] = {
-    # Dead file: nothing imports `Chatbooks_Window` (the pre-"Improved" copy).
-    # Verified by grep for `Chatbooks_Window import` across the package --
-    # only `Chatbooks_Window_Improved` has importers. Left flagged rather than
-    # deleted because retiring the file is a separate decision.
-    (
-        "UI/Chatbooks_Window.py",
-        "on_mount",
-        "self._export_path.glob",
-    ): "dead file, no importers",
-    (
-        "UI/Chatbooks_Window.py",
-        "on_button_pressed",
-        "self._export_path.glob",
-    ): "dead file, no importers",
-    (
-        "UI/Chatbooks_Window.py",
-        "action_refresh",
-        "self._export_path.glob",
-    ): "dead file, no importers",
-    # The archive opens in the same function, previously hidden behind the glob
-    # above -- surfaced only once the walk started reporting every blocking call
-    # per function rather than the first.
-    (
-        "UI/Chatbooks_Window.py",
-        "on_mount",
-        "zipfile.ZipFile",
-    ): "dead file, no importers",
-    (
-        "UI/Chatbooks_Window.py",
-        "on_button_pressed",
-        "zipfile.ZipFile",
-    ): "dead file, no importers",
-    (
-        "UI/Chatbooks_Window.py",
-        "action_refresh",
-        "zipfile.ZipFile",
-    ): "dead file, no importers",
     # The ChatbookExportManagementWindow glob+stat scan that was baselined
     # here moved off the pump in task-15471 (`refresh_chatbook_list` now
     # runs `_scan_chatbook_files` via `asyncio.to_thread`).

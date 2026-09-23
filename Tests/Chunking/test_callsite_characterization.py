@@ -15,9 +15,6 @@ What each test pins, and against WHICH producer it runs today:
 * ``ebook_chapters``: Phase B Task 7 removed chunking_service's method
   whitelist, so the method now chunks through the engine (the §7.2
   regression fix; the xfail marker was removed with the whitelist).
-* ``XML_Ingestion`` import: the ``chunk_xml`` part of the seam was restored
-  by the Task 3 shim; the module has a second, PRE-EXISTING broken import
-  unrelated to chunking (see the test for details).
 * ``§7.3 preview/ingest agreement`` (task 10): the chunk preview modal the
   user inspects before ingesting must be produced by the same chunking code
   that stores chunks. Both modal branches are pinned against the ingest seam
@@ -89,32 +86,6 @@ def test_ebook_chapters_through_rag_service():
         text, {"method": "ebook_chapters", "max_size": 400, "overlap": 0}
     )
     assert chunks, "ebook_chapters must chunk, not raise"
-
-
-@pytest.mark.xfail(
-    strict=False,
-    reason="pre-existing, NOT a chunking seam: XML_Ingestion also imports "
-           "'add_media_to_database', which Client_Media_DB_v2 has never "
-           "exported (broken at the branch merge-base; dead module)",
-)
-def test_xml_ingestion_import():
-    # §7.1: the module-level chunk_xml name restored (Task 3 shim).
-    #
-    # The chunking part of this seam is green: chunk_xml imports cleanly and
-    # is pinned directly in test_chunk_lib_shim.py
-    # (test_module_level_chunk_xml_restored). Importing the whole
-    # XML_Ingestion module still fails on a SECOND import that predates this
-    # project (verified against the branch merge-base and the pre-Task-1
-    # commit — zero occurrences of the name in Client_Media_DB_v2 at either):
-    #
-    #   XML_Ingestion.py:13:
-    #   from tldw_chatbook.DB.Client_Media_DB_v2 import add_media_to_database
-    #
-    # No other module in the tree imports XML_Ingestion, which is why this
-    # went unnoticed. Fixing it means touching non-test code and is out of
-    # scope for this task; strict=False so the test flips to XPASS the
-    # moment that import is repaired.
-    import tldw_chatbook.Local_Ingestion.XML_Ingestion as mod  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

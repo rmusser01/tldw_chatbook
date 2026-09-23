@@ -2173,29 +2173,6 @@ async def test_home_read_it_later_primary_lands_on_queue_subview():
     }
 
 
-def test_media_screen_navigation_context_stashes_browse_subview():
-    """The Media nav-context contract stashes the subview pre-mount and
-    applies it after the restored state (explicit navigation wins)."""
-    from tldw_chatbook.Constants import MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW
-    from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-
-    app = _build_test_app()
-    screen = MediaScreen(app)
-    assert screen._pending_nav_browse_subview is None
-
-    screen.apply_navigation_context(
-        {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: "read-it-later"}
-    )
-    assert screen._pending_nav_browse_subview == "read-it-later"
-
-    # Invalid payloads are ignored, not stashed.
-    screen._pending_nav_browse_subview = None
-    screen.apply_navigation_context({})
-    screen.apply_navigation_context({MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: ""})
-    screen.apply_navigation_context(None)
-    assert screen._pending_nav_browse_subview is None
-
-
 def test_open_tasks_provider_wiring_flows_to_dashboard_input():
     """Qodo #12: the production app-to-adapter wiring (constructor lambdas
     closing over the real provider methods) actually feeds the counts
