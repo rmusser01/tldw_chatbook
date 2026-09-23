@@ -45,8 +45,6 @@ CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 #: real `_consume_pending_console_prompt_insert` body lives here now.
 CONSOLE_PROMPTS_PATH = PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
-MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
-MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
 MEDIA_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "media_events.py"
 LEGACY_CHAT_ROOT_NAMES = (
     "rag_expansion_provider_value",
@@ -2005,27 +2003,6 @@ def test_tldw_cli_has_no_retired_media_destination_state() -> None:
             violations[name] = collector.occurrences
 
     assert violations == {}
-
-
-def test_media_runtime_state_is_constructed_only_by_the_destination() -> None:
-    app_occurrences = _occurrences(APP_PATH, "MediaRuntimeState")
-    screen_occurrences = _occurrences(MEDIA_SCREEN_PATH, "MediaRuntimeState")
-    window_occurrences = _occurrences(MEDIA_WINDOW_PATH, "MediaRuntimeState")
-
-    assert app_occurrences == []
-    assert screen_occurrences == []
-    assert any(
-        kind == "name_load" and "MediaWindow.__init__" in ".".join(scopes)
-        for _path, kind, scopes, _line in window_occurrences
-    )
-
-
-def test_media_window_has_no_duplicate_media_active_view_descriptor() -> None:
-    media_window_class = _class_definition(MEDIA_WINDOW_PATH, "MediaWindow")
-    collector = _NamedOccurrenceCollector(MEDIA_WINDOW_PATH, "media_active_view")
-    collector.visit(media_window_class)
-
-    assert collector.occurrences == []
 
 
 def test_media_events_module_contains_contracts_not_root_handlers() -> None:

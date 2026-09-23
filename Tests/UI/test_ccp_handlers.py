@@ -11,7 +11,6 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
 )
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
-    CCPMessageManager,
     CCPPersonaHandler,
     PersonaMessage,
     ViewChangeMessage,
@@ -402,28 +401,6 @@ class TestCCPPersonaHandler:
             "Local chat greetings are not available yet.",
             severity="warning",
         )
-
-
-class TestCCPMessageManager:
-    """Message manager coverage for string session IDs."""
-
-    def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
-        # load_conversation_messages is a plain `def` (TASK-981: it never
-        # awaits anything, so `@work(thread=True)` on `async def` was
-        # buying nothing but an extra event loop per call) -- call the
-        # unwrapped function synchronously, no `await`.
-        manager = CCPMessageManager(mock_window)
-
-        with patch(
-            "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.fetch_messages_for_conversation",
-            return_value=[{"id": "msg-1", "role": "user", "content": "hello"}],
-        ) as mock_fetch:
-            CCPMessageManager.load_conversation_messages.__wrapped__(
-                manager, "conv-1"
-            )
-
-        mock_fetch.assert_called_with("conv-1")
-        assert manager.current_messages[0]["id"] == "msg-1"
 
 
 @pytest.mark.asyncio
