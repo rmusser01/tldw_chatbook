@@ -12,7 +12,8 @@ ADR required: yes
 ADR path: backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md
 Reason: new provider/runtime boundary (preset-driven adapter form), changes how
 providers register across config/Console/settings surfaces, and records the
-deliberate xAI exclusion and Bedrock deferral.
+deliberate xAI exclusion and the Bedrock OpenAI-compat-first scope (native
+Converse wire deferred as fallback).
 ```
 
 ## Summary
@@ -30,9 +31,9 @@ breadth. This design introduces:
    (data, not code), absorbing the boilerplate currently duplicated between
    `zai.py` and `moonshot.py`, riding the existing `hosted_chat` wire boundary.
 3. **Curated presets** — Databricks first; Together, Fireworks, Cerebras,
-   Perplexity next; Azure OpenAI and Gemini's OpenAI-compatible layer after
-   two small transport extensions; Bedrock deliberately deferred (non-OpenAI
-   Converse wire).
+   Perplexity next; Azure OpenAI, Gemini's OpenAI-compatible layer, and AWS
+   Bedrock (via Bedrock's own OpenAI-compatible endpoints, verified
+   December 2025) after two small transport extensions.
 
 Adding a curated provider drops from "20-file ritual" to "one registry record
 + one preset record + one registration line + tests + docs".
@@ -59,9 +60,13 @@ Adding a curated provider drops from "20-file ritual" to "one registry record
 - Migrating `moonshot.py`/`zai.py` (or the legacy `LLM_API_Calls.py`
   providers) onto the engine — ADR-063's evidence-gated migration policy
   stands; migration is a possible follow-up task, not this design.
-- AWS Bedrock (Converse API is not OpenAI-shaped → needs a true strict
-  adapter) and full enterprise identity auth (SigV4, Entra, service-account
-  ADC). Key-based auth only; seams left open (Phase 4 candidates).
+- Bedrock's **native wire** (Converse/InvokeModel) and **SigV4/IAM auth**:
+  Bedrock is supported via its OpenAI-compatible endpoints + long-term
+  Bearer API keys (AWS, December 2025) — a preset, not a Converse adapter.
+  The native wire remains a documented fallback only if a required model
+  isn't exposed through the OpenAI-compatible surface.
+- Full enterprise identity auth (SigV4, Entra, service-account ADC).
+  Key-based auth only; seams left open (Phase 4 candidates).
 - Anthropic-wire or Google-native-wire providers; those remain hand-written
   adapters.
 
@@ -99,6 +104,10 @@ Adding a curated provider drops from "20-file ritual" to "one registry record
    OpenAI-compatible at `{workspace-host}/openai/v1`, Bearer PAT auth.
 4. Enterprise clouds: **key-based auth now**, structured so identity-based
    auth can be added per provider later without rework.
+5. **AWS Bedrock is in scope** (added at spec review): Bedrock exposes
+   native OpenAI-compatible Chat Completions/Responses endpoints with
+   long-term Bearer API keys (AWS announcement, December 2025) — so Bedrock
+   is a preset on the engine, not a Converse strict adapter.
 
 ## Architecture
 
@@ -376,12 +385,20 @@ Acceptance criteria:
       deployment listing, key-based auth.
 - [ ] Gemini OpenAI-compatible layer preset (OpenAI-compat endpoint with API
       key), distinct from the existing native Google adapter.
+- [ ] AWS Bedrock preset on the engine: OpenAI-compatible endpoint with a
+      region-configured base URL (per-account like Databricks — no shipped
+      default), Bearer API-key auth, model discovery per O-3, response
+      allowances from a live probe. Readiness copy notes Bedrock API-key
+      expiry (long-term but time-limited keys) as a likely 401 cause. If a
+      required model turns out not to be exposed via the OpenAI-compatible
+      endpoints, the native-Converse-fallback decision escalates to a spec
+      addendum before implementation.
 
 ### Phase 4 — deferred (separate future specs/tasks)
 
-Bedrock Converse strict adapter; enterprise identity auth (SigV4/Entra/ADC)
-plugged at the `auth_scheme` seam; possible evidence-gated migration of
-`moonshot.py`/`zai.py` onto the engine.
+Bedrock-native Converse wire (fallback only, see Phase 3); enterprise
+identity auth (SigV4/Entra/ADC) plugged at the `auth_scheme` seam; possible
+evidence-gated migration of `moonshot.py`/`zai.py` onto the engine.
 
 ## Testing strategy
 
@@ -413,6 +430,12 @@ plugged at the `auth_scheme` seam; possible evidence-gated migration of
 - **O-2 — Azure exact URL shaping:** finalized in the Phase 3 plan; the seam
   (constructed route + query params in the transport call, never in
   configured base URLs) is fixed by this design.
+- **O-3 — Bedrock OpenAI-compatible specifics:** exact endpoint URL pattern
+  (region placeholder), model-ID format (inference-profile prefixes such as
+  `us.*`), whether a `/v1/models`-style listing exists or discovery needs
+  the native ListFoundationModels shape, response-envelope allowances, and
+  API-key lifetime handling in readiness copy. Pinned from AWS docs + live
+  probe in the Phase 3 plan; manual `[providers]` seeding works regardless.
 
 ## Alternatives considered
 
