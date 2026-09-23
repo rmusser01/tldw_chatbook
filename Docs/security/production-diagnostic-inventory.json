@@ -1689,7 +1689,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "7b37ae0b5279821bb81b",
+      "diagnostic_digest": "14ff99ccf9fbaefb5c4d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Persona_Buddy/controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
