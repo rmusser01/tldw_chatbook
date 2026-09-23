@@ -7151,7 +7151,14 @@ class ProtectKeysStep(SetupStep):
         # out of a worker whose `exit_on_error` defaults to True exits the
         # whole app mid-setup. Recheck, and the launch sites pass
         # exit_on_error=False for everything this recheck cannot see.
-        if not self.is_mounted:
+        #
+        # Qodo review of PR #2799: `is_attached`, NOT `is_mounted`.
+        # Textual 8.2.8 sets `_is_mounted = True` once and never clears it
+        # (message_pump.py:612 is its only assignment after __init__), so a
+        # removed widget still reports `is_mounted is True` -- the check this
+        # comment describes was inert. `is_attached` walks `_parent` to the
+        # DOM root and goes False the moment the node is removed.
+        if not self.is_attached:
             return
         status = self.query_one("#setup-protect-status", Static)
         if ok:
@@ -7374,7 +7381,9 @@ class SummaryStep(SetupStep):
         # out of a worker whose `exit_on_error` defaults to True exits the
         # whole app mid-setup. Recheck, and the launch sites pass
         # exit_on_error=False for everything this recheck cannot see.
-        if not self.is_mounted:
+        # Qodo review of PR #2799: `is_attached`, not `is_mounted` -- see
+        # `ProtectKeysStep._apply_password_worker` for why the latter is inert.
+        if not self.is_attached:
             return
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 

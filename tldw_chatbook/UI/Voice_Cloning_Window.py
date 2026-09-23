@@ -560,23 +560,41 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         # OFF, so a profile called `[old] voice` names itself correctly).
         from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
-        confirmed = await self.app.push_screen_wait(
+        # Qodo review of PR #2799: the first cut of this fix awaited
+        # `app.push_screen_wait`, which raises `NoActiveWorker` unless it runs
+        # inside a Textual worker -- and NEITHER caller is one
+        # (`on_button_pressed` runs on the message pump; `action_delete_profile`
+        # spawns a bare `asyncio.create_task`). That just swapped the compose
+        # `AttributeError` for a push-time `NoActiveWorker`: still no dialog,
+        # still no delete. The callback form has no worker requirement and is
+        # what every other dialog in this module already uses.
+        #
+        # The name is bound HERE, not re-read in the callback: the prompt names
+        # one profile and the irreversible half must delete that same one even
+        # if the table selection moves while the dialog is up.
+        profile = self.selected_profile
+
+        def _on_confirmed(confirmed: Optional[bool]) -> None:
+            if not confirmed:
+                return
+            manager = self.backend_managers.get(self.current_backend)
+            if not manager:
+                return
+            success, message = manager.delete_profile(profile)
+            if success:
+                self.notify(message, severity="information")
+                self._load_profiles()
+            else:
+                self.notify(message, severity="error")
+
+        self.app.push_screen(
             ConfirmationDialog(
                 title="Delete Profile",
-                message=f"Delete profile '{self.selected_profile}'?",
+                message=f"Delete profile '{profile}'?",
                 confirm_label="Delete",
-            )
+            ),
+            _on_confirmed,
         )
-        if confirmed:
-            # Delete the profile
-            manager = self.backend_managers.get(self.current_backend)
-            if manager:
-                success, message = manager.delete_profile(self.selected_profile)
-                if success:
-                    self.notify(message, severity="information")
-                    self._load_profiles()
-                else:
-                    self.notify(message, severity="error")
 
     async def _export_profile(self) -> None:
         """Export selected profile"""

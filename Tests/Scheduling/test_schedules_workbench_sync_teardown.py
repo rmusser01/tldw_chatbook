@@ -8,8 +8,12 @@ screen (the user navigates away while the server call is in flight) raises
 True, i.e. the app exits -- and `_sync_running` is left set, wedging the Sync
 action for the rest of the session.
 
-Gate-free: the screen is allocated with `__new__`, and only `_run_sync`'s own
-seams are driven.
+The unit tests below are gate-free: the screen is allocated with `__new__`
+and only `_run_sync`'s own seams are driven. The mounted journey at the
+bottom of this file (Qodo review of PR #2799, "Sync teardown lacks worker
+coverage") pushes the real workbench into a real Textual app, starts the real
+worker, and pops the screen mid-flight -- which is how the original fix's
+`is_mounted` guard was found to be inert.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
 from textual.css.query import NoMatches
 
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -24,10 +29,25 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 
 
+class _DetachableWorkbench(SchedulesWorkbench):
+    """Lets the unit fakes below drive the real production predicate.
+
+    `is_attached` is a read-only Textual property, and a `__new__`-allocated
+    screen has no app, so it would be permanently False. Overriding it is the
+    only way for an off-app fake to exercise BOTH sides of the guard.
+    """
+
+    _attached = True
+
+    @property
+    def is_attached(self) -> bool:
+        return self._attached
+
+
 def _screen_that_unmounts_mid_sync():
     """A workbench whose DOM disappears while `sync_now` is awaited."""
-    screen = SchedulesWorkbench.__new__(SchedulesWorkbench)
-    screen._is_mounted = True
+    screen = _DetachableWorkbench.__new__(_DetachableWorkbench)
+    screen._attached = True
     screen._sync_running = True
     posted: list[object] = []
     buttons = {
@@ -36,7 +56,7 @@ def _screen_that_unmounts_mid_sync():
     }
 
     def _query_one(selector, _expect=None):
-        if not screen._is_mounted:
+        if not screen._attached:
             raise NoMatches(selector)
         return buttons[selector]
 
@@ -52,7 +72,7 @@ def _screen_that_unmounts_mid_sync():
 
         async def sync_now(self, _owner_id):
             # The user navigates away while the server call is in flight.
-            screen._is_mounted = False
+            screen._attached = False
             return SimpleNamespace(status="ok")
 
     screen._service = lambda: _Service()
@@ -125,8 +145,85 @@ def test_a_sync_whose_screen_is_already_gone_still_clears_the_flag():
     session, which is the wedge this task exists to prevent.
     """
     screen, _posted = _screen_that_unmounts_mid_sync()
-    screen._is_mounted = False  # gone before the worker's first slice
+    screen._attached = False  # gone before the worker's first slice
 
     asyncio.run(screen._run_sync())
 
     assert screen._sync_running is False
+
+
+# --------------------------------------------------------------------------
+# Qodo review of #2799, "Sync teardown lacks worker coverage": everything
+# above drives `_run_sync` directly on a synthetic screen, so it never
+# exercised a Textual worker, a real unmount, or `exit_on_error`. This does.
+#
+# It is also what caught the guard being inert. `is_mounted` looked like the
+# obvious "am I still here?" check, but Textual 8.2.8 assigns
+# `_is_mounted = True` exactly once and never clears it, so the popped screen
+# still reported True, entered the DOM block it was meant to skip, raised
+# `NoMatches`, and was swallowed by the `except` underneath. A fake that sets
+# `_is_mounted = False` by hand asserts on a state production never reaches.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_popping_the_workbench_mid_sync_leaves_the_app_alive_and_unwedged():
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from Tests.UI.schedules_test_helpers import (
+        MockSchedulingDB,
+        MockSchedulingServiceMixin,
+        MockServerClient,
+    )
+
+    released = asyncio.Event()
+
+    class _BlockingService(MockSchedulingServiceMixin):
+        server_client = MockServerClient(notifications_service=object())
+
+        def __init__(self) -> None:
+            self.db = MockSchedulingDB()
+
+        async def list_tasks(self, owner_id=None, include_projections=True):
+            return []
+
+        async def sync_now(self, owner_id=None):
+            await released.wait()
+            return SimpleNamespace(status="ok", pulled=0, pushed=0)
+
+    class _App(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.scheduling_service = _BlockingService()
+            self.runtime_policy = SimpleNamespace(
+                state=SimpleNamespace(active_server_id="example.com")
+            )
+
+    app = _App()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        await workbench.action_sync_now()
+        await pilot.pause()
+        assert workbench._sync_running is True, "the sync worker never started"
+
+        # The user navigates away while the server call is in flight.
+        pilot.app.pop_screen()
+        await pilot.pause()
+        released.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        # The Textual fact the guard must not be written against: a popped
+        # screen still calls itself mounted. Pinned so nobody "simplifies"
+        # `is_attached` back to `is_mounted`.
+        assert workbench.is_mounted is True
+        assert workbench.is_attached is False
+
+        assert pilot.app.is_running, "the sync teardown took the app down"
+        assert workbench._sync_running is False, (
+            "Sync stays refused for the rest of the session"
+        )

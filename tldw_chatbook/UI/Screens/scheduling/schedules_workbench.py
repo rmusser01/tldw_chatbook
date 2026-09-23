@@ -5453,7 +5453,17 @@ class SchedulesWorkbench(BaseAppScreen):
             # the Sync action for the rest of the session. State first, DOM
             # behind a mount check.
             self._sync_running = False
-            if self.is_mounted:
+            # Qodo review of PR #2799: `is_attached`, NOT `is_mounted`.
+            # Textual 8.2.8 sets `_is_mounted = True` once and never clears
+            # it (message_pump.py:612 is its only assignment after __init__),
+            # so a popped screen still reports `is_mounted is True` -- this
+            # branch was entered on the very teardown it guards, raised
+            # `NoMatches`, and was swallowed by the `except` below. Measured
+            # on a mounted app: pop the screen mid-sync and the `finally:`
+            # still runs (a worker cancellation propagates THROUGH it),
+            # `is_mounted` is True, `is_attached` is False. The `except`
+            # stays too: it covers races this predicate cannot see.
+            if self.is_attached:
                 try:
                     for btn_id in (
                         "#scheduling-owner-local",
