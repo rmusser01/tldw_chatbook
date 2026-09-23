@@ -96,15 +96,29 @@ class UnsupportedModelResponseEncoding(ValueError):
     """The peer ignored identity encoding for a bounded models response."""
 
 
-async def read_bounded_model_response(response: httpx.Response) -> bytes | None:
-    """Read raw streamed bytes without allowing transparent decompression."""
+async def read_bounded_model_response(
+    response: httpx.Response, max_bytes: int = MODEL_PROBE_RESPONSE_MAX_BYTES
+) -> bytes | None:
+    """Read raw streamed bytes without allowing transparent decompression.
+
+    Args:
+        response: A streamed response whose body has not been decoded.
+        max_bytes: Largest body accepted; a multi-page caller passes what is
+            left of its whole-operation budget.
+
+    Returns:
+        The raw body, or None when it exceeds ``max_bytes``.
+
+    Raises:
+        UnsupportedModelResponseEncoding: The peer ignored identity encoding.
+    """
     content_encoding = response.headers.get("content-encoding", "identity")
     if content_encoding.strip().casefold() not in {"", "identity"}:
         raise UnsupportedModelResponseEncoding
     content_length = response.headers.get("content-length")
     if content_length is not None:
         try:
-            if int(content_length) > MODEL_PROBE_RESPONSE_MAX_BYTES:
+            if int(content_length) > max_bytes:
                 return None
         except ValueError:
             pass
@@ -112,9 +126,9 @@ async def read_bounded_model_response(response: httpx.Response) -> bytes | None:
     body = bytearray()
     if response.is_stream_consumed:
         buffered = response.content
-        return buffered if len(buffered) <= MODEL_PROBE_RESPONSE_MAX_BYTES else None
+        return buffered if len(buffered) <= max_bytes else None
     async for chunk in response.aiter_raw():
-        if len(body) + len(chunk) > MODEL_PROBE_RESPONSE_MAX_BYTES:
+        if len(body) + len(chunk) > max_bytes:
             return None
         body.extend(chunk)
     return bytes(body)

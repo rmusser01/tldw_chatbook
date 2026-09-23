@@ -158,3 +158,73 @@ def test_a_full_list_does_not_evict_other_providers():
     cache.replace("openrouter", "https://x.test/v1", models("openrouter", full))
     assert len(cache.list("openai", "https://x.test/v1")) == 128
     assert len(cache.list("openrouter", "https://x.test/v1")) == full
+
+
+async def _anthropic_discovery(handler):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        return await discover_openai_compatible_models(
+            provider="anthropic",
+            provider_list_key="Anthropic",
+            endpoint="https://api.anthropic.com/v1",
+            api_key="sk-ant-test",
+            client=client,
+        )
+
+
+def _anthropic_pages(total: int, page_size: int, *, never_ends: bool = False):
+    """Handler serving `total` models in `page_size` pages via after_id."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = request.url.params.get("after_id")
+        start = 0 if after is None else int(after.rsplit("-", 1)[1]) + 1
+        ids = [f"claude-{i}" for i in range(start, min(start + page_size, total))]
+        more = never_ends or start + page_size < total
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"id": i} for i in ids],
+                "has_more": more,
+                "last_id": ids[-1],
+            },
+        )
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_paginated_catalog_over_one_thousand_models_lists_every_model():
+    """Qodo review on #2821: pagination stopped at ten 100-model pages, so a
+    1,001-4,096 model catalog silently kept only its first 1,000."""
+    result = await _anthropic_discovery(_anthropic_pages(1500, 100))
+    assert result.status == "success", result.error
+    assert len(result.models) == 1500
+
+
+@pytest.mark.asyncio
+async def test_pagination_that_never_finishes_fails_closed():
+    """Short pages that keep saying has_more must not cache a partial list."""
+    result = await _anthropic_discovery(_anthropic_pages(10**6, 10, never_ends=True))
+    assert result.status == "error"
+    assert result.models == ()
+
+
+@pytest.mark.asyncio
+async def test_paged_responses_share_one_byte_budget():
+    """Qodo review on #2821: the byte bound applied per page, so many pages
+    could hold several times MODEL_DISCOVERY_RESPONSE_MAX_BYTES at once."""
+    budget = openai_compatible_model_discovery.MODEL_DISCOVERY_RESPONSE_MAX_BYTES
+    pad = b" " * (budget // 3)  # JSON whitespace: each page fits, three do not
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = request.url.params.get("after_id")
+        page = 0 if after is None else int(after.rsplit("-", 1)[1]) + 1
+        payload = {
+            "data": [{"id": f"claude-{page}"}],
+            "has_more": True,
+            "last_id": f"claude-{page}",
+        }
+        return httpx.Response(200, content=json.dumps(payload).encode() + pad)
+
+    result = await _anthropic_discovery(handler)
+    assert result.status == "error"
+    assert "large" in result.error.message.casefold()
