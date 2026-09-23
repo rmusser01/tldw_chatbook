@@ -8,15 +8,16 @@ Chatbook Unit Tests
 Detailed unit tests for chatbook components with mocked dependencies.
 """
 
-import pytest
 import json
 import re
+import sqlite3
 import zipfile
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import Mock, patch
-import sqlite3
+
+import pytest
 
 from tldw_chatbook.Chatbooks import (
     ChatbookCreator,
