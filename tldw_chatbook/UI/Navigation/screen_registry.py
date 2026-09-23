@@ -161,9 +161,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "ccp": ScreenRoute(
         "ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"
     ),
-    "media": ScreenRoute(
-        "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
-    ),
     "evals": ScreenRoute(
         "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
     ),
@@ -275,9 +272,13 @@ _SCREEN_ALIASES = {
     # duplicate content rendered underneath. Existing startup configs /
     # callers using the legacy "media" route id now resolve to Library
     # instead, mirroring the "notes"/"prompts"/"skills"/"search" aliases
-    # above. ``MediaScreen`` itself is not deleted -- its save_state/
-    # restore_state contracts stay directly exercised by their own unit
-    # tests, mirroring the "skills" precedent.
+    # above. TASK-32899 then deleted ``media_screen.MediaScreen`` and
+    # ``MediaWindow_v2`` outright and dropped the shadowed "media"
+    # ScreenRoute: with this alias in place nothing could reach either --
+    # ``resolve_screen_route`` was RUN over all 52 route ids and aliases and
+    # none resolved to ``MediaScreen``, and ``app.py``'s screen pre-importer
+    # skips every route id that is also an alias key. Their only remaining
+    # callers were their own unit tests.
     "media": "library",
     # The standalone Coding screen is retired (merged into Console). Legacy
     # "coding" route ids still resolve to a real screen (Console) instead of

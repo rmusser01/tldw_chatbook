@@ -209,7 +209,6 @@ def test_shared_asset_exceptions_are_explicit() -> None:
         "tldw_chatbook/TTS/TTS_Backends.py",
         "tldw_chatbook/TTS/backends/kokoro.py",
         "tldw_chatbook/TTS/kokoro_pytorch.py",
-        "tldw_chatbook/TTS/utils/download_models.py",
         "tldw_chatbook/TTS/backends/chatterbox.py",
         "tldw_chatbook/TTS/backends/higgs.py",
         "tldw_chatbook/TTS/backends/higgs_voice_manager.py",
