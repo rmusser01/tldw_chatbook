@@ -61,8 +61,6 @@ class TopicBar(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the topic bar."""
-        (self.count / self.max_count * 100) if self.max_count > 0 else 0
-
         with Horizontal(classes="topic-bar-container"):
             yield Label(f"{self.topic} ({self.count})", classes="topic-label")
             with Container(classes="topic-bar-bg"):
@@ -112,9 +110,13 @@ class StatsScreen(BaseAppScreen):
 
     def _start_statistics_load(self) -> None:
         """Begin loading statistics and render the loading state on the UI thread."""
-        self.stats_data = None
-        self.error_message = None
-        self.is_loading = True
+        # `set_reactive` writes without running the watcher: `refresh_stats_display`
+        # rebuilds the whole pane from all three values at once, and
+        # `call_after_refresh` does not coalesce, so one write per watcher meant
+        # one full `remove_children()` + remount per write (tier-2 review S19 P3).
+        self.set_reactive(StatsScreen.stats_data, None)
+        self.set_reactive(StatsScreen.error_message, None)
+        self.set_reactive(StatsScreen.is_loading, True)
         self._sync_destination_header("loading")
         if self.is_mounted:
             self.call_after_refresh(self.refresh_stats_display)
@@ -126,9 +128,12 @@ class StatsScreen(BaseAppScreen):
         error_message: Optional[str],
     ) -> None:
         """Apply worker results on the main thread."""
-        self.stats_data = stats_data
-        self.error_message = error_message
-        self.is_loading = False
+        # One rebuild for the one result -- see `_start_statistics_load`.
+        self.set_reactive(StatsScreen.stats_data, stats_data)
+        self.set_reactive(StatsScreen.error_message, error_message)
+        self.set_reactive(StatsScreen.is_loading, False)
+        if self.is_mounted:
+            self.call_after_refresh(self.refresh_stats_display)
         if error_message:
             self._sync_destination_header("error")
         elif stats_data:
