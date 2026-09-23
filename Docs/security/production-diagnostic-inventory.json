@@ -141,10 +141,24 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "ebd5049a714019fa236d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Audio/console_dictation.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 15,
       "diagnostic_digest": "8f76afe025ea73e6fe34",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/diarizer_local.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "a5dd63999ebb7d778ddb",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Audio/dictation_metrics.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -155,8 +169,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 56,
-      "diagnostic_digest": "13a6566de7a66790c097",
+      "call_count": 54,
+      "diagnostic_digest": "482e37bc4f19a05625d8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -204,8 +218,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "2ddb56cc166070ce690b",
+      "call_count": 9,
+      "diagnostic_digest": "b8e42bd415e2f4a6f7a3",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/system_audio_tap.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -1282,6 +1296,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "3a2686fa6b970d69635c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Library/collections_capture_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 4,
       "diagnostic_digest": "d7e85acdb99de3005f73",
       "owner": "TASK-494",
@@ -1692,6 +1713,13 @@
       "diagnostic_digest": "45d839f1307b3c5a334d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Personal_Context/interview_launch.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "8f71e7a1b3c45701e66f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Prompt_Management/Prompt_Engineering.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -2339,8 +2367,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "cfc6f6a77e5b64862f3c",
+      "call_count": 9,
+      "diagnostic_digest": "d2dc9d87899e398bfb1b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/higgs_voice_manager.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2361,7 +2389,7 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "80a7d14d35d0035765a7",
+      "diagnostic_digest": "0da66b254a3e381e5100",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/voice_manager_base.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2406,6 +2434,20 @@
       "diagnostic_digest": "4a1fb0024fa568cc2a67",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/studio_preferences.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 7,
+      "diagnostic_digest": "5a001d0f54c1944d439f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/TTS/utils/download_models.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "d2ca5bc002c608627a78",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/TTS/utils/performance.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -11366,11 +11408,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 598,
+    "owner_files": 604,
     "path_privacy_candidate_calls": 694,
     "persistent_sink_files": 14,
-    "task_31551_calls": 56,
+    "task_31551_calls": 55,
     "task_492_calls": 1360,
-    "task_494_calls": 7682
+    "task_494_calls": 7692
   }
 }

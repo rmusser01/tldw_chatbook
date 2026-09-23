@@ -4,13 +4,67 @@
 # Imports
 import json
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from loguru import logger
 
 from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
-from tldw_chatbook.Utils.timestamps import utc_now_iso
+from tldw_chatbook.Utils.timestamps import utc_now, utc_now_iso
+
+#######################################################################################################################
+#
+# Profile-store backup naming and ordering
+#
+
+#: Backup filename stamp: UTC, ``Z``-suffixed, and filename-safe -- ADR-173's
+#: canonical stored shape carries ``:``, which a path component cannot.
+#:
+#: MICROSECONDS, not ADR-173's milliseconds, because this stamp is also the
+#: backup's IDENTITY: at second precision every save inside the same second
+#: resolved to one path, which ``voice_files.copy`` then replaced, so a burst
+#: of edits (an import, a multi-select delete) kept ONE recovery point instead
+#: of ``BACKUP_KEEP``. Copying the store takes far longer than a microsecond,
+#: so consecutive saves are now collision-free without an existence-check loop.
+BACKUP_STAMP_FORMAT = "%Y%m%dT%H%M%S.%fZ"
+
+#: Second-precision stamps written before that fix -- parsed rather than
+#: discarded, because a user upgrading mid-rotation has both shapes in one
+#: backup directory and the older ones are still real recovery points.
+_SUPERSEDED_BACKUP_STAMP_FORMATS = ("%Y%m%dT%H%M%SZ",)
+
+#: How many rotated backups a profile store keeps.
+BACKUP_KEEP = 10
+
+
+def _backup_moment(path: Path) -> datetime:
+    """When this backup was taken, as an aware UTC ``datetime``.
+
+    (TASK-32893) Backups used to be named with ``datetime.now()`` -- naive
+    LOCAL time -- and selected with ``sorted(glob(...))``, i.e. by filename
+    bytes. Across a DST fall-back, or on a machine that changed timezone, the
+    lexically-last name is not the most recent backup, so "restore the latest"
+    restored an older file over the user's newer profiles.
+
+    Args:
+        path: A backup file named ``<stem>_backup_<stamp>.json``.
+
+    Returns:
+        The instant the backup was taken, as an aware UTC ``datetime``.
+    """
+    stamp = path.stem.rsplit("_backup_", 1)[-1]
+    for fmt in (BACKUP_STAMP_FORMAT, *_SUPERSEDED_BACKUP_STAMP_FORMATS):
+        try:
+            return datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    # A pre-TASK-32893 name carries a naive LOCAL stamp that cannot be placed
+    # on a timeline without the writer's offset. The file's own mtime can:
+    # ``shutil.copy`` does not preserve mtime, so the mtime IS the moment the
+    # backup was taken.
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+
 
 #######################################################################################################################
 #
@@ -29,9 +83,8 @@ class VoiceManagerBase(ABC):
     the records file name, the load/save cache, and the update/delete/get CRUD
     that every backend implements identically. Subclasses customize storage via
     ``profiles_filename`` and log wording via the label attributes, keep
-    timestamped backups by setting ``keep_backups`` and overriding
-    ``_backup_before_save``, and implement the engine-specific
-    create/list/export/import profile methods.
+    timestamped backups by setting ``keep_backups``, and implement the
+    engine-specific create/list/export/import profile methods.
     """
 
     #: Records file name inside ``voice_samples_dir``.
@@ -72,31 +125,86 @@ class VoiceManagerBase(ABC):
             self.backup_dir = self.voice_samples_dir / "backups"
             voice_files.mkdir(self, self.backup_dir, exist_ok=True)
 
+    def _list_backups(self) -> List[Path]:
+        """This store's backups, OLDEST FIRST, ordered by parsed timestamp.
+
+        Returns:
+            Chronologically ordered paths; empty when there are none, or when
+            this backend does not keep backups.
+        """
+        if not self.keep_backups or not self.backup_dir.is_dir():
+            return []
+        return sorted(
+            self.backup_dir.glob(f"{self.profiles_file.stem}_backup_*.json"),
+            # The name breaks mtime ties so the prune order is deterministic.
+            key=lambda path: (_backup_moment(path), path.name),
+        )
+
     def _backup_before_save(self) -> None:
-        """Hook: retain the previous records file before saving (no-op)."""
+        """Copy the live records file aside before it is overwritten.
+
+        (TASK-32893) Every save replaces the whole store, so this copy is the
+        only thing between one bad profile edit and all of the user's
+        profiles. Higgs had it; Chatterbox did not, and now both do via
+        ``keep_backups``.
+
+        A failure is logged and swallowed: an absent backup is not a reason to
+        refuse the save the caller actually asked for.
+        """
+        if not self.keep_backups:
+            return
+        try:
+            if not self.profiles_file.exists():
+                return  # nothing stored yet, so nothing to preserve
+            stamp = utc_now().strftime(BACKUP_STAMP_FORMAT)
+            voice_files.copy(
+                self,
+                self.profiles_file,
+                self.backup_dir / f"{self.profiles_file.stem}_backup_{stamp}.json",
+            )
+            # Prune by parsed timestamp, not by filename bytes.
+            for stale in self._list_backups()[:-BACKUP_KEEP]:
+                voice_files.unlink(self, stale)
+        except Exception as e:
+            logger.warning(f"Failed to create backup: {e}")
 
     @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
         """Load the profile records from the store file.
 
+        (TASK-32893) A read error used to be logged and answered with ``{}``
+        -- the very same answer as "this user has no profiles" -- so the next
+        ``save_profiles`` wrote an empty store over a file that was merely
+        locked, permission-denied, or truncated, and every profile in it was
+        gone. ABSENT and UNREADABLE are now different answers; the CRUD
+        methods turn the raise into a refusal, which leaves the bytes on disk
+        exactly as they were found.
+
         Returns:
-            The cached-or-loaded ``{name: record}`` mapping; empty when the
-            store is missing or unreadable.
+            The cached-or-loaded ``{name: record}`` mapping; ``{}`` when the
+            store does not exist yet.
+
+        Raises:
+            OSError: The store exists but could not be read.
+            json.JSONDecodeError: The store exists but is not valid JSON.
+            ValueError: The store exists but does not hold a JSON object.
         """
         if self._profiles_cache is not None:
             return self._profiles_cache
 
-        if self.profiles_file.exists():
-            try:
-                with voice_files.open_text(self, self.profiles_file, "r") as f:
-                    self._profiles_cache = json.load(f)
-                    return self._profiles_cache
-            except Exception as e:
-                logger.error(f"Failed to load {self.store_log_label} profiles: {e}")
-                self._profiles_cache = {}
-        else:
+        if not self.profiles_file.exists():
             self._profiles_cache = {}
+            return self._profiles_cache
 
+        with voice_files.open_text(self, self.profiles_file, "r") as f:
+            profiles = json.load(f)
+        if not isinstance(profiles, dict):
+            raise ValueError(
+                f"Voice profile store {self.profiles_file} does not hold a JSON "
+                f"object (found {type(profiles).__name__}); refusing to treat "
+                f"it as empty."
+            )
+        self._profiles_cache = profiles
         return self._profiles_cache
 
     @voice_files.call

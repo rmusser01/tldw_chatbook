@@ -2806,30 +2806,99 @@ class LocalMediaReadingService:
         include_notes: bool = True,
         format: str = "jsonl",
     ) -> Any:
+        """Export saved reading items, refusing filters this store cannot honour.
+
+        Args:
+            status: Reading states to export. Only ``"saved"`` exists locally.
+            tags: Keywords every exported item must carry.
+            favorite: Favorite filter. Only ``False``/``None`` are expressible.
+            q: Full-text query narrowing the scope.
+            domain: Substring matched against each item's URL. Applied in
+                Python to one page, so it needs a page that reaches the end of
+                the scope.
+            page: 1-based page of the scope to export.
+            size: Rows per page; also the export's ceiling.
+            include_metadata: Include the per-item metadata block.
+            include_clean_html: Include the cleaned article HTML.
+            include_text: Include the extracted plain text.
+            include_highlights: Include stored highlights.
+            include_notes: Include attached notes.
+            format: ``"jsonl"`` or ``"zip"`` -- the only two this store
+                writes.
+
+        Returns:
+            The export response: its encoded ``content`` plus the filename and
+            media type chosen for ``format``.
+
+        Raises:
+            ValueError: ``status`` names anything but ``"saved"``;
+                ``favorite`` is ``True``; ``domain`` is given for a page that
+                does not reach the end of the scope; or ``format`` is not a
+                supported export format. Every one of these would otherwise
+                produce a short export the caller could not tell was short.
+        """
+        # (TASK-32893) Three filters this local store cannot honour used to
+        # produce a SILENT truncation instead of an error: an unsupported
+        # ``status``/``favorite`` returned an empty export -- indistinguishable
+        # from "you have nothing saved" -- and ``domain`` was applied in Python
+        # to one already-paged result, so an export could miss every match
+        # past the first page and still look complete. An export the user
+        # cannot tell is short is data loss, so refuse instead, the way the
+        # unsupported-format check below already does.
         normalized_statuses = {
             str(value).strip().lower() for value in (status or ["saved"]) if value
         }
-        if normalized_statuses and "saved" not in normalized_statuses:
-            rows: list[dict[str, Any]] = []
-        elif favorite is True:
-            rows = []
-        else:
-            offset = max(int(page) - 1, 0) * max(int(size), 1)
-            payload = self.search_media(
-                query=q,
-                limit=max(int(size), 1),
-                offset=offset,
-                read_it_later_only=True,
-                must_have=tags,
+        unsupported_statuses = normalized_statuses - {"saved"}
+        if unsupported_statuses:
+            raise ValueError(
+                "Local reading export only holds 'saved' items; it cannot "
+                f"export status {sorted(unsupported_statuses)}."
             )
-            rows = list(payload.get("items", []))
-            if domain:
-                normalized_domain = str(domain).strip().lower()
-                rows = [
-                    row
-                    for row in rows
-                    if normalized_domain in str(row.get("url") or "").lower()
-                ]
+        if favorite is True:
+            raise ValueError(
+                "Local reading export does not record a favorite flag; a "
+                "favorite-only export would silently be empty."
+            )
+        page_size = max(int(size), 1)
+        offset = max(int(page) - 1, 0) * page_size
+        payload = self.search_media(
+            query=q,
+            limit=page_size,
+            offset=offset,
+            read_it_later_only=True,
+            must_have=tags,
+        )
+        rows = list(payload.get("items", []))
+        if domain:
+            # The domain match runs here, not in SQL, so it only ever sees this
+            # page; rows BEYOND the page would be dropped without a word. What
+            # settles it is the search's own unpaged ``total``, not the page
+            # being full: a scope that happens to be an exact multiple of
+            # ``size`` -- the plain case being ``size`` set to the number of
+            # saved items -- fills its last page and has nothing after it.
+            # A total of an unexpected shape is treated as unknown rather than
+            # as zero, so a payload change cannot silently disarm the guard.
+            total = payload.get("total")
+            unseen = (
+                offset + len(rows) < total
+                if isinstance(total, int) and not isinstance(total, bool)
+                else len(rows) == page_size
+            )
+            if unseen:
+                raise ValueError(
+                    "Local reading export applies the domain filter to one "
+                    f"page at a time and page {max(int(page), 1)} does not "
+                    "reach the end of the saved items, so a domain-filtered "
+                    "export would silently omit later matches. Raise `size` "
+                    "past the number of saved items, or narrow the export "
+                    "with `q`."
+                )
+            normalized_domain = str(domain).strip().lower()
+            rows = [
+                row
+                for row in rows
+                if normalized_domain in str(row.get("url") or "").lower()
+            ]
         if include_metadata or include_text or include_clean_html or include_notes:
             rows = [self._local_export_detail_row(row) for row in rows]
         export_rows = [
@@ -5712,10 +5781,23 @@ class LocalMediaReadingService:
         )
 
     def _local_export_detail_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Merge one item's full detail into its search row, for export.
+
+        Raises:
+            ValueError: (TASK-32893) When the detail read fails. It used to
+                ``return dict(row)``, which drops exactly the fields the
+                detail carries -- body text, clean HTML, notes -- so the item
+                was exported as a metadata-only husk with nothing marking it
+                short. A user cannot detect that; failing the export can be
+                seen and retried.
+        """
         try:
             detail = self.get_media_detail(row.get("id"))
-        except Exception:
-            return dict(row)
+        except Exception as exc:
+            raise ValueError(
+                f"Reading export could not read item {row.get('id')!r}: {exc}. "
+                "Refusing to export it without its body content."
+            ) from exc
         merged = dict(row)
         merged.update(dict(detail))
         return merged
