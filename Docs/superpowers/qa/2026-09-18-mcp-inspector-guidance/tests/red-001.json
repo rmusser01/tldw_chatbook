@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]",
+      "status": "failure"
+    }
+  ]
+}

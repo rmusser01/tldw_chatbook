@@ -1,6 +1,6 @@
 # ADR-044: Generated video is ephemeral and name-referenced; playback and streaming use a hybrid in-process/subprocess pipeline
 
-Status: Accepted (revision 3; revision 1 corrected decisions 1, 4, 5, 7; revision 2 defines post-save capacity and the sole-oversized-file exception; revision 3 defines canonical generated-video containers and filename extensions)
+Status: Accepted (decision 2 superseded by ADR-176 — the mirroring package now delegates its shared skeleton to the Media_Generation core; all other decisions stand) (revision 3; revision 1 corrected decisions 1, 4, 5, 7; revision 2 defines post-save capacity and the sole-oversized-file exception; revision 3 defines canonical generated-video containers and filename extensions)
 Date: 2026-08-07
 Related Task: backlog/tasks/task-3401 (Video generation, ephemeral storage, playback, and streaming)
 Supersedes: N/A

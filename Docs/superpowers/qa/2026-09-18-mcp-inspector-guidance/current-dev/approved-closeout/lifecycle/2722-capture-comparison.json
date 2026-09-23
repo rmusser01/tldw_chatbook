@@ -1,0 +1,123 @@
+{
+  "normalization": "Generated Rich IDs/styles, insignificant XML whitespace and numeric timestamps only; no layout or color normalization. Inspector comparison retains all text/rect geometry and styles at inspector x coordinates.",
+  "captures": [
+    {
+      "capture": "textual-dark-170x48-audit.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-170x48-restored.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-170x48-server.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-170x48-tool.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-80x24-audit.svg",
+      "semantic_svg_equal": false,
+      "terminal_equal": false,
+      "differing_terminal_rows": [
+        14,
+        22
+      ],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-80x24-restored.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-80x24-server.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-dark-80x24-tool.svg",
+      "semantic_svg_equal": false,
+      "terminal_equal": false,
+      "differing_terminal_rows": [
+        16,
+        22
+      ],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-170x48-audit.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-170x48-restored.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-170x48-server.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-170x48-tool.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-80x24-audit.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-80x24-restored.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-80x24-server.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    },
+    {
+      "capture": "textual-light-80x24-tool.svg",
+      "semantic_svg_equal": true,
+      "terminal_equal": true,
+      "differing_terminal_rows": [],
+      "inspector_equal": true
+    }
+  ]
+}

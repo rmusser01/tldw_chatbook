@@ -1,0 +1,6 @@
+PR Fast Lane	Run actions/checkout@v4	2026-09-22T03:29:11.4441876Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +982e555926d441ea362eb91c48a8f7079b7f5ed0:refs/remotes/pull/2721/merge
+PR Fast Lane	Run actions/checkout@v4	2026-09-22T03:29:26.3919378Z  * [new ref]           982e555926d441ea362eb91c48a8f7079b7f5ed0 -> pull/2721/merge
+PR Fast Lane	Run actions/checkout@v4	2026-09-22T03:29:28.5437680Z HEAD is now at 982e5559 Merge 7c0c035de2eef3fd6592812f739cf59fd52b8da3 into ea2d7b22a8af93e4a4856d350640f03af5cc4880
+PR Fast Lane	Run actions/checkout@v4	2026-09-22T03:29:28.5579521Z 982e555926d441ea362eb91c48a8f7079b7f5ed0
+PR Fast Lane	Run fast PR contract	2026-09-22T03:39:39.8415899Z ================= 1152 passed, 1 warning in 550.91s (0:09:10) ==================
+PR Fast Lane	Run admission-sensitive suites	2026-09-22T03:42:40.4745074Z ============ 123 passed, 1 xfailed, 9 warnings in 175.31s (0:02:55) ============

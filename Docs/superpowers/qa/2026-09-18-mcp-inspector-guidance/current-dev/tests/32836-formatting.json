@@ -1,0 +1,178 @@
+[
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "1886-1888",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2004-2009",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2011-2017",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2114-2114",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2124-2124",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2298-2298",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2310-2310",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2678-2678",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2683-2683",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2778-2778",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "2783-2783",
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "Tests/UI/test_mcp_inspector_guidance.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "14-14",
+      "Tests/Utils/test_mcp_native_qa_args.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--range",
+      "42-42",
+      "Tests/Utils/test_mcp_native_qa_args.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "command": [
+      "<repo>/.venv/bin/ruff",
+      "format",
+      "--check",
+      "Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  }
+]
