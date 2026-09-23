@@ -12,14 +12,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "check_canvas_mermaid_assets.py"
-EXPECTED_OUTPUTS = {
-    "canvas_runtime_worker_v2.js",
-    "canvas_renderer_v2.js",
-    "mermaid-subset.json",
-    "MERMAID_THIRD_PARTY_LICENSES.txt",
-    "mermaid-runtime-manifest.json",
-    "profile-catalog.json",
-}
+STATIC = PROJECT_ROOT / "tldw_chatbook" / "Canvas" / "static"
 
 
 def _load_checker():
@@ -35,6 +28,9 @@ def _load_checker():
     finally:
         sys.path.remove(scripts)
     return module
+
+
+EXPECTED_OUTPUTS = set(_load_checker().EXPECTED_OUTPUTS)
 
 
 def _download(name: str, data: bytes) -> dict[str, dict[str, object]]:
@@ -155,7 +151,10 @@ def test_check_runs_existing_builder_in_isolation_and_accepts_exact_outputs(
     monkeypatch.setattr(checker, "build", controlled_build)
 
     result = checker.check_assets(
-        input_dir=source, manifest_path=manifest, committed_dir=committed
+        input_dir=source,
+        manifest_path=manifest,
+        committed_dir=committed,
+        vendored={},
     )
 
     assert set(result) == EXPECTED_OUTPUTS
@@ -186,3 +185,59 @@ def test_main_fails_when_explicit_offline_input_environment_is_missing(
 
     assert checker.main([]) == 1
     assert "declared input is missing" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# TASK-32897: the two outputs the builder COPIES out of STATIC
+# --------------------------------------------------------------------------
+
+
+def test_the_copied_outputs_are_authenticated_against_a_pin_in_this_checker():
+    """The committed bytes must match the digests recorded in the checker.
+
+    `build()` reads these two straight out of STATIC and `committed_dir`
+    defaults to that same STATIC, so their row in `compare_generated_outputs`
+    diffs a file against a copy of itself. Before the pin existed, editing one
+    and then re-running the documented `reproducible_command` (which writes
+    back into STATIC) regenerated a self-consistent manifest and catalog and
+    the check went green on the tampered bytes -- measured, not theorised.
+    """
+    checker = _load_checker()
+
+    assert set(checker.VENDORED_OUTPUTS) == {
+        "canvas_runtime_worker_v2.js",
+        "canvas_renderer_v2.js",
+    }
+    checker.verify_vendored_pins(STATIC)
+
+
+@pytest.mark.parametrize(
+    "name", ["canvas_runtime_worker_v2.js", "canvas_renderer_v2.js"]
+)
+def test_a_tampered_copied_output_fails_the_pin(tmp_path, name):
+    """The negative control: bad bytes in, non-zero out."""
+    checker = _load_checker()
+    for asset in checker.VENDORED_OUTPUTS:
+        data = (STATIC / asset).read_bytes()
+        if asset == name:
+            data += b"\n/*backdoor*/\n"
+        (tmp_path / asset).write_bytes(data)
+
+    with pytest.raises(checker.MermaidAssetCheckError, match="integrity mismatch"):
+        checker.verify_vendored_pins(tmp_path)
+
+
+def test_a_missing_copied_output_fails_the_pin(tmp_path):
+    checker = _load_checker()
+    with pytest.raises(checker.MermaidAssetCheckError, match="is missing"):
+        checker.verify_vendored_pins(tmp_path)
+
+
+def test_a_symlinked_copied_output_fails_the_pin(tmp_path):
+    """A symlink would let the pinned bytes be swapped out from elsewhere."""
+    checker = _load_checker()
+    for asset in checker.VENDORED_OUTPUTS:
+        (tmp_path / asset).symlink_to(STATIC / asset)
+
+    with pytest.raises(checker.MermaidAssetCheckError, match="cannot be a symlink"):
+        checker.verify_vendored_pins(tmp_path)

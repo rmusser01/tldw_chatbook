@@ -73,10 +73,19 @@ class WorkspaceOperation(str, Enum):
     TOOL_USE = "tool_use"
 
 
+#: Secret-looking key fragments dropped from persisted binding metadata.
+#: Kept in step with ``MCP/redaction._SECRET_KEY_RE``, the shared policy for
+#: the same question (TASK-32901): these three were missing here while
+#: ``private_key`` was missing there. Matching is substring-of-normalized, so
+#: ``bearer`` also covers ``bearer_token`` and ``passwd`` covers ``db_passwd``.
+#: This scrubber deliberately *drops* the key rather than storing ``"***"``.
 _SECRET_METADATA_PARTS = (
     "api_key",
     "apikey",
+    "authorization",
+    "bearer",
     "credential",
+    "passwd",
     "password",
     "private_key",
     "secret",
@@ -94,8 +103,23 @@ WORKSPACE_ASSISTANT_KINDS = ("persona",)
 WORKSPACE_PERSONA_MEMORY_MODES = ("read_only", "read_write")
 
 
-def utc_now_iso() -> str:
-    """Return a stable UTC timestamp string for registry records."""
+def registry_now_iso() -> str:
+    """Return the workspace registry's stored UTC timestamp shape.
+
+    Deliberately NOT ``Utils.timestamps.utc_now_iso``: this returns the
+    aware-offset ``...+00:00`` form already committed to ``workspaces`` and
+    ``workspace_memberships``, while the canonical helper returns a
+    fixed-width millisecond ``Z``. The two used to share a name here, so
+    adopting the canonical one looked like an import fix while silently
+    writing a second shape into a lexically-ordered column (TASK-32901).
+    Switching shapes requires a read-side migration, not a rename.
+
+    Returns:
+        The current instant as an aware UTC ISO-8601 string carrying an
+        explicit ``+00:00`` offset (``"2026-09-22T21:04:05.123456+00:00"``),
+        at microsecond precision -- not the canonical fixed-width millisecond
+        ``Z`` form.
+    """
 
     return datetime.now(timezone.utc).isoformat()
 
@@ -137,8 +161,8 @@ class WorkspaceRecord:
     archived: bool = False
     assistant_defaults: WorkspaceAssistantDefaults | None = None
     assistant_defaults_explicit_none: bool = False
-    created_at: str = field(default_factory=utc_now_iso)
-    updated_at: str = field(default_factory=utc_now_iso)
+    created_at: str = field(default_factory=registry_now_iso)
+    updated_at: str = field(default_factory=registry_now_iso)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -168,7 +192,7 @@ class WorkspaceMembership:
     role: str = "source"
     transfer_policy: WorkspaceTransferPolicy | str = WorkspaceTransferPolicy.REFERENCE
     title: str = ""
-    created_at: str = field(default_factory=utc_now_iso)
+    created_at: str = field(default_factory=registry_now_iso)
     membership_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -207,8 +231,8 @@ class WorkspaceRuntimeBinding:
     locator: str
     status: RuntimeBindingStatus | str = RuntimeBindingStatus.INSPECT_ONLY
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=utc_now_iso)
-    updated_at: str = field(default_factory=utc_now_iso)
+    created_at: str = field(default_factory=registry_now_iso)
+    updated_at: str = field(default_factory=registry_now_iso)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -263,10 +287,10 @@ class ResearchQuickNoteReceipt:
     state: str = "pending"
     revision: int = 1
     failure_count: int = 0
-    next_retry_at: str = field(default_factory=utc_now_iso)
+    next_retry_at: str = field(default_factory=registry_now_iso)
     blocked_reason_code: str = ""
-    created_at: str = field(default_factory=utc_now_iso)
-    updated_at: str = field(default_factory=utc_now_iso)
+    created_at: str = field(default_factory=registry_now_iso)
+    updated_at: str = field(default_factory=registry_now_iso)
     data_source: str = "local"
     server_profile_id: str = ""
     principal_id: str = ""
