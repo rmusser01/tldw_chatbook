@@ -1,0 +1,368 @@
+tldw_chatbook/Actor_Packs/contracts.py	712	in _validate_portrait handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Audio/diarizer_local.py	227	in __init__ handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/diarizer_worker.py	571	in main handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/dictation_service.py	16	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Audio/dictation_service_lazy.py	19	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Audio/dictation_service_lazy.py	512	in audio_service handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/meeting_owner.py	561	in build_diarizer handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/meeting_owner.py	708	in _missing_recorder_message handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/meeting_owner.py	1100	in _models_ready handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/meeting_owner.py	1681	in _embedding_diarizer handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/meeting_owner.py	1854	in enroll_from_mic handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/recording_service.py	19	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Audio/recording_service.py	45	module handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/recording_service.py	54	module handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/recording_service.py	69	module handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/system_audio_tap.py	312	in probe handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/voiceprint.py	315	in _read handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Audio/voiceprint.py	748	in _has_real_keyring_backend handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/age_worker.py	18	module handlers=['(ImportError, OSError)'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/dictionary_source_job.py	154	in _work handlers=['BaseException'] optional_deps_imported=False
+tldw_chatbook/Backup_Recovery/launcher.py	43	in startup_preflight handlers=['(\n        OSError,\n        ValueError,\n        RuntimeError,\n        ImportError,\n        EOFError,\n        KeyboardInterrupt,\n    )'] optional_deps_imported=False
+tldw_chatbook/Canvas/web_auth.py	166	in resolve_web_access_token handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	846	in _get_default_chachanotes_db handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	880	in fetch_all_dictionaries handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/Character_Chat_Lib.py	2509	in import_character_card_from_json_string handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/local_character_persona_service.py	68	in normalize_policy_rules handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/visual_identity.py	3221	in ensure_builtin_samira handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/world_info_resolver.py	35	in _collect_active_world_books handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/world_info_resolver.py	52	in _collect_active_world_books handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/world_info_resolver.py	96	in resolve_world_info_injection handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Character_Chat/world_info_resolver.py	184	in summarize_active_world_books handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	224	in _ensure_nltk handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	266	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	482	in _install_tokenizer_resolve_alias handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	502	in _is_engine_fallback_tokenizer handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	543	in _probe_engine_token_resolution handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/Chunk_Lib.py	1174	in _rolling_summarize handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/auto_selection.py	318	in _select_template handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/base.py	128	in _get_chunking_bool handlers=['(ImportError, AttributeError, KeyError)', 'ValueError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/base.py	468	in __init__ handlers=['ImportError', '(AttributeError, TypeError)'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/multilingual.py	243	in _tokenize_with_library handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/multilingual.py	254	in _tokenize_with_library handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/multilingual.py	266	in _tokenize_with_library handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/multilingual.py	278	in _tokenize_with_library handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/regex_safety.py	12	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/regex_safety.py	113	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/splitters/__init__.py	21	in get_sentence_splitter handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/splitters/blingfire.py	15	in __init__ handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/json_xml.py	20	in _get_chunking_bool handlers=['(ImportError, AttributeError, KeyError, ValueError)'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/json_xml.py	36	in _get_chunking_str handlers=['(ImportError, AttributeError, KeyError, ValueError)'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/json_xml.py	757	in chunk handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/json_xml.py	827	in chunk_with_metadata handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/propositions.py	209	in _propositions_via_spacy handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/propositions.py	393	in _parse_llm_props handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/semantic.py	65	in _check_dependencies handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/semantic.py	415	in _get_tokenizer handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/semantic.py	427	in _get_tokenizer handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/sentences.py	45	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/sentences.py	75	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/sentences.py	90	in set_language handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/tokens.py	83	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/tokens.py	139	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/words.py	236	in _tokenize_chinese handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/words.py	273	in _tokenize_japanese handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/words.py	312	in _tokenize_korean handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/strategies/words.py	332	in _tokenize_thai handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/engine/utils/metrics.py	15	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/lab_runner.py	288	in _resource_limits handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Chunking/lab_runner.py	323	in _worker_main handlers=['_Limited', 'MemoryError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Chunking/language_chunkers.py	158	in tokenize_sentences handlers=['LookupError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/Evals/ab_testing.py	24	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Evals/dataset_loader.py	28	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_orchestrator.py	461	in _run_admitted_evaluation handlers=['asyncio.CancelledError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_orchestrator.py	973	in create_task_from_template handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_runner.py	33	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_runner.py	833	in calculate_semantic_similarity handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_runner.py	1847	in _is_valid_json handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_runner.py	1857	in _is_valid_xml handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Evals/eval_runner.py	2646	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Evals/specialized_runners.py	364	in _execute_code handlers=['subprocess.TimeoutExpired', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Evals/task_loader.py	28	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Image_Generation/adapters/image_format_utils.py	24	module handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/LLM_Provider_Catalog/models_dev_catalog.py	207	in _enabled handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Library/library_artifacts_catalog.py	335	in _read_chatbook_detail handlers=['ArtifactReadError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Library/library_browse_location.py	123	in _recent_roots_write handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Library/library_rag_state.py	690	in library_rag_profile_top_k handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Library/local_media_chunk_tool_service.py	1200	in _shared_rag_service_or_none handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	50	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	58	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	66	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	86	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	1085	in process_epub handlers=['FileNotFoundError', 'ValueError', 'RuntimeError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	1182	in process_epub handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	1813	in _process_markup_or_plain_text handlers=['FileNotFoundError', 'ValueError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	1949	in _process_markup_or_plain_text handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	2386	in process_mobi handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	2444	in process_mobi handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	2537	in process_fb2 handlers=['ET.ParseError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py	2640	in process_fb2 handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	29	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	36	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	44	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	51	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	58	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py	327	in process_with_docling handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	27	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	34	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	47	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	55	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	290	in extract_text_from_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	474	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py	591	in extract_images_from_pdf handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	190	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	224	in process_pdf handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	299	in is_available handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	316	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	339	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	476	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	499	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	511	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	618	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	639	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	653	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	766	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	791	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	818	in initialize handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	857	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	867	in process_image handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	1020	in process_pdf handlers=['ImportError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/OCR_Backends.py	1098	in cleanup handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	28	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	172	in docling_parse_pdf handlers=['(ImportError, ModuleNotFoundError)'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	298	in docext_parse_pdf handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	486	in process_pdf handlers=['FileNotFoundError', 'IOError', '(RuntimeError, pymupdf.FileDataError, pymupdf.EmptyFileError)', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	547	in process_pdf handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py	750	in process_pdf handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/audio_processing.py	26	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/audio_processing.py	50	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/audio_processing.py	933	in _transcribe_audio handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	23	in _check_torch_available handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	32	in _check_speechbrain_available handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	41	in _check_sklearn_available handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	50	in _check_torchaudio_available handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	167	in _lazy_import_torch handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	181	in _lazy_import_numpy handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	288	in _lazy_import_speechbrain handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	293	in _lazy_import_speechbrain handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	308	in _lazy_import_sklearn handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/diarization_service.py	354	in _lazy_import_torchaudio handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/ingest_parse_worker.py	103	in silence_ingest_worker_import_noise handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/ingest_parse_worker.py	163	in classify_parse_failure handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/ingest_parse_worker.py	205	in run_parse_job handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/local_file_ingestion.py	573	in _decode_ingest_text handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/local_file_ingestion.py	623	in _chunk_text_for_ingest handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/local_file_ingestion.py	783	in _run_chat_analysis handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/transcription_service.py	28	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	100	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	165	in _ensure_torch_import handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	187	in _ensure_qwen2audio_imports handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	202	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	211	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	222	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	257	in _ensure_lightning_whisper_mlx_import handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	274	in _ensure_parakeet_mlx_import handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	2008	in _transcribe_with_canary handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	2631	in _transcribe_with_parakeet_mlx handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	3819	in _transcribe_buffer_with_parakeet_mlx handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	3974	in is_diarization_available handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	3987	in get_diarization_requirements handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/transcription_service.py	4073	in create_streaming_transcriber handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Local_Ingestion/video_processing.py	27	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Local_Ingestion/web_article_ingestion.py	137	in extract_article_for_ingest handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Media/local_media_reading_service.py	1330	in process_mediawiki_dump handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Media/local_media_reading_service.py	1580	in _extract_pdf_text handlers=['ModuleNotFoundError'] optional_deps_imported=False
+tldw_chatbook/Media/local_media_reading_service.py	1611	in _html_to_plain_text handlers=['ModuleNotFoundError'] optional_deps_imported=False
+tldw_chatbook/Media_Creation/generation_templates.py	33	module handlers=['ModuleNotFoundError'] optional_deps_imported=False
+tldw_chatbook/Media_Creation/generation_templates.py	237	in _read_style_config_section handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Metrics/Otel_Metrics.py	32	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Metrics/metrics.py	35	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Notes/Notes_Library.py	890	in save_note_with_organization handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Notes/note_import_windows_fs.py	152	in _open_native_fd handlers=['(AttributeError, ImportError)'] optional_deps_imported=False
+tldw_chatbook/Prompt_Management/Prompts_Interop.py	39	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Prompt_Management/Prompts_Interop.py	47	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Prompt_Management/prompt_improvement_service.py	84	in _known_context_limit handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Prompt_Management/prompt_improvement_service.py	93	in _known_output_limit handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Research_Interop/local_research_engine.py	75	in _configured_max_iterations handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Research_Interop/local_research_engine.py	1453	in _default_follow_up_answer_fn handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Scheduling/scheduler/handlers/briefing_handler.py	510	in _should_notify_failure handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Scheduling/scheduler/handlers/briefing_handler.py	533	in _close_incident handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Scheduling/scheduler/loop.py	561	in _record_heartbeat handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Scheduling/scheduler/loop.py	959	in _record_preflight_incident handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Scheduling/services/server_client.py	10	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Skills_Interop/local_skills_service.py	160	in resolve_script_run_limits handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Skills_Interop/local_skills_service.py	2308	in _script_scratch_root handlers=['RecoveryRequired', 'Exception'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/baseline_manager.py	56	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/local_watchlists_service.py	2505	in _urls_for_sitemap handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/monitoring_engine.py	30	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/monitoring_engine.py	105	in _require_beautifulsoup handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/noise_defaults.py	126	in selector_parse_errors handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/noise_defaults.py	150	in first_invalid_selector handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/custom_scraper.py	24	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/generic_scraper.py	19	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/generic_scraper.py	50	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/github_scraper.py	22	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/github_scraper.py	408	in _clean_github_content handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/hackernews_scraper.py	21	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/reddit_scraper.py	21	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/reddit_scraper.py	346	in _clean_reddit_content handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/scrapers/youtube_scraper.py	21	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/security.py	26	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/token_manager.py	16	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/watchlist_opml_service.py	12	module handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/Subscriptions/web_scraping_pipelines.py	425	in extract_text_content handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Subscriptions/web_scraping_pipelines.py	461	in extract_metadata handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/TTS_Backends.py	13	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/TTS_Backends.py	339	in _check_cuda_available handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/audio_player.py	552	in stop handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/audio_service.py	14	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/audio_service.py	26	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/audio_service.py	36	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/audiobook_generator.py	762	in _generate_silence handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/audiobook_generator.py	829	in _normalize_audio handlers=['ImportError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/audiobook_generator.py	870	in _get_audio_duration handlers=['(ImportError, Exception)'] optional_deps_imported=False
+tldw_chatbook/TTS/audiobook_generator.py	882	in _get_audio_duration handlers=['ImportError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/chatterbox.py	437	in _initialize_sync handlers=['ImportError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	448	in _initialize_sync handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	478	in _initialize_sync handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	620	in normalize_audio handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	658	in apply_fade_in_out handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	696	in crossfade_audio_chunks handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	882	in generate_with_isolation handlers=['ImportError'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	1081	in _generate_speech_stream handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox.py	1467	in save_reference_voice_with_metadata handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/TTS/backends/chatterbox_process.py	110	in main handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/elevenlabs.py	238	in generate_speech_stream handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	15	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	24	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	33	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	42	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	53	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	253	in _load_model handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	257	in _load_model handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs.py	1126	in _prepare_messages handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	22	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	30	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/higgs_voice_manager.py	38	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	29	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	38	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	257	in __init__ handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	583	in torch handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	597	in kokoro_onnx_module handlers=['ImportError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/TTS/backends/kokoro.py	1175	in _load_pytorch_model handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/profile_migration_candidate.py	114	in backup_to handlers=['ProfileRepositoryError', 'BaseException'] optional_deps_imported=False
+tldw_chatbook/TTS/profile_reference_materialization.py	17	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/profile_repository.py	1599	in open handlers=['BaseException'] optional_deps_imported=False
+tldw_chatbook/TTS/profile_repository.py	5794	in _reserve_maintenance_entry handlers=['BaseException'] optional_deps_imported=False
+tldw_chatbook/TTS/text_processor_advanced.py	11	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/TTS/voice_bundle_service.py	23	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Terminal/launch.py	534	in _read_account_values handlers=['(ImportError, KeyError, OSError)'] optional_deps_imported=False
+tldw_chatbook/Terminal/launch.py	549	in _read_posix_account_shell handlers=['(ImportError, KeyError, OSError)'] optional_deps_imported=False
+tldw_chatbook/Tool_Packs/catalog_snapshot.py	293	in _capture_v1 handlers=['ToolPackError', 'Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py	995	in handle_delete_character handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py	1097	in handle_export_character handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CCP_Modules/ccp_message_manager.py	140	in _create_message_widget handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CCP_Modules/ccp_validation_decorators.py	170	in wrapper handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CCP_Modules/ccp_validation_decorators.py	228	in wrapper handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/ChatbookExportManagementWindow.py	1155	in _open_location handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Chatbooks_Window.py	317	in _create_chatbook_async handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Chatbooks_Window.py	408	in _use_selected_template handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Chatbooks_Window.py	427	in _browse_templates handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Chatbooks_Window.py	456	in _create_chatbook_with_template handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Chatbooks_Window_Improved.py	617	in _scan_chatbooks handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CodeRepoCopyPasteWindow.py	355	in load_local_repository handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/CodeRepoCopyPasteWindow.py	855	in copy_to_clipboard handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Logs_Window.py	273	in load_from_app handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Logs_Window.py	326	in _write_filter_state handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Logs_Window.py	554	in _update_header_chip handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/MediaWindow_v2.py	1678	in handle_sidebar_collapse handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/MediaWindow_v2.py	1724	in perform_analysis handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Research_Window.py	131	in _iteration_rounds_default handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Research_Window.py	145	in _academic_lane_default handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Research_Window.py	367	in ask_follow_up handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Research_Window.py	565	in _start_local_engine handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	487	in on_audiobook_provider_select_for_voice_widget_changed handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	908	in on_chapter_edit_event handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1020	in _detect_chapters_worker handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1052	in _apply_detected_chapters handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1119	in _generate_audiobook handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1144	in _generate_audiobook handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1295	in _update_voice_options handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1381	in _handle_export_location handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/STTS_Window.py	1415	in _preview_chapter_audio handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/change_review_screen.py	300	in _configured_cap handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/change_review_screen.py	332	in git_actions_enabled handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/change_review_screen.py	3403	in _refresh_untracked_writable_banner handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/chat_screen.py	11032	in _open_console_generate_image_modal handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/chat_screen.py	11038	in _open_console_generate_image_modal handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/chat_screen.py	12751	in _build_character_avatar_widget handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/chat_screen.py	12780	in _build_character_avatar_widget handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/chat_screen.py	13143	in _prune_console_rail_preferences handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/chat_screen.py	19636	in _console_command_research handlers=['LocalToolError', 'Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Screens/home_screen.py	559	in _home_content_seam_call handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/library_screen.py	31375	in _active_review_set_banner handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/library_screen.py	31751	in _review_set_picker_worker handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/meetings_screen.py	113	in _onnx_download_mb handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/meetings_screen.py	1130	in _build_store handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	9546	in _preview_persona_visual_state handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	10838	in _render_inspector_avatar handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	10906	in _render_character_editor_avatar handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	11393	in _render_visual_identity_pack_preview handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	12450	in _render_character_expression_slot handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/personas_screen.py	15496	in _handle_policy_rules_changed handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py	1121	in _refresh_scheduler_liveness handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py	3014	in _on_acknowledge_incident handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/settings_screen.py	9506	in _appearance_theme_options handlers=['(ImportError, ModuleNotFoundError)'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/video_player_screen.py	123	in compose handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Screens/video_player_screen.py	324	in _render_frame handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_catalog_mixin.py	1445	in _chatterbox_profile_choices handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_catalog_mixin.py	1467	in _higgs_profile_choices handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_catalog_mixin.py	1692	in _check_higgs_installation handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_playback_mixin.py	815	in _ensure_audio_player handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_playback_mixin.py	843	in _pause_audio_async handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_playback_mixin.py	1002	in _handle_audio_export handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Speech/speech_settings_mixin.py	528	in _update_default_voice_options handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	3323	in _compose_about handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	3939	in _test_chat_connection handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	4075	in _test_all_api_keys handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	4119	in _save_tool_settings handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	4169	in _reset_tool_settings handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Tools_Settings_Window.py	6706	in _disable_encryption handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py	3523	in on_show handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py	6806	in _card_names handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py	7334	in _render_rows handlers=['Exception'] optional_deps_imported=True
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	53	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	111	in _ensure_playwright handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	137	in _ensure_trafilatura handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	145	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py	1448	in parse_csv_urls handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/crawler.py	43	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/crawler.py	52	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/importers.py	48	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/importers.py	56	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/processors.py	45	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Article_Scraper/scraper.py	184	in _fetch_html handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Confluence/confluence_scraper.py	16	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Confluence/confluence_utils.py	13	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/Confluence/confluence_utils.py	22	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/WebSearch_APIs.py	61	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/WebSearch_APIs.py	96	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/WebSearch_APIs.py	1164	in search_result_relevance handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Web_Scraping/WebSearch_APIs.py	3264	in extract_domain handlers=['(ImportError, ValueError, AttributeError)'] optional_deps_imported=False
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1146	in handle_save_button handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1458	in _display_analysis_at_index handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1518	in populate_providers handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1590	in update_models_for_provider handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1765	in handle_generate_analysis handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py	20	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Widgets/emoji_picker.py	24	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/Widgets/enhanced_file_picker.py	1863	in _confirm_single handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/model_search_picker.py	286	in load_provider handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/prune_safe_select.py	86	in _textual_version handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Widgets/settings_theme_editor.py	881	in _delete_user_theme handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Workspaces/change_bounds.py	111	in _config_setting handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/Workspaces/change_retention.py	216	in run_retention_for_app handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/css/build_css.py	26	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/css/check_bundle_sync.py	25	module handlers=['ImportError'] optional_deps_imported=False
+tldw_chatbook/tldw_api/flashcards_schemas.py	10	module handlers=['Exception'] optional_deps_imported=False
+tldw_chatbook/tldw_api/rag_admin_schemas.py	10	module handlers=['Exception'] optional_deps_imported=False
