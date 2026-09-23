@@ -28,6 +28,7 @@ from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 from aiohttp import web
+from loguru import logger
 
 from .capabilities import (
     CanvasCapabilityAction,
@@ -1400,11 +1401,18 @@ class CanvasGateway:
                     await self._cleanup_runner()
                 except asyncio.CancelledError:
                     raise
-                except Exception:  # noqa: BLE001 - platform cleanup failures vary
+                except Exception as exc:  # noqa: BLE001 - platform cleanup failures vary
+                    logger.warning(
+                        "Canvas gateway start aborted during runner cleanup: {}",
+                        type(exc).__name__,
+                    )
                     raise RuntimeError("Canvas gateway could not start") from None
             try:
                 await self._bind()
-            except Exception:  # noqa: BLE001 - aiohttp bind failures are platform-specific
+            except Exception as exc:  # noqa: BLE001 - aiohttp bind failures are platform-specific
+                logger.warning(
+                    "Canvas gateway could not bind: {}", type(exc).__name__
+                )
                 try:
                     await self._cleanup_runner()
                 except asyncio.CancelledError:

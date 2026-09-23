@@ -455,10 +455,13 @@ def build_console_workspace_state(
     workspaces = _safe_workspaces(registry_service)
     can_switch = len(workspaces) > 1
     is_default_workspace = active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
+    memberships = _safe_memberships(registry_service, active_workspace)
     source_rows = (
         tuple(conversations)
         if conversations is not None
-        else _conversation_rows_from_memberships(registry_service, active_workspace)
+        else _conversation_rows_from_memberships(
+            registry_service, active_workspace, memberships
+        )
     )
     rows = tuple(_select_conversation(row, current_conversation) for row in source_rows)
     server_label, server_detail = _server_readiness(
@@ -505,7 +508,9 @@ def build_console_workspace_state(
         ),
         server_readiness_label=server_label,
         server_readiness_detail=server_detail,
-        handoff_rows=_handoff_rows_from_memberships(registry_service, active_workspace),
+        handoff_rows=_handoff_rows_from_memberships(
+            registry_service, active_workspace, memberships
+        ),
         acp_handoff_label=acp_state[0],
         acp_handoff_detail=acp_state[1],
         acp_handoff_audit=acp_state[2],
@@ -750,19 +755,37 @@ def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:
     return tuple(workspaces or ())
 
 
-def _conversation_rows_from_memberships(
+def _safe_memberships(
     registry_service: Any,
     active_workspace: WorkspaceRecord,
-) -> tuple[ConsoleWorkspaceConversationRow, ...]:
+) -> tuple[Any, ...]:
+    """Read this workspace's memberships once, failing closed to no rows.
+
+    ``list_workspace_memberships`` is an unpaged ``SELECT *`` with no ``LIMIT``
+    and this build runs on the Textual event loop, so the conversation and
+    handoff rows share one read rather than issuing it twice (TASK-32901).
+    """
     try:
-        memberships = registry_service.list_workspace_memberships(
-            active_workspace.workspace_id
+        return tuple(
+            registry_service.list_workspace_memberships(
+                active_workspace.workspace_id
+            )
+            or ()
         )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to read workspace memberships for Console context rail",
         )
         return ()
+
+
+def _conversation_rows_from_memberships(
+    registry_service: Any,
+    active_workspace: WorkspaceRecord,
+    memberships: tuple[Any, ...] | None = None,
+) -> tuple[ConsoleWorkspaceConversationRow, ...]:
+    if memberships is None:
+        memberships = _safe_memberships(registry_service, active_workspace)
     if not memberships:
         return ()
     conversation_memberships = tuple(
@@ -786,16 +809,10 @@ def _conversation_rows_from_memberships(
 def _handoff_rows_from_memberships(
     registry_service: Any,
     active_workspace: WorkspaceRecord,
+    memberships: tuple[Any, ...] | None = None,
 ) -> tuple[ConsoleWorkspaceHandoffRow, ...]:
-    try:
-        memberships = registry_service.list_workspace_memberships(
-            active_workspace.workspace_id
-        )
-    except Exception:
-        logger.opt(exception=True).warning(
-            "Failed to read workspace memberships for Console handoff readiness",
-        )
-        return ()
+    if memberships is None:
+        memberships = _safe_memberships(registry_service, active_workspace)
     memberships_seq = tuple(memberships or ())
     duplicate_titles = _duplicate_membership_titles(memberships_seq)
     rows: list[ConsoleWorkspaceHandoffRow] = []
