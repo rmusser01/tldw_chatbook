@@ -7,8 +7,10 @@ payload contract) and chat (OpenAI-shaped ``chat_api_call`` reply). ``now``
 is fixed so the local date is deterministic on any machine's timezone.
 """
 import asyncio
+import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -380,3 +382,298 @@ def test_library_urls_reads_media_urls_and_tolerates_missing_db(
     query, params = media_db.queries[0]
     assert "SELECT url FROM Media" in query
     assert "?" in query and params is not None
+
+
+# --- Profile-signal refresh (Ruling R18) + feedback loop (Ruling R19) -------
+
+
+class _FakeNotesDB:
+    """Minimal notes DB: one execute_query returning keyword/uses rows."""
+
+    def __init__(self, keyword_uses):
+        self._rows = [{"keyword": k, "uses": u} for k, u in keyword_uses]
+
+    def execute_query(self, query, params=None):
+        return SimpleNamespace(fetchall=lambda: list(self._rows))
+
+
+class _FakeMediaDB:
+    """Minimal media DB: serves both reader queries the cycle issues.
+
+    The keyword-aggregation query (``read_media_topics``) gets the seeded
+    keyword/score rows; the library-dedupe query (``_library_urls``) gets a
+    URL list — here empty, so nothing is filtered as already-ingested.
+    """
+
+    def __init__(self, keyword_scores, library_urls=()):
+        self._keyword_rows = [
+            {"keyword": k, "score": s} for k, s in keyword_scores]
+        self._url_rows = [{"url": u} for u in library_urls]
+
+    def execute_query(self, query, params=None):
+        if "SELECT url FROM Media" in query:
+            rows = self._url_rows
+        else:
+            rows = self._keyword_rows
+        return SimpleNamespace(fetchall=lambda: list(rows))
+
+
+class _FakePCRecord:
+    def __init__(self, subject, kind="note"):
+        self.kind = kind
+        self.payload = SimpleNamespace(subject=subject)
+
+
+class _FakePCService:
+    def __init__(self, records):
+        self._records = records
+
+    def list_records(self, *, scope_ids, include_archived=False):
+        return list(self._records)
+
+
+def _profile_row(db, text, facet="topic"):
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM dream_interest_profile WHERE facet = ? AND text = ?",
+            (facet, text),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _seed_story_with_feedback(db, *, matched, kind, created_at=None):
+    """One story plus one feedback row with a CONTROLLED created_at."""
+    collection = db.get_collection_by_date("2026-09-20")
+    if collection is None:
+        collection_id = db.create_collection(
+            "2026-09-20", "scheduled", "digest")
+    else:
+        collection_id = int(collection["id"])
+    story_id = db.insert_story(
+        collection_id,
+        title="t",
+        url=f"https://dreams.test/feedback/"
+             f"{len(db.list_stories(collection_id))}",
+        snippet="s",
+        body="b",
+        status="complete",
+        source="web",
+        kind="content",
+        event_date=None,
+        location=None,
+        matched_topics=matched,
+        query="q",
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO dream_feedback (story_id, kind, created_at)"
+            " VALUES (?, ?, ?)",
+            (story_id, kind, created_at or NOW.isoformat()),
+        )
+    return story_id
+
+
+def _profile_facts(db):
+    """Stable per-key facts (weight/source/boost) for idempotence checks."""
+    return {
+        (row["facet"], row["text"]): (
+            round(float(row["weight"]), 6), row["source"],
+            row["last_boosted_at"],
+        )
+        for row in db.list_profile()
+    }
+
+
+@pytest.mark.asyncio
+async def test_cycle_refreshes_profile_signals_from_all_three_sources(
+        dreams_db, settings, tmp_path, monkeypatch):
+    from tldw_chatbook.Dreams import cycle_service
+
+    monkeypatch.setattr(
+        cycle_service, "_pc_distillate_cache_path",
+        lambda: tmp_path / "pc_distillate.json")
+    # A user-owned row must survive the refresh untouched (ruling R18).
+    dreams_db.upsert_profile_entry("topic", "user topic", weight=0.7,
+                                   searchable=1, source="user")
+    deps = CycleDeps(
+        dreams_db=dreams_db,
+        chachanotes_db_getter=lambda: _FakeNotesDB([("rust tui", 2)]),
+        media_db_getter=lambda: _FakeMediaDB([("jazz guitar", 2)]),
+        subs_db_getter=lambda: None,
+        pc_service_getter=lambda: _FakePCService(
+            [_FakePCRecord("visit japan")]),
+        chat_getter=lambda: _fake_chat,
+        perform_search=_fake_perform,
+        now=lambda: NOW,
+    )
+    first = await run_cycle(deps, trigger="manual")
+    assert first["status"] == "complete"
+
+    facts = _profile_facts(dreams_db)
+    # Two note touches -> 0.5; merged rows land per origin with fresh decay
+    # clocks (last_boosted_at stamped) so snapshot() does not floor them.
+    assert facts[("topic", "rust tui")] == (0.5, "notes", NOW.isoformat())
+    assert facts[("topic", "jazz guitar")] == (0.5, "media", NOW.isoformat())
+    assert facts[("topic", "visit japan")] == (
+        1.0, "personal_context", NOW.isoformat())
+    # The pre-seeded user row keeps its weight, source, and boost stamp.
+    assert facts[("topic", "user topic")] == (0.7, "user", None)
+
+    # A second cycle neither duplicates rows nor disturbs the user row.
+    second = await run_cycle(deps, trigger="refresh")
+    assert second["status"] == "complete"
+    assert _profile_facts(dreams_db) == facts
+    keys = [(row["facet"], row["text"]) for row in dreams_db.list_profile()]
+    assert len(keys) == len(set(keys))
+
+
+@pytest.mark.asyncio
+async def test_profile_source_failure_degrades_but_cycle_completes(
+        dreams_db, settings):
+    class BrokenDB:
+        def execute_query(self, query, params=None):
+            raise sqlite3.OperationalError("database is locked")
+
+    deps = CycleDeps(
+        dreams_db=dreams_db,
+        chachanotes_db_getter=lambda: BrokenDB(),
+        media_db_getter=lambda: None,
+        subs_db_getter=lambda: None,
+        pc_service_getter=lambda: None,
+        chat_getter=lambda: _fake_chat,
+        perform_search=_fake_perform,
+        now=lambda: NOW,
+    )
+    result = await run_cycle(deps, trigger="manual")
+    assert result["status"] == "complete"
+    row = dreams_db.get_collection_by_date(_today())
+    assert row["degradation_notes"] and "notes" in row["degradation_notes"]
+
+
+@pytest.mark.asyncio
+async def test_pc_cache_path_failure_skips_source_with_note(
+        dreams_db, settings, monkeypatch):
+    from tldw_chatbook.Dreams import cycle_service
+
+    def broken_path():
+        raise OSError("no user data dir")
+
+    monkeypatch.setattr(cycle_service, "_pc_distillate_cache_path",
+                        broken_path)
+    deps = CycleDeps(
+        dreams_db=dreams_db,
+        chachanotes_db_getter=lambda: _FakeNotesDB([("rust tui", 1)]),
+        media_db_getter=lambda: None,
+        subs_db_getter=lambda: None,
+        pc_service_getter=lambda: _FakePCService([]),
+        chat_getter=lambda: _fake_chat,
+        perform_search=_fake_perform,
+        now=lambda: NOW,
+    )
+    result = await run_cycle(deps, trigger="manual")
+    assert result["status"] == "complete"
+    row = dreams_db.get_collection_by_date(_today())
+    assert row["degradation_notes"] and "personal context" in \
+        row["degradation_notes"]
+    # The healthy notes source still landed.
+    assert _profile_row(dreams_db, "rust tui") is not None
+
+
+# --- Feedback loop (Ruling R19) ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_feedback_more_raises_topic_weight_and_stamps_boost(
+        dreams_db, settings):
+    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="notes")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    await _apply_feedback(_deps(dreams_db), NOW)
+    row = _profile_row(dreams_db, "rust tui")
+    assert row["weight"] == pytest.approx(0.6)
+    assert row["last_boosted_at"] == NOW.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_apply_feedback_less_lowers_weight_without_new_stamp(
+        dreams_db, settings):
+    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="notes")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="less")
+    await _apply_feedback(_deps(dreams_db), NOW)
+    row = _profile_row(dreams_db, "rust tui")
+    assert row["weight"] == pytest.approx(0.4)
+    assert row["last_boosted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_apply_feedback_adjusts_user_topics_but_never_goals(
+        dreams_db, settings):
+    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+
+    # Spec contract: feedback adjusts TOPIC weights generally -- user-seeded
+    # topics included; only facet='goal' rows are immune.
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="user")
+    dreams_db.upsert_profile_entry("goal", "rust tui", weight=0.9,
+                                   searchable=1, source="seed")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    await _apply_feedback(_deps(dreams_db), NOW)
+    topic = _profile_row(dreams_db, "rust tui", facet="topic")
+    goal = _profile_row(dreams_db, "rust tui", facet="goal")
+    assert topic["weight"] == pytest.approx(0.6)
+    assert topic["last_boosted_at"] == NOW.isoformat()
+    assert goal["weight"] == pytest.approx(0.9)
+    assert goal["last_boosted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_apply_feedback_clamps_weight_bounds(
+        dreams_db, settings):
+    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+
+    dreams_db.upsert_profile_entry("topic", "ceil topic", weight=0.95,
+                                   searchable=1, source="notes")
+    dreams_db.upsert_profile_entry("topic", "floor topic", weight=0.1,
+                                   searchable=1, source="notes")
+    _seed_story_with_feedback(dreams_db, matched=["ceil topic"], kind="more")
+    _seed_story_with_feedback(dreams_db, matched=["floor topic"], kind="less")
+    await _apply_feedback(_deps(dreams_db), NOW)
+    assert _profile_row(dreams_db, "ceil topic")["weight"] == \
+        pytest.approx(1.0)
+    assert _profile_row(dreams_db, "floor topic")["weight"] == \
+        pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_apply_feedback_ignores_old_and_neutral_feedback(
+        dreams_db, settings):
+    from tldw_chatbook.Dreams.cycle_service import _apply_feedback
+
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="notes")
+    _seed_story_with_feedback(
+        dreams_db, matched=["rust tui"], kind="more",
+        created_at=(NOW - timedelta(days=15)).isoformat())
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"],
+                              kind="exported")
+    await _apply_feedback(_deps(dreams_db), NOW)
+    row = _profile_row(dreams_db, "rust tui")
+    assert row["weight"] == pytest.approx(0.5)
+    assert row["last_boosted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_cycle_applies_feedback_at_cycle_time(dreams_db, settings):
+    dreams_db.upsert_profile_entry("topic", "rust tui", weight=0.5,
+                                   searchable=1, source="user")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert result["status"] == "complete"
+    row = _profile_row(dreams_db, "rust tui")
+    assert row["weight"] == pytest.approx(0.6)
+    assert row["last_boosted_at"] == NOW.isoformat()

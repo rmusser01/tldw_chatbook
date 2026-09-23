@@ -1,14 +1,16 @@
 """[dreams] Cycle orchestration: one dated collection per run.
 
 ``run_cycle`` is the whole discovery pipeline of spec §discovery staged
-end-to-end — reclaim stale rows, snapshot the profile, claim the local date,
+end-to-end — reclaim stale rows, refresh the interest profile from
+notes/media/Personal-Context signals (ruling R18), apply the feedback loop
+to topic weights (ruling R19), snapshot the profile, claim the local date,
 synthesize queries, search, harvest the watchlist, rank unseen candidates,
 generate one story per pick, and write every outcome as a row. Every
 blocking call (web search, chat, SQLite) runs under ``asyncio.to_thread``
 with DB writes grouped one hop per stage, copying
 ``briefing_service``'s discipline. Degradations — synthesis fallback, search
-failure, budget trims — never kill the cycle; they append to the
-collection's ``degradation_notes``.
+failure, budget trims, a failed signal source — never kill the cycle; they
+append to the collection's ``degradation_notes``.
 
 A date that already owns a collection row is not an error: later triggers
 for the same date run in APPEND mode (spec §idempotency, ruling R11) — the
@@ -31,6 +33,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -39,6 +42,7 @@ from loguru import logger
 from tldw_chatbook.Dreams import (
     discovery,
     interest_profile,
+    profile_sources,
     query_synthesis,
     story_service,
 )
@@ -58,6 +62,21 @@ _STALE_GENERATING_MINUTES = 15
 #: there is no source URL — the synthetic scheme keeps the row honest about
 #: having no link to dive into.
 _LLM_URL_PREFIX = "dreams://llm/"
+
+#: Weight delta one net feedback event moves a topic by (ruling R19; spec
+#: §feedback loop). Feedback kinds count +1 (``more``/``kept``/``dived``/
+#: ``ingested``) or −1 (``less``); ``exported``/``tracked`` are recorded but
+#: carry no weight signal.
+_FEEDBACK_STEP = 0.1
+
+#: How far back the feedback loop reads (spec §feedback loop: a trailing
+#: two-week window of story reactions).
+_FEEDBACK_WINDOW_DAYS = 14
+
+#: Feedback-adjusted weights are clamped to the same bounds decay converges
+#: to (spec §interest profile): never below the floor, never above 1.0.
+_WEIGHT_FLOOR = 0.05
+_WEIGHT_CEILING = 1.0
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -81,15 +100,14 @@ class CycleDeps:
 
     Attributes:
         dreams_db: The Dreams database (required; the only hard dependency).
-        chachanotes_db_getter: Returns the notes DB or None (unused by the
-            discovery cycle itself; carried for the profile-refresh flows
-            that share this bag).
+        chachanotes_db_getter: Returns the notes DB or None; None means no
+            notes keyword signals for the profile refresh (ruling R18).
         media_db_getter: Returns the media DB or None; None means no
-            library-URL dedupe.
+            library-URL dedupe and no media keyword signals.
         subs_db_getter: Returns the subscriptions DB or None; None means no
             watchlist candidate pool.
-        pc_service_getter: Returns the Personal Context service or None
-            (carried for the profile-refresh flows).
+        pc_service_getter: Returns the Personal Context service or None;
+            None means no personal-context signals for the profile refresh.
         chat_getter: Returns the pre-bound chat seam
             (``story_service.resolve_dreams_chat``-shaped); may raise, the
             cycle degrades.
@@ -97,7 +115,7 @@ class CycleDeps:
         now: Injected clock (UTC-aware); drives date bucketing, staleness,
             and catch-up windows.
     """
-    dreams_db: "DreamsDB"
+    dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
     media_db_getter: Callable[[], Any]
     subs_db_getter: Callable[[], Any]
@@ -167,7 +185,7 @@ def _library_urls(deps: CycleDeps) -> set[str]:
     return {str(row["url"]) for row in rows if row["url"]}
 
 
-def _append_target(dreams_db: "DreamsDB", local_date: str) -> dict | None:
+def _append_target(dreams_db: DreamsDB, local_date: str) -> dict | None:
     """Resolve the existing collection row a later trigger appends onto.
 
     Adds ``story_rows`` (rows already written for the date) and ``urls``
@@ -197,7 +215,7 @@ def _append_target(dreams_db: "DreamsDB", local_date: str) -> dict | None:
 
 
 def _finish_cycle(
-    dreams_db: "DreamsDB",
+    dreams_db: DreamsDB,
     collection_id: int,
     *,
     degradation_notes: str | None,
@@ -276,7 +294,7 @@ def _attributed_query(candidate: Candidate, queries: list[str]) -> str:
 
 
 def _record_story(
-    dreams_db: "DreamsDB",
+    dreams_db: DreamsDB,
     local_date: str,
     collection_id: int,
     *,
@@ -312,8 +330,240 @@ def _record_story(
     )
 
 
+def _pc_distillate_cache_path() -> Path:
+    """The Personal-Context distillate cache under the user data dir.
+
+    Same root helper ``get_dreams_db_path`` resolves through
+    (``get_user_data_dir``), adapted to a sub-directory: the lock-tolerant
+    PC reader treats this file as its cache-on-unlock distillate. The import
+    is deferred so a config-import failure stays a cycle-time degradation,
+    not a module-import crash. May raise when the secured directory cannot
+    be resolved — the caller degrades to skipping the PC source.
+    """
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir() / "dreams" / "pc_distillate.json"
+
+
+def _preferred_sources(
+    collected: list[tuple[str, list[dict]]],
+) -> dict[tuple[str, str], str]:
+    """Per merged ``(facet, text)`` key, the origin that weighed most.
+
+    A topic the sources agree on keeps ONE row, so it needs one ``source``:
+    the reader whose signal contributed the most weight wins, first-read
+    order (notes, media, personal context) breaking ties. The reader's own
+    ``source`` value is preferred when it sets one, with the origin name as
+    the fallback.
+    """
+    winners: dict[tuple[str, str], tuple[float, str]] = {}
+    for origin, rows in collected:
+        for entry in rows:
+            key = (str(entry.get("facet", "topic")),
+                   str(entry.get("text", "")).strip().lower())
+            if not key[1]:
+                continue
+            source = str(entry.get("source") or origin)
+            weight = float(entry.get("weight", 0.0))
+            best = winners.get(key)
+            if best is None or weight > best[0]:
+                winners[key] = (weight, source)
+    return {key: source for key, (_, source) in winners.items()}
+
+
+def _upsert_profile_signals(
+    dreams_db: DreamsDB,
+    merged: list[dict],
+    source_by_key: dict[tuple[str, str], str],
+    *,
+    now_iso: str,
+) -> None:
+    """Persist merged signal rows; sync, the caller thread-offloads.
+
+    Merge semantics (ruling R18): DO NOT clobber — existing rows whose
+    ``source`` is ``user``/``seed`` keep their weight and their boost stamp
+    entirely (only the feedback stage, R19, may stamp them later); derived
+    rows take the new merged weight. Rows absent from the merge are NOT
+    deleted — decay handles staleness. Protection matches the table's own
+    uniqueness semantics (exact ``(facet, text)``), so a differently-spelled
+    user row keeps its weight while the normalized derived row lands
+    alongside it.
+
+    Each row the refresh upserts also gets ``last_boosted_at = now``: fresh
+    evidence restarts the decay clock, otherwise ``snapshot`` would floor
+    every never-boosted row to ``0.05`` immediately and the personalization
+    this stage builds would evaporate before a single query is synthesized.
+    ``upsert_profile_entry`` deliberately never touches that column (it is
+    owned by these flows), so the stamp is a separate batched UPDATE.
+    """
+    protected = {
+        (str(row["facet"]), str(row["text"]))
+        for row in dreams_db.list_profile()
+        if str(row.get("source")) in ("user", "seed")
+    }
+    stamped: list[tuple[str, str]] = []
+    for row in merged:
+        key = (str(row["facet"]), str(row["text"]))
+        if key in protected:
+            continue
+        dreams_db.upsert_profile_entry(
+            key[0], key[1],
+            weight=float(row["weight"]), searchable=1,
+            source=source_by_key.get(key, "notes"),
+        )
+        stamped.append(key)
+    if stamped:
+        with dreams_db.transaction() as conn:
+            conn.executemany(
+                "UPDATE dream_interest_profile SET last_boosted_at = ?"
+                " WHERE facet = ? AND text = ?",
+                [(now_iso, facet, text) for facet, text in stamped],
+            )
+
+
+async def _refresh_profile_signals(
+    deps: CycleDeps, now: datetime
+) -> list[str]:
+    """Stage 0a (ruling R18): rebuild derived profile rows from signals.
+
+    Reads the three signal sources through the injected getters (a ``None``
+    skips that source silently), merges them, and upserts the merged topics.
+    Every source — and the write — degrades with a note on failure; the
+    cycle always continues. Reads run one ``asyncio.to_thread`` hop per
+    source DB, and the Dreams write is one more hop (stage discipline).
+    """
+    notes: list[str] = []
+    collected: list[tuple[str, list[dict]]] = []
+    notes_db = deps.chachanotes_db_getter()
+    if notes_db is not None:
+        try:
+            collected.append(("notes", await asyncio.to_thread(
+                profile_sources.read_note_topics, notes_db)))
+        except Exception as exc:  # noqa: BLE001 - a dead source degrades
+            notes.append(f"profile signals: notes failed: {exc}")
+    media_db = deps.media_db_getter()
+    if media_db is not None:
+        try:
+            collected.append(("media", await asyncio.to_thread(
+                profile_sources.read_media_topics, media_db)))
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"profile signals: media failed: {exc}")
+    pc_service = deps.pc_service_getter()
+    if pc_service is not None:
+        try:
+            cache_path = await asyncio.to_thread(_pc_distillate_cache_path)
+        except Exception as exc:  # noqa: BLE001 - no temp fallback path
+            notes.append(
+                "profile signals: personal context cache path unresolvable"
+                f" ({type(exc).__name__}); source skipped")
+        else:
+            # Never raises (lock-tolerant reader with the cache above).
+            collected.append(("personal_context", await asyncio.to_thread(
+                profile_sources.read_personal_context_topics, pc_service,
+                cache_path=cache_path)))
+    if not collected:
+        return notes
+    merged = interest_profile.merge_signals([rows for _, rows in collected])
+    if not merged:
+        return notes
+    try:
+        await asyncio.to_thread(
+            _upsert_profile_signals, deps.dreams_db, merged,
+            _preferred_sources(collected), now_iso=now.isoformat())
+    except Exception as exc:  # noqa: BLE001 - a failed write degrades
+        notes.append(f"profile signals: profile write failed: {exc}")
+    return notes
+
+
+def _apply_feedback_sync(dreams_db: DreamsDB, *, now: datetime) -> None:
+    """The feedback loop's reads and writes; runs in one thread hop.
+
+    Joins ``dream_feedback`` → ``dream_stories.matched_topics`` over the
+    trailing window, nets each topic (+1 per ``more``/``kept``/``dived``/
+    ``ingested``, −1 per ``less``; ``exported``/``tracked`` are neutral),
+    then adjusts each matched ``facet='topic'`` row by
+    ``FEEDBACK_STEP * net`` clamped to ``[0.05, 1.0]``, stamping
+    ``last_boosted_at = now`` only on positive net (a negative one keeps
+    the old stamp — decay, not the boost clock, handles fading).
+
+    Immunity contract (spec §feedback loop): ``facet='goal'`` rows are
+    NEVER adjusted — goals change only by direct user edit. User- and
+    seed-sourced TOPIC rows ARE adjustable: feedback adjusts topic weights
+    generally, and a hand-seeded topic the user keeps reacting to is
+    exactly the case the loop exists for; only the goal facet is sacred.
+    """
+    cutoff = (now - timedelta(days=_FEEDBACK_WINDOW_DAYS)).isoformat()
+    with dreams_db.connection() as conn:
+        rows = conn.execute(
+            "SELECT ds.matched_topics AS matched, fb.kind AS kind"
+            " FROM dream_feedback AS fb"
+            " JOIN dream_stories AS ds ON ds.id = fb.story_id"
+            " WHERE fb.created_at >= ?",
+            (cutoff,),
+        ).fetchall()
+    net: dict[str, int] = {}
+    for row in rows:
+        try:
+            topics = json.loads(row["matched"] or "[]")
+        except ValueError:
+            continue
+        kind = str(row["kind"])
+        delta = (1 if kind in ("more", "kept", "dived", "ingested")
+                 else -1 if kind == "less" else 0)
+        if delta == 0:
+            continue
+        for topic in topics:
+            topic = str(topic).strip().lower()
+            if topic:
+                net[topic] = net.get(topic, 0) + delta
+    if not net:
+        return
+    now_iso = now.isoformat()
+    updates: list[tuple[float, str | None, str, str]] = []
+    for row in dreams_db.list_profile():
+        if str(row["facet"]) != "topic":
+            continue  # goals are immune, by construction
+        delta = net.get(str(row["text"]).strip().lower(), 0)
+        if delta == 0:
+            continue
+        weight = min(_WEIGHT_CEILING, max(
+            _WEIGHT_FLOOR, float(row["weight"]) + _FEEDBACK_STEP * delta))
+        updates.append((weight, now_iso if delta > 0 else None,
+                        now_iso, str(row["text"])))
+    if not updates:
+        return
+    with dreams_db.transaction() as conn:
+        conn.executemany(
+            "UPDATE dream_interest_profile SET"
+            " weight = ?,"
+            " last_boosted_at = COALESCE(?, last_boosted_at),"
+            " updated_at = ?"
+            " WHERE facet = 'topic' AND text = ?",
+            updates,
+        )
+
+
+async def _apply_feedback(deps: CycleDeps, now: datetime) -> list[str]:
+    """Stage 0b (ruling R19): fold recent story feedback into topic weights.
+
+    One ``asyncio.to_thread`` hop against the Dreams DB; any failure
+    degrades with a note and never aborts the cycle.
+    """
+    try:
+        await asyncio.to_thread(_apply_feedback_sync, deps.dreams_db,
+                                now=now)
+    except Exception as exc:  # noqa: BLE001 - the loop degrades, not the cycle
+        return [f"feedback loop failed: {exc}"]
+    return []
+
+
 async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
     """Run one full discovery cycle for the current local date.
+
+    Before the profile snapshot, two stages personalize it: the interest
+    profile is refreshed from notes/media/Personal-Context signals (ruling
+    R18) and recent story feedback is folded into topic weights (ruling
+    R19) — both degrade with notes and never abort the cycle.
 
     Never raises for provider/search failures: they degrade the collection
     (notes on the row) while every candidate still becomes a story row. A
@@ -351,13 +601,20 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         if reclaimed:
             logger.info("Dreams cycle reclaimed {} stale generating row(s)",
                         reclaimed)
+        # Profile stages (rulings R18/R19) run BEFORE the snapshot so it
+        # reflects refreshed signals and feedback-adjusted weights; both
+        # degrade with notes and never abort the cycle. Their notes are
+        # carried into the collection row once it exists.
+        stage_notes: list[str] = []
+        stage_notes += await _refresh_profile_signals(deps, now)
+        stage_notes += await _apply_feedback(deps, now)
         snap = await asyncio.to_thread(
             interest_profile.snapshot, dreams_db, now_epoch=now.timestamp())
         profile_digest = hashlib.sha256(
             json.dumps(snap, sort_keys=True).encode()).hexdigest()[:16]
         collection_id = await asyncio.to_thread(
             dreams_db.create_collection, local_date, trigger, profile_digest)
-        notes: list[str] = []
+        notes: list[str] = list(stage_notes)
         configured_cap = int(dreams_setting("stories_per_cycle"))
         # Append mode (ruling R11): the date is taken, so this trigger
         # appends onto the existing row until the date's TOTAL reaches the
@@ -400,7 +657,9 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             return chat(**kwargs)
 
         try:
-            chat = deps.chat_getter()
+            # Thread-offloaded: the getter force-reloads config from disk
+            # and may reach the keyring — neither belongs on the event loop.
+            chat = await asyncio.to_thread(deps.chat_getter)
             queries = await query_synthesis.synthesize_queries(
                 counting_chat, snapshot=snap,
                 count=int(dreams_setting("queries_per_cycle")),
@@ -495,8 +754,10 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 count_call=chat is not None)
             results.append((candidate, result))
 
-        # Every surfaced URL enters the seen ledger, whatever its outcome —
-        # an empty or failed story still means "we already found this".
+        # Every PICKED candidate's URL is upserted into the seen ledger,
+        # whatever its outcome — surfaced-but-unpicked URLs are not recorded
+        # here, and an empty or failed story still means "we already found
+        # this".
         if results:
             await asyncio.to_thread(
                 dreams_db.seen_upsert,
@@ -524,7 +785,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
 
 
 def _catchup_due(
-    dreams_db: "DreamsDB", *, local_date: str, cadence_hours: int,
+    dreams_db: DreamsDB, *, local_date: str, cadence_hours: int,
     now: datetime,
 ) -> bool:
     """The catch-up predicate's SQLite reads; runs in one ``to_thread`` hop.
