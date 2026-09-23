@@ -8,29 +8,11 @@ import os
 import platform
 from pathlib import Path
 
-
-def flush_file(fd: int) -> None:
-    """Persist file contents and metadata using the host's native barrier."""
-    if os.name == "nt":
-        from ..Utils.windows_files import flush_file as native_flush
-
-        native_flush(fd)
-        return
-    os.fsync(fd)
-    if platform.system() == "Darwin":
-        import fcntl
-
-        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
-
-
-def flush_directory(fd: int) -> None:
-    """Persist directory changes; failures remain ambiguous to journal callers."""
-    if os.name == "nt":
-        from ..Utils.windows_files import flush_directory as native_flush
-
-        native_flush(fd)
-    else:
-        flush_file(fd)
+# task-32896: the barriers moved down to the Utils leaf so
+# ``Utils/atomic_file_ops.py`` could reach them without ``Utils`` importing
+# this feature package. Re-exported verbatim -- every existing importer of
+# ``native_platform.flush_file``/``flush_directory`` is unchanged.
+from ..Utils.file_durability import flush_directory, flush_file  # noqa: F401
 
 
 def rename_noreplace(

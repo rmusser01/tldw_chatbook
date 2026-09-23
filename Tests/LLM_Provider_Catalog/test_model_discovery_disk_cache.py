@@ -85,7 +85,14 @@ def test_disk_store_holds_no_credentials(tmp_path):
     )
 
 
-def test_save_uses_pid_scoped_temp_name(tmp_path, monkeypatch):
+def test_save_publishes_by_rename_from_a_same_directory_temp(tmp_path, monkeypatch):
+    """Since task-32896 ``save`` delegates to ``Utils.atomic_file_ops``, so the
+    temp name is ``mkstemp``-random rather than pid-scoped (strictly better: a
+    pid name is predictable and collides when a pid is reused, and the old
+    hand-rolled path left the temp behind on failure). What must still hold is
+    the property the pid-name assertion stood in for -- publication is a rename
+    from a temp in the *same directory*, so it is atomic, and no temp survives.
+    """
     store = _store(tmp_path)
     store.record("OpenAI", "fp", ["gpt-a"])
     captured = {}
@@ -97,8 +104,11 @@ def test_save_uses_pid_scoped_temp_name(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "replace", fake_replace)
     store.save()
-    assert captured["src"].name == f"model_catalog_cache.json.{os.getpid()}.tmp"
-    assert (tmp_path / "model_catalog_cache.json").exists()
+    target = tmp_path / "model_catalog_cache.json"
+    assert captured["src"].parent == target.parent
+    assert captured["src"] != target
+    assert target.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_future_dated_fetched_at_is_stale(tmp_path):

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
+from ..Utils.file_durability import flush_directory, fsync_parent_directory
 from . import bootstrap, profile_paths
 from . import storage_admission as storage
 
@@ -338,8 +339,10 @@ def backup_corrupt(source):
         if state.pinned:
             fd = state.pins[state.selected.parent]
             os.replace(state.selected.name, backup.name, src_dir_fd=fd, dst_dir_fd=fd)
+            flush_directory(fd)
         else:
             os.replace(state.selected, backup)
+            fsync_parent_directory(backup.parent)
     except BaseException:
         state.uncertain = True
         raise bootstrap.RecoveryRequired("raw_publication_uncertain") from None

@@ -12,13 +12,13 @@ interval so a deliberately long interval is not mistaken for a stall.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
+
+from ..Utils.atomic_file_ops import atomic_write_text
 
 #: Liveness verdict is stale once the last tick is older than the poll
 #: interval times this factor -- a couple of missed polls, not one late one.
@@ -110,42 +110,9 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
                 "tick_count": heartbeat.tick_count,
             }
         )
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".heartbeat-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-                # os.replace publishes the NAME immediately; without this the
-                # CONTENTS may still be in page cache. A power loss between the
-                # two leaves a truncated file, read_heartbeat maps the
-                # ValueError to None, and the surface reports "never started"
-                # for a scheduler that had been ticking -- the confusion
-                # TASK-26025 exists to remove. Once per poll interval.
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, path)
-        except Exception:
-            with open(os.devnull, "w"):
-                pass
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        # The barrier above makes the CONTENTS durable; this makes the NAME
-        # durable. Placed after the cleanup block on purpose: the publish has
-        # already succeeded here, so a failure to flush the directory must not
-        # route through the unlink-the-temp path. Best effort -- a platform
-        # with no directory descriptor (Windows) simply skips it, and the
-        # residual it leaves is a heartbeat up to one poll interval stale,
-        # never a truncated one.
-        try:
-            directory = os.open(path.parent, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        # private=True keeps the owner-only mode this writer already had
+        # (mkstemp opens at 0o600 and nothing chmod'd it wider).
+        atomic_write_text(path, payload, private=True)
     except Exception as exc:  # noqa: BLE001 -- observation never breaks the loop
         logger.debug(f"scheduler heartbeat write failed: {exc!r}")
 
