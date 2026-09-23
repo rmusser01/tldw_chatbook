@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Mapping
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
@@ -124,12 +125,21 @@ class ServerAudioServicesService:
             authority_owner="server",
         )
 
-    async def _require_server_admin(
+    async def _require_audio_diagnostic_capability(
         self, client: TLDWAPIClient, action_id: str
     ) -> None:
-        profile = self._dump(await client.get_current_user_profile(sections="identity"))
-        user = profile.get("user") if isinstance(profile, dict) else None
-        if not isinstance(user, dict) or user.get("role") != "admin":
+        try:
+            capabilities = self._dump(await client.get_current_user_capabilities())
+        except APIResponseError as exc:
+            if exc.status_code == HTTPStatus.FORBIDDEN:
+                raise self._admin_required(action_id) from exc
+            if exc.status_code == HTTPStatus.NOT_FOUND:
+                return  # Older servers retain the diagnostic endpoint as final authority.
+            raise
+        if (
+            isinstance(capabilities, dict)
+            and capabilities.get("can_run_audio_diagnostics") is False
+        ):
             raise self._admin_required(action_id)
 
     async def get_tts_health(self) -> dict[str, Any]:
@@ -139,15 +149,29 @@ class ServerAudioServicesService:
     async def get_stt_health(
         self, *, model: str | None = None, warm: bool = False
     ) -> dict[str, Any]:
+        """Read STT status, optionally asking the server to warm a model.
+
+        Args:
+            model: Optional STT model name for the server diagnostic.
+            warm: Whether to perform the privileged model warm-up.
+
+        Returns:
+            The server's STT health data.
+
+        Raises:
+            PolicyDeniedError: Warm-up is denied by current server capability or
+                a later server 403.
+            APIResponseError: Other server or capability-request failures.
+        """
         action_id = "audio.health.observe.server"
         self._enforce(action_id)
         client = self._require_client()
         if warm:
-            await self._require_server_admin(client, action_id)
+            await self._require_audio_diagnostic_capability(client, action_id)
         try:
             return self._dump(await client.get_stt_health(model=model, warm=warm))
         except APIResponseError as exc:
-            if warm and exc.status_code == 403:
+            if warm and exc.status_code == HTTPStatus.FORBIDDEN:
                 raise self._admin_required(action_id) from exc
             raise
 
@@ -170,14 +194,24 @@ class ServerAudioServicesService:
         return self._dump(await self._require_client().get_audio_streaming_limits())
 
     async def test_audio_streaming(self) -> dict[str, Any]:
+        """Run the server's administrator-only streaming diagnostic.
+
+        Returns:
+            The server's diagnostic result.
+
+        Raises:
+            PolicyDeniedError: Current server capability or a later 403 denies
+                the diagnostic.
+            APIResponseError: Other server or capability-request failures.
+        """
         action_id = "audio.streaming.launch.server"
         self._enforce(action_id)
         client = self._require_client()
-        await self._require_server_admin(client, action_id)
+        await self._require_audio_diagnostic_capability(client, action_id)
         try:
             return self._dump(await client.test_audio_streaming())
         except APIResponseError as exc:
-            if exc.status_code == 403:
+            if exc.status_code == HTTPStatus.FORBIDDEN:
                 raise self._admin_required(action_id) from exc
             raise
 

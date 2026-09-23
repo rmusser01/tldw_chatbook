@@ -274,6 +274,7 @@ from .auth_user_schemas import (
     RegistrationResponse,
     SessionResponse,
     UserProfileCatalogResponse,
+    UserCapabilitiesResponse,
     UserProfileResponse,
     UserProfileUpdateRequest,
     UserProfileUpdateResponse,
@@ -3591,6 +3592,11 @@ class TLDWAPIClient:
             else None,
         )
         return UserProfileCatalogResponse.model_validate(response)
+
+    async def get_current_user_capabilities(self) -> UserCapabilitiesResponse:
+        """Read optional current-caller decisions from the active server."""
+        response = await self._request("GET", "/api/v1/users/me/capabilities")
+        return UserCapabilitiesResponse.model_validate(response)
 
     async def get_current_user_profile(
         self,
