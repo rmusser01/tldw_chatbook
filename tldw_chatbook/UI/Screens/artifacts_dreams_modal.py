@@ -35,6 +35,11 @@ stays inspectable -- but offers Close only: every story action is a
 silent no-op, the hint line advertises Close only, and nothing is ever
 written for a row with no ``dream_stories`` id behind it.
 
+**Ingest is http(s)-only.** LLM-knowledge stories (``dreams://llm/…`` URLs)
+have no web destination for the read-it-later queue, so their modal hides
+the Ingest button, drops it from the hint line, and the ``i`` keybinding
+degrades to a gentle notice instead of submitting a doomed capture.
+
 **All writes are single-row instant SQLite calls** made directly in the
 action handlers (controller ruling, mirroring the kept-briefings modal):
 ``DreamsDB.set_story_kept``/``record_feedback`` are one-statement
@@ -54,6 +59,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from loguru import logger
 from rich.console import Group, RenderableType
@@ -93,6 +99,26 @@ _HANDOFF_UNAVAILABLE_NOTICE = (
 _SYNTHETIC_NOTICE = (
     "This discovery cycle failed and recorded no story to act on."
 )
+_NO_HTTP_URL_NOTICE = (
+    "This story has no web URL to ingest."
+)
+
+
+def _ingestable(story: Mapping[str, Any]) -> bool:
+    """Whether the story URL may enter the read-it-later queue.
+
+    Ingest captures a WEB destination, so only http(s) URLs qualify: the
+    synthetic ``dreams://llm/…`` rows (search failed; the story came
+    straight from model knowledge) have nothing for the capture backend to
+    fetch, and the ingest seam's own ``validate_url`` would refuse them
+    anyway. Such rows hide the button, the hint, and the keybinding acts as
+    a gentle notice.
+    """
+    try:
+        parsed = urlparse(str(story.get("url") or "").strip())
+    except ValueError:
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 def _dreams_export_dir() -> Path:
@@ -261,9 +287,10 @@ class DreamsStoryModal(ModalScreen[None]):
                     yield Button(
                         "Export (e)", id="dsm-export-button", compact=True
                     )
-                    yield Button(
-                        "Ingest (i)", id="dsm-ingest-button", compact=True
-                    )
+                    if _ingestable(self._story):
+                        yield Button(
+                            "Ingest (i)", id="dsm-ingest-button", compact=True
+                        )
                     yield Button(
                         "More like this (m)", id="dsm-more-button", compact=True
                     )
@@ -272,17 +299,18 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all seven for a story, Close only for
-            # a synthetic failed-cycle row.
+            # implemented actions -- all seven for a story with an http(s)
+            # URL, Close only for a synthetic failed-cycle row, and no
+            # Ingest for a dreams://llm row whose action is gated off.
             yield Static(self._hints_text(), id="dsm-hints")
 
     def _hints_text(self) -> Text:
         hints = Text(style="dim")
         if not self._synthetic:
-            hints.append(
-                "k Keep · d Dive deeper · e Export · i Ingest"
-                " · m More like this · l Less like this · "
-            )
+            hints.append("k Keep · d Dive deeper · e Export")
+            if _ingestable(self._story):
+                hints.append(" · i Ingest")
+            hints.append(" · m More like this · l Less like this · ")
         hints.append("q Close")
         return hints
 
@@ -485,6 +513,13 @@ class DreamsStoryModal(ModalScreen[None]):
         """
         if self._synthetic:
             self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if not _ingestable(self._story):
+            # dreams://llm rows have no web destination to capture; the
+            # button and hint are already hidden for them, this guard
+            # covers the "i" keybinding.
+            self.notify(_NO_HTTP_URL_NOTICE, severity="information",
+                        markup=False)
             return
         backend = self._capture_backend()
         if backend is None:

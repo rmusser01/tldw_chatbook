@@ -388,6 +388,86 @@ async def test_ingest_without_capture_backend_degrades_to_notice(tmp_path):
         assert app.screen is modal, "a refused action must not dismiss or crash"
 
 
+def _seed_llm_story_db(tmp_path) -> DreamsDB:
+    """One llm-source story: its URL is the synthetic dreams:// scheme."""
+    db = DreamsDB(tmp_path / "dreams-llm.sqlite", "dreams-modal")
+    collection = db.create_collection("2026-09-22", "scheduled", "digest")
+    db.insert_story(
+        collection,
+        title="LLM knowledge story",
+        url="dreams://llm/0/rust%20tui",
+        snippet="",
+        body="A story straight from model knowledge.",
+        status="complete",
+        source="llm",
+        kind="content",
+        event_date=None,
+        location=None,
+        matched_topics=["rust tui"],
+        query="rust tui",
+    )
+    db.upsert_profile_entry(
+        "topic", "rust tui", weight=0.9, searchable=1, source="seed"
+    )
+    return db
+
+
+@pytest.mark.asyncio
+async def test_llm_story_does_not_offer_ingest_anywhere(tmp_path):
+    db = _seed_llm_story_db(tmp_path)
+    story = _story_row(db)
+    backend = FakeCaptureBackend()
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        labels = _button_labels(modal)
+        assert "Ingest" not in labels, "dreams:// rows must not offer Ingest"
+        for word in ("Keep", "Dive deeper", "Export", "More like this",
+                     "Less like this", "Close"):
+            assert word in labels, f"http-only gate must not hide {word!r}"
+        hints = _renderable_text(
+            modal.query_one("#dsm-hints", Static).renderable)
+        assert "Ingest" not in hints, "hints must not advertise a gated action"
+
+        # The keyboard binding is guarded too: pressing i writes nothing.
+        await pilot.press("i")
+        await pilot.pause()
+        assert backend.requests == []
+        assert _feedback_kinds(db, story["id"]) == []
+        assert changed == []
+        assert app.screen is modal, "a refused ingest must not dismiss"
+
+
+@pytest.mark.asyncio
+async def test_http_story_still_offers_ingest(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: FakeCaptureBackend(),
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert "Ingest" in _button_labels(modal)
+        hints = _renderable_text(
+            modal.query_one("#dsm-hints", Static).renderable)
+        assert "i Ingest" in hints
+
+
 # --- Modal surface ----------------------------------------------------------
 
 
