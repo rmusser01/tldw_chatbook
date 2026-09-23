@@ -1199,8 +1199,11 @@ class RecordingWorkspaceNotesService:
             "version": (kwargs.get("version") or 0) + 1,
         }
 
-    async def delete_workspace_note(self, workspace_id, note_id, version):
-        self.calls.append(("delete_note", workspace_id, note_id, version))
+    async def delete_workspace_note(self, workspace_id, note_id):
+        # (TASK-32893) no `version`: the workspace-notes DELETE has no
+        # compare-and-set to forward one to, and the parameter that used to be
+        # accepted here was silently discarded.
+        self.calls.append(("delete_note", workspace_id, note_id))
         return {"deleted": True}
 
 

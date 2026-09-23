@@ -255,6 +255,14 @@ def _replace_chunk_rows(
     (TASK-19902) On the auto path the caller wraps this AND the config
     re-stamp in ONE outer transaction -- ``transaction()`` nests, so the
     writes here commit only when the re-stamp lands too.
+
+    (TASK-32893) Because that DELETE is hard, a replacement with ZERO usable
+    rows is REFUSED with ``ValueError`` before the DELETE runs rather than
+    performed: see the guard below.
+
+    Raises:
+        ValueError: When ``chunks`` yields no insertable row -- the existing
+            chunk rows are left intact.
     """
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     client_id = getattr(media_db, "client_id", "local")
@@ -298,20 +306,35 @@ def _replace_chunk_rows(
                 None,
             )
         )
+    if not rows:
+        # (TASK-32893) REFUSE a zero-row replacement rather than perform it.
+        # The DELETE below is HARD, so an empty replacement wiped every chunk
+        # the item had while the caller still reported ``rechunked``. The only
+        # empty-guard upstream covers empty *source* text
+        # (``rechunk_one_item``: "source content is empty"); a chunker that
+        # returns nothing for non-empty content -- unsupported format,
+        # zero-length extract, every chunk invalid -- reached here and
+        # destroyed the old rows. Raising BEFORE the DELETE leaves them
+        # untouched; ``rechunk_one_item``'s per-item handler turns this into a
+        # ``failed`` outcome carrying this message, and its outer transaction
+        # rolls the config re-stamp back with it.
+        raise ValueError(
+            f"Re-chunk produced no usable chunks for media {media_id}; "
+            "refusing to delete the existing chunk rows."
+        )
     with media_db.transaction() as conn:
         conn.execute(
             "DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?", (media_id,)
         )
-        if rows:
-            conn.executemany(
-                "INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, "
-                "chunk_index, start_char, end_char, chunk_type, creation_date, "
-                "last_modified_orig, is_processed, metadata, chunking_template, "
-                "chunking_params, chunk_engine_version, uuid, last_modified, "
-                "version, client_id, deleted, prev_version, merge_parent_uuid) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
+        conn.executemany(
+            "INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, "
+            "chunk_index, start_char, end_char, chunk_type, creation_date, "
+            "last_modified_orig, is_processed, metadata, chunking_template, "
+            "chunking_params, chunk_engine_version, uuid, last_modified, "
+            "version, client_id, deleted, prev_version, merge_parent_uuid) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
 
 
 async def forced_reindex_media_item(
