@@ -78,6 +78,13 @@ _IDENTIFIER_FIELDS = frozenset(
         "site_module",
         "site_function",
         "widget_type",
+        # TASK-32920: an `event_loop_stall` record's sampled stack -- the
+        # innermost frame (`leaf_*`, often library code) and the Chatbook
+        # frame above `site_*`. Same identifier-only contract as above.
+        "leaf_module",
+        "leaf_function",
+        "caller_module",
+        "caller_function",
     }
 )
 _INTEGER_FIELDS = frozenset(
@@ -110,6 +117,7 @@ _INTEGER_FIELDS = frozenset(
         # TASK-32533: line numbers of the `raise_*` / `site_*` frames.
         "raise_line",
         "site_line",
+        "caller_line",
     }
 )
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})

@@ -78,6 +78,13 @@ class UIResponsivenessMonitor:
         #: failed-and-reported); lets tests and future callers synchronize
         #: with the background dispatch without sleeping.
         self._stall_records_processed = 0
+        # TASK-32920: the heartbeat only sees a stall after the loop recovers,
+        # when the culprit is already off the stack. A watchdog thread samples
+        # the loop thread's frames WHILE it is stalled so the record names the
+        # blocking code (module/function/line only -- never locals or paths).
+        self._loop_thread_id: int | None = None
+        self._stall_sample: dict[str, object] | None = None
+        self._watchdog_thread: threading.Thread | None = None
 
     def record_diagnostic(self, component: str, event: str, **fields: object) -> None:
         """Queue metadata from UI or worker threads without caller-side file I/O.
@@ -152,9 +159,10 @@ class UIResponsivenessMonitor:
         """
         with self._diagnostic_lock:
             self._diagnostic_closed = True
-            thread = self._stall_thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=timeout)
+            threads = (self._stall_thread, self._watchdog_thread)
+        for thread in threads:
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=timeout)
 
     def record_refresh(self, operation: str) -> None:
         """Count fixed activity names on the UI loop without retaining widgets.
@@ -187,7 +195,9 @@ class UIResponsivenessMonitor:
             elif not excessive:
                 self._refresh_breaches.discard(operation)
 
-    def _persist_stall(self, lag_ms: int) -> None:
+    def _persist_stall(
+        self, lag_ms: int, sample: dict[str, object] | None = None
+    ) -> None:
         """Queue one diagnostics record for an observed event-loop stall.
 
         The record is persisted by the daemon drain thread; this method only
@@ -200,6 +210,7 @@ class UIResponsivenessMonitor:
             "active_workers": sorted(self._active_workers),
             "mounts": self._mounts,
             "removes": self._removes,
+            **(sample or {}),
         }
         self.record_diagnostic("ui", "event_loop_stall", **record)
 
@@ -259,7 +270,7 @@ class UIResponsivenessMonitor:
         if lag_ms >= self.stall_threshold_ms:
             if not self._stall_persisted:
                 self._stall_persisted = True
-                self._persist_stall(lag_ms)
+                self._persist_stall(lag_ms, self._stall_sample)
         else:
             # A healthy heartbeat demonstrates recovery: re-arm so the next
             # threshold crossing is recorded as its own incident.
@@ -272,6 +283,29 @@ class UIResponsivenessMonitor:
         lag_seconds = max(0.0, elapsed_seconds - self.heartbeat_interval_seconds)
         self.record_heartbeat_delta(lag_seconds)
         self._last_heartbeat = now
+        self._stall_sample = None
+        if self.enabled and self._watchdog_thread is None:
+            self._loop_thread_id = threading.get_ident()
+            with self._diagnostic_lock:
+                if self._diagnostic_closed:
+                    return
+                self._watchdog_thread = threading.Thread(
+                    target=self._watch_loop, name="ui-stall-watchdog", daemon=True
+                )
+                self._watchdog_thread.start()
+
+    def _watch_loop(self) -> None:
+        """Sample the loop thread's stack once per stall, off the loop."""
+        limit = self.heartbeat_interval_seconds + self.stall_threshold_ms / 1000
+        poll = min(0.1, self.stall_threshold_ms / 2000)
+        while not self._diagnostic_closed:
+            time.sleep(poll)
+            beat = self._last_heartbeat
+            if self._stall_sample is None and time.perf_counter() - beat >= limit:
+                sample = _sample_stack(self._loop_thread_id)
+                # Drop a sample that raced a recovering heartbeat.
+                if beat == self._last_heartbeat:
+                    self._stall_sample = sample
 
     def reset_heartbeat_baseline(self) -> None:
         """Reset heartbeat timing without clearing accumulated diagnostics."""
@@ -288,3 +322,33 @@ class UIResponsivenessMonitor:
             max_heartbeat_lag_ms=self._max_heartbeat_lag_ms,
             stalled=self._max_heartbeat_lag_ms >= self.stall_threshold_ms,
         )
+
+
+_PACKAGE = __name__.split(".", 1)[0]
+
+
+def _sample_stack(thread_id: int | None) -> dict[str, object]:
+    """Name the innermost frame and the two deepest Chatbook frames.
+
+    ``leaf_*`` is where the thread actually is (often a library such as a
+    keyring backend); ``site_*`` is the Chatbook code that called into it and
+    ``caller_*`` the Chatbook frame above that.
+    """
+    frame = sys._current_frames().get(thread_id) if thread_id is not None else None
+    if frame is None:
+        return {}
+    sample: dict[str, object] = {
+        "leaf_module": frame.f_globals.get("__name__", ""),
+        "leaf_function": frame.f_code.co_name,
+    }
+    slots = ("site", "caller")
+    while frame is not None and slots:
+        module = frame.f_globals.get("__name__", "")
+        in_package = module == _PACKAGE or module.startswith(_PACKAGE + ".")
+        if in_package and module != __name__:
+            slot, slots = slots[0], slots[1:]
+            sample[f"{slot}_module"] = module
+            sample[f"{slot}_function"] = frame.f_code.co_name
+            sample[f"{slot}_line"] = frame.f_lineno
+        frame = frame.f_back
+    return sample
