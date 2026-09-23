@@ -362,6 +362,7 @@ from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from .config import (
     first_profile_created_this_session,
     get_cli_setting,
+    get_dreams_db_path,  # dreams phase 1
     get_library_collections_db_path,
     get_library_ingest_jobs_db_path,
     get_media_db_path,
@@ -10200,6 +10201,13 @@ class TldwCli(
             self.local_library_collections_service = None
             self.library_collections_service = None
 
+        # dreams phase 1: the Dreams DB itself is NOT constructed here --
+        # every Dreams import must stay off the `_ui_ready` module census
+        # (ADR-097 boot ratchet; the budget is at its limit), so
+        # `_wire_dreams_scheduler_integration` constructs it after
+        # `_ui_ready`, in the same synchronous slice as the scheduler
+        # worker start and before its first queue load.
+
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
         from tldw_chatbook.Library.collections_capture_repository import (
@@ -10985,6 +10993,23 @@ class TldwCli(
         if briefing_handler is not None:
             handlers["briefing_job"] = briefing_handler
 
+        # dreams phase 1: the Dreams cycle handler is dispatched through a
+        # lazy closure (the `_dispatch_automation_definition` pattern above)
+        # so its import chain stays off the `_ui_ready` module census
+        # (ADR-097; the boot budget is at its limit). The projection that
+        # feeds it is attached to the live queue after `_ui_ready` in
+        # `_wire_dreams_scheduler_integration`, before the scheduler's
+        # first queue load, so a task can only ever dispatch after both
+        # exist. Cycle deps are built per dispatch via
+        # `_dreams_cycle_deps` (getter-lambda discipline -- most handles do
+        # not exist yet at wiring time; the getter tolerates None and the
+        # handler no-ops).
+        async def _dispatch_dreams_cycle(task: dict[str, Any]) -> None:
+            handler = self._get_dreams_cycle_handler()
+            await handler.handle(task)
+
+        handlers["dreams_cycle"] = _dispatch_dreams_cycle
+
         # schedules-handoff PR-2, Task 5: local automation definitions
         # (`family="recurring_question"` in v1) are real queue rows, not
         # gated behind a config flag the way watchlist/briefing checks are
@@ -11021,6 +11046,8 @@ class TldwCli(
             briefing_projection=(
                 briefing_projection if briefing_handler is not None else None
             ),
+            # dreams phase 1: no projection here -- attaching one would
+            # import it before `_ui_ready` (census ratchet).
             missed_fire_grace_seconds=get_cli_setting(
                 "scheduling", "missed_fire_grace_seconds", MISSED_FIRE_GRACE_SECONDS
             ),
@@ -11569,6 +11596,125 @@ class TldwCli(
             self.notification_dispatch_service
         )
         self.local_watchlists_service.notification_app = self
+
+    def _get_dreams_cycle_handler(self) -> Any:  # dreams phase 1
+        """Lazily construct and memoize the Dreams cycle handler.
+
+        ADR-097 (boot-census ratchet): the handler module's import chain
+        stays off the boot path -- built on first dispatch, then cached on
+        `self` (the `_get_automation_definition_handler` pattern). Shutdown
+        reachability does not depend on which instance runs a cycle:
+        spawned cycles are held in the handler module's own set, which
+        `on_unmount` reaches directly.
+        """
+        handler = getattr(self, "_dreams_cycle_handler", None)
+        if handler is None:
+            from .Scheduling.scheduler.handlers.dreams_handler import (
+                DreamsCycleHandler,
+            )
+
+            handler = DreamsCycleHandler(
+                deps_getter=lambda: self._dreams_cycle_deps()
+            )
+            self._dreams_cycle_handler = handler
+        return handler
+
+    def _dreams_cycle_deps(self):  # dreams phase 1
+        """Build ``CycleDeps`` for a scheduled or catch-up Dreams cycle.
+
+        Returns ``None`` when Dreams cannot run right now (disabled, or no
+        Dreams database) so every caller -- the scheduled handler's
+        ``deps_getter`` and the boot catch-up -- skips cleanly instead of
+        constructing a cycle over missing handles. Every collaborator is a
+        GETTER LAMBDA resolved at cycle time, never an instance captured
+        here: this method is first reachable from the handler wiring inside
+        ``__init__`` (same construction-order trap the
+        ``chachanotes_db_getter`` comment block documents), and most of the
+        handles below do not exist yet at wiring time. The imports are
+        deferred to first real use (ADR-097 boot-census ratchet): the
+        cycle-service chain loads only when a cycle actually runs.
+        """
+        from .Dreams.cycle_service import CycleDeps
+        from .Dreams.settings import dreams_setting
+        from .Dreams.story_service import resolve_dreams_chat
+
+        dreams_db = getattr(self, "dreams_db", None)
+        if dreams_db is None or not dreams_setting("enabled"):
+            return None
+        return CycleDeps(
+            dreams_db=dreams_db,
+            chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
+            media_db_getter=lambda: getattr(self, "media_db", None),
+            subs_db_getter=lambda: getattr(self, "subscriptions_db", None),
+            # Raw attribute read, not `get_personal_context_service()`:
+            # that method BOOTSTRAPS the service (imports the Personal
+            # Context stack on first call) and the discovery cycle only
+            # carries this handle for the profile-refresh flows -- a
+            # missing service must stay a cheap None.
+            pc_service_getter=lambda: getattr(
+                self, "_personal_context_service", None
+            ),
+            # May raise RuntimeError when no provider resolves; run_cycle
+            # catches that and degrades the cycle by design.
+            chat_getter=resolve_dreams_chat,
+        )
+
+    def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1
+        """Run the Dreams boot catch-up worker when enabled and due.
+
+        Guarded so a disabled Dreams never constructs deps -- or even
+        imports the cycle chain (ADR-097). A COROUTINE worker, non-
+        exclusive: the catch-up cycle runs alongside the scheduler rather
+        than contending with its worker group.
+        """
+        from .Dreams.settings import dreams_setting
+
+        if not (
+            dreams_setting("enabled") and dreams_setting("catchup_enabled")
+        ):
+            return
+        deps = self._dreams_cycle_deps()
+        if deps is None:
+            return
+        from .Dreams.cycle_service import run_catchup_if_due
+
+        self.run_worker(
+            run_catchup_if_due(deps),
+            exclusive=False,
+            group="dreams",
+        )
+
+    def _wire_dreams_scheduler_integration(self) -> None:  # dreams phase 1
+        """Wire Dreams into the live scheduler after `_ui_ready`.
+
+        Every Dreams import -- the DB, the projection, the cycle chain --
+        stays off the first-paint module census by landing here, AFTER the
+        census's synchronous `_ui_ready` snapshot is taken but in the same
+        slice as the scheduler worker start, so the worker's first queue
+        load already sees the projection (the worker coroutine cannot run
+        before this slice yields). The queue attribute is the same post-hoc
+        seam the briefing settings refresh already uses
+        (`self.scheduler_loop.queue.briefing_projection = ...`); the
+        projection is built unconditionally because its `[dreams] enabled`
+        gate and cadence are read live on every `tasks()` call.
+        """
+        try:
+            from .DB.Dreams_DB import DreamsDB
+
+            self.dreams_db = DreamsDB(
+                get_dreams_db_path(), CLI_APP_CLIENT_ID
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Dreams DB unavailable during app wiring",
+            )
+            self.dreams_db = None
+        from .Scheduling.services.dreams_projection import DreamsProjection
+
+        self.scheduler_loop.queue.dreams_projection = DreamsProjection(
+            lambda: getattr(self, "dreams_db", None)
+        )
+        self._start_dreams_boot_catchup()
 
     def _get_automation_definition_handler(self) -> Any:
         """Lazily construct and memoize the automation-definition handler.
@@ -17154,6 +17300,11 @@ class TldwCli(
                 group="scheduling",
             )
 
+        # dreams phase 1: Dreams DB + projection + boot catch-up, all after
+        # `_ui_ready` (ADR-097 boot-census ratchet; guarded internally, a
+        # disabled Dreams stops at two cheap settings reads).
+        self._wire_dreams_scheduler_integration()
+
         self._schedule_deferred_startup_work()
         from .Backup_Recovery.profile_open import acknowledge_mounted
 
@@ -19499,6 +19650,24 @@ class TldwCli(
                     self.loguru_logger.error(
                         f"Error stopping scheduled briefing generations: {e}"
                     )
+
+            # dreams phase 1: the same seam for scheduled Dreams cycles --
+            # `DreamsCycleHandler` spawns them as bare `asyncio.Task`s too,
+            # held in the handler module's own set.
+            try:
+                from .Scheduling.scheduler.handlers.dreams_handler import (
+                    shutdown as dreams_shutdown,
+                )
+
+                cancelled = await dreams_shutdown()
+                if cancelled:
+                    self.loguru_logger.info(
+                        f"Cancelled {cancelled} in-flight Dreams cycle(s)"
+                    )
+            except Exception as e:
+                self.loguru_logger.error(
+                    f"Error stopping scheduled Dreams cycles: {e}"
+                )
 
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.

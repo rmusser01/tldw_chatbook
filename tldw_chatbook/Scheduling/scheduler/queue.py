@@ -8,11 +8,17 @@ introduced later when sub-second dispatch latency is required.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+
+# dreams phase 1: typing only -- importing the Dreams projection at module
+# level would put its (small, but nonzero) import chain on every boot's
+# `_ui_ready` module census for queue consumers that never wire Dreams.
+if TYPE_CHECKING:
+    from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
 
 _FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
 _DEFAULT_OWNER_ID = "local"
@@ -45,10 +51,12 @@ class PriorityQueue:
         db: Any,
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
+        dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
     ) -> None:
         self.db = db
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
+        self.dreams_projection = dreams_projection
         self._items: list[dict[str, Any]] = []
 
     @staticmethod
@@ -110,6 +118,7 @@ class PriorityQueue:
 
         self._append_projected(self.watchlist_projection)
         self._append_projected(self.briefing_projection)
+        self._append_projected(self.dreams_projection)  # dreams phase 1
 
         self._items.sort(key=self._sort_key)
 
