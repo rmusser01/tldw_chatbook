@@ -59,11 +59,6 @@ _KNOWN_UNHARDENED: dict[str, str] = {
         "the seven: a poisoned document in the corpus can choose the XML "
         "the model emits."
     ),
-    "Local_Ingestion/XML_Ingestion.py": (
-        "Parses user-supplied .xml files chosen for ingestion -- the same "
-        "threat shape as the OPML importer fixed by TASK-19558 (a file the "
-        "user did not write, imported on their behalf)."
-    ),
     "Media/local_media_reading_service.py": (
         "`ET.iterparse` over stored media documents. iterparse streams "
         "elements but still expands internal entities, so a byte cap on the "
