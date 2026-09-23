@@ -42,9 +42,9 @@ breadth. This design introduces:
    future preset once that API settles (the `hosted_chat` `responses` route
    is the natural seam; tracked as open item O-4).**
 3. **Curated presets** — Databricks first; Together, Fireworks, Cerebras,
-   Perplexity next; Azure OpenAI and Gemini's OpenAI-compatible layer after
-   two small transport extensions; Bedrock deliberately deferred (non-OpenAI
-   Converse wire).
+   Perplexity next; Azure OpenAI, Gemini's OpenAI-compatible layer, and AWS
+   Bedrock (via Bedrock's own OpenAI-compatible endpoints, verified
+   December 2025) after two small transport extensions.
 
 Adding a curated provider drops from "20-file ritual" to "one registry record
 + one preset record + one registration line + tests + docs".
@@ -540,9 +540,9 @@ evidence-gated migration of `moonshot.py`/`zai.py` onto the engine.
 
 ### Phase 4 — deferred (separate future specs/tasks)
 
-Bedrock Converse strict adapter; enterprise identity auth (SigV4/Entra/ADC)
-plugged at the `auth_scheme` seam; possible evidence-gated migration of
-`moonshot.py`/`zai.py` onto the engine.
+Bedrock-native Converse wire (fallback only, see Phase 3); enterprise
+identity auth (SigV4/Entra/ADC) plugged at the `auth_scheme` seam; possible
+evidence-gated migration of `moonshot.py`/`zai.py` onto the engine.
 
 ## Testing strategy
 
