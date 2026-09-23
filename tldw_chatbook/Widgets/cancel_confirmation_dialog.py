@@ -3,59 +3,45 @@
 Cancel confirmation dialog for media ingestion processes.
 """
 
-from typing import Optional
-from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Container
-from textual.screen import ModalScreen
-from textual.widgets import Label, Button, Static
 
-from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from .confirmation_dialog import ConfirmationDialog
 
 
-class CancelConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
-    """Modal dialog for confirming cancellation of media processing."""
+class CancelConfirmationDialog(ConfirmationDialog):
+    """Modal dialog for confirming cancellation of media processing.
+
+    TASK-32864: this was a hand-rolled copy of ConfirmationDialog's shape
+    with different accents; it is now a thin specialization of the
+    documented pattern class (ADR-161). Only the accent CSS and the
+    default wording differ; compose, bindings, safe dismissal, and the
+    markup-disabled prose contract come from the parent.
+    """
 
     DEFAULT_CSS = """
     CancelConfirmationDialog {
         align: center middle;
     }
-    
+
     CancelConfirmationDialog > Container {
-        width: 60;
-        height: auto;
-        background: $surface;
         border: thick $primary;
-        padding: 1 2;
     }
-    
+
     CancelConfirmationDialog .dialog-title {
         text-align: center;
-        text-style: bold;
         color: $error;
-        margin-bottom: 1;
     }
-    
+
     CancelConfirmationDialog .dialog-message {
         text-align: center;
-        margin-bottom: 1;
     }
-    
+
     CancelConfirmationDialog .button-container {
-        align: center middle;
-        height: auto;
-        width: 100%;
         margin-top: 1;
-    }
-    
-    CancelConfirmationDialog Button {
-        margin: 0 1;
-        min-width: 12;
     }
     """
 
     BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
-    SAFE_MODAL_CONTENT = "#cancel-confirmation-dialog"
 
     def __init__(
         self,
@@ -63,41 +49,21 @@ class CancelConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         message: str = "Are you sure you want to cancel the transcription?\nAlready processed files will be kept.",
         confirm_text: str = "Yes, Cancel",
         cancel_text: str = "Continue Processing",
-        name: Optional[str] = None,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        **kwargs: object,
     ) -> None:
         """Initialize the cancel confirmation dialog.
 
         Args:
-            title: Dialog title
-            message: Confirmation message
-            confirm_text: Text for confirm button
-            cancel_text: Text for cancel button
+            title: Dialog title.
+            message: Confirmation message.
+            confirm_text: Text for the confirm (cancel-the-job) button.
+            cancel_text: Text for the cancel (keep-going) button.
+            **kwargs: Forwarded to ModalScreen (name/id/classes).
         """
-        super().__init__(name=name, id=id, classes=classes)
-        self.title_text = title
-        self.message_text = message
-        self.confirm_text = confirm_text
-        self.cancel_text = cancel_text
-
-    def compose(self) -> ComposeResult:
-        """Compose the dialog UI."""
-        with Container(id="cancel-confirmation-dialog"):
-            yield Static(self.title_text, classes="dialog-title")
-            yield Label(self.message_text, classes="dialog-message")
-            with Horizontal(classes="button-container"):
-                yield Button(self.cancel_text, variant="primary", id="continue-btn")
-                yield Button(self.confirm_text, variant="error", id="cancel-btn")
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        event.stop()  # Prevent propagation to parent
-        if event.button.id == "cancel-btn":
-            self.dismiss(True)  # User confirmed cancellation
-        else:
-            await self.request_safe_cancel(source="button")
-
-    async def _perform_safe_cancel(self, *, source: str) -> None:
-        del source
-        self.dismiss_safe_once(False)
+        super().__init__(
+            title=title,
+            message=message,
+            confirm_label=confirm_text,
+            cancel_label=cancel_text,
+            **kwargs,
+        )

@@ -16222,3 +16222,33 @@ not against the screen class's declaration. And a "pre-existing failures"
 baseline earns one root-cause pass before it is treated as noise: a number
 you inherited and never explained is a standing assumption that every future
 triage will be measured against.
+
+### A truncated grep is not a references check (TASK-32864, PR #2795)
+
+**What happened.** Collapsing `CancelConfirmationDialog` onto the shared
+pattern renamed its buttons from `#continue-btn`/`#cancel-btn` to
+`#cancel-button`/`#confirm-button`. A repo-wide grep for the old ids was
+piped through `head -8`, the visible hits were all unrelated dialogs, and
+the change shipped on that evidence. Two dependent suites
+(`test_console_video_capacity.py`, `test_console_prompt_queue_modal.py`)
+still clicked the removed selectors — their hits sat beyond the cutoff —
+and the PR's AI reviewer caught what the verification did not.
+
+**What to do.** A references check that feeds a rename must be exhaustive
+by construction: count the matches (`grep -c` / `| wc -l`) and assert the
+number you inspected, never trust a `head` window into an unbounded list.
+And run the callers' suites, not just the changed module's: the collapse
+was pinned by the dismissal suite while the two interaction suites that
+actually pressed the renamed buttons never ran.
+
+## A synthetic mouse click can race the inspector's focus scroll (PR2722)
+
+PR2722 CI failed five Test Tool cases after readiness guidance stopped consuming
+space above detail. Local direct runs passed, but a diagnostic run adding 35ms
+between Pilot pauses reproduced a missed Run click: its row moved from 14 to 10
+while the mouse sequence was in flight, and no execution reached the fake service.
+The built-in case similarly moved from row 8 to 5. Worker completion alone did
+not settle focus scrolling. The shared test Run-click helper now waits for
+scheduled animations and asserts the unchanged Pilot mouse click actually hits.
+No retry or direct-handler bypass is involved. Also assert a Failed outcome in
+redaction tests: absence-only checks had accepted the empty, never-run result.

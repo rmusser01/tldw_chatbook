@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": {
+    "baseline_diagnostics": 13,
+    "current_diagnostics": 13,
+    "introduced": []
+  },
+  "Tests/UI/test_mcp_inspector_guidance.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Tests/Utils/test_mcp_native_qa_args.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-inspector-guidance/native_check.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  }
+}
