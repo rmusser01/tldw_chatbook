@@ -137,6 +137,12 @@ class ArtifactsScreen(BaseAppScreen):
         self._daily_reports: list[dict[str, Any]] = []
         self._daily_reports_generation = 0
         self._daily_reports_worker: Worker[Any] | None = None
+        # Dreams Phase 1: the same refresh trio shape as _daily_reports,
+        # holding the Artifacts list's Dreams rows (full `dream_stories`
+        # rows shaped by Dreams.dreams_view.list_recent_dreams).
+        self._dreams: list[dict[str, Any]] = []
+        self._dreams_generation = 0
+        self._dreams_worker: Worker[Any] | None = None
         # TASK-21514: the previewed Daily Report (a full `briefings` row via
         # `SubscriptionsDB.get_briefing`, with `watchlist_name`/`kept` merged
         # in from the list row), or None when no report is previewed.
@@ -159,6 +165,7 @@ class ArtifactsScreen(BaseAppScreen):
         self._chatbook_unmounted = False
         self._start_chatbook_refresh()
         self._start_daily_reports_refresh()
+        self._start_dreams_refresh()
         # ADR-031: the footer hint must stay 1:1 with a working binding;
         # `s` -> action_share_artifacts is registered alongside it.
         self.register_footer_shortcuts(
@@ -170,8 +177,9 @@ class ArtifactsScreen(BaseAppScreen):
         self._render_share_banner()
 
     def on_screen_resume(self) -> None:
-        """Refresh daily reports, and one-shot Chatbook handoffs, on resume."""
+        """Refresh daily reports, dreams, and Chatbook handoffs, on resume."""
         self._start_daily_reports_refresh()
+        self._start_dreams_refresh()
         if self._chatbook_refresh_worker is None or (
             self._active_chatbook_claim is None
             and self.app_instance.pending_handoffs.has_pending(
@@ -197,6 +205,13 @@ class ArtifactsScreen(BaseAppScreen):
         # cancellation lands too late to stop the worker body.
         self._daily_reports_generation += 1
         worker = self._daily_reports_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        # Same teardown shape for the Dreams refresh (Qodo #15 pattern):
+        # bump the generation so an in-flight `call_from_thread` apply is
+        # invalidated even if the worker cancellation lands too late.
+        self._dreams_generation += 1
+        worker = self._dreams_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
         self._report_preview_generation += 1
@@ -313,6 +328,61 @@ class ArtifactsScreen(BaseAppScreen):
             )
             if summary is not None:
                 previewed["kept"] = bool(summary.get("kept"))
+        self.refresh(recompose=True)
+
+    # --- Dreams Phase 1: the list pane's Dreams slot -------------------------
+
+    @property
+    def _dreams_enabled(self) -> bool:
+        """True when ``[dreams] enabled`` is set (spec default: off)."""
+        from ...Dreams.settings import dreams_setting
+
+        return bool(dreams_setting("enabled"))
+
+    def _start_dreams_refresh(self) -> None:
+        """Re-read recent Dreams stories off the UI thread, then repaint."""
+        if not self._dreams_enabled:
+            # A disabled feature spins no refresh workers (and compose
+            # already renders its "> Dreams: disabled" copy). Dreams is off
+            # by default, so this keeps the mount/resume worker traffic of
+            # a default install unchanged.
+            return
+        self._dreams_generation += 1
+        # The daily-reports start recomposes unconditionally to drop
+        # possibly-deleted rows while refreshing. Dreams rows are
+        # append-only discovery output, so with rows on screen the
+        # drop-while-refreshing behavior is preserved -- but an
+        # unconditional recompose on every mount/resume of a screen whose
+        # Dreams slot is EMPTY churns the whole list pane for nothing.
+        if self._dreams:
+            self.refresh(recompose=True)
+        self._dreams_worker = self._refresh_dreams(self._dreams_generation)
+
+    @work(exclusive=True, thread=True, group="artifacts-dreams")
+    def _refresh_dreams(self, generation: int) -> None:
+        from ...Dreams.dreams_view import list_recent_dreams
+
+        db = getattr(self.app_instance, "dreams_db", None)
+        rows: list[dict[str, Any]] = []
+        if db is not None:
+            try:
+                rows = list_recent_dreams(db)
+            except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
+                rows = []
+        self.app.call_from_thread(self._apply_dreams, generation, rows)
+
+    def _apply_dreams(self, generation: int, rows: list[dict[str, Any]]) -> None:
+        if not self.is_attached or generation != self._dreams_generation:
+            # Same guard as _apply_daily_reports: superseded by a newer
+            # refresh, or the screen went away -- never recompose.
+            return
+        if self._dreams == rows:
+            # An unchanged payload (the empty steady state) must not
+            # recompose: a late no-op apply landing between another slot's
+            # refresh and its repaint would tear the list's widgets down
+            # mid-query. Only a real change repaints.
+            return
+        self._dreams = rows
         self.refresh(recompose=True)
 
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
@@ -900,7 +970,7 @@ class ArtifactsScreen(BaseAppScreen):
                 id="artifacts-mode-strip", classes="destination-mode-strip"
             ):
                 yield Static(
-                    "Types: All | Chatbooks | Reports | Datasets | Drafts | Exports | Sort: Recent",
+                    "Types: All | Chatbooks | Reports | Dreams | Datasets | Drafts | Exports | Sort: Recent",
                     id="artifacts-mode-label",
                     classes="destination-section",
                 )
@@ -1010,6 +1080,34 @@ class ArtifactsScreen(BaseAppScreen):
                             "Create Your First Daily Report",
                             id="artifacts-daily-report-demo",
                             tooltip=DAILY_REPORT_DEMO_TOOLTIP,
+                        )
+                    # Dreams rows reuse the Report rows' exact widget idiom
+                    # (bare Statics, `artifacts-<type>-row-{id}` ids, no new
+                    # classes or literals), so the ADR-150 governance test
+                    # stays green untouched. A disabled feature renders its
+                    # disabled copy even when rows exist; an enabled one with
+                    # no rows (or no DB handle yet) renders "none yet".
+                    from ...Dreams.dreams_view import format_dream_row
+
+                    if self._dreams_enabled and self._dreams:
+                        for story in self._dreams:
+                            row_id = story.get("id")
+                            if row_id is None:
+                                # Synthetic failed-cycle row: no story id, so
+                                # the widget id keys on the cycle's collection
+                                # date (unique per date by schema).
+                                row_id = f"cycle-{story.get('collection_date')}"
+                            yield Static(
+                                self._literal_text(format_dream_row(story)),
+                                id=f"artifacts-dream-row-{row_id}",
+                            )
+                    elif self._dreams_enabled:
+                        yield Static(
+                            "> Dreams: none yet", id="artifacts-list-dreams"
+                        )
+                    else:
+                        yield Static(
+                            "> Dreams: disabled", id="artifacts-list-dreams"
                         )
                     yield Static(
                         "  Datasets: none available", id="artifacts-list-datasets"
