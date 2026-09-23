@@ -1255,6 +1255,10 @@ def _anthropic_tools_payload(tools: list) -> list:
             )
             continue
         function = entry.get("function")
+        if entry.get("type") == "function" and not isinstance(function, dict):
+            # OpenAI-shaped but malformed: drop it locally rather than passing an
+            # unconverted entry through to Gemini.
+            continue
         if entry.get("type") == "function" and isinstance(function, dict):
             name = str(function.get("name") or "").strip()
             if not name:
@@ -3205,6 +3209,83 @@ def chat_with_cohere(
 
 
 @_provider_recovery.unqualified
+def _google_tools_payload(tools: list) -> list:
+    """Wrap OpenAI function-format tool entries as Gemini functionDeclarations.
+
+    Entries already Gemini-shaped (carrying ``functionDeclarations`` /
+    ``function_declarations`` or other non-OpenAI keys) pass through
+    untouched. OpenAI entries with a blank name are dropped locally —
+    Gemini rejects empty tool names (task-263 review precedent).
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Gemini shaped).
+
+    Returns:
+        A Gemini ``tools`` list; OpenAI entries collapse into ONE
+        ``{"functionDeclarations": [...]}`` entry, passthrough entries keep
+        their positions.
+    """
+    declarations = []
+    passthrough = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and not isinstance(function, dict):
+            # OpenAI-shaped but malformed. Drop it locally rather than letting an
+            # unconverted entry reach Gemini as if it were native.
+            continue
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            declarations.append(
+                {
+                    "name": name,
+                    "description": str(function.get("description") or ""),
+                    "parametersJsonSchema": deepcopy(parameters),
+                }
+            )
+        else:
+            passthrough.append(entry)
+    result = list(passthrough)
+    if declarations:
+        result.append({"functionDeclarations": declarations})
+    return result
+
+
+def _google_function_response(name: str, content) -> dict:
+    """Build a Gemini functionResponse part from an OpenAI tool result.
+
+    Gemini requires ``response`` to be a JSON OBJECT: dict-parseable string
+    content is used directly; anything else wraps as ``{"result": <str>}``.
+
+    Args:
+        name: The function name this result answers (Gemini pairs by name
+            plus position — it has no call ids).
+        content: The tool result content (string, typically).
+
+    Returns:
+        ``{"functionResponse": {"name": ..., "response": {...}}}``.
+    """
+    response = None
+    if isinstance(content, str) and content.strip():
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            response = parsed
+    if response is None:
+        # `content is None`, not falsiness: a tool returning 0 or False must
+        # not be sent to Gemini as an empty string.
+        response = {"result": "" if content is None else str(content)}
+    return {"functionResponse": {"name": name, "response": response}}
+
+
 def chat_with_google(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,

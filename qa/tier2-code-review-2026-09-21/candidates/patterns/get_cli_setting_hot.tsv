@@ -1,0 +1,6 @@
+tldw_chatbook/Library/library_browse_location.py	77	browse_start_directory loop=True
+tldw_chatbook/Local_Ingestion/diarization_service.py	482	_default_config_loader loop=True
+tldw_chatbook/Skills_Interop/local_skills_service.py	167	resolve_script_run_limits loop=True
+tldw_chatbook/UI/Screens/library_screen.py	632	_read_library_ingest_options_from_config loop=True
+tldw_chatbook/UI/Screens/library_screen.py	637	_read_library_ingest_options_from_config loop=True
+tldw_chatbook/UI/Speech/speech_settings_pane.py	373	_read_global_preferences loop=True

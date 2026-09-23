@@ -56,6 +56,11 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
+    # TASK-32912: `_post_with_retry` below calls this on the retryable-status
+    # branch. TASK-32853 moved the definition to the hosted engine and left the
+    # call site, so every 429/5xx during summarization raised NameError instead
+    # of retrying -- the error-recovery path failing precisely when it was needed.
+    _retry_delay,
     owned_json_post,
 )
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
