@@ -115,6 +115,15 @@ jobs:
       # the PR gate has. One bad import must cost that one file, not all
       # 101,851 tests. The run still reports the collection error and still
       # exits non-zero -- nothing is being swallowed.
+      #
+      # LIMIT, stated rather than implied: this repairs the collection abort,
+      # it does NOT make the nightly green. The job ceiling is 240 minutes and
+      # this run is deliberately serial (see the step name). Tests/UI alone
+      # measured ~18,148 tests in >2h across SIX processes, so a serial
+      # whole-tree pass cannot finish inside the ceiling and will be killed
+      # with partial results. That is strictly more signal than the zero tests
+      # it produced before, and still a failing one. Sharding or scoping the
+      # nightly is a design decision, tracked separately.
       - name: Run deep suite (serial, thorough, slow tiers, cache-off)
         env:
           TLDW_HYPOTHESIS_PROFILE: thorough

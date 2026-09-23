@@ -3,6 +3,7 @@ Root conftest.py for shared test fixtures and configuration.
 This file provides common fixtures used across the test suite.
 """
 
+import importlib
 import os
 import shutil
 import tempfile
@@ -169,7 +170,7 @@ network_guard.install()
 # the same import from a wrapper before pytest starts binds the participant to
 # the developer's REAL ~/.config/tldw_cli/config.toml and then fails at
 # collection instead.
-import tldw_chatbook.Chunking  # noqa: F401,E402
+importlib.import_module("tldw_chatbook.Chunking")
 
 
 # Hypothesis: no per-example deadline (TASK-1260).

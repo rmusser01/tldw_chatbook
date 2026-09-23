@@ -65,6 +65,14 @@ MINIMUM_FILES = 120  # TASK-32908: 120 files / 851 tests, verified green
 
 
 def read_census(path: Path) -> list[str]:
+    """Read the census, dropping comments and blank lines.
+
+    Args:
+        path: The census file, one `Tests/UI/...` path per line.
+
+    Returns:
+        The listed paths in file order, comments and blanks removed.
+    """
     """Return the census entries, in file order, ignoring blanks/comments."""
     entries: list[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -76,6 +84,12 @@ def read_census(path: Path) -> list[str]:
 
 
 def main() -> int:
+    """Verify the PR-gate census is intact.
+
+    Returns:
+        0 when every listed path exists, is unique, sits under `Tests/UI/`, and
+        the census has not shrunk below its floor; 1 otherwise.
+    """
     if not CENSUS_PATH.exists():
         print(f"FAIL: census file is missing: {CENSUS_PATH}", file=sys.stderr)
         return 1
