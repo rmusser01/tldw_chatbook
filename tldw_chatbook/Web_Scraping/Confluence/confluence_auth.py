@@ -7,8 +7,8 @@ import os
 import base64
 from typing import Dict, Optional, Any
 from enum import Enum
-from urllib.parse import urlencode, urlparse
 import requests
+from requests.models import PreparedRequest
 import threading
 
 from requests.auth import HTTPBasicAuth
@@ -297,10 +297,21 @@ class ConfluenceAuth:
         # URL makes the predicate true for the shapes production uses --
         # and the query string now reaches the egress check too -- without
         # widening it for an unrecognized kwarg.
+        # Built by `requests`' OWN url preparation, not by hand (Qodo review
+        # of #2800). This method's contract is "arguments to pass to
+        # requests", so parity is the requirement, and appending after the
+        # complete URL broke it for an endpoint carrying a fragment: the
+        # query landed INSIDE the fragment and was never transmitted.
+        # Endpoints interpolate a server-supplied `page_id`
+        # (`f"/rest/api/content/{page_id}"`), so that is reachable input, not
+        # a hypothetical. `prepare_url` puts the query before the fragment,
+        # merges with an existing query, and keeps `doseq` semantics -- and
+        # the fully prepared URL is still what the egress guard checks.
         params = kwargs.pop("params", None)
         if params:
-            separator = "&" if urlparse(url).query else "?"
-            url = f"{url}{separator}{urlencode(params, doseq=True)}"
+            prepared = PreparedRequest()
+            prepared.prepare_url(url, params)
+            url = prepared.url
 
         trusted = origin_set(self.base_url)
         if method.upper() == "GET" and set(kwargs) <= {"headers", "timeout"}:

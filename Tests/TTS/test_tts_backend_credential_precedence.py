@@ -124,3 +124,88 @@ def test_elevenlabs_still_honours_the_legacy_api_section(stub_config, monkeypatc
     stub_config({}, legacy_api={"elevenlabs_api_key": STORED})
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     assert ElevenLabsTTSBackend({}).api_key == STORED
+
+
+# --------------------------------------------------------------------------
+# The MANAGER path (Qodo review of #2800). Every test above constructs a
+# backend directly with `{}` -- a path production never takes.
+# `TTSBackendManager.get_backend` builds the config first, and that builder
+# resolved the credential itself, environment FIRST, into the very key the
+# constructors treat as an explicit per-instance override. So the precedence
+# rule above held only for hand-constructed backends and was inverted for
+# every real one.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "backend_id, env_var, provider",
+    [
+        ("openai_official", "OPENAI_API_KEY", "openai"),
+        ("elevenlabs", "ELEVENLABS_API_KEY", "elevenlabs"),
+    ],
+)
+def test_manager_built_config_does_not_outrank_the_stored_key(
+    stub_config, monkeypatch, backend_id, env_var, provider
+):
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    stub_config({provider: {"api_key": STORED, "api_key_env_var": env_var}})
+    monkeypatch.setenv(env_var, FROM_ENV)
+
+    manager = TTSBackendManager(
+        {"api_settings": {provider: {"api_key": STORED}}}
+    )
+    prepared = manager._prepare_backend_config(backend_id)
+
+    assert prepared.get(env_var) != FROM_ENV, (
+        f"the manager pre-resolved {env_var} from the environment into the "
+        "backend's explicit-override slot, where it outranks get_api_key"
+    )
+
+
+@pytest.mark.parametrize(
+    "backend_cls, backend_id, env_var, provider",
+    [
+        (OpenAITTSBackend, "openai_official", "OPENAI_API_KEY", "openai"),
+        (ElevenLabsTTSBackend, "elevenlabs", "ELEVENLABS_API_KEY", "elevenlabs"),
+    ],
+)
+def test_a_manager_created_backend_spends_the_stored_key(
+    stub_config, monkeypatch, backend_cls, backend_id, env_var, provider
+):
+    """End to end over the seam production uses: config built by the manager,
+    backend constructed from it, and the key it will actually send."""
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    stub_config({provider: {"api_key": STORED, "api_key_env_var": env_var}})
+    monkeypatch.setenv(env_var, FROM_ENV)
+
+    manager = TTSBackendManager(
+        {"api_settings": {provider: {"api_key": STORED}}}
+    )
+    backend = backend_cls(config=manager._prepare_backend_config(backend_id))
+
+    assert backend.api_key == STORED
+
+
+@pytest.mark.parametrize(
+    "backend_cls, backend_id, env_var, provider",
+    [
+        (OpenAITTSBackend, "openai_official", "OPENAI_API_KEY", "openai"),
+        (ElevenLabsTTSBackend, "elevenlabs", "ELEVENLABS_API_KEY", "elevenlabs"),
+    ],
+)
+def test_a_manager_created_backend_still_falls_back_to_the_environment(
+    stub_config, monkeypatch, backend_cls, backend_id, env_var, provider
+):
+    """...and removing the pre-resolution must not strand the env var: it is
+    the fallback, which is the whole point of it being second."""
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    stub_config({provider: {"api_key_env_var": env_var}})
+    monkeypatch.setenv(env_var, FROM_ENV)
+
+    manager = TTSBackendManager({})
+    backend = backend_cls(config=manager._prepare_backend_config(backend_id))
+
+    assert backend.api_key == FROM_ENV

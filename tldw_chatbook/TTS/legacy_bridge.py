@@ -253,14 +253,18 @@ def legacy_provider_config(
             ("API", "openai_api_key"),
         )
         if authentication_mode is OpenAIAuthenticationMode.API_KEY:
-            api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
-                raw,
-                openai_key_locations,
-            )
+            # Stored config BEFORE the environment (Qodo review of #2800).
+            # This projection feeds `TTSBackendManager.app_config`, whose
+            # `_prepare_backend_config` copies it into the backend's
+            # explicit-override slot -- so resolving the env var first here
+            # re-inverted ADR-012's stored-outranks-env rule one layer up
+            # from where it was just fixed.
+            api_key = _first_mapping_value(raw, openai_key_locations)
             api_key = api_key or _first_mapping_value(
                 app_config,
                 openai_key_locations,
             )
+            api_key = api_key or os.getenv("OPENAI_API_KEY")
             if api_key:
                 projected["openai_api"] = {"api_key": api_key}
         else:
@@ -273,14 +277,13 @@ def legacy_provider_config(
             ("API", "elevenlabs_api_key"),
             ("elevenlabs_api", "api_key"),
         )
-        api_key = os.getenv("ELEVENLABS_API_KEY") or _first_mapping_value(
-            raw,
-            elevenlabs_key_locations,
-        )
+        # Stored config before the environment, as above.
+        api_key = _first_mapping_value(raw, elevenlabs_key_locations)
         api_key = api_key or _first_mapping_value(
             app_config,
             elevenlabs_key_locations,
         )
+        api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         if api_key:
             projected["elevenlabs_api"] = {"api_key": api_key}
     elif provider_id == "kokoro":

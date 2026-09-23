@@ -12,13 +12,17 @@ Bounded on purpose (6 levels, ~10^6 expansion) and asserted on the REFUSAL,
 never on a timing -- a test that measures "this took too long" is a flake
 generator and proves nothing about the fix.
 
-`Local_Ingestion/XML_Ingestion.py` is hardened in the same commit but has no
-behavioural test here, and the reason is worth recording: at
-`origin/dev d0face3ebe` the module **cannot be imported at all** --
+`Local_Ingestion/XML_Ingestion.py` is hardened in the same commit, and its
+behavioural tests are at the bottom of this file. They arrived late, and the
+reason is worth recording: the module **cannot be imported** --
 `from tldw_chatbook.DB.Client_Media_DB_v2 import add_media_to_database`
-raises `ImportError` because that name no longer exists. A pre-existing,
-unrelated defect, not caused by this task; it leaves the AST census as the
-only check that reaches that file.
+raises `ImportError` because that name does not exist (that module defines
+`add_media_with_keywords`, a method, and no such module-level function).
+That is a pre-existing defect this task did not cause and has not fixed;
+nothing under `tldw_chatbook/` imports `XML_Ingestion` either, so the module
+is currently orphaned. But it is a broken IMPORT, not an untestable parser:
+stubbing that one name lets the real module load and its real `ET.parse` be
+exercised, which is exactly what an AST census cannot do.
 """
 
 from __future__ import annotations
@@ -127,3 +131,155 @@ def test_stdlib_would_have_expanded_the_same_payload():
     outline = root.find("./body/outline")
     assert outline is not None
     assert len(outline.get("text") or "") >= 3 * 10**5
+
+
+# --------------------------------------------------------------------------
+# Qodo review of #2800: the widened `ValueError` handler must guard the PARSE
+# and nothing else. It originally enclosed the article loop and the
+# caller-supplied `filter_function` too.
+# --------------------------------------------------------------------------
+
+_VALID_SITEMAP = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    "<url><loc>https://example.invalid/a</loc></url>"
+    "</urlset>"
+)
+
+
+def test_a_filter_that_raises_is_not_reported_as_a_broken_sitemap(tmp_path):
+    """A `ValueError` from caller-supplied filtering code used to be logged
+    as "Error parsing sitemap" and swallowed into an empty list -- a broken
+    filter was indistinguishable from an empty sitemap, and the caller was
+    told nothing at all."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
+
+    path = tmp_path / "sitemap.xml"
+    path.write_text(_VALID_SITEMAP, encoding="utf-8")
+
+    def _broken_filter(_url):
+        raise ValueError("the filter itself is broken")
+
+    with pytest.raises(ValueError, match="the filter itself is broken"):
+        AEL.scrape_from_filtered_sitemap(str(path), _broken_filter)
+
+
+def test_a_scrape_failure_is_not_reported_as_a_broken_sitemap(
+    tmp_path, monkeypatch, no_config_reads
+):
+    """Same defect on the fetched sibling: its `try` enclosed the whole
+    `scrape_article` comprehension."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
+
+    class _Response:
+        content = _VALID_SITEMAP.encode()
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        AEL, "guarded_fetch_requests", lambda url, **kwargs: _Response()
+    )
+
+    def _broken_scrape(_url):
+        raise ValueError("scraping blew up")
+
+    monkeypatch.setattr(AEL, "scrape_article", _broken_scrape)
+
+    with pytest.raises(ValueError, match="scraping blew up"):
+        AEL.scrape_from_sitemap("https://example.invalid/sitemap.xml")
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("https://user:secret@host.invalid/maps/sitemap.xml?token=abc",
+         "https://host.invalid/maps/sitemap.xml"),
+        ("/Users/someone/Documents/private/sitemap.xml", "sitemap.xml"),
+        ("sitemap.xml", "sitemap.xml"),
+    ],
+)
+def test_the_logged_sitemap_name_carries_no_secret_and_no_home_path(
+    source, expected
+):
+    """The failure must be attributable without putting credentials, query
+    tokens, or a profile-owned path into a persistent sink."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
+
+    assert AEL._sitemap_log_name(source) == expected
+
+
+# --------------------------------------------------------------------------
+# `Local_Ingestion/XML_Ingestion.py` -- the behavioural half the module
+# docstring said could not exist (Qodo review of #2800).
+#
+# It could not be imported because `from ...Client_Media_DB_v2 import
+# add_media_to_database` names a symbol that module does not define. That is
+# still true, and still a pre-existing defect this task did not cause -- but
+# it is a broken IMPORT, not an untestable parser. Stubbing that import lets
+# the real module load and the real `ET.parse` be exercised. Without this,
+# swapping the alias back to the stdlib parser passes every check in the
+# repo.
+# --------------------------------------------------------------------------
+
+
+def _load_xml_ingestion(monkeypatch):
+    """Import XML_Ingestion with its broken and heavyweight deps stubbed."""
+    import importlib
+    import sys
+    import types
+
+    stubs = {
+        # The name that does not exist -- the whole reason this module is
+        # unimportable.
+        "tldw_chatbook.DB.Client_Media_DB_v2": {
+            "add_media_to_database": lambda *a, **k: None
+        },
+        "tldw_chatbook.LLM_Calls.Summarization_General_Lib": {
+            "analyze": lambda *a, **k: ""
+        },
+        "tldw_chatbook.Chunking.Chunk_Lib": {"chunk_xml": lambda *a, **k: []},
+        "tldw_chatbook.Metrics.metrics_logger": {
+            "log_counter": lambda *a, **k: None,
+            "log_histogram": lambda *a, **k: None,
+        },
+    }
+    for name, attrs in stubs.items():
+        module = types.ModuleType(name)
+        for attr, value in attrs.items():
+            setattr(module, attr, value)
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.delitem(
+        sys.modules, "tldw_chatbook.Local_Ingestion.XML_Ingestion", raising=False
+    )
+    return importlib.import_module("tldw_chatbook.Local_Ingestion.XML_Ingestion")
+
+
+def test_xml_ingestion_parses_through_defusedxml(monkeypatch):
+    """The alias must be defusedxml, asserted on the module object rather
+    than on the source text an AST census already reads."""
+    module = _load_xml_ingestion(monkeypatch)
+
+    assert module.ET.__name__ == "defusedxml.ElementTree"
+
+
+def test_xml_ingestion_refuses_entity_expansion(tmp_path, monkeypatch):
+    """The behaviour, through `ET.parse` -- the exact symbol `xml_to_text`
+    and `import_xml_file` both parse with."""
+    module = _load_xml_ingestion(monkeypatch)
+
+    path = tmp_path / "payload.xml"
+    path.write_text(BILLION_LAUGHS_OPML, encoding="utf-8")
+
+    with pytest.raises(_entities_forbidden()):
+        module.ET.parse(str(path))
+
+
+def test_xml_ingestion_still_reads_a_benign_document(tmp_path, monkeypatch):
+    """Negative control: the hardening refuses the payload, not XML."""
+    module = _load_xml_ingestion(monkeypatch)
+
+    path = tmp_path / "benign.xml"
+    path.write_text(BENIGN_OPML, encoding="utf-8")
+
+    assert module.ET.parse(str(path)).getroot() is not None

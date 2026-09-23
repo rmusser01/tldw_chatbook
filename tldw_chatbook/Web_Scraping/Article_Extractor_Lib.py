@@ -886,6 +886,30 @@ def scrape_and_no_summarize_then_ingest(url, keywords, custom_article_title):
         return f"Failed to process URL {url}: {str(e)}"
 
 
+def _sitemap_log_name(source: str) -> str:
+    """A sitemap source safe to name in a persistent log.
+
+    Without this, every refusal logged the same "Error parsing sitemap" line
+    and nothing said which import or fetch produced it (Qodo review of
+    #2800). What may be logged is narrower than the source itself:
+
+    * A URL keeps only scheme, host and path. Userinfo carries credentials
+      and the query carries tokens; neither belongs in a persistent sink.
+    * A local path keeps only its basename -- a full path under the user's
+      home is exactly what ``scripts/check_profile_owned_paths.py`` polices.
+
+    Args:
+        source: The sitemap URL or local file path the caller supplied.
+
+    Returns:
+        A short, attributable label. Never the raw source.
+    """
+    parsed = urlparse(source)
+    if parsed.scheme in ("http", "https"):
+        return f"{parsed.scheme}://{parsed.hostname or ''}{parsed.path}"
+    return os.path.basename(source) or "<unnamed>"
+
+
 def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     """
     Scrape articles from a sitemap file, applying an additional filter function.
@@ -894,26 +918,38 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     :param filter_function: A function that takes a URL and returns True if it should be scraped
     :return: List of scraped articles
     """
+    # PARSE only. `ValueError` is a broad net -- it is how defusedxml's
+    # `EntitiesForbidden` refusal arrives, since that is not an
+    # `ET.ParseError` -- so the block it guards must hold nothing else.
+    # `filter_function` is CALLER-SUPPLIED code (Qodo review of #2800):
+    # running it under this handler reported any `ValueError` it raised as
+    # "Error parsing sitemap" and returned an empty list, so a broken filter
+    # looked like an empty sitemap.
     try:
         tree = _safe_parse(sitemap_file)
         root = tree.getroot()
-
-        articles = []
-        for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"):
-            if filter_function(url.text):
-                article_data = scrape_article(url.text)
-                if article_data:
-                    articles.append(article_data)
-
-        return articles
     except (xET.ParseError, ValueError) as e:
-        # ValueError covers defusedxml's `EntitiesForbidden` refusal, which is
-        # NOT an `ET.ParseError` (TASK-32894). Type only, never the message:
-        # `EntitiesForbidden` names the offending ENTITY, i.e. text the
-        # hostile document chose, and this sink is persistent
-        # (`local_watchlists_service._check_url_isolated` states the rule).
-        logging.error(f"Error parsing sitemap: {type(e).__name__}")
+        # Type only, never the message: `EntitiesForbidden` names the
+        # offending ENTITY, i.e. text the hostile document chose, and this
+        # sink is persistent (`local_watchlists_service._check_url_isolated`
+        # states the rule). The file's BASENAME is safe and is what
+        # attributes the failure when several imports refuse alike; the
+        # directory is not logged, because a full local path in a persistent
+        # sink is what the profile-owned-path census exists to police.
+        logging.error(
+            f"Error parsing sitemap {_sitemap_log_name(sitemap_file)}: "
+            f"{type(e).__name__}"
+        )
         return []
+
+    articles = []
+    for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"):
+        if filter_function(url.text):
+            article_data = scrape_article(url.text)
+            if article_data:
+                articles.append(article_data)
+
+    return articles
 
 
 def is_content_page(url: str) -> bool:
@@ -1077,6 +1113,12 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
     Returns:
         The scraped articles, or ``[]`` if the sitemap could not be fetched.
     """
+    # Fetch and PARSE only. `ValueError` is a broad net -- it is how
+    # defusedxml's `EntitiesForbidden` refusal arrives, since that is not an
+    # `ET.ParseError` -- so the block it guards must contain nothing but the
+    # parse. Scraping under it too (Qodo review of #2800) turned any
+    # `ValueError` raised while scraping an article into "Error parsing
+    # sitemap" plus a successful-looking empty result.
     try:
         response = guarded_fetch_requests(
             sitemap_url,
@@ -1086,27 +1128,29 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
         )
         response.raise_for_status()
         root = _safe_fromstring(response.content)
-
-        return [
-            article
-            for url in root.findall(
-                ".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
-            )
-            if (article := scrape_article(url.text))
-        ]
     except (EgressBlockedError, EgressFetchError) as e:
         logging.error(f"Sitemap fetch blocked or too large: {e}")
         return []
     except (xET.ParseError, ValueError) as e:
-        # ValueError covers defusedxml's `EntitiesForbidden` refusal
-        # (TASK-32894); a refused sitemap yields no articles, not a crash.
-        # Type only -- the refusal message names the entity the hostile
-        # document chose, and this sink is persistent.
-        logging.error(f"Error parsing sitemap: {type(e).__name__}")
+        # A refused sitemap yields no articles, not a crash. Type only --
+        # the refusal message names the entity the hostile document chose,
+        # and this sink is persistent. The URL is safe to name (it is the
+        # operator's own argument) and is what attributes the failure when
+        # several fetches refuse alike.
+        logging.error(
+            f"Error parsing sitemap {_sitemap_log_name(sitemap_url)}: "
+            f"{type(e).__name__}"
+        )
         return []
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
         return []
+
+    return [
+        article
+        for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+        if (article := scrape_article(url.text))
+    ]
 
 
 #
