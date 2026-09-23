@@ -74,11 +74,6 @@ tldw_chatbook/TTS/
 │   ├── chatterbox.py       # Chatterbox TTS (voice cloning)
 │   ├── higgs.py            # Higgs Audio V2 (advanced voice cloning)
 │   └── higgs_voice_manager.py # Voice profile management for Higgs
-└── utils/                   # Utility modules
-    ├── __init__.py
-    ├── download_models.py   # Model download utilities
-    ├── voice_utils.py       # Voice mixing utilities
-    └── performance.py       # Performance tracking
 ```
 
 ### Core Components
@@ -1037,15 +1032,22 @@ Local TTS installs:
 - onnxruntime: ONNX model inference
 
 ### Kokoro Model Setup
-1. Download the model files:
-   - Model: `kokoro-v0_19.onnx` (~300MB)
-   - Voices: `voices.json`
 
-2. Place them in your configured paths or use the download utility:
-   ```python
-   from tldw_chatbook.TTS.utils.download_models import download_kokoro_model
-   await download_kokoro_model()
-   ```
+**Selecting Kokoro can start a network download.** The first time the ONNX
+backend initializes and the configured model or voices file is missing,
+`KokoroTTSBackend._initialize_onnx` fetches it from the `kokoro-onnx` GitHub
+releases (`kokoro-v1.0.onnx`, ~300 MB, and `voices-v1.0.bin`), verifies the
+SHA-256, and moves it into place. Nothing is downloaded when the files are
+already there.
+
+What was removed in TASK-32899 is the STANDALONE `TTS/utils/download_models.py`
+utility -- it was never wired to anything -- not the backend's own fetch.
+
+To supply the files yourself instead, download them and point the Kokoro
+model/voices path settings at them (Settings ▸ Speech ▸ TTS, or
+`KOKORO_ONNX_MODEL_PATH_DEFAULT` / `KOKORO_ONNX_VOICES_JSON_DEFAULT` in
+config.toml) before first use. The backend finds them present and skips the
+download.
 
 ## Usage
 
