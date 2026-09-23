@@ -418,3 +418,56 @@ def test_keyring_clear_server_deletes_known_purpose_usernames_for_server():
     store.clear_server("server-a")
 
     assert fake.values == {}
+
+
+class CountingKeyring(FakeKeyring):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+
+    def get_password(self, service_name: str, username: str) -> str | None:
+        self.reads += 1
+        return super().get_password(service_name, username)
+
+
+def test_repeated_secret_reads_share_one_keyring_round_trip() -> None:
+    """TASK-32922: every server API call re-read the keyring on the UI loop.
+
+    ``build_client`` resolves the token before its client cache can hit, so
+    each call was a SecretService D-Bus round trip on Linux.
+    """
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "secret-1")
+    fake.reads = 0
+
+    for _ in range(10):
+        assert store.get_scoped_secret(scope) == "secret-1"
+    assert fake.reads == 1
+
+
+def test_writes_and_deletes_are_visible_immediately() -> None:
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "secret-1")
+    assert store.get_scoped_secret(scope) == "secret-1"
+
+    store.set_scoped_secret(scope, "secret-2")
+    assert store.get_scoped_secret(scope) == "secret-2"
+
+    store.delete_scoped_secret(scope)
+    assert store.get_scoped_secret(scope) is None
+
+    store.set_scoped_secret(scope, "secret-3")
+    store.clear_all()
+    assert store.get_scoped_secret(scope) is None
