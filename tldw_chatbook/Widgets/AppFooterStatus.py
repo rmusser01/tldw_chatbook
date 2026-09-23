@@ -2,6 +2,10 @@
 #
 # Imports
 #
+# Standard Library
+from typing import TYPE_CHECKING
+
+#
 # 3rd-party Libraries
 from rich.cells import cell_len
 from textual.app import ComposeResult
@@ -12,6 +16,9 @@ from textual.widgets import Static
 #
 # Local Imports
 from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+
+if TYPE_CHECKING:  # Type-only: the runtime import stays inside the opt-in gate.
+    from .Tamagotchi.base_tamagotchi import TamagotchiDeath, TamagotchiStatCritical
 #
 ########################################################################################################################
 #
@@ -209,9 +216,18 @@ class AppFooterStatus(Widget):
         Tamagotchi package pulls in the private-SQLite and backup/recovery
         stack, and EVERY screen composes one of these footers.
         """
-        from ..config import get_cli_setting
+        from ..config import coerce_bool_setting, get_cli_setting
 
-        if not get_cli_setting("tamagotchi", "enabled", False):
+        # `coerce_bool_setting`, not raw truthiness: a hand-edited
+        # `enabled = "false"` is a non-empty string, i.e. TRUE to `if`, which
+        # would turn the pet ON for a user who wrote the word "false". This is
+        # the repo's fail-closed gate vocabulary (the one `coerce_bool_flag`'s
+        # docstring points at for gates, and the one `local_tools_enabled` and
+        # `raw_cli_permitted` already use) -- anything it cannot read as a
+        # boolean, including a bare integer or a typo, resolves to the default.
+        if not coerce_bool_setting(
+            get_cli_setting("tamagotchi", "enabled", False), False
+        ):
             return None
 
         from .Tamagotchi.base_tamagotchi import CompactTamagotchi
@@ -250,8 +266,13 @@ class AppFooterStatus(Widget):
             logger.warning(f"Footer tamagotchi disabled, invalid settings: {exc}")
             return None
 
-    def on_tamagotchi_death(self, event) -> None:
-        """Tell the user their pet died -- the one event they cannot miss."""
+    def on_tamagotchi_death(self, event: "TamagotchiDeath") -> None:
+        """Tell the user their pet died -- the one event they cannot miss.
+
+        Args:
+            event: The death message; its ``pet_name``, ``cause`` and ``age``
+                (hours) become the notification text.
+        """
         self.app.notify(
             f"{event.pet_name} has died ({event.cause}) at "
             f"{event.age:.1f}h. Set [tamagotchi] enabled = false to stop.",
@@ -260,8 +281,13 @@ class AppFooterStatus(Widget):
             timeout=10,
         )
 
-    def on_tamagotchi_stat_critical(self, event) -> None:
-        """Surface a stat crossing into the danger zone, once per crossing."""
+    def on_tamagotchi_stat_critical(self, event: "TamagotchiStatCritical") -> None:
+        """Surface a stat crossing into the danger zone, once per crossing.
+
+        Args:
+            event: The crossing message; its ``pet_name``, ``stat_name``,
+                ``value`` and ``severity`` become the notification.
+        """
         self.app.notify(
             f"{event.pet_name}: {event.stat_name} is {event.value:.0f}.",
             title="Tamagotchi",

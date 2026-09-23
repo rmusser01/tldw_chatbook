@@ -251,3 +251,220 @@ async def test_pet_stays_off_for_a_config_that_predates_the_section(monkeypatch)
         assert footer._tamagotchi is None
         assert not app.query(BaseTamagotchi)
         assert not [n for n in _live_timer_names(app) if "tamagotchi" in n]
+
+
+# ---------------------------------------------------------------------------
+# Qodo review on PR #2807. Each of these was born red against this branch's
+# own base -- verified by reverting the corresponding hunk.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value", ["false", "False", "no", "off", "on", "0", 0, "typo", 123]
+)
+@pytest.mark.asyncio
+async def test_a_config_value_that_is_not_true_keeps_the_gate_shut(
+    monkeypatch, value
+):
+    """The gate is the safety property, so it must not read raw truthiness.
+
+    ``enabled = "false"`` is a non-empty string -- truthy to a bare ``if`` --
+    so a user who hand-edited the word "false" into their config got a pet.
+    So did anyone whose value was a typo. The gate now runs through the
+    repo's fail-closed setting vocabulary, where anything it cannot read as
+    a boolean resolves to the default.
+    """
+    _patch_gate(monkeypatch, enabled=value)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app.query_one(AppFooterStatus)._tamagotchi is None
+        assert not app.query(BaseTamagotchi)
+        assert not [n for n in _live_timer_names(app) if "tamagotchi" in n]
+
+
+@pytest.mark.parametrize("value", [True, "true", "yes", "1", 1])
+@pytest.mark.asyncio
+async def test_a_config_value_that_is_true_still_opens_the_gate(monkeypatch, value):
+    """Anti-vacuity: the parametrisation above is a gate, not a blanket off.
+
+    ``"on"`` is deliberately absent: the shared setting vocabulary is
+    ``true/yes/1`` and their negatives, and anything outside it resolves to
+    the default -- which for this gate means off. Fail-closed is the right
+    direction for the one switch standing between a user and an uninvited
+    pet, and TOML's own ``enabled = true`` is the documented form.
+    """
+    _patch_gate(monkeypatch, enabled=value)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert len(app.query(CompactTamagotchi)) == 1
+
+
+@pytest.mark.parametrize("key", ["name", "personality"])
+@pytest.mark.asyncio
+async def test_a_non_string_setting_omits_the_pet_instead_of_taking_the_footer_down(
+    monkeypatch, key
+):
+    """``name = 123`` is valid TOML, and every screen composes this footer.
+
+    The validators called ``.strip()``/``.lower()`` before checking the type,
+    so a non-string raised ``AttributeError`` -- straight past the footer's
+    ``except ValidationError`` and into the compose of every screen.
+    """
+    _patch_gate(monkeypatch, enabled=True, **{key: 123})
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app.query_one(AppFooterStatus) is not None  # footer survived
+        assert app.query_one(AppFooterStatus)._tamagotchi is None
+
+
+@pytest.mark.asyncio
+async def test_a_returning_pet_resyncs_before_it_decays_and_saves(monkeypatch):
+    """A -> B -> A inside one interval must not roll the shared pet back.
+
+    Authority used to be dropped only when a 30 s tick happened to catch a
+    copy in the background. A round trip shorter than the interval never
+    gives the departing copy such a tick, so it returned still believing its
+    snapshot was current -- and wrote it over whatever the other screen's
+    copy had advanced.
+    """
+    storage = _patch_gate(monkeypatch, enabled=True)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pet = app.query_one(CompactTamagotchi)
+        pet.happiness = 10
+        pet._state_authoritative = True  # never ticked while backgrounded
+
+        # What the other screen's copy of the same pet advanced meanwhile.
+        state = dict(storage.load(pet.id) or {})
+        state.update({"happiness": 90, "hunger": 5, "energy": 90, "health": 100})
+        storage.save(pet.id, state)
+
+        pet._periodic_update()
+
+        assert pet.happiness > 50, "the returning copy kept its stale snapshot"
+        assert storage.load(pet.id)["happiness"] > 50, "and wrote it back"
+
+
+@pytest.mark.asyncio
+async def test_an_interaction_after_returning_is_not_overwritten(monkeypatch):
+    """`interact()` on a non-authoritative copy used to be lost.
+
+    It mutated stale in-memory stats, and the next periodic tick reloaded the
+    shared snapshot straight over them -- for every keyboard and click action.
+    """
+    storage = _patch_gate(monkeypatch, enabled=True)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pet = app.query_one(CompactTamagotchi)
+
+        state = dict(storage.load(pet.id) or {})
+        state.update({"happiness": 50, "hunger": 80, "energy": 50, "health": 100})
+        storage.save(pet.id, state)
+        pet._state_authoritative = False  # just came back to the foreground
+
+        pet.interact("feed")
+
+        assert storage.load(pet.id)["hunger"] < 80, (
+            "the interaction never reached the shared store"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_does_not_publish_its_guess(monkeypatch):
+    """A transient storage failure must not be saved over real progress.
+
+    `_load_state` marked the widget authoritative on its failure path too,
+    on the reasoning that the defaults were the best copy available -- but
+    the only use that authority has is to decay those defaults and write
+    them back.
+    """
+    storage = _patch_gate(monkeypatch, enabled=True)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pet = app.query_one(CompactTamagotchi)
+
+        state = dict(storage.load(pet.id) or {})
+        state.update({"happiness": 88, "hunger": 12, "energy": 77, "health": 100})
+        storage.save(pet.id, state)
+
+        def explode(*args, **kwargs):
+            raise OSError("storage unavailable")
+
+        monkeypatch.setattr(type(storage), "load", explode)
+        pet._periodic_update()
+        monkeypatch.undo()
+
+        assert not pet._state_authoritative, "a failed read still claimed authority"
+        assert storage.load(pet.id)["happiness"] == 88, "progress was overwritten"
+
+
+@pytest.mark.asyncio
+async def test_an_already_critical_snapshot_is_not_re_announced(monkeypatch):
+    """Each footer keeps its own edge set against one shared pet.
+
+    ``TamagotchiStatCritical`` is edge-triggered, so adopting a snapshot that
+    is already critical is not a crossing this copy witnessed -- otherwise
+    every screen the user visits raises the same alarm again.
+    """
+    storage = _patch_gate(monkeypatch, enabled=True)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pet = app.query_one(CompactTamagotchi)
+
+        state = dict(storage.load(pet.id) or {})
+        state.update({"happiness": 60, "hunger": 95, "energy": 60, "health": 100})
+        storage.save(pet.id, state)
+
+        pet._load_state()
+
+        assert "hunger" in pet._critical_stats, "the crossing was not adopted at all"
+
+        before = len(app.notifications)
+        pet._check_critical_stats()
+        await pilot.pause()
+        assert len(app.notifications) == before, (
+            "an adopted crossing was announced as if it were new"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_second_crossing_inside_one_interval_is_still_reported(monkeypatch):
+    """Recovery has to clear the edge set when it happens, not 30 s later.
+
+    `interact()` changed stats without touching the tracker, so a stat that
+    recovered and re-crossed between two ticks kept its stale entry and the
+    second crossing was silently suppressed.
+    """
+    _patch_gate(monkeypatch, enabled=True)
+
+    app = _FooterApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pet = app.query_one(CompactTamagotchi)
+
+        pet.hunger = 95
+        pet._check_critical_stats()
+        assert "hunger" in pet._critical_stats
+
+        # Feeding drops hunger below the threshold; the tracker must follow.
+        pet.interact("feed")
+        assert "hunger" not in pet._critical_stats, (
+            "recovery did not clear the edge tracker until the next tick"
+        )

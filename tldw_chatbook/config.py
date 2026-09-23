@@ -3718,6 +3718,8 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 
 [tamagotchi]
 enabled = false  # opt-in virtual pet in the footer status bar; off unless you ask for it
+# Write a TOML boolean. The gate is fail-closed: anything it cannot read as
+# true/yes/1 (or their negatives) -- including "on" -- leaves the pet off.
 # name = "Bit"  # 1-20 chars, letters/digits/space/-/_ only
 # personality = "balanced"  # balanced, energetic, lazy, needy, independent, playful
 # State lives in ~/.config/tldw_chatbook/tamagotchi_pets.json (backed up by the
