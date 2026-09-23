@@ -37,7 +37,12 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
-MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
+# TASK-32925: shared by local probes, the Settings endpoint probe and model
+# discovery, which all read full provider catalogs. OpenRouter's measured
+# 748,851 bytes (2026-09-23) sat at 71% of the old 1 MiB bound, past which the
+# whole list failed closed. Sized for DISCOVERED_MODEL_MAX_COUNT live-sized
+# (~1.8 KB) records; still a small per-read memory bound.
+MODEL_PROBE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024
 DEFAULT_LLAMACPP_DISCOVERY_URL = "http://127.0.0.1:8080"
 DEFAULT_OLLAMA_DISCOVERY_URL = "http://127.0.0.1:11434"
 #: api_settings sections whose configured endpoints are eligible candidates.

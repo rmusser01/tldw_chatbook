@@ -136,8 +136,11 @@ MODEL_DISCOVERY_RESPONSE_MAX_BYTES = MODEL_PROBE_RESPONSE_MAX_BYTES
 # models for an ordinary account, so live first-run discovery errored with
 # "The models endpoint returned too many models" for every OpenAI user with a
 # valid key. The fail-closed semantics are kept; only the calibration changes.
-# MODEL_DISCOVERY_RESPONSE_MAX_BYTES (1 MiB) remains the real memory bound.
-DISCOVERED_MODEL_MAX_COUNT = 512
+# MODEL_DISCOVERY_RESPONSE_MAX_BYTES (8 MiB) remains the real memory bound.
+# TASK-32925: 512 sat just above OpenRouter's 456 live models (2026-09-23), and
+# crossing it would list NOTHING for every OpenRouter user. Keep ~8x headroom;
+# the disk and in-memory caches are pinned to hold a full-count list.
+DISCOVERED_MODEL_MAX_COUNT = 4096
 DISCOVERED_MODEL_ID_MAX_CHARS = MODEL_ID_MAX_CHARS
 MODEL_METADATA_MAX_DEPTH = 8
 MODEL_METADATA_MAX_ITEMS = 256

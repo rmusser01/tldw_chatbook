@@ -19,7 +19,7 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
 )
 
 pytestmark = pytest.mark.local_server_probe
-_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
+_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024  # TASK-32925
 
 
 def _client(handler, *, follow_redirects: bool = False) -> httpx.AsyncClient:

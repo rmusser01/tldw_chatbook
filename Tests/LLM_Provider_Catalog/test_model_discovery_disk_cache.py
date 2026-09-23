@@ -14,7 +14,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
 
 _EXPECTED_MAX_BYTES = 2 * 1024 * 1024
 _EXPECTED_MAX_ENTRIES = 128
-_EXPECTED_MAX_MODELS_PER_ENTRY = 100
+_EXPECTED_MAX_MODELS_PER_ENTRY = 4096  # TASK-32925: holds a full discovered list
 _EXPECTED_MAX_RAW_ENTRIES = 4096
 
 
@@ -496,7 +496,7 @@ def test_record_stops_infinite_duplicate_iterable_at_max_plus_one(tmp_path):
 
 def _unicode_models() -> list[str]:
     return [
-        f"{index:03}-" + "界" * 116 for index in range(_EXPECTED_MAX_MODELS_PER_ENTRY)
+        f"{index:04}-" + "界" * 115 for index in range(_EXPECTED_MAX_MODELS_PER_ENTRY)
     ]
 
 
@@ -557,7 +557,7 @@ def test_serialized_entry_keys_do_not_collapse_distinct_identities(tmp_path):
 def test_aggregate_budget_rejects_atomically_and_preserves_existing_file(tmp_path):
     store = _store(tmp_path)
     models = [
-        f"{index:03}-" + "\U0001f600" * 116
+        f"{index:04}-" + "\U0001f600" * 115
         for index in range(_EXPECTED_MAX_MODELS_PER_ENTRY)
     ]
     rejected_index = None
