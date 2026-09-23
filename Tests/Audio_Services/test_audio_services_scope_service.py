@@ -342,8 +342,8 @@ async def test_audio_services_scope_service_reports_admin_required_for_connected
         def __init__(self):
             self.diagnostic_calls = []
 
-        async def get_current_user_profile(self, **kwargs):
-            return {"user": {"role": "user"}}
+        async def get_current_user_capabilities(self):
+            return {"can_run_audio_diagnostics": False}
 
         async def get_stt_health(self, **kwargs):
             self.diagnostic_calls.append("stt_health")

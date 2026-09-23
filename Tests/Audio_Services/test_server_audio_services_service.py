@@ -22,14 +22,24 @@ from tldw_chatbook.tldw_api.exceptions import APIResponseError
 
 
 class FakeAudioClient:
-    def __init__(self, role="admin"):
+    def __init__(self, role="admin", *, capability=None):
         self.calls = []
         self.role = role
+        self.capability = capability
+        self.capability_error = None
+        self.capability_missing = False
         self.diagnostic_error = None
 
-    async def get_current_user_profile(self, **kwargs):
-        self.calls.append(("get_current_user_profile", kwargs))
-        return {"user": {"role": self.role} if self.role else None}
+    async def get_current_user_capabilities(self):
+        self.calls.append(("get_current_user_capabilities",))
+        if self.capability_error:
+            raise self.capability_error
+        if self.capability_missing:
+            return {}
+        allowed = (
+            self.capability if self.capability is not None else self.role == "admin"
+        )
+        return {"can_run_audio_diagnostics": allowed}
 
     async def get_tts_health(self):
         self.calls.append(("get_tts_health",))
@@ -233,8 +243,8 @@ async def test_server_audio_diagnostics_require_current_server_admin():
     assert test_denial.value.reason_code == "admin_required"
     assert client.calls == [
         ("get_stt_health", {"model": None, "warm": False}),
-        ("get_current_user_profile", {"sections": "identity"}),
-        ("get_current_user_profile", {"sections": "identity"}),
+        ("get_current_user_capabilities",),
+        ("get_current_user_capabilities",),
     ]
 
 
@@ -252,11 +262,68 @@ async def test_server_audio_diagnostics_translate_revoked_admin_403():
     assert warm_denial.value.reason_code == "admin_required"
     assert test_denial.value.reason_code == "admin_required"
     assert [call[0] for call in client.calls] == [
-        "get_current_user_profile",
+        "get_current_user_capabilities",
         "get_stt_health",
-        "get_current_user_profile",
+        "get_current_user_capabilities",
         "test_audio_streaming",
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_audio_diagnostics_allow_wildcard_principal_capability():
+    client = FakeAudioClient(role="user", capability=True)
+    service = ServerAudioServicesService(client=client)
+
+    assert (await service.get_stt_health(warm=True))["status"] == "healthy"
+    assert (await service.test_audio_streaming())["test_passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_server_audio_diagnostics_translate_capability_403():
+    client = FakeAudioClient(role="user")
+    client.capability_error = APIResponseError(403, "Forbidden")
+    service = ServerAudioServicesService(client=client)
+
+    with pytest.raises(PolicyDeniedError) as warm_denial:
+        await service.get_stt_health(warm=True)
+    with pytest.raises(PolicyDeniedError) as test_denial:
+        await service.test_audio_streaming()
+
+    assert warm_denial.value.reason_code == "admin_required"
+    assert test_denial.value.reason_code == "admin_required"
+    assert client.calls == [
+        ("get_current_user_capabilities",),
+        ("get_current_user_capabilities",),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_route", [False, True])
+async def test_server_audio_diagnostics_defer_to_older_server_guard(
+    missing_route: bool,
+) -> None:
+    client = FakeAudioClient(role="user")
+    if missing_route:
+        client.capability_error = APIResponseError(404, "Not Found")
+    else:
+        client.capability_missing = True
+    service = ServerAudioServicesService(client=client)
+
+    assert (await service.get_stt_health(warm=True))["status"] == "healthy"
+    assert (await service.test_audio_streaming())["test_passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_server_audio_diagnostics_preserve_non_auth_capability_errors() -> None:
+    client = FakeAudioClient(role="user")
+    client.capability_error = APIResponseError(503, "Unavailable")
+    service = ServerAudioServicesService(client=client)
+
+    with pytest.raises(APIResponseError) as error:
+        await service.get_stt_health(warm=True)
+
+    assert error.value.status_code == 503
+    assert client.calls == [("get_current_user_capabilities",)]
 
 
 @pytest.mark.asyncio
