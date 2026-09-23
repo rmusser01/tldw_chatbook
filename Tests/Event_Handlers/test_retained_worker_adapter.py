@@ -9,10 +9,13 @@ from tldw_chatbook.Event_Handlers import worker_events
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
-RETAINED_CALLER_PATHS = (PROJECT_ROOT / "tldw_chatbook" / "UI" / "MediaWindow_v2.py",)
-EXPECTED_CALLS_BY_PATH = {
-    RETAINED_CALLER_PATHS[0]: 1,
-}
+#: Production files allowed to call ``TldwCli.chat_wrapper``. TASK-32899
+#: deleted the last one (``UI/MediaWindow_v2.py``'s media-analysis flow), so
+#: the census now pins ZERO approved callers -- a strictly stronger guard.
+#: ``worker_events.chat_wrapper_function`` and ``app.chat_wrapper`` are now
+#: reachable from no production caller; retiring them is a separate decision.
+RETAINED_CALLER_PATHS: tuple[Path, ...] = ()
+EXPECTED_CALLS_BY_PATH: dict[Path, int] = {}
 
 
 def _iter_chat_wrapper_calls(source_root: Path):
