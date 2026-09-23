@@ -253,6 +253,20 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "ef55f76cd014367be7f6",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Canvas/gateway.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "3e1734fcc674cd51ace6",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Canvas/service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 210,
       "diagnostic_digest": "893412cb6efb6c6c73eb",
       "owner": "TASK-494",
@@ -884,7 +898,7 @@
     },
     {
       "call_count": 42,
-      "diagnostic_digest": "3ac51c99f2c7322fd050",
+      "diagnostic_digest": "c7be003e23f145c4abeb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1387,13 +1401,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 17,
-      "diagnostic_digest": "f8f0062da6fd1da6d222",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Local_Inference/mlx_lm_inference_local.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 4,
       "diagnostic_digest": "c8b81627ab9effb1c9f7",
       "owner": "TASK-494",
@@ -1653,13 +1660,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "bb642fb676c466eb5aa0",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Models/evaluation_state.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 22,
       "diagnostic_digest": "042a7d966f71d7ac6012",
       "owner": "TASK-494",
@@ -1692,6 +1692,13 @@
       "diagnostic_digest": "b052e42b0107e06fda5e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Notifications/event_state_repository.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 6,
+      "diagnostic_digest": "14ff99ccf9fbaefb5c4d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Persona_Buddy/controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3963,8 +3970,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "26c6f7810fbded96dcd6",
+      "call_count": 13,
+      "diagnostic_digest": "d230135f06eb816d249b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4159,8 +4166,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "2c9e9e570dc79bd60b81",
+      "call_count": 6,
+      "diagnostic_digest": "c8467f645f72d243acbb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Workspaces/display_state.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5939,7 +5946,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "c330677a9c425140",
+          "call_digest": "baf4cbf4b0163e69",
           "method": "debug",
           "path_expressions": [
             "cfg.model_name_or_path"
@@ -6500,29 +6507,6 @@
         }
       ],
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "1504f8afe972232b",
-          "method": "info",
-          "path_expressions": [
-            "' '.join(command)"
-          ],
-          "scope": "start_mlx_lm_server",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "962e94d7cb3974a6",
-          "method": "info",
-          "path_expressions": [
-            "process.pid"
-          ],
-          "scope": "start_mlx_lm_server",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Local_Inference/mlx_lm_inference_local.py"
     },
     {
       "candidates": [
@@ -11408,11 +11392,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 604,
-    "path_privacy_candidate_calls": 694,
+    "owner_files": 605,
+    "path_privacy_candidate_calls": 692,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
     "task_492_calls": 1360,
-    "task_494_calls": 7692
+    "task_494_calls": 7684
   }
 }

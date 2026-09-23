@@ -109,6 +109,6 @@ tldw_chatbook/Web_Server/artifact_share_server	ArtifactShareServer.run._serve	st
 tldw_chatbook/Widgets/Console/console_scope_picker_modal	_now_iso	offset_now_iso	1
 tldw_chatbook/Workflows/document_service	_insert_revision	offset_now_iso	1
 tldw_chatbook/Workspaces/change_retention	prune_change_history	strftime_iso	1
-tldw_chatbook/Workspaces/models	utc_now_iso	offset_now_iso	1
+tldw_chatbook/Workspaces/models	registry_now_iso	offset_now_iso	1
 tldw_chatbook/app	LibraryIngestQueueMixin._restore_ingest_jobs_off_thread	offset_now_iso	1
 tldw_chatbook/config	_preserve_corrupt_config_aside	strftime_iso	1

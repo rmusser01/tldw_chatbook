@@ -1,20 +1,8 @@
-import pytest
-import subprocess
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import patch
 
-# ProcessLookupError is a built-in exception in Python 3.3+
-# But let's ensure it's available
-try:
-    ProcessLookupError
-except NameError:
-    # For older Python versions (though the project requires 3.11+)
-    ProcessLookupError = OSError
+import pytest
 
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_mlx_lm
-from tldw_chatbook.Local_Inference.mlx_lm_inference_local import (
-    start_mlx_lm_server,
-    stop_mlx_lm_server,
-)
 from tldw_chatbook.config import RuntimeConfigSnapshot
 
 # Define exception classes if they don't exist in Chat_Deps
@@ -62,156 +50,6 @@ def mock_mlx_settings():
     ):
         yield mock_settings
 
-
-# --- Tests for start_mlx_lm_server ---
-
-
-@patch("subprocess.Popen")
-def test_start_mlx_lm_server_success(mock_popen):
-    """Test successful server start."""
-    mock_process = MagicMock()
-    mock_process.pid = 1234
-    mock_popen.return_value = mock_process
-
-    model_path = "mlx-community/test-model"
-    host = "127.0.0.1"
-    port = 8080
-
-    process = start_mlx_lm_server(model_path, host, port)
-
-    expected_command = [
-        "python",
-        "-m",
-        "mlx_lm.server",
-        "--model",
-        model_path,
-        "--host",
-        host,
-        "--port",
-        str(port),
-    ]
-    mock_popen.assert_called_once_with(
-        expected_command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        universal_newlines=True,
-        env=ANY,  # Check that env was passed, content checked separately if needed
-    )
-    assert process == mock_process
-    assert process.pid == 1234
-
-
-@patch("subprocess.Popen")
-def test_start_mlx_lm_server_with_additional_args(mock_popen):
-    """Test server start with additional arguments."""
-    mock_process = MagicMock()
-    mock_popen.return_value = mock_process
-
-    model_path = "mlx-community/test-model"
-    host = "127.0.0.1"
-    port = 8080
-    additional_args = "--num-threads 4 --no-cache"
-
-    start_mlx_lm_server(model_path, host, port, additional_args)
-
-    expected_command = [
-        "python",
-        "-m",
-        "mlx_lm.server",
-        "--model",
-        model_path,
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--num-threads",
-        "4",
-        "--no-cache",
-    ]
-    mock_popen.assert_called_once_with(
-        expected_command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        universal_newlines=True,
-        env=ANY,
-    )
-
-
-@patch("subprocess.Popen", side_effect=FileNotFoundError("python not found"))
-def test_start_mlx_lm_server_file_not_found(mock_popen_error):
-    """Test FileNotFoundError when starting server."""
-    process = start_mlx_lm_server("model", "host", 8080)
-    assert process is None  # Function should catch FileNotFoundError and return None
-
-
-@patch("subprocess.Popen", side_effect=Exception("Some other error"))
-def test_start_mlx_lm_server_other_exception(mock_popen_exception):
-    """Test other exceptions during Popen are caught."""
-    process = start_mlx_lm_server("model", "host", 8080)
-    assert process is None  # Function should catch general exceptions and return None
-
-
-# --- Tests for stop_mlx_lm_server ---
-
-
-def test_stop_mlx_lm_server_graceful_termination():
-    """Test graceful server stop (terminate then wait)."""
-    mock_process = MagicMock()
-    mock_process.pid = 123
-    mock_process.poll.return_value = None  # Initially running
-
-    stop_mlx_lm_server(mock_process)
-
-    mock_process.terminate.assert_called_once()
-    mock_process.wait.assert_called_once_with(timeout=10)
-    mock_process.kill.assert_not_called()
-
-
-def test_stop_mlx_lm_server_force_kill_on_timeout():
-    """Test server kill if terminate/wait times out."""
-    mock_process = MagicMock()
-    mock_process.pid = 123
-    mock_process.poll.return_value = None  # Initially running
-    # Simulate wait() timing out
-    mock_process.wait.side_effect = subprocess.TimeoutExpired(
-        cmd="test_cmd", timeout=10
-    )
-
-    stop_mlx_lm_server(mock_process)
-
-    mock_process.terminate.assert_called_once()
-    mock_process.wait.assert_any_call(timeout=10)  # First call for terminate
-    mock_process.kill.assert_called_once()
-    # Check if wait was called again after kill
-    assert any(
-        call_args[1].get("timeout") == 5
-        for call_args in mock_process.wait.call_args_list
-        if call_args[1]
-    )
-
-
-def test_stop_mlx_lm_server_already_terminated():
-    """Test stopping an already terminated process."""
-    mock_process = MagicMock()
-    mock_process.pid = 123
-    mock_process.poll.return_value = 0  # Not None, so already terminated
-
-    stop_mlx_lm_server(mock_process)
-
-    mock_process.terminate.assert_not_called()
-    mock_process.kill.assert_not_called()
-
-
-def test_stop_mlx_lm_server_no_process():
-    """Test stopping when no process is provided."""
-    # This should log a warning but not raise an error.
-    # We can't easily check logs here without more setup, so just ensure it runs.
-    stop_mlx_lm_server(None)
-    # No assertions needed, just checking it doesn't crash
 
 
 # --- Tests for chat_with_mlx_lm ---
@@ -473,13 +311,12 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
 # However, `settings` is imported as a module/object, so `patch.object` or patching its methods is more common.
 # The current fixture attempts to mock `settings.get().get()` behavior.
 
-# Consider testing the case where `start_mlx_lm_server` returns None (e.g. FileNotFoundError)
-# and how `chat_with_mlx_lm` would behave. Currently, `chat_with_mlx_lm` doesn't start the server;
-# it assumes the server is already running at the specified host/port or api_url.
-# So, `start_mlx_lm_server` tests are about the server process, and `chat_with_mlx_lm` tests
-# are about correctly calling the OpenAI-compatible endpoint.
-# Testing the UI event handlers that use these functions together would be integration testing.
-# (e.g., in `test_llm_management_events.py`)
+# `chat_with_mlx_lm` does not start the server; it assumes one is already
+# running at the configured host/port or api_url. The MLX server lifecycle is
+# owned by `Event_Handlers/LLM_Management_Events/llm_management_events_mlx_lm.py`
+# and covered there; the duplicate `Local_Inference/mlx_lm_inference_local.py`
+# implementation and the eleven tests that pinned it were deleted in
+# TASK-32901 (unreachable, and already drifted from the live path).
 
 
 # Test for host/port missing from config and not overridden by api_url in chat_with_mlx_lm
@@ -537,102 +374,3 @@ def test_chat_with_mlx_lm_model_arg_overrides_missing_config(mock_openai_call):
         assert kwargs["model_name"] == model_arg  # Model from argument is used
         assert kwargs["api_base_url"] == "http://127.0.0.1:8080/v1"
 
-
-# Test for empty additional_args in start_mlx_lm_server
-@patch("subprocess.Popen")
-def test_start_mlx_lm_server_empty_additional_args(mock_popen):
-    mock_process = MagicMock()
-    mock_popen.return_value = mock_process
-    model_path = "mlx-community/test-model"
-    host = "127.0.0.1"
-    port = 8080
-
-    start_mlx_lm_server(model_path, host, port, additional_args="")  # Empty string
-    expected_command = [
-        "python",
-        "-m",
-        "mlx_lm.server",
-        "--model",
-        model_path,
-        "--host",
-        host,
-        "--port",
-        str(port),
-    ]
-    mock_popen.assert_called_once_with(
-        expected_command,
-        stdout=ANY,
-        stderr=ANY,
-        text=True,
-        bufsize=ANY,
-        universal_newlines=ANY,
-        env=ANY,
-    )
-
-    mock_popen.reset_mock()
-    start_mlx_lm_server(
-        model_path, host, port, additional_args="   "
-    )  # Whitespace string
-    mock_popen.assert_called_once_with(
-        expected_command,
-        stdout=ANY,
-        stderr=ANY,
-        text=True,
-        bufsize=ANY,
-        universal_newlines=ANY,
-        env=ANY,
-    )
-
-    mock_popen.reset_mock()
-    start_mlx_lm_server(model_path, host, port, additional_args=None)  # None
-    mock_popen.assert_called_once_with(
-        expected_command,
-        stdout=ANY,
-        stderr=ANY,
-        text=True,
-        bufsize=ANY,
-        universal_newlines=ANY,
-        env=ANY,
-    )
-
-
-# Test stop_mlx_lm_server when process.terminate() raises an exception
-def test_stop_mlx_lm_server_terminate_exception():
-    mock_process = MagicMock()
-    mock_process.pid = 456
-    mock_process.poll.return_value = None  # Running
-    mock_process.terminate.side_effect = ProcessLookupError(
-        "Process already terminated"
-    )
-    # Even if terminate says it's gone, kill might be tried if poll says otherwise.
-    # Or, if terminate fails, kill path is taken. Let's assume poll is reliable.
-
-    # If terminate raises ProcessLookupError, it means the process is already gone.
-    # The function should catch this and proceed as if terminated.
-    stop_mlx_lm_server(mock_process)
-    mock_process.terminate.assert_called_once()
-    mock_process.kill.assert_not_called()  # kill should not be called if terminate confirms it's gone via exception
-
-
-def test_stop_mlx_lm_server_kill_exception_after_timeout():
-    mock_process = MagicMock()
-    mock_process.pid = 789
-    mock_process.poll.return_value = None  # Running
-    mock_process.wait.side_effect = [
-        subprocess.TimeoutExpired(cmd="test", timeout=10),
-        None,
-    ]  # First wait times out, second (after kill) succeeds
-    mock_process.kill.side_effect = ProcessLookupError(
-        "Process died before kill"
-    )  # Kill itself fails
-
-    # Even if kill fails with ProcessLookupError, wait() after kill should be called.
-    # The main thing is that an attempt was made.
-    stop_mlx_lm_server(mock_process)
-
-    mock_process.terminate.assert_called_once()
-    # wait() is called once after terminate (which times out)
-    # kill() is called but raises ProcessLookupError, so no second wait()
-    assert mock_process.wait.call_count == 1
-    mock_process.kill.assert_called_once()
-    # No crash expected

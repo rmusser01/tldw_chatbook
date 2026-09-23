@@ -11,6 +11,7 @@ from tldw_chatbook.Library.library_content_evidence import (
     LIBRARY_CONTENT_SOURCES,
     LibraryContentEvidence,
 )
+from tldw_chatbook.Utils.Utils import coerce_bool_flag
 
 LIBRARY_RAIL_SECTION_IDS = (
     "browse",
@@ -21,8 +22,6 @@ LIBRARY_RAIL_SECTION_IDS = (
     "details",
 )
 
-_TRUE_STRINGS = {"true", "yes", "1", "on"}
-_FALSE_STRINGS = {"false", "no", "0", "off"}
 
 _LIBRARY_CONTENT_SOURCE_COUNT = len(LIBRARY_CONTENT_SOURCES)
 
@@ -50,20 +49,6 @@ class LibraryRailPreferences:
     details_open: bool = False
 
 
-def _coerce_bool(value: Any, fallback: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in _TRUE_STRINGS:
-            return True
-        if normalized in _FALSE_STRINGS:
-            return False
-    return fallback
-
-
 def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
     """Normalize stored Library rail preferences.
 
@@ -77,12 +62,12 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
     if not isinstance(raw, dict):
         return defaults
     return LibraryRailPreferences(
-        browse_open=_coerce_bool(raw.get("browse_open"), defaults.browse_open),
-        artifacts_open=_coerce_bool(raw.get("artifacts_open"), defaults.artifacts_open),
-        create_open=_coerce_bool(raw.get("create_open"), defaults.create_open),
-        study_open=_coerce_bool(raw.get("study_open"), defaults.study_open),
-        ingest_open=_coerce_bool(raw.get("ingest_open"), defaults.ingest_open),
-        details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
+        browse_open=coerce_bool_flag(raw.get("browse_open"), defaults.browse_open),
+        artifacts_open=coerce_bool_flag(raw.get("artifacts_open"), defaults.artifacts_open),
+        create_open=coerce_bool_flag(raw.get("create_open"), defaults.create_open),
+        study_open=coerce_bool_flag(raw.get("study_open"), defaults.study_open),
+        ingest_open=coerce_bool_flag(raw.get("ingest_open"), defaults.ingest_open),
+        details_open=coerce_bool_flag(raw.get("details_open"), defaults.details_open),
     )
 
 
