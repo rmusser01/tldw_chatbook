@@ -211,12 +211,17 @@ class ChatDictionary:
                     )
                     self.is_regex = False
                     return self.raw_key
-                # ReDoS backstop. A dictionary key is user-supplied (editor,
-                # imported file, or DB row) and the compiled pattern is later
-                # run with .search()/.subn() against message text on the send
-                # path, so a catastrophic-backtracking pattern hangs the app.
-                # Same fail-closed downgrade world_info_processor applies, and
-                # the same one this function already applies to a bad pattern.
+                # ReDoS screen -- best-effort, NOT a backstop. A dictionary
+                # key is user-supplied (editor, imported file, or DB row) and
+                # the compiled pattern is later run with .search()/.subn()
+                # against message text on the send path, so a catastrophic
+                # pattern hangs the app. This rejects the shapes
+                # world_info_regex's module docstring enumerates and lets the
+                # residual ones through; Python ``re`` cannot be portably
+                # time-bounded, so closing those needs a different matcher,
+                # not a longer heuristic. Same fail-closed downgrade
+                # world_info_processor applies, and the same one this function
+                # already applies to a bad pattern.
                 validate_regex_pattern(pattern_to_compile)
                 return re.compile(pattern_to_compile, self.key_flags)
             except (re.error, ValueError) as e:

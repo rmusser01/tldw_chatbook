@@ -119,6 +119,27 @@ def test_image_format_conversion_refuses_a_pixel_bomb(monkeypatch):
         image_format_utils.maybe_convert_format(content, "image/png", "png", "jpg")
 
 
+def test_image_output_refuses_a_pixel_bomb_that_needs_no_conversion(monkeypatch):
+    """The cap must not depend on the backend having answered in a WRONG format.
+
+    ``maybe_convert_format`` returns early when the response already matches
+    the requested format, so a backend answering PNG to a PNG request reached
+    every adapter -- and whatever later decodes it -- with its pixel count
+    never looked at. Requesting the format the content already is, is the
+    ordinary case, not the exotic one.
+    """
+    from tldw_chatbook.Image_Generation.adapters import image_format_utils
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", _WARNING_BAND_CAP)
+    content = _warning_band_png()
+
+    with pytest.raises(ImageGenerationError):
+        image_format_utils.validate_and_convert_image_output(
+            content, "image/png", "png"
+        )
+
+
 def test_image_ingest_refuses_a_pixel_bomb(monkeypatch, tmp_path):
     """``process_image`` had neither a byte cap nor a pixel cap."""
     from tldw_chatbook.Local_Ingestion import Image_Processing_Lib
@@ -166,6 +187,97 @@ def test_text_ingest_read_is_capped(monkeypatch, tmp_path):
     small = tmp_path / "small.txt"
     small.write_bytes(b"ok")
     assert local_file_ingestion.read_ingest_file_bytes(small) == b"ok"
+
+
+def test_text_ingest_cap_binds_the_read_not_just_the_size_report(
+    monkeypatch, tmp_path
+):
+    """The bytes CONSUMED are bounded, not merely the size that was reported.
+
+    The cap checked ``path.stat()`` and then reopened the pathname with an
+    unrestricted ``read_bytes()``, so the object measured was not necessarily
+    the object read. A file appended to between the two calls -- ingesting a
+    log that is still being written is the everyday version, no attacker
+    needed -- went past the ceiling the check exists to impose.
+
+    Both size REPORTS are made to lie here, so the only thing that can still
+    refuse the file is the bounded read itself.
+    """
+    import os as os_module
+
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    monkeypatch.setattr(local_file_ingestion, "max_text_file_bytes", lambda: 16)
+    path = tmp_path / "grew.txt"
+    path.write_bytes(b"x" * 64)
+
+    class _Undersized:
+        st_size = 8
+
+    monkeypatch.setattr(Path, "stat", lambda self, **kw: _Undersized())
+    monkeypatch.setattr(os_module, "fstat", lambda fd: _Undersized())
+
+    with pytest.raises(local_file_ingestion.FileIngestionError) as excinfo:
+        local_file_ingestion.read_ingest_file_bytes(path)
+    assert "exceeds limit" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("configured", ["not a number", 0, -5, None, 12.5, True])
+def test_text_ingest_cap_survives_an_unusable_setting(monkeypatch, configured):
+    """A typo in config.toml must not crash ingestion or disable the ceiling.
+
+    ``int(max_mb)`` raised on non-numeric text -- on EVERY plaintext, HTML and
+    MOBI read -- and quietly accepted 0 or a negative, which refuses every file
+    ever offered. Both now fall back to the documented default and say so.
+    """
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "get_cli_setting",
+        lambda *a, **k: configured,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting", lambda *a, **k: configured
+    )
+
+    assert local_file_ingestion.max_text_file_bytes() == (
+        local_file_ingestion.DEFAULT_TEXT_FILE_SIZE_MB * 1024 * 1024
+    )
+
+
+# Real ingest wiring reads config through the config-participant admission,
+# which fails closed under the per-test profile redirect (ADR-126). This is the
+# per-NODE opt-in conftest provides for exactly that: a unit-test file with one
+# integration case in it.
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("suffix", "payload"),
+    [(".txt", b"x" * 64), (".html", b"<p>" + b"x" * 64 + b"</p>")],
+)
+def test_public_text_ingest_flow_reaches_the_cap(
+    monkeypatch, tmp_path, suffix, payload
+):
+    """INTEGRATION: the real ingest entry point, not the reader in isolation.
+
+    A unit test on ``read_ingest_file_bytes`` keeps passing if a future edit
+    routes plaintext or HTML around it, which is precisely how a bound gets
+    quietly disconnected. This drives ``parse_local_file_for_ingest`` -- the
+    public pre-DB half of ``ingest_local_file`` -- and asserts the refusal
+    surfaces to the caller.
+    """
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    monkeypatch.setattr(local_file_ingestion, "max_text_file_bytes", lambda: 16)
+    path = tmp_path / f"big{suffix}"
+    path.write_bytes(payload)
+
+    with pytest.raises(local_file_ingestion.FileIngestionError) as excinfo:
+        local_file_ingestion.parse_local_file_for_ingest(
+            path, {"perform_analysis": False, "perform_chunking": False}
+        )
+    assert "exceeds limit" in str(excinfo.value)
 
 
 def test_text_ingest_cap_reads_the_media_processing_setting(monkeypatch):
@@ -305,6 +417,19 @@ def test_chat_dictionary_key_rejects_a_catastrophic_pattern():
     assert entry.key == "/(a+)+$/", "the key degrades to a literal, as a bad regex does"
 
 
+def test_chat_dictionary_key_rejects_prefix_overlapping_alternation():
+    """``(a|aa)*`` is not a DUPLICATE alternation, and it still explodes.
+
+    The screen only looked for textually repeated branches, so this whole
+    family compiled. Measured on CPython 3.12 against ``"a" * n + "!"``:
+    0.6 ms at n=18, 4.1 ms at n=22, 26 ms at n=26, 177 ms at n=30.
+    """
+    from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import ChatDictionary
+
+    entry = ChatDictionary(key="/(a|aa)*$/", content="replacement")
+    assert entry.is_regex is False, "prefix-overlapping branches must not compile"
+
+
 def test_chat_dictionary_key_still_accepts_an_ordinary_pattern():
     """The backstop must not break the feature it guards."""
     import re
@@ -320,6 +445,76 @@ def test_chat_dictionary_key_still_accepts_an_ordinary_pattern():
 # --------------------------------------------------------------------------
 # 5. subprocess calls with no timeout
 # --------------------------------------------------------------------------
+
+
+def test_m4b_fallback_failure_still_removes_its_temporary_audio(
+    monkeypatch, tmp_path
+):
+    """A failed audiobook export must not leave a whole book's audio behind.
+
+    The m4a was unlinked AFTER the chapterless fallback export, outside any
+    ``finally``. When that fallback raised -- the exact path a timed-out
+    ffmpeg now takes -- the outer handler returned False and the temporary
+    stayed on disk, sized like the book itself.
+    """
+    import asyncio
+    import tempfile as tempfile_module
+
+    from tldw_chatbook.TTS import audio_service
+
+    class _Segment:
+        def __init__(self, ms: int = 0) -> None:
+            self._ms = ms
+
+        @staticmethod
+        def empty() -> "_Segment":
+            return _Segment(0)
+
+        @staticmethod
+        def from_file(_path) -> "_Segment":
+            return _Segment(1000)
+
+        def __add__(self, other: "_Segment") -> "_Segment":
+            return _Segment(self._ms + other._ms)
+
+        def __len__(self) -> int:
+            return self._ms
+
+        def export(self, path, **_kwargs):
+            if str(path) == str(output):  # the chapterless fallback
+                raise RuntimeError("encoder died during the fallback")
+            Path(path).write_bytes(b"\x00" * 4096)
+
+    output = tmp_path / "book.m4b"
+    monkeypatch.setattr(tempfile_module, "tempdir", str(tmp_path))
+    monkeypatch.setattr(audio_service, "PYDUB_AVAILABLE", True)
+    # pydub is optional, so the name may not exist on the module at all.
+    monkeypatch.setattr(audio_service, "AudioSegment", _Segment, raising=False)
+    # ``create_m4b_with_chapters`` imports subprocess inside itself; that is the
+    # same module object, so patching it here is what the function will see.
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0] if a else [], 1, "", "boom"),
+    )
+
+    service = audio_service.AudioService()
+    assert (
+        asyncio.run(
+            service.create_m4b_with_chapters(
+                [tmp_path / "one.wav"], ["Chapter 1"], str(output)
+            )
+        )
+        is False
+    )
+
+    leftovers = sorted(
+        path.name
+        for path in tmp_path.iterdir()
+        if path.suffix in {".m4a", ".txt"}
+    )
+    assert leftovers == [], f"temporary files survived a failed export: {leftovers}"
+
 
 
 _TIMEOUT_REQUIRED = (

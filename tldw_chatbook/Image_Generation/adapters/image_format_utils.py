@@ -176,6 +176,12 @@ def maybe_convert_format(
     actual_format: str | None,
     requested_format: str,
 ) -> tuple[bytes, str]:
+    # Before the early return, not after it: the pixel ceiling is a property of
+    # the CONTENT, and whether that content also needs transcoding is beside
+    # the point. Guarding only the conversion arm meant a backend answering PNG
+    # to a PNG request -- the ordinary case, not the exotic one -- reached every
+    # adapter with its declared pixel count never looked at.
+    _reject_decompression_bomb(content)
     if requested_format == actual_format:
         return content, content_type or content_type_for_format(requested_format)
     if requested_format not in {"png", "jpg", "webp"}:
@@ -184,7 +190,6 @@ def maybe_convert_format(
         raise ImageGenerationError("invalid image content")
     if Image is None:
         raise ImageGenerationError("Pillow is required for image format conversion")
-    _reject_decompression_bomb(content)
     try:
         with Image.open(io.BytesIO(content)) as img:
             if requested_format == "jpg" and img.mode not in {"RGB"}:

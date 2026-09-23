@@ -4,13 +4,24 @@ World-info matching runs on the UI event loop and Python ``re`` cannot be
 portably time-bounded, so a catastrophic pattern could freeze the app. Patterns
 are validated fail-closed at save and import; the send-path matcher additionally
 never raises. The catastrophic-pattern heuristic is best-effort: it flags
-nested unbounded-quantifier shapes (at any grouping depth) and textually
-duplicated alternation branches in a flat quantified group. Residual (accepted)
-gaps it does NOT catch: general alternation-overlap ReDoS (``(a|ab)*``) and
-identical-language branches that differ only by redundant grouping/escaping
-(``(a|(a))*``). These are rare in hand-authored lore; the send-path never-raise
-guard does not help against a hang, so the residual risk is documented, not
-eliminated.
+nested unbounded-quantifier shapes (at any grouping depth) and, in a flat
+quantified group, alternation branches that are either duplicated or
+PREFIX-OVERLAPPING (``(a|aa)*``).
+
+That prefix rule used to be an accepted residual gap. It is not one any more:
+``(a|aa)*$`` was accepted, compiled, and measured on CPython 3.12 at 0.6 ms
+(n=18), 4.1 ms (n=22), 26 ms (n=26) and 177 ms (n=30) against ``"a" * n + "!"``
+-- exponential, on the send path, from a user-supplied dictionary key. The rule
+is conservative rather than exact, so ``(a|ab)*`` (which measures fast) is now
+rejected too; the cost of being wrong that way is a logged downgrade to literal
+matching.
+
+Residual (still accepted) gaps: overlap that is not a textual prefix
+(``([ab]|a)*``, ``(\\w|a)*``) and identical-language branches that differ only
+by redundant grouping/escaping (``(a|(a))*``). Python ``re`` cannot be portably
+time-bounded, so the send-path never-raise guard does not help against a hang
+and closing these needs a time-bounded matcher, not a bigger heuristic. The
+residual risk is documented, not eliminated.
 """
 from __future__ import annotations
 
@@ -121,21 +132,47 @@ def _split_top_level_alternation(body: str) -> list[str]:
     return parts
 
 
-def _has_duplicate_alternation(pattern: str) -> bool:
-    """True if a flat unbounded-quantified group has a repeated alternation
-    branch — the ``(a|a)*`` / ``(a|a|a)+`` family (any number of branches).
+def _has_overlapping_alternation(pattern: str) -> bool:
+    """True if a flat unbounded-quantified group has AMBIGUOUS branches.
+
+    Two shapes, both of which let the engine reach the same position by more
+    than one route and so backtrack exponentially on a failing suffix:
+
+    * duplicates — the ``(a|a)*`` / ``(a|a|a)+`` family (any branch count);
+    * PREFIX OVERLAP — ``(a|aa)*``, where no two branches are equal but a
+      shorter one composes into a longer one. Measured on CPython 3.12,
+      ``(a|aa)*$`` against ``"a" * n + "!"`` runs 0.6 ms at n=18, 4.1 ms at
+      n=22, 26 ms at n=26 and 177 ms at n=30. Only the duplicate shape was
+      checked before, so this whole family was accepted and compiled.
+
+    The prefix rule is deliberately CONSERVATIVE, not exact: ``(a|ab)*``
+    measures fast and is rejected anyway. Being wrong here costs a user-
+    supplied pattern its regex-ness (it is logged and matched literally),
+    which is the same fail-closed downgrade the rest of this policy applies;
+    being wrong the other way hangs the send path.
+
     Splits only on real top-level alternation (see _split_top_level_alternation),
-    so escaped/char-class pipes don't cause false positives."""
+    so escaped/char-class pipes don't cause false positives.
+    """
     for m in _FLAT_QUANT_GROUP_RE.finditer(pattern):
         body = _GROUP_PREFIX_RE.sub("", m.group(1))
         alts = _split_top_level_alternation(body)
-        if len(alts) >= 2 and len(set(alts)) < len(alts):
+        if len(alts) < 2:
+            continue
+        if len(set(alts)) < len(alts):
+            return True
+        if any(
+            one and other.startswith(one)
+            for one in alts
+            for other in alts
+            if one != other
+        ):
             return True
     return False
 
 
 def _looks_catastrophic(pattern: str) -> bool:
-    return _has_nested_unbounded_quantifier(pattern) or _has_duplicate_alternation(pattern)
+    return _has_nested_unbounded_quantifier(pattern) or _has_overlapping_alternation(pattern)
 
 
 def validate_regex_pattern(pattern: str) -> None:
