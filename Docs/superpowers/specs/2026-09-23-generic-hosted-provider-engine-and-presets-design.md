@@ -14,6 +14,7 @@ Reason: new provider/runtime boundary (preset-driven adapter form), changes how
 providers register across config/Console/settings surfaces, and records the
 deliberate xAI exclusion and the Bedrock OpenAI-compat-first scope (native
 Converse wire deferred as fallback).
+deliberate xAI exclusion and Bedrock deferral.
 ```
 
 ## Summary
@@ -40,6 +41,10 @@ breadth. This design introduces:
    is a different wire that rejects Chat-Completions-only parameters — a
    future preset once that API settles (the `hosted_chat` `responses` route
    is the natural seam; tracked as open item O-4).**
+3. **Curated presets** — Databricks first; Together, Fireworks, Cerebras,
+   Perplexity next; Azure OpenAI and Gemini's OpenAI-compatible layer after
+   two small transport extensions; Bedrock deliberately deferred (non-OpenAI
+   Converse wire).
 
 Adding a curated provider drops from "20-file ritual" to "one registry record
 + one preset record + one registration line + tests + docs".
@@ -73,6 +78,9 @@ Adding a curated provider drops from "20-file ritual" to "one registry record
   isn't exposed through the OpenAI-compatible surface.
 - Full enterprise identity auth (SigV4, Entra, service-account ADC).
   Key-based auth only; seams left open (Phase 4 candidates).
+- AWS Bedrock (Converse API is not OpenAI-shaped → needs a true strict
+  adapter) and full enterprise identity auth (SigV4, Entra, service-account
+  ADC). Key-based auth only; seams left open (Phase 4 candidates).
 - Anthropic-wire or Google-native-wire providers; those remain hand-written
   adapters.
 
@@ -132,6 +140,14 @@ record** carrying identity *and* wire data, so there is exactly one record
 (not two overlapping ones) per provider:
 
 Identity fields (every provider):
+only) importable by `config.py`; the engine lives in `LLM_Calls/` beside
+`hosted_chat.py`; presets are data consumed by the engine and registered by
+callers.
+
+### 1. `tldw_chatbook/provider_registry.py` — identity catalog (new)
+
+One frozen dataclass record per provider (built-in hand-written providers get
+opaque records too — the registry covers *identity*, not implementation):
 
 | Field | Purpose |
 | --- | --- |
@@ -158,6 +174,7 @@ Preset fields (engine-driven providers only — see §2):
 | `reasoning_disposition` | `"displayable" \| "proprietary" \| "ignored"` (per `HostedChatFinishPolicy`) |
 | `auth_scheme` | `"bearer"` (Phase 1–2) \| `"api_key_header"` (Phase 3, Azure) \| `"none"` (long-tail family only, Phase 2) |
 | `discovery` | Model-list route shape (`"openai_models"` default, or a custom path — Databricks O-1) |
+| `pricing_seeds` | Optional per-model $/Mtok entries for `pricing_catalog.py` |
 
 Consumer sites stop hand-maintaining literals and import derived
 frozensets/mappings (e.g. `CLOUD_PROVIDER_KEYS`,
@@ -183,6 +200,25 @@ engine providers share one param-map constant, exactly as `zai`/`moonshot`
 each carry one today). The engine reads preset-variant records from the leaf
 registry (§1) — behavior lives here, data lives in the leaf, and `config.py`
 never imports from `LLM_Calls/`.
+### 2. `LLM_Calls/hosted_provider_engine.py` + `hosted_provider_presets.py` (new)
+
+`build_hosted_chat_handler(preset) -> chat_with_*` returns a handler with the
+same signature and param surface the dispatch expects (mirrors
+`chat_with_zai`'s signature so `PROVIDER_PARAM_MAP` entries stay uniform —
+engine providers share one param-map constant).
+
+`HostedProviderPreset` holds everything provider-specific as data:
+
+| Field | Examples |
+| --- | --- |
+| `key`, `display_name` | `"databricks"`, `"Databricks"` |
+| `base_url_rule` | Default URL + normalization (append `/openai/v1` when the user pasted a bare Databricks workspace host; reject terminal `/chat/completions` paths — reuse `normalize_hosted_chat_base_url`) |
+| `api_key_env_candidates` | `("DATABRICKS_TOKEN",)` |
+| `finish_reasons` | allowed terminals `{stop, tool_calls, length}`; provider-terminal-error reasons → `ChatProviderError(502)` |
+| `payload_flags` | temperature / top_p / stop / response_format (incl. `json_schema`) / `reasoning_effort` key name / extra body fields |
+| `reasoning_disposition` | `"displayable" \| "proprietary" \| "ignored"` (per `HostedChatFinishPolicy`) |
+| `auth_scheme` | `"bearer"` (Phase 1–2) \| `"api_key_header"` (Phase 3, Azure) |
+| `capability_hints` | native tools, streaming, reasoning effort (mirror registry flags; registry is authoritative) |
 
 The engine absorbs, once, the boilerplate duplicated today: config/env
 resolution (`_resolve_api_key`, `_resolve_base_url`, numeric/streaming
@@ -195,6 +231,7 @@ engine emits the LLM call/latency metric counters **centrally** — the thin
 per-provider metric wrappers in `LLM_API_Calls.py` (the
 `chat_with_moonshot`/`chat_with_zai` wrapper pattern) are not replicated per
 preset.
+base URL). Error messages are prefixed with the preset display name.
 
 **Escape hatch rule:** if a provider proves genuinely quirky, the answer is a
 zai-style hand-written strict adapter — never a bespoke hack flag on a
@@ -228,6 +265,7 @@ preset. The engine stays honest by refusing to absorb unbounded weirdness.
 Per the empirical new-provider checklist, the literal tables that become
 registry-derived: `config.py` `[providers]` seeds, `[api_settings.X]`
 default tables (emitted from each record's `settings_defaults`),
+default tables (a per-preset defaults builder emits these),
 `_cloud_provider_keys`; `Chat/Chat_Functions.py` audit + param-map
 constants; `Chat/provider_readiness.py` key sets; `Chat/console_provider_endpoints.py` `_BUILTIN_PROVIDER_ENDPOINTS` (Databricks
 entry documents the `/openai/v1` suffix); `console_provider_support.py`
@@ -260,6 +298,13 @@ the agent-bridge surfaces (`Agents/agent_service.py`,
 preset is that these need **zero** provider-specific edits; where one
 cannot be genericized, the deviation is recorded in that phase's plan
 before implementation.
+`LLM_Provider_Catalog/model_catalog_settings.py`
+`AUTO_REFRESH_PROVIDER_LIST_KEYS`; `local_llm_provider_catalog_service.py`
+strict-hosted resolution branch (engine presets expose a
+`resolve_request`-shaped entry point exactly like `resolve_zai_request`);
+`LLM_Calls/pricing_catalog.py` seeds. `UI/Screens/settings_screen.py`
+provider pickers already derive from the handler catalog — only display-name
+and reasoning-effort copy change.
 
 ## Data flow (Databricks, Phase 1)
 
@@ -283,6 +328,16 @@ before implementation.
    per ADR-020. No shipped model seed — gateway model availability is
    workspace-dependent, so `[providers].Databricks` starts empty and fills
    via discovery or manual seeding.
+   → resolve from `[api_settings.databricks]`/env → normalize base URL
+   (append `/openai/v1` to a bare host) → payload per preset flags →
+   `owned_json_post(route="chat/completions", Bearer PAT)` → strict
+   normalization with preset finish policy → OpenAI-shaped response dict with
+   terminal metadata + continuation checkpoints (identical consumer shape to
+   `chat_with_zai` output).
+3. **Model auto-refresh:** catalog service resolves Databricks via the
+   engine's `resolve_request` entry point (strict-hosted branch), discovers
+   models (see open item O-1), consent-gated write-through to `[providers]`
+   per ADR-020. Manual `[providers].Databricks` seeding works regardless.
 4. **Cost ticker:** preset `pricing_seeds` where prices are known; unknown
    models are simply omitted (pricing is already optional).
 
@@ -362,6 +417,8 @@ Azure's `prompt_filter_results`, vLLM/Together extras). Rules:
 
 Build: `provider_registry.py` (including the Databricks preset-variant
 record); `hosted_provider_engine.py`; registry-derived
+Build: `provider_registry.py`; `hosted_provider_engine.py` +
+`hosted_provider_presets.py` with `DATABRICKS` preset; registry-derived
 tables rolled out consumer-by-consumer (each consumer swap is independently
 testable); Databricks wired end-to-end.
 
@@ -436,6 +493,14 @@ Acceptance criteria:
       shape-safe top-level/event extras, null-valued choice/message extras,
       the two allowlisted non-null cases (`choice.logprobs`,
       `choice.stop_reason`), and empty-text stop/length finishes.
+- [ ] Together, Fireworks, Cerebras, Perplexity presets: each is a record +
+      tests + docs; a "preset cost" test asserts no provider-specific Python
+      module is needed for a flag-clean OpenAI-compatible provider.
+- [ ] ADR-146 `openai_compatible` family executes via the engine (strict
+      tier) instead of `chat_with_custom_openai`; registry entries keep
+      `custom-ep:<slug>` identity, cached models, and credential precedence
+      (env → stored). Evidence-gated swap with parity tests against the old
+      path.
 
 ### Phase 3 — Enterprise, key-based
 
@@ -460,6 +525,12 @@ Bedrock-native Converse wire (fallback only, see Phase 3); enterprise
 identity auth (SigV4/Entra/ADC) plugged at the `auth_scheme` seam; possible
 evidence-gated migration of `moonshot.py`/`zai.py` onto the engine.
 
+### Phase 4 — deferred (separate future specs/tasks)
+
+Bedrock Converse strict adapter; enterprise identity auth (SigV4/Entra/ADC)
+plugged at the `auth_scheme` seam; possible evidence-gated migration of
+`moonshot.py`/`zai.py` onto the engine.
+
 ## Testing strategy
 
 - **Engine (once, parameterized over presets):** resolution precedence
@@ -471,6 +542,10 @@ evidence-gated migration of `moonshot.py`/`zai.py` onto the engine.
   extras fail closed, required shapes never relaxed), continuation
   checkpoint round-trip, keyless auth handling, redaction of keys in
   errors/logs.
+  (including bare-host Databricks paste), payload building per flags
+  (snapshot fixtures), finish-policy tables, strict response/stream
+  validation (malformed cases fail closed), continuation checkpoint
+  round-trip, redaction of keys in errors/logs.
 - **Per preset:** record validity; payload snapshot; readiness resolution;
   registry membership; pricing seeds load.
 - **Parity:** registry coverage vs `API_CALL_HANDLERS`, audited set,
