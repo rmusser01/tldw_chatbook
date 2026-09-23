@@ -616,6 +616,15 @@ async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
     raise AssertionError(f"dreams refresh never landed {selector!r}")
 
 
+# The four wiring tests below build a real app via ``_build_test_app``,
+# whose ``build_test_app_config`` calls the real ``load_settings()`` (a
+# guarded config read). Under the default per-test TLDW_CONFIG_PATH redirect
+# the config participant admitted at collection time no longer matches and
+# admission fails closed (RecoveryRequired("raw_source_selection_changed")).
+# ``bootstrap_profile`` (Tests/conftest.py, TASK-32873) keeps the
+# collection-time profile so the bound selection still matches. The bare-App
+# modal tests above never reach a guarded config read and need no marker.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dream_row_click_opens_modal_and_actions_refresh_rows(
     tmp_path, monkeypatch
@@ -654,6 +663,7 @@ async def test_dream_row_click_opens_modal_and_actions_refresh_rows(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dream_row_enter_opens_modal(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
@@ -673,6 +683,7 @@ async def test_dream_row_enter_opens_modal(tmp_path, monkeypatch):
         assert isinstance(host.screen_stack[-1], DreamsStoryModal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_synthetic_row_click_opens_status_view(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
@@ -693,6 +704,7 @@ async def test_synthetic_row_click_opens_status_view(tmp_path, monkeypatch):
         assert "Cycle 2026-09-23" in _visible_text(modal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dream_row_ingest_uses_app_capture_service(tmp_path, monkeypatch):
     """The screen wires the modal's backend to the app's capture service."""

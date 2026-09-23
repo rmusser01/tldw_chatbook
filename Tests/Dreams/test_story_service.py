@@ -111,6 +111,14 @@ def test_resolve_dreams_chat_prebinds_endpoint_key_and_model(monkeypatch):
     assert captured["streaming"] is False
 
 
+# This test deliberately leaves ``load_cli_config_and_ensure_existence``
+# real (the resolver's production config path), which enters the guarded
+# config-participant admission. Under the per-test TLDW_CONFIG_PATH redirect
+# the participant admitted at collection time no longer matches and
+# admission fails closed (RecoveryRequired("raw_source_selection_changed")),
+# so this node keeps the collection-time profile via ``bootstrap_profile``
+# (Tests/conftest.py, TASK-32873) instead of weakening what it exercises.
+@pytest.mark.bootstrap_profile
 def test_resolve_dreams_chat_prefers_dreams_provider_settings(monkeypatch):
     captured = {}
 

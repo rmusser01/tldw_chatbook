@@ -79,6 +79,7 @@ def _dream_row_widgets(screen):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_seeded_dream_rows_paint_and_mode_label_names_dreams(
     tmp_path, monkeypatch
@@ -102,6 +103,14 @@ async def test_seeded_dream_rows_paint_and_mode_label_names_dreams(
         )
 
 
+# Every test here builds a real app via ``_build_test_app``, whose
+# ``build_test_app_config`` calls the real ``load_settings()`` (a guarded
+# config read). Under the default per-test TLDW_CONFIG_PATH redirect the
+# config participant admitted at collection time no longer matches and
+# admission fails closed (RecoveryRequired("raw_source_selection_changed")).
+# ``bootstrap_profile`` (Tests/conftest.py, TASK-32873) keeps the
+# collection-time profile so the bound selection still matches.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_cycle_synthetic_row_paints(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
@@ -119,6 +128,7 @@ async def test_failed_cycle_synthetic_row_paints(tmp_path, monkeypatch):
         assert row.region.height >= 1, "the synthetic failed-cycle row must paint"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disabled_dreams_renders_disabled_even_with_rows(tmp_path):
     # No [dreams] section in the sandbox config: dreams_setting defaults off.
@@ -136,6 +146,7 @@ async def test_disabled_dreams_renders_disabled_even_with_rows(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enabled_dreams_with_no_rows_renders_none_yet(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
@@ -150,6 +161,7 @@ async def test_enabled_dreams_with_no_rows_renders_none_yet(tmp_path, monkeypatc
         assert str(empty.renderable) == "> Dreams: none yet"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_dreams_db_degrades_to_none_yet_without_crashing(monkeypatch):
     """Wiring order tolerance: no dreams_db attribute yet means no rows, not
@@ -167,6 +179,7 @@ async def test_missing_dreams_db_degrades_to_none_yet_without_crashing(monkeypat
         assert screen._dreams == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_invalidates_late_dreams_apply(tmp_path, monkeypatch):
     """Same teardown contract as the daily-reports trio (Qodo #15): unmount
