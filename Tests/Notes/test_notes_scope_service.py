@@ -277,8 +277,9 @@ class FakeServerNotes:
         self.deleted_ids.append(("server", note_id, version))
         return {"deleted": True}
 
-    async def delete_workspace_note(self, workspace_id, note_id, version):
-        self.deleted_ids.append(("workspace", workspace_id, note_id, version))
+    async def delete_workspace_note(self, workspace_id, note_id):
+        # (TASK-32893) no `version`: see the service's own docstring.
+        self.deleted_ids.append(("workspace", workspace_id, note_id))
         return {"deleted": True}
 
     async def search_server_notes(self, query, limit=10, offset=0):

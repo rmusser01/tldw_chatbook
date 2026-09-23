@@ -43,7 +43,7 @@ from .models import (
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
-    utc_now_iso,
+    registry_now_iso,
 )
 from .change_review_consent import (
     ChangeReviewConsent,
@@ -488,7 +488,7 @@ class LocalWorkspaceRegistryService:
     ) -> None:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
-        self._now_factory = now_factory or utc_now_iso
+        self._now_factory = now_factory or registry_now_iso
         self._mutation_generation = 0
         self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
         self._receipt_token_factory = receipt_token_factory or (

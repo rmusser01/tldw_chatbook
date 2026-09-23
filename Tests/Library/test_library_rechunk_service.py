@@ -1276,8 +1276,14 @@ def test_an_invalid_chunk_is_skipped_and_leaves_its_index_gap(media_db):
     ]
 
 
-def test_replacing_with_no_valid_chunks_still_clears_the_old_rows(media_db):
-    """The DELETE is unconditional; only the INSERT is skipped when empty."""
+def test_replacing_with_no_valid_chunks_refuses_and_keeps_the_old_rows(media_db):
+    """(TASK-32893) A zero-row replacement is REFUSED, not performed.
+
+    This test previously pinned the opposite ("the DELETE is unconditional"):
+    the hard DELETE ran, the item lost every chunk it had, and
+    ``rechunk_one_item`` still reported ``rechunked``. The old rows must
+    SURVIVE a chunker that produced nothing.
+    """
     from tldw_chatbook.Library import library_rechunk_service as service
 
     media_id, _, _ = media_db.add_media_with_keywords(
@@ -1286,13 +1292,61 @@ def test_replacing_with_no_valid_chunks_still_clears_the_old_rows(media_db):
     service._replace_chunk_rows(
         media_db, media_id, [{"text": "old"}], template_name=None, template_params=None
     )
-    service._replace_chunk_rows(
-        media_db, media_id, [], template_name=None, template_params=None
-    )
+
+    with pytest.raises(ValueError, match="refusing to delete"):
+        service._replace_chunk_rows(
+            media_db, media_id, [], template_name=None, template_params=None
+        )
+    # ... and the same refusal when every chunk the chunker produced is invalid.
+    with pytest.raises(ValueError, match="refusing to delete"):
+        service._replace_chunk_rows(
+            media_db,
+            media_id,
+            [{"text": None}, "not-a-dict"],
+            template_name=None,
+            template_params=None,
+        )
 
     with media_db.transaction() as conn:
         remaining = conn.execute(
-            "SELECT count(*) AS n FROM UnvectorizedMediaChunks WHERE media_id = ?",
+            "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ?",
             (media_id,),
-        ).fetchone()["n"]
-    assert remaining == 0
+        ).fetchall()
+    assert [row["chunk_text"] for row in remaining] == ["old"]
+
+
+def test_rechunk_one_item_fails_loudly_when_chunking_yields_nothing(
+    media_db, monkeypatch
+):
+    """(TASK-32893) The end-to-end outcome is ``failed``, never ``rechunked``.
+
+    The empty-source guard upstream only catches empty *content*; a chunker
+    that returns nothing for real content used to delete every chunk row and
+    report success.
+    """
+    from tldw_chatbook.Library import library_rechunk_service as service
+
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Survivor", media_type="document", content="real content", keywords=[]
+    )
+    service._replace_chunk_rows(
+        media_db, media_id, [{"text": "old"}], template_name=None, template_params=None
+    )
+    monkeypatch.setattr(service, "improved_chunking_process", lambda *a, **k: [])
+
+    outcome = _run(
+        service.rechunk_one_item(
+            media_db,
+            media_db.get_media_by_id(media_id),
+            spec={"method": "sentences", "max_size": 3},
+        )
+    )
+
+    assert outcome["status"] == "failed"
+    assert "refusing to delete" in " ".join(outcome["notes"])
+    with media_db.transaction() as conn:
+        remaining = conn.execute(
+            "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ?",
+            (media_id,),
+        ).fetchall()
+    assert [row["chunk_text"] for row in remaining] == ["old"]

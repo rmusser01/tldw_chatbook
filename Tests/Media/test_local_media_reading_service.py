@@ -3135,6 +3135,122 @@ def test_save_reading_item_restores_trashed_match(tmp_path):
     db.close_connection()
 
 
+def test_local_reading_export_refuses_filters_it_cannot_honour(memory_db_factory):
+    """(TASK-32893) An unhonoured filter must not masquerade as an empty export.
+
+    ``status=['archived']`` and ``favorite=True`` both used to set ``rows = []``
+    and return a perfectly well-formed, completely empty export -- the same
+    bytes the user would get if they genuinely had nothing saved.
+    """
+    db = memory_db_factory()
+    saved_id, _, _ = db.add_media_with_keywords(
+        title="Saved",
+        content="Saved text",
+        media_type="article",
+        url="https://example.com/saved",
+        keywords=["ai"],
+    )
+    db.save_media_to_read_it_later(saved_id)
+    service = LocalMediaReadingService(db)
+
+    with pytest.raises(ValueError, match="only holds 'saved'"):
+        service.export_reading_items(status=["archived"])
+    with pytest.raises(ValueError, match="favorite"):
+        service.export_reading_items(favorite=True)
+
+    # The supported shape still exports, so the refusal is not a blanket veto.
+    exported = service.export_reading_items(status=["saved"], favorite=False)
+    assert exported["content"].strip(), "the honourable export still produces rows"
+
+
+def test_local_reading_export_refuses_a_domain_filter_it_can_only_half_apply(
+    memory_db_factory,
+):
+    """(TASK-32893) The domain filter runs in Python AFTER a paged query.
+
+    With a full page it can only have seen part of the scope, so the export it
+    produces is truncated by an unknown amount and says nothing about it.
+    """
+    db = memory_db_factory()
+    for index in range(3):
+        media_id, _, _ = db.add_media_with_keywords(
+            title=f"Item {index}",
+            content=f"Body {index}",
+            media_type="article",
+            url=f"https://example.com/{index}",
+            keywords=[],
+        )
+        db.save_media_to_read_it_later(media_id)
+    service = LocalMediaReadingService(db)
+
+    with pytest.raises(ValueError, match="domain filter"):
+        service.export_reading_items(domain="example.com", size=2)
+
+    # A page that is NOT full has seen the whole scope, so it still exports.
+    exported = service.export_reading_items(domain="example.com", size=50)
+    rows = [
+        json.loads(line) for line in exported["content"].decode("utf-8").splitlines()
+    ]
+    assert len(rows) == 3
+
+
+def test_a_full_but_final_page_still_exports_with_a_domain_filter(memory_db_factory):
+    """A full page is only truncated when the search's ``total`` says so.
+
+    The refusal used to trip on ``len(rows) == page_size`` alone, so an export
+    whose scope happened to be an exact multiple of the page size -- the plain
+    case being ``size`` chosen to equal the number of saved items -- was
+    refused even though the page had already seen every row there is.
+    """
+    db = memory_db_factory()
+    for index in range(2):
+        media_id, _, _ = db.add_media_with_keywords(
+            title=f"Item {index}",
+            content=f"Body {index}",
+            media_type="article",
+            url=f"https://example.com/{index}",
+            keywords=[],
+        )
+        db.save_media_to_read_it_later(media_id)
+    service = LocalMediaReadingService(db)
+
+    # Exactly two saved items and a page size of two: full, and also final.
+    exported = service.export_reading_items(domain="example.com", size=2)
+    rows = [
+        json.loads(line) for line in exported["content"].decode("utf-8").splitlines()
+    ]
+    assert len(rows) == 2, "a page that reached the end of the scope is complete"
+
+
+def test_local_reading_export_fails_rather_than_dropping_an_items_body(
+    memory_db_factory, monkeypatch
+):
+    """(TASK-32893) A per-item detail failure used to be swallowed.
+
+    ``_local_export_detail_row`` returned the bare search row, so the item was
+    written into the export WITHOUT its text/clean-html/notes and nothing in
+    the artifact said so.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved",
+        content="The body that must not vanish",
+        media_type="article",
+        url="https://example.com/saved",
+        keywords=[],
+    )
+    db.save_media_to_read_it_later(media_id)
+    service = LocalMediaReadingService(db)
+
+    def _boom(_media_id):
+        raise RuntimeError("detail read failed")
+
+    monkeypatch.setattr(service, "get_media_detail", _boom)
+
+    with pytest.raises(ValueError, match="without its body content"):
+        service.export_reading_items(include_text=True)
+
+
 class _BareConnectionDB:
     """Only the two seams `_purge_expired_reading_digest_outputs` touches.
 
