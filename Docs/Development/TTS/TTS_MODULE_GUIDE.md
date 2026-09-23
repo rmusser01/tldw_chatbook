@@ -1032,15 +1032,22 @@ Local TTS installs:
 - onnxruntime: ONNX model inference
 
 ### Kokoro Model Setup
-1. Download the model files:
-   - Model: `kokoro-v0_19.onnx` (~300MB)
-   - Voices: `voices.json`
 
-2. Point the Kokoro model/voices path settings at them (Settings ▸ Speech ▸
-   TTS, or `KOKORO_ONNX_MODEL_PATH_DEFAULT` /
-   `KOKORO_ONNX_VOICES_JSON_DEFAULT` in config.toml). There is no in-app
-   downloader: the never-wired `TTS/utils/download_models.py` was deleted
-   in TASK-32899.
+**Selecting Kokoro can start a network download.** The first time the ONNX
+backend initializes and the configured model or voices file is missing,
+`KokoroTTSBackend._initialize_onnx` fetches it from the `kokoro-onnx` GitHub
+releases (`kokoro-v1.0.onnx`, ~300 MB, and `voices-v1.0.bin`), verifies the
+SHA-256, and moves it into place. Nothing is downloaded when the files are
+already there.
+
+What was removed in TASK-32899 is the STANDALONE `TTS/utils/download_models.py`
+utility -- it was never wired to anything -- not the backend's own fetch.
+
+To supply the files yourself instead, download them and point the Kokoro
+model/voices path settings at them (Settings ▸ Speech ▸ TTS, or
+`KOKORO_ONNX_MODEL_PATH_DEFAULT` / `KOKORO_ONNX_VOICES_JSON_DEFAULT` in
+config.toml) before first use. The backend finds them present and skips the
+download.
 
 ## Usage
 
