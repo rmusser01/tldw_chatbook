@@ -79,7 +79,11 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert not fast.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in fast["steps"])
     assert required["name"] == "Derived artifacts reproduce from their sources"
-    assert required.get("needs") == ["pr-fast-lane"]
+    # TASK-32908: ui-fast-lane joined the aggregation. Both lanes are ordinary
+    # jobs; `derived-artifacts` remains the only branch-protection context, so
+    # each lane needs its own verdict step below or a red lane would leave the
+    # required check green.
+    assert required.get("needs") == ["pr-fast-lane", "ui-fast-lane"]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in required["steps"])
@@ -92,6 +96,27 @@ def _assert_required_aggregation(workflow: dict) -> None:
     )
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
+
+    ui_verdict = _named_step(required, "Require successful UI fast lane")
+    assert not ui_verdict.get("continue-on-error", False)
+    assert ui_verdict["if"] == (
+        "${{ github.event_name == 'pull_request' && "
+        "needs.ui-fast-lane.result != 'success' }}"
+    )
+    assert "needs.ui-fast-lane.result" in ui_verdict["run"]
+    assert "exit 1" in ui_verdict["run"]
+
+    # The UI lane is bounded the same way the fast lane is: one serial job,
+    # minimal install, its own timeout. TASK-32908 put it in its own job
+    # precisely so it cannot eat pr-fast-lane's 30-minute budget.
+    ui = workflow["jobs"]["ui-fast-lane"]
+    assert ui["runs-on"] == "ubuntu-latest"
+    assert "strategy" not in ui
+    assert ui["timeout-minutes"] <= 20
+    assert not ui.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in ui["steps"])
+    ui_commands = "\n".join(str(step.get("run", "")) for step in ui["steps"])
+    assert ui_commands.count("pip install") == 1
 
 
 def _assert_fast_lane_invocation(workflow: dict) -> None:
@@ -234,10 +259,14 @@ def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() 
     _assert_required_aggregation(workflow)
 
     required = workflow["jobs"]["derived-artifacts"]
-    verdict_index = next(
+    # Everything after the LAST lane verdict is a derived-artifact checker.
+    # TASK-32908 added a second verdict step (the UI lane); anchoring on the
+    # first one would have classified it as a checker and demanded
+    # `!cancelled()` on a step that must stay conditional on its lane.
+    verdict_index = max(
         index
         for index, step in enumerate(required["steps"])
-        if step.get("name") == "Require successful PR fast lane"
+        if str(step.get("name", "")).startswith("Require successful ")
     )
     checker_steps = required["steps"][verdict_index + 1 :]
     assert checker_steps
