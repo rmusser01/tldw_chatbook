@@ -73,6 +73,7 @@ from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.path_validation import validate_filename, validate_path_simple
+from ...Utils.timestamps import utc_now_iso
 
 #: Same refusal as ``kept_briefings_modal._MARKDOWN_HYPERLINKS`` and the
 #: Artifacts screen's own report preview: story bodies are LLM-written
@@ -98,6 +99,10 @@ _HANDOFF_UNAVAILABLE_NOTICE = (
 )
 _SYNTHETIC_NOTICE = (
     "This discovery cycle failed and recorded no story to act on."
+)
+_UNCONFIRMED_INGEST_NOTICE = (
+    "The server did not confirm this save; check read-it-later before "
+    "retrying."
 )
 _NO_HTTP_URL_NOTICE = (
     "This story has no web URL to ingest."
@@ -199,7 +204,7 @@ def _export_markdown(story: Mapping[str, Any]) -> str:
     if story.get("event_date"):
         lines.append(f"- Event date: {story['event_date']}")
     lines.append(f"- Dreams story id: {story.get('id')}")
-    generated = datetime.now(UTC).isoformat(timespec="seconds")
+    generated = utc_now_iso()
     lines.append(f"- Generated: {generated}")
     lines.extend(["", str(story.get("body") or "").strip(), ""])
     return "\n".join(lines)
@@ -264,6 +269,7 @@ class DreamsStoryModal(ModalScreen[None]):
         self._dreams_db_getter = dreams_db_getter
         self._capture_backend_getter = capture_backend_getter
         self._on_changed = on_changed
+        self._ingest_in_flight = False
 
     # --- Compose ---------------------------------------------------------
 
@@ -407,7 +413,11 @@ class DreamsStoryModal(ModalScreen[None]):
     # --- Actions (ADR-031 single letters; synthetic rows are no-ops) -------
 
     def action_keep(self) -> None:
-        """Toggle kept + record ``kept`` feedback + refresh the screen rows."""
+        """Toggle kept + refresh the screen rows.
+
+        ``kept`` feedback (a positive topic signal) is recorded only on the
+        transition TO kept: unkeeping must never boost the story's topics.
+        """
         if self._synthetic:
             self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
             return
@@ -427,7 +437,7 @@ class DreamsStoryModal(ModalScreen[None]):
                 markup=False,
             )
             return
-        if not self._record_feedback("kept"):
+        if kept and not self._record_feedback("kept"):
             return
         self._story["kept"] = kept
         self.notify(
@@ -452,12 +462,17 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._record_feedback("dived"):
             return
         title = str(self._story.get("title") or "Untitled dream story")
+        body = str(self._story.get("body") or "")
+        url = str(self._story.get("url") or "")
+        if _ingestable(self._story):
+            # "Dive deeper" is about the source: carry its link too.
+            body = f"{body}\n\nSource: {url}".strip()
         open_chat_with_handoff(
             ChatHandoffPayload(
                 source="dreams",
                 item_type="dream_story",
                 title=title,
-                body=str(self._story.get("body") or ""),
+                body=body,
                 display_summary=f"Dream story staged: {title}",
                 suggested_prompt=(
                     "Tell me more about this story and what it means for "
@@ -509,7 +524,7 @@ class DreamsStoryModal(ModalScreen[None]):
         save_capture``), so this action awaits it; every failure --
         missing backend, bad URL shape, backend error -- is a dismissible
         notice, never a crash, and feedback/``on_changed`` fire only
-        after a successful capture.
+        after a CONFIRMED capture; an outcome-unknown save is a warning.
         """
         if self._synthetic:
             self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
@@ -521,6 +536,10 @@ class DreamsStoryModal(ModalScreen[None]):
             self.notify(_NO_HTTP_URL_NOTICE, severity="information",
                         markup=False)
             return
+        if self._ingest_in_flight:
+            # The save is async: a second press while it is awaited would
+            # submit the same URL twice.
+            return
         backend = self._capture_backend()
         if backend is None:
             self.notify(
@@ -528,8 +547,12 @@ class DreamsStoryModal(ModalScreen[None]):
             )
             return
         # Lazy Dreams import (same pattern as ``_preview_queries``).
-        from ...Dreams.ingest_action import ingest_story_url
+        from ...Dreams.ingest_action import (
+            UNKNOWN_OUTCOME_IDENTIFIER,
+            ingest_story_url,
+        )
 
+        self._ingest_in_flight = True
         try:
             identifier = await ingest_story_url(
                 backend,
@@ -546,6 +569,14 @@ class DreamsStoryModal(ModalScreen[None]):
                 severity="error",
                 markup=False,
             )
+            return
+        finally:
+            self._ingest_in_flight = False
+        if identifier == UNKNOWN_OUTCOME_IDENTIFIER:
+            # The server may or may not have saved it: no success receipt,
+            # and no ``ingested`` signal for the interest profile.
+            self.notify(_UNCONFIRMED_INGEST_NOTICE, severity="warning",
+                        markup=False)
             return
         if not self._record_feedback("ingested"):
             return

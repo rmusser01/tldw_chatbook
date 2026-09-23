@@ -10203,10 +10203,11 @@ class TldwCli(
 
         # dreams phase 1: the Dreams DB itself is NOT constructed here --
         # every Dreams import must stay off the `_ui_ready` module census
-        # (ADR-097 boot ratchet; the budget is at its limit), so
-        # `_wire_dreams_scheduler_integration` constructs it after
-        # `_ui_ready`, in the same synchronous slice as the scheduler
-        # worker start and before its first queue load.
+        # (ADR-097 boot ratchet; the budget is at its limit), and a disabled
+        # Dreams must not create storage, so `get_dreams_db` builds it on
+        # first use while `[dreams] enabled` is set.
+        self.dreams_db = None
+        self._dreams_db_lock = threading.Lock()
 
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
@@ -11619,6 +11620,33 @@ class TldwCli(
             self._dreams_cycle_handler = handler
         return handler
 
+    def get_dreams_db(self) -> Any:  # dreams phase 1
+        """The Dreams DB, created on first use while Dreams is enabled.
+
+        Returns ``None`` while ``[dreams] enabled`` is off (an off-by-default
+        feature must not create storage) or when the database cannot open.
+        Called from the UI thread and from the scheduler's queue-load
+        worker thread, hence the lock around first construction.
+        """
+        from .Dreams.settings import dreams_setting
+
+        if not dreams_setting("enabled"):
+            return getattr(self, "dreams_db", None)
+        with self._dreams_db_lock:
+            if getattr(self, "dreams_db", None) is None:
+                try:
+                    from .DB.Dreams_DB import DreamsDB
+
+                    self.dreams_db = DreamsDB(
+                        get_dreams_db_path(), CLI_APP_CLIENT_ID
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Dreams DB unavailable",
+                    )
+                    return None
+            return self.dreams_db
+
     def _dreams_cycle_deps(self):  # dreams phase 1
         """Build ``CycleDeps`` for a scheduled or catch-up Dreams cycle.
 
@@ -11638,8 +11666,10 @@ class TldwCli(
         from .Dreams.settings import dreams_setting
         from .Dreams.story_service import resolve_dreams_chat
 
-        dreams_db = getattr(self, "dreams_db", None)
-        if dreams_db is None or not dreams_setting("enabled"):
+        if not dreams_setting("enabled"):
+            return None
+        dreams_db = self.get_dreams_db()
+        if dreams_db is None:
             return None
         return CycleDeps(
             dreams_db=dreams_db,
@@ -11696,23 +11726,15 @@ class TldwCli(
         seam the briefing settings refresh already uses
         (`self.scheduler_loop.queue.briefing_projection = ...`); the
         projection is built unconditionally because its `[dreams] enabled`
-        gate and cadence are read live on every `tasks()` call.
+        gate and cadence are read live on every `tasks()` call. The Dreams
+        DB itself is NOT built here: `get_dreams_db` creates it on first
+        use while `[dreams] enabled` is set, so a default (disabled)
+        install never creates `dreams.sqlite`.
         """
-        try:
-            from .DB.Dreams_DB import DreamsDB
-
-            self.dreams_db = DreamsDB(
-                get_dreams_db_path(), CLI_APP_CLIENT_ID
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Dreams DB unavailable during app wiring",
-            )
-            self.dreams_db = None
         from .Scheduling.services.dreams_projection import DreamsProjection
 
         self.scheduler_loop.queue.dreams_projection = DreamsProjection(
-            lambda: getattr(self, "dreams_db", None)
+            self.get_dreams_db
         )
         self._start_dreams_boot_catchup()
 

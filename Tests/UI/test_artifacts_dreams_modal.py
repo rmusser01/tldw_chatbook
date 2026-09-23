@@ -171,7 +171,8 @@ async def test_keep_toggle_writes_kept_feedback_and_refreshes(tmp_path):
         await pilot.press("k")  # toggle back off
         await pilot.pause()
         assert _story_kept(db, story["id"]) == 0
-        assert _feedback_kinds(db, story["id"]) == ["kept", "kept"]
+        # Unkeeping is not a positive signal: no second ``kept`` row.
+        assert _feedback_kinds(db, story["id"]) == ["kept"]
         assert len(changed) == 2, "each mutating action fires on_changed once"
 
 
@@ -266,7 +267,8 @@ async def test_dive_stages_handoff_payload_and_records_feedback(tmp_path):
         assert payload.source == "dreams"
         assert payload.item_type == "dream_story"
         assert payload.title == _STORY_TITLE
-        assert payload.body == _STORY_BODY
+        # The body plus the source link ("dive deeper" is about the source).
+        assert payload.body == f"{_STORY_BODY}\n\nSource: https://example.com/flights"
         assert payload.suggested_prompt.strip(), "dive must carry a prompt"
         assert _feedback_kinds(db, story["id"]) == ["dived"]
         assert app.screen is not modal, "dive dismisses the modal"
@@ -334,6 +336,36 @@ async def test_ingest_submits_story_url_and_records_feedback(tmp_path):
         assert _feedback_kinds(db, story["id"]) == ["ingested"]
         assert changed == [1], "on_changed fires exactly once after success"
         assert app.screen is modal, "ingest keeps the modal open"
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_ingest_warns_and_records_no_feedback(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    backend = FakeCaptureBackend()
+    backend.unknown_outcome = True
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        assert len(backend.requests) == 1
+        # The server may not have saved it: no "ingested" interest signal,
+        # no success receipt, no refresh.
+        assert _feedback_kinds(db, story["id"]) == []
+        assert changed == []
+        assert any("did not confirm" in n.message
+                   for n in app._notifications)
 
 
 @pytest.mark.asyncio
@@ -706,13 +738,18 @@ async def test_synthetic_row_click_opens_status_view(tmp_path, monkeypatch):
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_dream_row_ingest_uses_app_capture_service(tmp_path, monkeypatch):
-    """The screen wires the modal's backend to the app's capture service."""
+async def test_dream_row_ingest_uses_app_capture_scope(tmp_path, monkeypatch):
+    """The screen wires the modal's backend to the app's capture SCOPE.
+
+    Not ``local_collections_capture_service``: the scope routes to the
+    authority the runtime source activated (local or server), and composing
+    it on demand covers the boot-deferred capture services.
+    """
     _enable_dreams(monkeypatch)
     app = _build_test_app(configured_default="artifacts")
     app.dreams_db = _seed_db(tmp_path)
     backend = FakeCaptureBackend()
-    app.local_collections_capture_service = backend
+    app.ensure_collections_capture_services = lambda: backend
     host = DestinationHarness(app, "artifacts")
     async with host.run_test(size=(160, 50)) as pilot:
         await pilot.pause(0.1)

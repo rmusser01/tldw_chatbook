@@ -370,7 +370,7 @@ class ArtifactsScreen(BaseAppScreen):
     def _refresh_dreams(self, generation: int) -> None:
         from ...Dreams.dreams_view import list_recent_dreams
 
-        db = getattr(self.app_instance, "dreams_db", None)
+        db = self._dreams_db()
         rows: list[dict[str, Any]] = []
         if db is not None:
             try:
@@ -418,6 +418,22 @@ class ArtifactsScreen(BaseAppScreen):
             return
         self._open_dreams_story_row(focused_id)
 
+    def _dreams_db(self) -> Any:
+        """The app's Dreams DB (created on first use while enabled), or None."""
+        getter = getattr(self.app_instance, "get_dreams_db", None)
+        if callable(getter):
+            return getter()
+        return getattr(self.app_instance, "dreams_db", None)
+
+    def _dreams_capture_scope(self) -> Any:
+        """The app's active read-it-later capture scope, or None."""
+        ensure = getattr(self.app_instance, "ensure_collections_capture_services",
+                         None)
+        if callable(ensure):
+            return ensure()
+        return getattr(self.app_instance, "collections_capture_scope_service",
+                       None)
+
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
 
@@ -443,17 +459,12 @@ class ArtifactsScreen(BaseAppScreen):
         self.app.push_screen(
             DreamsStoryModal(
                 story,
-                dreams_db_getter=lambda: getattr(
-                    self.app_instance, "dreams_db", None
-                ),
-                # Task 8: the app's read-it-later capture backend
-                # (``LocalCollectionsCaptureService`` implements the
-                # ``CollectionsCaptureBackend`` Protocol whose
-                # ``save_capture`` is the real save entry), wired the same
-                # lazy-getter way as the Dreams DB above.
-                capture_backend_getter=lambda: getattr(
-                    self.app_instance, "local_collections_capture_service", None
-                ),
+                dreams_db_getter=self._dreams_db,
+                # The capture SCOPE, not the local service: it routes
+                # ``save_capture`` to whichever authority (local or server)
+                # the runtime source activated, and composes the capture
+                # services on first use (they are deferred at boot).
+                capture_backend_getter=self._dreams_capture_scope,
                 on_changed=self._start_dreams_refresh,
             )
         )
