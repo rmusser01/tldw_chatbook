@@ -283,3 +283,56 @@ def test_xml_ingestion_still_reads_a_benign_document(tmp_path, monkeypatch):
     path.write_text(BENIGN_OPML, encoding="utf-8")
 
     assert module.ET.parse(str(path)).getroot() is not None
+
+
+# --------------------------------------------------------------------------
+# Qodo review of #2800: the LOCAL sitemap path reached `_safe_parse` -- and so
+# the filesystem -- without the central `Utils.path_validation` module, so a
+# traversal spelling or a bogus absolute path was opened as-is.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["traversal", "home_expansion", "missing"],
+)
+def test_a_refused_local_sitemap_path_never_reaches_the_file_read(
+    tmp_path, monkeypatch, spelling
+):
+    """Refusal happens before the open, not inside the XML parser.
+
+    The traversal case deliberately resolves BACK to the real file, so the
+    filesystem itself would have served it: only the validator stops it.
+    """
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
+
+    (tmp_path / "sitemap.xml").write_text(_VALID_SITEMAP, encoding="utf-8")
+
+    parsed = []
+    real_parse = AEL._safe_parse
+    monkeypatch.setattr(
+        AEL, "_safe_parse", lambda path: parsed.append(path) or real_parse(path)
+    )
+
+    source = {
+        "traversal": str(
+            tmp_path / "x" / ".." / ".." / tmp_path.name / "sitemap.xml"
+        ),
+        "home_expansion": "~/sitemap.xml",
+        "missing": str(tmp_path / "nope" / "sitemap.xml"),
+    }[spelling]
+
+    assert AEL.scrape_from_filtered_sitemap(source, lambda url: False) == []
+    assert parsed == [], f"{spelling} path reached the file read: {parsed}"
+
+
+def test_a_plain_local_sitemap_path_still_parses(tmp_path):
+    """Negative control for the guard above: ordinary paths are unaffected."""
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
+
+    path = tmp_path / "sitemap.xml"
+    path.write_text(_VALID_SITEMAP, encoding="utf-8")
+
+    seen = []
+    assert AEL.scrape_from_filtered_sitemap(str(path), seen.append) == []
+    assert seen == ["https://example.invalid/a"]

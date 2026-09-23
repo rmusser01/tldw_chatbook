@@ -104,6 +104,7 @@ async_playwright = None
 sync_playwright = None
 
 import requests  # noqa: E402
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
@@ -914,10 +915,37 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     """
     Scrape articles from a sitemap file, applying an additional filter function.
 
-    :param sitemap_file: Path to the sitemap file
+    :param sitemap_file: Path to the sitemap file. Rejected by
+        `Utils.path_validation` -- and the file never opened -- if it is a
+        traversal spelling, carries shell metacharacters, or does not exist.
     :param filter_function: A function that takes a URL and returns True if it should be scraped
-    :return: List of scraped articles
+    :return: List of scraped articles (empty if the path or the XML is refused)
     """
+    # The LOCAL path is caller-controlled and used to reach `_safe_parse`
+    # unvalidated (Qodo review of #2800), so traversal spellings and
+    # out-of-scope absolute paths were opened as-is. This is the one place
+    # the local branch reads the filesystem -- `scrape_and_convert_with_
+    # filter` forwards its `source` straight here -- so the guard belongs
+    # here and covers both. The URL branch is untouched: it goes to
+    # `scrape_from_sitemap`, which fetches rather than opens.
+    #
+    # `validate_path_simple` (not `validate_path`) is the right mode: there
+    # is no app-owned sitemap directory to confine to -- a user may keep a
+    # sitemap anywhere -- which is the same reasoning `UI/Evals/snippet_
+    # editor.py` and `Character_Chat_Lib.parse_character_card` document for
+    # their user-chosen files.
+    try:
+        sitemap_path = validate_path_simple(sitemap_file, require_exists=True)
+    except ValueError:
+        # The reason is NOT logged: `validate_path_simple`'s catch-all
+        # message embeds the rejected path, which is exactly what
+        # `_sitemap_log_name` exists to keep out of a persistent sink.
+        logging.error(
+            f"Refused sitemap path {_sitemap_log_name(sitemap_file)}: "
+            "failed path validation"
+        )
+        return []
+
     # PARSE only. `ValueError` is a broad net -- it is how defusedxml's
     # `EntitiesForbidden` refusal arrives, since that is not an
     # `ET.ParseError` -- so the block it guards must hold nothing else.
@@ -926,7 +954,7 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     # "Error parsing sitemap" and returned an empty list, so a broken filter
     # looked like an empty sitemap.
     try:
-        tree = _safe_parse(sitemap_file)
+        tree = _safe_parse(sitemap_path)
         root = tree.getroot()
     except (xET.ParseError, ValueError) as e:
         # Type only, never the message: `EntitiesForbidden` names the
