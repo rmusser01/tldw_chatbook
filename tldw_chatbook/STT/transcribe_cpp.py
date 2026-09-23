@@ -39,6 +39,15 @@ from .contracts import (
     TranscriptionTask,
     TranscriptionTimings,
 )
+
+#: Ceiling on one ffmpeg decode of a user-supplied media container. An hour is
+#: generous for a long recording on slow hardware and still finite, so a
+#: malformed or adversarial container parks the worker for an hour rather than
+#: forever. Deliberately NOT shared with the other ffmpeg call sites: they
+#: bound different operations, and one number for all of them would couple
+#: limits that have no reason to move together.
+_FFMPEG_DECODE_TIMEOUT_SECONDS = 3600
+
 from .coordinator import TranscriptionCoordinator, TranscriptionCoordinatorError
 from .registry import (
     CapabilitySet,
@@ -298,6 +307,9 @@ def _pcm_16k_mono(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
+            # A malformed or adversarial container can park ffmpeg
+            # indefinitely; bound it rather than wedge the worker.
+            timeout=_FFMPEG_DECODE_TIMEOUT_SECONDS,
         )
         return _read_normalized_wav(temporary_path)
     finally:

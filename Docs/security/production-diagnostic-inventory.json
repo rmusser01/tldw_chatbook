@@ -204,8 +204,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "b8e42bd415e2f4a6f7a3",
+      "call_count": 10,
+      "diagnostic_digest": "c3e6f9aea63b967fb641",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/system_audio_tap.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -1443,8 +1443,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "6842e55e39bcc505548e",
+      "call_count": 11,
+      "diagnostic_digest": "21aac7f4e5c3598ced0a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/local_file_ingestion.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2353,8 +2353,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 62,
-      "diagnostic_digest": "b0fe354e2504adebacc3",
+      "call_count": 61,
+      "diagnostic_digest": "863d9060c72a09fa6320",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11226,7 +11226,7 @@
     "owner_files": 592,
     "path_privacy_candidate_calls": 685,
     "persistent_sink_files": 14,
-    "task_31551_calls": 55,
+    "task_31551_calls": 56,
     "task_492_calls": 1360,
     "task_494_calls": 7503
   }
