@@ -153,6 +153,9 @@ def test_cloud_classification_matches_config():
     # flips the derivation.
     from tldw_chatbook.config import _cloud_provider_keys
     assert tuple(sorted(_cloud_provider_keys)) == tuple(
+    from tldw_chatbook.config import _cloud_provider_keys
+    # Same exclusion as above until Task 9 flips the derivation.
+    assert tuple(sorted(_cloud_provider_keys())) == tuple(
         sorted(set(CLOUD_PROVIDER_CONFIG_KEYS) - {"Databricks"})
     )
 
@@ -1026,6 +1029,7 @@ git commit -m "feat: register databricks via engine; derive audited endpoint set
 
 **Files:**
 - Modify: `tldw_chatbook/config.py` (`[providers]`-backing defaults — search for `API_MODELS_BY_PROVIDER` ~L3468 and the `[api_settings]` default tables, `[api_settings.databricks]` added among them; `_cloud_provider_keys` **list** ~L9843)
+- Modify: `tldw_chatbook/config.py` (`[providers]` table ~L4041–4073, `[api_settings.databricks]` in defaults ~L4093–4510, `_cloud_provider_keys` ~L9567–9580)
 - Test: `Tests/test_config_databricks.py`
 
 **Interfaces:**
@@ -1055,6 +1059,7 @@ def test_api_settings_databricks_defaults():
 def test_databricks_classified_cloud():
     from tldw_chatbook.config import _cloud_provider_keys
     assert "Databricks" in _cloud_provider_keys
+    assert "Databricks" in _cloud_provider_keys()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1073,6 +1078,10 @@ Expected: FAIL — no Databricks entries.
    ~L9843) with `CLOUD_PROVIDER_CONFIG_KEYS` from the registry (the Task 2
    parity test already proves equality with the old list plus `Databricks`;
    update that test to include `databricks` now — remove the exclusion).
+3. `_cloud_provider_keys`: replace the hand-typed list with
+   `CLOUD_PROVIDER_CONFIG_KEYS` from the registry (the Task 2 parity test
+   already proves equality with the old list plus `Databricks`; update that
+   test to include `databricks` now — remove the `- {"databricks"}` exclusion).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1350,6 +1359,8 @@ Port the env-gated live pattern (module-level `pytest.mark.skipif` on
 missing env vars — no `test_live_*` file exists on dev; the env-gate
 convention below is self-contained):
 `pytest.mark.skipif(not os.environ.get("DATABRICKS_TOKEN") or
+Port the structure of `Tests/LLM_Calls/test_live_moonshot_zai_api.py`:
+module-level `pytest.mark.skipif(not os.environ.get("DATABRICKS_TOKEN") or
 not os.environ.get("DATABRICKS_HOST"), reason="live credentials not set")`.
 Four tests:
 
