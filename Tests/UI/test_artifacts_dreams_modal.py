@@ -19,10 +19,12 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.artifacts_dreams_modal as dsm_module
+from Tests.Dreams.test_ingest_action import FakeCaptureBackend
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.dreams_view import list_recent_dreams
+from tldw_chatbook.Library.collections_capture_models import CollectionsCaptureError
 from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 
@@ -149,7 +151,10 @@ async def test_keep_toggle_writes_kept_feedback_and_refreshes(tmp_path):
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: changed.append(1)
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: changed.append(1),
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -178,7 +183,10 @@ async def test_more_records_feedback_and_dismisses(tmp_path):
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: changed.append(1)
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: changed.append(1),
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -198,7 +206,10 @@ async def test_less_records_feedback_and_dismisses(tmp_path):
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -217,7 +228,10 @@ async def test_close_dismisses_modal(tmp_path):
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -236,7 +250,10 @@ async def test_dive_stages_handoff_payload_and_records_feedback(tmp_path):
     app = _ModalApp()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -264,7 +281,10 @@ async def test_export_writes_markdown_stub_and_records_feedback(tmp_path, monkey
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -285,26 +305,119 @@ async def test_export_writes_markdown_stub_and_records_feedback(tmp_path, monkey
         assert app.screen is modal, "export keeps the modal open"
 
 
-# --- Modal surface ----------------------------------------------------------
+@pytest.mark.asyncio
+async def test_ingest_submits_story_url_and_records_feedback(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    backend = FakeCaptureBackend()
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        (request,) = backend.requests
+        assert request.submitted_url == "https://example.com/flights"
+        assert request.title == _STORY_TITLE
+        assert request.freeform_note.startswith("via Dreams"), (
+            "the capture note must attribute the item to Dreams"
+        )
+        assert _feedback_kinds(db, story["id"]) == ["ingested"]
+        assert changed == [1], "on_changed fires exactly once after success"
+        assert app.screen is modal, "ingest keeps the modal open"
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_six_actions(tmp_path):
+async def test_ingest_failure_is_a_notice_not_a_crash(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    backend = FakeCaptureBackend(
+        error=CollectionsCaptureError("capture_queue_full")
+    )
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        assert backend.requests == []
+        assert _feedback_kinds(db, story["id"]) == [], (
+            "a failed capture records no ingested feedback"
+        )
+        assert changed == [], "on_changed must not fire for a failure"
+        assert app.screen is modal, "a failed ingest must not dismiss or crash"
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_capture_backend_degrades_to_notice(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == []
+        assert app.screen is modal, "a refused action must not dismiss or crash"
+
+
+# --- Modal surface ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_footer_hints_advertise_exactly_the_seven_actions(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
 
         hints = _renderable_text(modal.query_one("#dsm-hints", Static).renderable)
-        for word in ("Keep", "Dive deeper", "Export", "More like this",
-                     "Less like this", "Close"):
+        for word in (
+            "Keep",
+            "Dive deeper",
+            "Export",
+            "Ingest",
+            "More like this",
+            "Less like this",
+            "Close",
+        ):
             assert word in hints, f"hint must advertise {word!r}"
-        for word in ("Ingest", "Track", "Delete", "Cast", "Regenerate", "Share"):
+        for word in ("Track", "Delete", "Cast", "Regenerate", "Share"):
             assert word not in hints, f"hint must not advertise {word!r}"
 
 
@@ -316,7 +429,10 @@ async def test_story_detail_renders_provenance_and_query_preview(tmp_path, monke
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: db, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -337,10 +453,14 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
     db = _seed_db(tmp_path)
     _seed_failed_cycle(db)
     synthetic = _synthetic_row(db)
+    backend = FakeCaptureBackend()
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            synthetic, dreams_db_getter=lambda: db, on_changed=lambda: None
+            synthetic,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -351,18 +471,34 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
 
         labels = _button_labels(modal)
         assert "Close" in labels
-        for word in ("Keep", "Dive deeper", "Export", "More like this", "Less like this"):
+        for word in (
+            "Keep",
+            "Dive deeper",
+            "Export",
+            "Ingest",
+            "More like this",
+            "Less like this",
+        ):
             assert word not in labels, f"synthetic row must not offer {word!r}"
 
         hints = _renderable_text(modal.query_one("#dsm-hints", Static).renderable)
-        for word in ("Keep", "Dive deeper", "Export", "More like this", "Less like this"):
+        for word in (
+            "Keep",
+            "Dive deeper",
+            "Export",
+            "Ingest",
+            "More like this",
+            "Less like this",
+        ):
             assert word not in hints
 
         await pilot.press("k")  # inert on a synthetic row
+        await pilot.press("i")  # ingest is equally inert
         await pilot.pause()
         with db.connection() as conn:
             feedback_rows = conn.execute("SELECT COUNT(*) FROM dream_feedback").fetchone()
         assert int(feedback_rows[0]) == 0, "no action may write for a synthetic row"
+        assert backend.requests == [], "no action may capture for a synthetic row"
         assert app.screen is modal
 
         await pilot.press("q")
@@ -376,7 +512,10 @@ async def test_missing_dreams_db_degrades_to_notice_without_crash(tmp_path):
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
         modal = DreamsStoryModal(
-            story, dreams_db_getter=lambda: None, on_changed=lambda: None
+            story,
+            dreams_db_getter=lambda: None,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
         )
         await app.push_screen(modal)
         await pilot.pause()
@@ -472,3 +611,32 @@ async def test_synthetic_row_click_opens_status_view(tmp_path, monkeypatch):
         modal = host.screen_stack[-1]
         assert isinstance(modal, DreamsStoryModal)
         assert "Cycle 2026-09-23" in _visible_text(modal)
+
+
+@pytest.mark.asyncio
+async def test_dream_row_ingest_uses_app_capture_service(tmp_path, monkeypatch):
+    """The screen wires the modal's backend to the app's capture service."""
+    _enable_dreams(monkeypatch)
+    app = _build_test_app(configured_default="artifacts")
+    app.dreams_db = _seed_db(tmp_path)
+    backend = FakeCaptureBackend()
+    app.local_collections_capture_service = backend
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(160, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert isinstance(screen, ArtifactsScreen)
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
+
+        await pilot.click("#artifacts-dream-row-1")
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, DreamsStoryModal)
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        (request,) = backend.requests
+        assert request.submitted_url == "https://example.com/flights"
+        assert request.freeform_note.startswith("via Dreams")
+        assert _feedback_kinds(app.dreams_db, 1) == ["ingested"]

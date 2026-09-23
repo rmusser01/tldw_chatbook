@@ -1,10 +1,12 @@
-"""Dreams story detail modal (Dreams Phase 1, Task 7).
+"""Dreams story detail modal (Dreams Phase 1, Task 7; ingest in Task 8).
 
 One story's full surface on the Artifacts screen: title, source URL,
 body, provenance, a "what we'll look for" preview of the NEXT cycle's
 queries, and the Phase-1 action set -- keep/unkeep, dive deeper (stage a
-``ChatHandoffPayload`` into Chat), export to Markdown, more/less
-feedback, close.
+``ChatHandoffPayload`` into Chat), export to Markdown, ingest into the
+read-it-later capture queue (Task 8, via
+``Dreams.ingest_action.ingest_story_url`` bound to the app's capture
+service), more/less feedback, close.
 
 Modal structure follows this stream's own modal idioms:
 
@@ -45,6 +47,7 @@ crashes.
 
 from __future__ import annotations
 
+import inspect
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -81,6 +84,9 @@ _SLUG_MAX_LENGTH = 40
 _PREVIEW_LABEL = "preview (fallback queries until next cycle)"
 
 _NO_DB_NOTICE = "Dreams is unavailable in this runtime: no dreams database."
+_NO_CAPTURE_BACKEND_NOTICE = (
+    "Read-it-later capture is unavailable in this runtime."
+)
 _HANDOFF_UNAVAILABLE_NOTICE = (
     "Console handoff is unavailable for Dreams in this runtime."
 )
@@ -184,6 +190,11 @@ class DreamsStoryModal(ModalScreen[None]):
         dreams_db_getter: Zero-arg callable returning the app's
             ``DreamsDB`` or ``None``; called lazily at action time so a
             runtime without the database still renders the modal.
+        capture_backend_getter: Zero-arg callable returning the app's
+            read-it-later capture backend (``local_collections_capture_service``,
+            a ``CollectionsCaptureBackend``) or ``None``; called lazily at
+            action time so the Ingest action degrades to a notice rather
+            than crashing a runtime without the capture service.
         on_changed: Zero-arg callback fired after every mutating action;
             the Artifacts screen re-reads its Dreams rows.
     """
@@ -192,11 +203,12 @@ class DreamsStoryModal(ModalScreen[None]):
         ("k", "keep", "Keep"),
         ("d", "dive", "Dive deeper"),
         ("e", "export", "Export"),
+        ("i", "ingest", "Ingest"),
         ("m", "more", "More like this"),
         ("l", "less", "Less like this"),
         ("q", "close", "Close"),
         # Hidden: Escape is the safe-dismissal grammar (task-16211), not a
-        # footer-advertised action -- the hint line stays exactly the six.
+        # footer-advertised action -- the hint line stays exactly the seven.
         Binding("escape", "close", "Close", show=False),
     )
 
@@ -217,12 +229,14 @@ class DreamsStoryModal(ModalScreen[None]):
         story: dict[str, Any],
         *,
         dreams_db_getter: Callable[[], Any],
+        capture_backend_getter: Callable[[], Any],
         on_changed: Callable[[], None],
     ) -> None:
         super().__init__()
         self._story = dict(story)
         self._synthetic = bool(story.get("synthetic"))
         self._dreams_db_getter = dreams_db_getter
+        self._capture_backend_getter = capture_backend_getter
         self._on_changed = on_changed
 
     # --- Compose ---------------------------------------------------------
@@ -248,6 +262,9 @@ class DreamsStoryModal(ModalScreen[None]):
                         "Export (e)", id="dsm-export-button", compact=True
                     )
                     yield Button(
+                        "Ingest (i)", id="dsm-ingest-button", compact=True
+                    )
+                    yield Button(
                         "More like this (m)", id="dsm-more-button", compact=True
                     )
                     yield Button(
@@ -255,7 +272,7 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all six for a story, Close only for
+            # implemented actions -- all seven for a story, Close only for
             # a synthetic failed-cycle row.
             yield Static(self._hints_text(), id="dsm-hints")
 
@@ -263,8 +280,8 @@ class DreamsStoryModal(ModalScreen[None]):
         hints = Text(style="dim")
         if not self._synthetic:
             hints.append(
-                "k Keep · d Dive deeper · e Export · m More like this"
-                " · l Less like this · "
+                "k Keep · d Dive deeper · e Export · i Ingest"
+                " · m More like this · l Less like this · "
             )
         hints.append("q Close")
         return hints
@@ -317,6 +334,12 @@ class DreamsStoryModal(ModalScreen[None]):
         try:
             return self._dreams_db_getter()
         except Exception:  # noqa: BLE001 - a broken getter is a missing DB
+            return None
+
+    def _capture_backend(self) -> Any:
+        try:
+            return self._capture_backend_getter()
+        except Exception:  # noqa: BLE001 - a broken getter is a missing backend
             return None
 
     def _story_id(self) -> int | None:
@@ -451,6 +474,50 @@ class DreamsStoryModal(ModalScreen[None]):
         self.notify(f"Exported to {path.name}", markup=False)
         self._changed()
 
+    async def action_ingest(self) -> None:
+        """Submit the story URL to read-it-later, then record feedback.
+
+        The real save entry is async (``CollectionsCaptureBackend.
+        save_capture``), so this action awaits it; every failure --
+        missing backend, bad URL shape, backend error -- is a dismissible
+        notice, never a crash, and feedback/``on_changed`` fire only
+        after a successful capture.
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        backend = self._capture_backend()
+        if backend is None:
+            self.notify(
+                _NO_CAPTURE_BACKEND_NOTICE, severity="warning", markup=False
+            )
+            return
+        # Lazy Dreams import (same pattern as ``_preview_queries``).
+        from ...Dreams.ingest_action import ingest_story_url
+
+        try:
+            identifier = await ingest_story_url(
+                backend,
+                url=str(self._story.get("url") or ""),
+                title=str(self._story.get("title") or "Untitled dream story"),
+                source_note=(
+                    f"via Dreams {datetime.now(UTC).date().isoformat()}"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed capture is a notice
+            logger.warning(f"Dreams ingest failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not ingest this story: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        if not self._record_feedback("ingested"):
+            return
+        # The identifier is a backend-generated id string, never markup.
+        self.notify(f"Ingested to read-it-later ({identifier}).", markup=False)
+        self._changed()
+
     def action_more(self) -> None:
         """Record ``more`` feedback, notify, dismiss."""
         if self._synthetic:
@@ -484,17 +551,22 @@ class DreamsStoryModal(ModalScreen[None]):
 
     # --- Event routing ---------------------------------------------------
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         button_id = str(event.button.id or "")
         dispatch = {
             "dsm-keep-button": self.action_keep,
             "dsm-dive-button": self.action_dive,
             "dsm-export-button": self.action_export,
+            "dsm-ingest-button": self.action_ingest,
             "dsm-more-button": self.action_more,
             "dsm-less-button": self.action_less,
             "dsm-close-button": self.action_close,
         }
         handler = dispatch.get(button_id)
         if handler is not None:
-            handler()
+            result = handler()
+            # ``action_ingest`` is async (the capture entry is); the rest
+            # return None immediately.
+            if inspect.isawaitable(result):
+                await result

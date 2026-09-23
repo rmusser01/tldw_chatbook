@@ -446,6 +446,14 @@ class ArtifactsScreen(BaseAppScreen):
                 dreams_db_getter=lambda: getattr(
                     self.app_instance, "dreams_db", None
                 ),
+                # Task 8: the app's read-it-later capture backend
+                # (``LocalCollectionsCaptureService`` implements the
+                # ``CollectionsCaptureBackend`` Protocol whose
+                # ``save_capture`` is the real save entry), wired the same
+                # lazy-getter way as the Dreams DB above.
+                capture_backend_getter=lambda: getattr(
+                    self.app_instance, "local_collections_capture_service", None
+                ),
                 on_changed=self._start_dreams_refresh,
             )
         )
