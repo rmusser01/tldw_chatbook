@@ -537,3 +537,33 @@ def test_held_capacity_still_refuses_a_volume_that_fills_mid_copy(tmp_path):
             check(-1)
     finally:
         shutil.disk_usage = original
+
+
+def test_held_capacity_refuses_an_ancestor_that_is_no_longer_the_pinned_one(tmp_path):
+    """Qodo #2811.9: a cached pathname is not a binding to a filesystem.
+
+    ``held_capacity`` resolves the destination's volume once and then closes
+    the pinned descriptor, keeping only the ancestor's NAME for the per-chunk
+    ``shutil.disk_usage``. Rename that ancestor away and stand a different
+    directory in its place and the loop measures the impostor's free space
+    while the caller's still-open destination descriptor writes to the
+    original filesystem -- a restore can then exhaust the real volume with
+    every check reporting room. The identity the pin established must be
+    re-proved, not assumed.
+    """
+    import os
+
+    from tldw_chatbook.Backup_Recovery import native_files, space
+
+    root = _private_root(tmp_path)
+    destination = root / "out"
+    native_files.create_private_directory(destination)
+
+    check = space.held_capacity(destination)
+    check(0)  # Same directory, plenty of room: no complaint.
+
+    os.rename(destination, root / "moved")
+    native_files.create_private_directory(destination)  # Same name, new inode.
+
+    with pytest.raises(ValueError, match="capacity_volume_unavailable"):
+        check(0)

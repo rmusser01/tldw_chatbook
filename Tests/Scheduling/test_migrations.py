@@ -454,3 +454,71 @@ def test_v6_migrate_then_rollback_round_trips_to_v5(tmp_path):
     assert "task_incidents" not in tables
     # The v5 table the rollback must NOT have touched.
     assert "scheduled_task_runs" in tables
+
+
+class _FailingStampConnection:
+    """Pass every statement through except the version stamp, which explodes."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def execute(self, sql: str, *args):
+        if sql.startswith("INSERT INTO schema_version"):
+            raise sqlite3.OperationalError("disk I/O error")
+        return self._conn.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+@pytest.mark.parametrize(
+    "module_name, table, stays_at",
+    [
+        ("v4_to_v5", "scheduled_task_runs", 7),
+        ("v5_to_v6", "task_incidents", 7),
+    ],
+)
+def test_a_rollback_whose_version_stamp_fails_drops_nothing(
+    tmp_path, monkeypatch, module_name, table, stays_at
+):
+    """Qodo #2811.8: the DROP and the stamp must be one transaction.
+
+    Python's sqlite3 opens an implicit transaction only for
+    INSERT/UPDATE/DELETE/REPLACE -- never for DDL -- so a bare
+    ``conn.execute("DROP TABLE ...")`` commits on its own the moment it runs.
+    A rollback that dropped first and stamped second therefore had no
+    all-or-nothing property at all: fail the stamp and the table is already
+    gone for good while ``schema_version`` still advertises the version that
+    table defines. Routing both halves through the shared ``transaction()``
+    context manager under one explicit BEGIN is what makes the pair atomic.
+    """
+    import importlib
+
+    module = importlib.import_module(
+        f"tldw_chatbook.Scheduling.db.migrations.{module_name}"
+    )
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    assert db.get_schema_version() == stays_at
+
+    # Injected at `_get_connection`, which BOTH the old `closing(...)` shape
+    # and the fixed `transaction()` shape route through, so this test is not
+    # written against either implementation.
+    original = db._get_connection
+
+    def _get_connection():
+        # `transaction()` closes what it is handed; hand it a proxy that
+        # forwards `commit`/`rollback`/`close` to the real connection.
+        return _FailingStampConnection(original())
+
+    monkeypatch.setattr(db, "_get_connection", _get_connection)
+
+    with pytest.raises(sqlite3.OperationalError):
+        module.rollback(db)
+
+    monkeypatch.undo()
+    assert db.get_schema_version() == stays_at
+    with closing(db._get_connection()) as conn:
+        assert table in _table_names(conn), (
+            f"{module_name}.rollback committed its DROP of {table} before the "
+            "version stamp failed, leaving a schema the stamp contradicts"
+        )

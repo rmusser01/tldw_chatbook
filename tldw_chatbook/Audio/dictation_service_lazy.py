@@ -30,6 +30,10 @@ except ImportError:
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 
+# The shared boundary validator (`_resolve_buffer_duration_ms`). Already in
+# this module's import graph via `..config`, so it costs nothing new here.
+from ..Utils.input_validation import validate_bounded_integer
+
 # One catalogue of local providers, shared with the Console's resolver. Import
 # free of heavy dependencies by design (`find_spec` only), so this costs
 # nothing here and cannot drift from what the resolver picks.
@@ -526,29 +530,30 @@ class LazyLiveDictationService:
         """
         raw = get_cli_setting("dictation.buffer_duration_ms", cls.BUFFER_DURATION_MS)
         try:
-            duration_ms = int(raw)
-        except (TypeError, ValueError, OverflowError):
-            # Same trap as the resolvers above: `nan`/`inf` are valid TOML
-            # floats. `int(float("nan"))` raises `ValueError` and
-            # `int(float("inf"))` raises `OverflowError` (not `ValueError`),
-            # so both must be caught here or a typo'd config value crashes
-            # dictation start instead of falling back.
-            logger.warning(
-                "Invalid dictation.buffer_duration_ms {!r}; using {}",
-                raw,
-                cls.BUFFER_DURATION_MS,
+            # The shared boundary validator, not a hand-rolled `int()` plus
+            # range test: it already rejects every shape this resolver has to
+            # survive -- `bool` (`int(True)` is 1), `nan`/`inf` (valid TOML
+            # floats), the strings `"nan"`/`"inf"`, and anything that is not
+            # integer text -- and is the same callable the Pydantic boundary
+            # models in `input_validation` use as a `field_validator`.
+            #
+            # An ABSENT key is not malformed: `get_cli_setting` hands back
+            # `BUFFER_DURATION_MS`, which validates and returns silently. Only
+            # a value that is genuinely PRESENT and unusable -- `0`, `-1`,
+            # `2001`, `"500ms"` -- warns. Never collapse the two with a
+            # falsiness test: a configured `0` must be reported, not ignored.
+            return validate_bounded_integer(
+                raw, minimum=1, maximum=cls.MAX_BUFFER_DURATION_MS
             )
-            return cls.BUFFER_DURATION_MS
-        if not 1 <= duration_ms <= cls.MAX_BUFFER_DURATION_MS:
+        except ValueError:
             logger.warning(
-                "dictation.buffer_duration_ms must be a positive integer of at "
-                "most {} (got {!r}); using {}",
+                "dictation.buffer_duration_ms must be an integer of 1..{} "
+                "(got {!r}); using {}",
                 cls.MAX_BUFFER_DURATION_MS,
                 raw,
                 cls.BUFFER_DURATION_MS,
             )
             return cls.BUFFER_DURATION_MS
-        return duration_ms
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
