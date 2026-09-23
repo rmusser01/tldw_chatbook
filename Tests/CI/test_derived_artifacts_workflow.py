@@ -41,6 +41,10 @@ CHECKERS = (
     # helper: datetime.utcnow() is forbidden and naive datetime.now().isoformat()
     # is ratcheted.
     "scripts/check_timestamp_writers.py",
+    # TASK-32908. Tests/UI gated nothing on a PR; a verified-green subset now
+    # runs in the ui-fast-lane job, and this checker is what stops that subset
+    # from being quietly edited away instead of fixed.
+    "scripts/check_ui_pr_gate_census.py",
 )
 
 
@@ -57,8 +61,88 @@ def _steps() -> list[dict]:
 
 
 def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
-    """The added lane must not create a second branch-protection context."""
-    assert list(_workflow()["jobs"]) == ["pr-fast-lane", "derived-artifacts"]
+    """The added lanes must not create a second branch-protection context.
+
+    TASK-32908 added `ui-fast-lane` beside `pr-fast-lane`. Both are ordinary
+    jobs that report their own square; neither is named under branch
+    protection. `derived-artifacts` stays the single required context, and
+    `needs` + its two verdict steps are what make a red lane fail it -- see
+    `test_required_aggregator_fails_when_either_lane_fails`.
+    """
+    assert list(_workflow()["jobs"]) == [
+        "pr-fast-lane",
+        "ui-fast-lane",
+        "derived-artifacts",
+    ]
+
+
+def test_required_aggregator_fails_when_either_lane_fails():
+    """A lane that goes red must take the REQUIRED check down with it.
+
+    Without a verdict step a failing lane shows its own red square while
+    `Derived artifacts reproduce from their sources` stays green -- the
+    "guard nobody is gated on" shape this whole workflow exists to replace.
+    """
+    job = _workflow()["jobs"]["derived-artifacts"]
+    assert job.get("needs") == ["pr-fast-lane", "ui-fast-lane"]
+    for lane in ("pr-fast-lane", "ui-fast-lane"):
+        verdict = next(
+            step
+            for step in job["steps"]
+            if step.get("name") == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
+        )
+        assert verdict["if"] == (
+            "${{ github.event_name == 'pull_request' && "
+            f"needs.{lane}.result != 'success' }}}}"
+        )
+        assert "exit 1" in verdict["run"]
+
+
+def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
+    """TASK-32908: the run CI performs must be the run the census was verified
+    against.
+
+    The census was verified serially, in file order, on the same minimal
+    dependency set pr-fast-lane installs. xdist, a different plugin set, or a
+    different order would all be untested configurations for a gate whose
+    entire value is that it is green -- and a gate that lands red trains
+    people to ignore it.
+    """
+    job = _workflow()["jobs"]["ui-fast-lane"]
+
+    assert job["if"] == "github.event_name == 'pull_request'"
+    assert "strategy" not in job, "sharding would change the verified order"
+
+    install = next(
+        step for step in job["steps"]
+        if step.get("name") == "Install fast-lane dependencies"
+    )["run"]
+    assert "requirements-test.txt" not in install
+    assert "pytest-xdist" not in install
+    assert ".[" not in install
+
+    run = next(
+        step for step in job["steps"]
+        if step.get("name") == "Run the gated Tests/UI slice"
+    )["run"]
+    assert "scripts/ui_pr_gate_census.txt" in run
+    assert "-n auto" not in run and "--dist" not in run
+    assert "-p no:randomly" not in run  # not installed; order is collection order
+
+
+def test_ui_gate_census_is_non_empty_and_every_entry_exists():
+    """A census of renamed-away paths collects nothing and still exits 0."""
+    census = PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt"
+    entries = [
+        line.strip()
+        for line in census.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert entries, "the gated Tests/UI census must not be empty"
+    assert len(entries) == len(set(entries))
+    for entry in entries:
+        assert entry.startswith("Tests/UI/")
+        assert (PROJECT_ROOT / entry).is_file(), f"censused file is gone: {entry}"
 
 
 def test_triggers_are_not_path_filtered():

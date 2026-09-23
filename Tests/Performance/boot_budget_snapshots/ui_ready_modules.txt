@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1028 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1030 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -440,6 +440,8 @@ tldw_chatbook.Media_Creation
 tldw_chatbook.Media_Creation.generation_templates
 tldw_chatbook.Media_Creation.image_generation_service
 tldw_chatbook.Media_Creation.swarmui_client
+tldw_chatbook.Media_Generation
+tldw_chatbook.Media_Generation.config_machinery
 tldw_chatbook.Media_Playback
 tldw_chatbook.Media_Playback.availability
 tldw_chatbook.Media_Playback.frame_source
