@@ -1,0 +1,264 @@
+tldw_chatbook/Actor_Packs/repository.py	123	get_identity_by_portable_uuid :: SELECT actor_kind, local_actor_id, portable_uuid, source_portable_uuid, version FROM actor
+tldw_chatbook/Actor_Packs/repository.py	314	list_persona_intents :: SELECT intent_id, persona_id, operation, state, old_profile_json, new_profile_json, old_pr
+tldw_chatbook/Backup_Recovery/recovered_media.py	833	recover :: SELECT asset_id,kind FROM operations
+tldw_chatbook/Backup_Recovery/recovered_media.py	1267	relocate_restore :: SELECT r.message,r.slug,r.media_type,r.asset_id,a.state FROM refs r JOIN assets a USING(as
+tldw_chatbook/Backup_Recovery/recovered_media.py	1585	message_image_metadata (fstring) :: SELECT r.message,a.asset_id,a.digest,a.size,a.state,r.media_type FROM refs r JOIN assets a
+tldw_chatbook/Backup_Recovery/recovered_media.py	1632	resolve_message_image :: SELECT asset_id,media_type FROM refs WHERE profile=? AND message=? AND media_type LIKE 'im
+tldw_chatbook/Backup_Recovery/sqlite_validation.py	440	_check :: PRAGMA quick_check
+tldw_chatbook/Canvas/archive.py	85	export_canvas_archive (fstring) :: SELECT document.id, document.conversation_id, document.created_at, document.deleted_at, re
+tldw_chatbook/Canvas/archive.py	161	export_canvas_archive (fstring) :: SELECT hint.conversation_id, hint.last_canvas_id FROM canvas_conversation_hints AS hint JO
+tldw_chatbook/Canvas/repository.py	464	list_identities (fstring) :: SELECT document.id, document.conversation_id, document.created_at, document.deleted_at FRO
+tldw_chatbook/Canvas/repository.py	495	list_revision_metadata (fstring) :: SELECT revision.id AS revision_id, revision.canvas_id, document.conversation_id, revision.
+tldw_chatbook/Canvas/repository.py	639	hard_purge_conversation :: SELECT id FROM canvas_documents WHERE conversation_id = ? ORDER BY id
+tldw_chatbook/Canvas/repository.py	665	hard_purge_conversation :: SELECT id FROM canvas_documents WHERE conversation_id = ? ORDER BY id
+tldw_chatbook/Canvas/repository.py	1329	_require_durable_active_path (fstring) :: SELECT id, parent_message_id, conversation_id, deleted FROM messages WHERE id IN ()
+tldw_chatbook/Canvas/service.py	537	_validate_scope (fstring) :: SELECT id, parent_message_id, conversation_id, deleted FROM messages WHERE id IN ()
+tldw_chatbook/Character_Chat/visual_identity.py	3288	_samira_seed_preflight :: SELECT * FROM visual_identity_bindings WHERE owner_user_id = 0 AND actor_kind = 'character
+tldw_chatbook/Character_Chat/visual_identity.py	3358	_find_builtin_samira_card_by_scan :: SELECT id, name, extensions, deleted FROM character_cards ORDER BY id
+tldw_chatbook/Character_Chat/visual_identity.py	3380	_find_builtin_samira_pack :: SELECT * FROM visual_identity_packs WHERE owner_user_id = 0 AND source_kind = 'builtin' OR
+tldw_chatbook/Character_Chat/visual_identity.py	3439	_available_samira_name :: SELECT name FROM character_cards
+tldw_chatbook/Chatbooks/chatbook_importer.py	1551	_preflight_canvas_target_conflicts :: SELECT id, created_at, deleted_at FROM canvas_documents WHERE conversation_id = ? ORDER BY
+tldw_chatbook/Chatbooks/chatbook_importer.py	1565	_preflight_canvas_target_conflicts :: SELECT id, parent_revision_id, sequence, title, runtime_profile, html, content_sha256, htm
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	170	get_storage_status :: SELECT key, value FROM local_kanban_schema_meta
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	419	list_boards (fstring) :: SELECT COUNT(*) FROM kanban_boards WHERE
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	649	list_lists (fstring) :: SELECT * FROM kanban_lists WHERE ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	916	list_cards (fstring) :: SELECT * FROM kanban_cards WHERE ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1263	list_board_activities :: SELECT COUNT(*) FROM kanban_activities WHERE board_id = ?
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1283	list_card_activities :: SELECT COUNT(*) FROM kanban_activities WHERE card_id = ?
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1376	export_board :: SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1387	export_board (fstring) :: SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1398	export_board (fstring) :: SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1573	list_labels :: SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1717	list_card_labels :: SELECT labels.* FROM kanban_labels labels JOIN kanban_card_labels card_labels ON card_labe
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1784	list_checklists :: SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	1991	list_checklist_items :: SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2135	_checklists_for_card :: SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2140	_checklists_for_card :: SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2216	list_comments (fstring) :: SELECT COUNT(*) FROM kanban_comments WHERE
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2436	copy_card_with_checklists :: SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2440	copy_card_with_checklists :: SELECT label_id FROM kanban_card_labels WHERE card_id = ?
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2459	copy_card_with_checklists :: SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2508	_search_cards_raw (fstring) :: SELECT COUNT(*) FROM kanban_cards cards WHERE
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2680	list_card_links :: SELECT * FROM kanban_card_links WHERE card_id = ? ORDER BY id ASC
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2692	get_card_link_counts :: SELECT linked_type, COUNT(*) AS count FROM kanban_card_links WHERE card_id = ? GROUP BY li
+tldw_chatbook/Kanban_Interop/local_kanban_service.py	2776	list_cards_by_linked_content :: SELECT cards.*, links.id AS link_id, links.created_at AS linked_at, boards.name AS board_n
+tldw_chatbook/Library/collections_capture_repository.py	317	list_page (fstring) :: SELECT COUNT(*) WHERE
+tldw_chatbook/Library/collections_capture_repository.py	769	list_saved_searches :: SELECT COUNT(*) FROM collection_capture_saved_searches WHERE authority_key = ?
+tldw_chatbook/Library/collections_capture_repository.py	920	list_highlights :: SELECT COUNT(*) FROM collection_capture_highlights WHERE authority_key = ? AND capture_id 
+tldw_chatbook/Library/collections_capture_repository.py	1032	list_note_links :: SELECT COUNT(*) FROM collection_capture_note_links WHERE authority_key = ? AND capture_id 
+tldw_chatbook/Library/collections_legacy_recovery.py	192	list_collections :: SELECT COUNT(*) FROM library_collections
+tldw_chatbook/Library/collections_legacy_recovery.py	220	list_memberships :: SELECT COUNT(*) FROM library_collection_items
+tldw_chatbook/Library/library_collections_service.py	338	list_library_collections :: SELECT COUNT(*) AS count FROM library_collections WHERE deleted_at IS NULL
+tldw_chatbook/Library/library_collections_service.py	495	search_library_collections (fstring) :: SELECT COUNT(*) AS count FROM library_collections AS collection WHERE collection.deleted_a
+tldw_chatbook/Library/library_collections_service.py	574	get_library_collection :: SELECT COUNT(*) AS count FROM library_collection_items WHERE collection_id = ?
+tldw_chatbook/Library/library_rechunk_service.py	145	list_legacy_media_ids :: SELECT DISTINCT media_id FROM UnvectorizedMediaChunks WHERE deleted = 0 AND chunk_engine_v
+tldw_chatbook/Library/local_media_chunk_tool_service.py	334	_chunk_rows :: SELECT chunk_index, chunk_type, start_char, end_char, chunk_engine_version FROM Unvectoriz
+tldw_chatbook/Library/review_set_service.py	452	_read_review_set :: SELECT * FROM review_set_items WHERE set_id = ? ORDER BY position
+tldw_chatbook/Media/local_media_reading_service.py	287	get_library_media_chunks :: SELECT chunk_index, chunk_type, chunk_text, start_char, end_char, metadata, chunk_engine_v
+tldw_chatbook/Media/local_media_reading_service.py	610	list_media_trash :: SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1
+tldw_chatbook/Media/local_media_reading_service.py	647	empty_media_trash :: SELECT id FROM Media WHERE deleted = 0 AND is_trash = 1
+tldw_chatbook/Media/local_media_reading_service.py	1966	list_reference_images :: SELECT * FROM local_file_artifacts WHERE deleted = 0 AND LOWER(file_type) IN ('reference_i
+tldw_chatbook/Media/local_media_reading_service.py	2039	purge_file_artifacts :: SELECT id FROM local_file_artifacts WHERE deleted = 1
+tldw_chatbook/Media/local_media_reading_service.py	2250	list_highlights :: SELECT * FROM local_reading_highlights WHERE item_id = ? ORDER BY COALESCE(start_offset, i
+tldw_chatbook/Media/local_media_reading_service.py	2309	list_annotations :: SELECT * FROM local_document_annotations WHERE media_id = ? ORDER BY id
+tldw_chatbook/Media/local_media_reading_service.py	3095	list_reading_import_jobs (fstring) :: SELECT COUNT(*) FROM local_ingestion_jobs WHERE
+tldw_chatbook/Media/local_media_reading_service.py	3188	list_reading_digest_schedules :: SELECT COUNT(*) FROM local_reading_digest_schedules
+tldw_chatbook/Media/local_media_reading_service.py	3309	list_reading_digest_outputs (fstring) :: SELECT COUNT(*) FROM local_reading_digest_outputs WHERE
+tldw_chatbook/Media/local_media_reading_service.py	3337	run_due_reading_digest_schedules :: SELECT * FROM local_reading_digest_schedules ORDER BY created_at ASC, id ASC
+tldw_chatbook/Media/local_media_reading_service.py	3630	list_saved_searches :: SELECT COUNT(*) FROM local_reading_saved_searches
+tldw_chatbook/Media/local_media_reading_service.py	3727	list_note_links :: SELECT * FROM local_reading_note_links WHERE item_id = ? ORDER BY created_at DESC, note_id
+tldw_chatbook/Media/local_media_reading_service.py	3771	list_ingestion_sources :: SELECT * FROM local_ingestion_sources ORDER BY id DESC
+tldw_chatbook/Media/local_media_reading_service.py	3917	list_ingestion_source_items :: SELECT * FROM local_ingestion_source_items WHERE source_id = ? ORDER BY id DESC
+tldw_chatbook/Media/local_media_reading_service.py	4596	_sync_source_item_hashes :: SELECT id, content_hash, present_in_source FROM local_ingestion_source_items WHERE source_
+tldw_chatbook/Media/local_media_reading_service.py	4735	stream_ingest_job_events (fstring) :: SELECT * FROM local_ingestion_jobs WHERE ORDER BY id ASC
+tldw_chatbook/Media/local_media_reading_service.py	5066	_build_local_chunk_navigation_nodes :: SELECT chunk_text, chunk_index, start_char, end_char, chunk_type FROM UnvectorizedMediaChu
+tldw_chatbook/Media/local_media_reading_service.py	5431	_search_local_media_column (fstring) :: SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 0 AND LIKE ?
+tldw_chatbook/Media/local_media_reading_service.py	6297	_reading_digest_already_executed_for_minute :: SELECT created_at FROM local_reading_digest_outputs WHERE schedule_id = ?
+tldw_chatbook/Media/local_media_reading_service.py	6324	_purge_expired_reading_digest_outputs :: SELECT id, created_at FROM local_reading_digest_outputs WHERE schedule_id = ?
+tldw_chatbook/Notes/Notes_Library.py	382	get_agent_lesson_preflight_snapshot :: SELECT k.keyword FROM note_keywords AS nk JOIN keywords AS k ON k.id = nk.keyword_id WHERE
+tldw_chatbook/Notes/Notes_Library.py	719	_resolve_portable_folder_sync_id :: SELECT id, parent_id, name, sync_id, deleted FROM note_folders
+tldw_chatbook/Notes/Notes_Library.py	854	save_note_with_organization :: SELECT k.keyword FROM note_keywords AS nk JOIN keywords AS k ON k.id = nk.keyword_id WHERE
+tldw_chatbook/Notes/Notes_Library.py	1340	_organization_scope :: SELECT * FROM notes_organization_sync_checkpoints
+tldw_chatbook/Notes/Notes_Library.py	1389	_keyword_identity_conflict :: SELECT keyword FROM keywords WHERE deleted = 0
+tldw_chatbook/Notes/Notes_Library.py	1403	_keyword_identity_conflict :: SELECT collision_key FROM notes_organization_adoption_reviews WHERE server_profile_id = ? 
+tldw_chatbook/Notes/Notes_Library.py	1434	_ensure_save_folder :: SELECT * FROM note_folders WHERE parent_id IS NULL AND deleted = 0
+tldw_chatbook/Notes/Notes_Library.py	1448	_ensure_save_folder :: SELECT * FROM note_folders WHERE parent_id IS NULL AND deleted = 0
+tldw_chatbook/Notes/file_notes_replica.py	169	list_active_files :: SELECT relative_path, content_hash, size, mtime_ns FROM files WHERE root = ? AND deleted_a
+tldw_chatbook/Notes/file_notes_replica.py	384	list_deleted :: SELECT relative_path FROM files WHERE root = ? AND deleted_at IS NOT NULL ORDER BY deleted
+tldw_chatbook/Notes/note_folder_repository.py	319	page_child_folders (fstring) :: SELECT COUNT(*) AS total FROM note_folders WHERE deleted = 0 AND
+tldw_chatbook/Notes/note_folder_repository.py	404	page_note_placements (fstring) :: SELECT COUNT(*) AS total
+tldw_chatbook/Notes/note_folder_repository.py	443	page_note_placements (fstring) :: SELECT COUNT(*) AS total FROM effective_memberships
+tldw_chatbook/Notes/note_folder_repository.py	717	load_note_tree_mutation_context (fstring) :: SELECT FROM note_folders WHERE id IN () ORDER BY id
+tldw_chatbook/Notes/note_folder_repository.py	742	load_note_tree_mutation_context (fstring) :: SELECT FROM note_folders WHERE id IN () ORDER BY id
+tldw_chatbook/Notes/note_folder_repository.py	761	load_note_tree_mutation_context (fstring) :: SELECT FROM note_folders WHERE id IN () ORDER BY id
+tldw_chatbook/Notes/note_folder_repository.py	884	search_note_tree_placements (fstring) :: SELECT COUNT(*) AS total FROM visible_placements
+tldw_chatbook/Notes/note_folder_repository.py	904	search_note_tree_placements (fstring) :: SELECT COUNT(*) AS total FROM visible_placements
+tldw_chatbook/Notes/note_folder_repository.py	1480	list_memberships (fstring) :: SELECT FROM note_folder_memberships WHERE deleted = 0 AND note_id IN ()
+tldw_chatbook/Notes/note_folder_repository.py	1576	reconcile_managed :: SELECT id, folder_id, note_id, ownership, owner_id, owner_active, version, deleted, modifi
+tldw_chatbook/Notes/note_folder_repository.py	1640	reconcile_managed (fstring) :: UPDATE note_folder_memberships SET owner_active = 1, version = version + 1, modified_at = 
+tldw_chatbook/Notes/note_folder_repository.py	1667	convert_owner_to_manual :: SELECT id, folder_id, note_id, version FROM note_folder_memberships WHERE ownership = 'man
+tldw_chatbook/Notes/note_folder_repository.py	1709	remove_owner_memberships :: SELECT id, version FROM note_folder_memberships WHERE ownership = 'managed' AND owner_id =
+tldw_chatbook/Notes/note_folder_repository.py	1742	mark_unknown_owners_inactive :: SELECT id, owner_id, owner_active, version FROM note_folder_memberships WHERE ownership = 
+tldw_chatbook/Notes/note_folder_repository.py	1784	list_restore_reviews :: SELECT id, owner_id, note_id, folder_id FROM note_folder_memberships WHERE ownership = 'ma
+tldw_chatbook/Notes/note_folder_repository.py	2039	restore_folder (fstring) :: SELECT id FROM note_folders WHERE deleted = 0 AND id IN ()
+tldw_chatbook/Notes/note_folder_repository.py	2223	_load_note_tree_path :: WITH RECURSIVE path(id, parent_id, normalized_name, depth) AS ( SELECT id, parent_id, norm
+tldw_chatbook/Notes/note_folder_repository.py	2275	_load_subtree (fstring) :: SELECT FROM note_folders WHERE deleted = ? AND (normalized_path = ? OR (length(normalized_
+tldw_chatbook/Notes/note_folder_repository.py	2302	_load_restore_cohort (fstring) :: WITH RECURSIVE cohort AS (SELECT * FROM note_folders WHERE id = ? AND deleted = 1 AND modi
+tldw_chatbook/Notes/note_folder_repository.py	2390	_preflight_active_paths (fstring) :: SELECT id, normalized_path FROM note_folders WHERE deleted = 0 AND normalized_path IN ()
+tldw_chatbook/Notes/note_folder_repository.py	2602	_require_active_ids (fstring) :: SELECT id FROM WHERE deleted = 0 AND id IN ()
+tldw_chatbook/Notes/note_folder_repository.py	2726	_load_managed_folder_rows (fstring) :: WITH RECURSIVE requested_roots(root_id, ordinal) AS ( VALUES ), subtree(root_id, folder_id
+tldw_chatbook/Notes/note_import_executor.py	452	_keyword_rows :: SELECT k.id, k.keyword, k.version, k.deleted FROM keywords AS k JOIN note_keywords AS nk O
+tldw_chatbook/Notes/note_import_executor.py	465	_linked_keyword_rows :: SELECT k.id, k.keyword, k.version, k.deleted FROM keywords AS k JOIN note_keywords AS nk O
+tldw_chatbook/Notes/note_import_receipts.py	846	_load_snapshot :: SELECT item_id, source_locator_digest, selected_action, outcome_count, outcome, target_not
+tldw_chatbook/Notes/note_import_receipts.py	897	_load_effects :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, NULL, expect
+tldw_chatbook/Notes/note_import_receipts.py	907	_load_effects :: SELECT effect_id, NULL, NULL, effect_kind, state, NULL, target_folder_id, NULL, NULL, reas
+tldw_chatbook/Notes/note_import_receipts.py	917	_load_effects :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, target_folde
+tldw_chatbook/Notes/note_import_receipts.py	999	_affected_item_ids :: WITH RECURSIVE descendants(effect_id, path_digest) AS ( SELECT effect_id, path_digest FROM
+tldw_chatbook/Notes/note_import_receipts.py	1105	_load_dependency_snapshot (fstring) :: SELECT item_id, source_locator_digest, selected_action, outcome_count, outcome, target_not
+tldw_chatbook/Notes/note_import_receipts.py	1115	_load_dependency_snapshot (fstring) :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, NULL, expect
+tldw_chatbook/Notes/note_import_receipts.py	1125	_load_dependency_snapshot (fstring) :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, target_folde
+tldw_chatbook/Notes/note_import_receipts.py	1138	_load_dependency_snapshot (fstring) :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, target_folde
+tldw_chatbook/Notes/note_import_receipts.py	1165	_load_dependency_snapshot (fstring) :: SELECT effect_id, item_id, payload_index, effect_kind, state, target_note_id, target_folde
+tldw_chatbook/Notes/note_import_receipts.py	2145	aggregate_receipt :: SELECT payload_digest FROM import_payload_effects WHERE session_id = ? ORDER BY rowid
+tldw_chatbook/Notes/note_import_receipts.py	2196	_read_only_schema_is_available :: SELECT name FROM sqlite_schema WHERE type = 'table'
+tldw_chatbook/Notes/note_import_receipts.py	2302	_prior_observations (fstring) :: SELECT item.source_locator_digest, session.session_id, item.outcome_count, item.outcome, i
+tldw_chatbook/Notes/note_import_receipts.py	3020	_test_schema_snapshot :: SELECT name FROM sqlite_master WHERE type = ? AND name LIKE ? ORDER BY name
+tldw_chatbook/Notes/note_import_receipts.py	3039	_test_schema_snapshot :: SELECT name FROM pragma_table_info(?) ORDER BY cid
+tldw_chatbook/Notes/notes_device_state_store.py	924	activate_migration_candidate :: SELECT binding_id FROM notes_sync_bindings WHERE root_id = ? AND state = 'candidate' ORDER
+tldw_chatbook/Notes/notes_device_state_store.py	1062	list_root_summaries :: SELECT root_id, direction, state, last_status_code FROM notes_sync_roots ORDER BY root_id
+tldw_chatbook/Notes/notes_device_state_store.py	1168	list_bindings :: SELECT binding_id, root_id, note_scope_id, note_id, normalized_relative_path, stable_ident
+tldw_chatbook/Notes/notes_device_state_store.py	1324	candidate_binding_ids :: SELECT binding_id FROM notes_sync_bindings WHERE root_id = ? AND state = ? ORDER BY bindin
+tldw_chatbook/Notes/notes_device_state_store.py	1381	list_binding_summaries :: SELECT binding_id, root_id, note_scope_id, note_id, state, note_version FROM notes_sync_bi
+tldw_chatbook/Notes/notes_device_state_store.py	1830	list_incomplete_operations :: SELECT operation_id, root_id, binding_id, kind, state, reason_code, observation_token, exp
+tldw_chatbook/Notes/notes_organization_repository.py	833	effective_folder_sync_ids :: SELECT DISTINCT f.sync_id FROM note_folder_memberships AS m JOIN note_folders AS f ON f.id
+tldw_chatbook/Notes/notes_organization_repository.py	1402	_reject_resource_name_collision (fstring) :: SELECT id, , sync_id FROM WHERE deleted = 0 ORDER BY id
+tldw_chatbook/Notes/notes_organization_repository.py	1479	_folder_segments :: WITH RECURSIVE lineage(id, parent_id, name, depth) AS (SELECT id, parent_id, name, 0 FROM 
+tldw_chatbook/Notes/notes_organization_repository.py	1491	_collection_segments :: WITH RECURSIVE lineage(id, parent_id, name, depth) AS (SELECT id, parent_id, name, 0 FROM 
+tldw_chatbook/Notes/notes_organization_repository.py	1514	_preflight_folder_rewrite :: WITH RECURSIVE subtree(id, parent_id, name, path, normalized_path, deleted, depth) AS (SEL
+tldw_chatbook/Notes/notes_organization_repository.py	1586	_preflight_folder_rewrite (fstring) :: SELECT id, normalized_path FROM note_folders WHERE deleted = 0 AND id NOT IN () ORDER BY i
+tldw_chatbook/Notifications/client_notifications_db.py	466	get_settings :: SELECT key, value FROM client_notification_settings
+tldw_chatbook/Notifications/event_state_repository.py	1108	prune_stream_state :: SELECT id, event_key, dedupe_key, event_id, server_cursor FROM event_records WHERE source_
+tldw_chatbook/Notifications/event_state_repository.py	1357	clear_server_profile_state (fstring) :: SELECT event_key, dedupe_key FROM event_records WHERE
+tldw_chatbook/Notifications/event_state_repository.py	1790	_retained_cursor_bounds :: SELECT event_id, server_cursor FROM event_records WHERE source_authority = ? AND server_pr
+tldw_chatbook/Personal_Context/interview_draft_repository.py	104	__init__ :: PRAGMA table_info(interview_drafts)
+tldw_chatbook/Personal_Context/repository.py	492	_inspect_schema :: SELECT singleton, version FROM personal_context_schema
+tldw_chatbook/Personal_Context/repository.py	548	_inspect_schema (fstring) :: SELECT outbox_id FROM encrypted_outbox ORDER BY created_at, rowid
+tldw_chatbook/Personal_Context/repository.py	749	current_values :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	763	acquire_first_link_freeze :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	1761	current_values :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	1774	apply_reviewed_link :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	1797	apply_reviewed_link :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	1829	apply_reviewed_link :: SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?
+tldw_chatbook/Personal_Context/repository.py	2032	apply_reviewed_link (fstring) :: SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?
+tldw_chatbook/Personal_Context/repository.py	2069	apply_reviewed_link (fstring) :: SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?
+tldw_chatbook/Personal_Context/repository.py	2094	apply_reviewed_link (fstring) :: SELECT scope_id FROM local_scope_bindings
+tldw_chatbook/Personal_Context/repository.py	2130	apply_reviewed_link (fstring) :: SELECT scope_id FROM local_scope_bindings
+tldw_chatbook/Personal_Context/repository.py	2233	first_link_head_rows :: SELECT object_type, object_id, version_id FROM object_heads WHERE object_type IN ('manifes
+tldw_chatbook/Personal_Context/repository.py	2521	commit_record_and_manifest :: SELECT undo_id FROM local_undo WHERE record_id = ?
+tldw_chatbook/Personal_Context/repository.py	2822	_retire_record_content :: SELECT outbox_id, envelope_version FROM encrypted_outbox WHERE object_type = 'record' AND 
+tldw_chatbook/Personal_Context/repository.py	2848	_retire_record_content :: SELECT undo_id FROM local_undo WHERE record_id = ?
+tldw_chatbook/Personal_Context/repository.py	2864	_retire_pending_outbox_content :: SELECT outbox_id, envelope_version FROM encrypted_outbox WHERE object_type = ? AND object_
+tldw_chatbook/Personal_Context/repository.py	3046	commit_proposal :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	3147	_expire_due_proposals_in_connection :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	3234	current_rows :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	3595	_require_no_record_collision_in_connection :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	3690	list_scope_bindings :: SELECT scope_id FROM local_scope_bindings ORDER BY scope_id
+tldw_chatbook/Personal_Context/repository.py	3846	_rebuild_newly_linked_scope_outbox :: SELECT encrypted_objects.* FROM object_heads JOIN encrypted_objects USING (object_type, ob
+tldw_chatbook/Personal_Context/repository.py	3866	_rebuild_newly_linked_scope_outbox :: SELECT * FROM encrypted_objects WHERE object_type = 'record' AND object_id = ?
+tldw_chatbook/Personal_Context/repository.py	3901	_rebuild_newly_linked_scope_outbox :: SELECT * FROM encrypted_objects WHERE object_type = 'record' AND object_id = ?
+tldw_chatbook/Personal_Context/repository.py	3955	_require_unique_workspace_binding :: SELECT scope_id, encrypted_binding_version FROM local_scope_bindings ORDER BY scope_id
+tldw_chatbook/Personal_Context/repository.py	4022	list_undo_ids :: SELECT undo_id FROM local_undo WHERE expires_at <= ?
+tldw_chatbook/Personal_Context/repository.py	4027	list_undo_ids :: SELECT undo_id FROM local_undo ORDER BY rowid DESC
+tldw_chatbook/Personal_Context/repository.py	4330	list_quarantine :: SELECT * FROM quarantine ORDER BY created_at, quarantine_id
+tldw_chatbook/Prompt_Management/prompt_scope_service.py	448	_collection_record :: SELECT prompt_id FROM LocalPromptCollectionItems WHERE collection_id = ? ORDER BY position
+tldw_chatbook/Prompt_Management/prompt_scope_service.py	879	list_prompt_collections :: SELECT COUNT(*) FROM LocalPromptCollections WHERE deleted = 0 AND instr(PY_CASEFOLD(name),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py	912	list_prompt_collections (fstring) :: SELECT COUNT(*) FROM LocalPromptCollections WHERE deleted = 0 AND instr(PY_CASEFOLD(name),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py	1058	list_prompt_collection_memberships :: SELECT item.collection_id FROM LocalPromptCollectionItems AS item JOIN LocalPromptCollecti
+tldw_chatbook/Prompt_Management/prompt_scope_service.py	1105	replace_prompt_collection_memberships :: SELECT collection_id FROM LocalPromptCollectionItems WHERE prompt_id = ? ORDER BY collecti
+tldw_chatbook/RAG_Admin/local_rag_admin_service.py	641	count_chunks_by_engine_version :: SELECT chunk_engine_version, COUNT(DISTINCT media_id) AS n FROM UnvectorizedMediaChunks WH
+tldw_chatbook/Research_Interop/local_research_service.py	1722	list_checkpoints :: SELECT * FROM research_checkpoints WHERE run_id = ? ORDER BY rowid ASC
+tldw_chatbook/Research_Interop/local_research_service.py	2041	list_artifacts :: SELECT * FROM research_artifacts WHERE run_id = ? ORDER BY id ASC
+tldw_chatbook/Research_Interop/local_research_service.py	2092	list_run_events :: SELECT * FROM research_run_events WHERE run_id = ? AND id > ? ORDER BY id ASC
+tldw_chatbook/Research_Interop/migrations/v0_to_v1_run_lease_columns.py	40	apply :: PRAGMA table_info(research_runs)
+tldw_chatbook/Scheduling/db/migrations/v1_to_v2.py	43	migrate :: PRAGMA table_info(reminder_tasks)
+tldw_chatbook/Scheduling/db/migrations/v2_to_v3.py	39	migrate :: PRAGMA table_info(reminder_tasks)
+tldw_chatbook/Scheduling/db/migrations/v3_to_v4.py	102	migrate :: PRAGMA table_info(automation_definitions)
+tldw_chatbook/Scheduling/db/migrations/v4_to_v5.py	50	migrate :: PRAGMA table_info(reminder_tasks)
+tldw_chatbook/Scheduling/db/migrations/v5_to_v6.py	54	migrate :: PRAGMA table_info(reminder_tasks)
+tldw_chatbook/Scheduling/db/migrations/v6_to_v7.py	90	migrate :: PRAGMA table_info(automation_results)
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	511	_detect_server_deletions_conn :: SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id IS NOT NULL
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	908	list_reminder_tasks (fstring) :: SELECT * FROM reminder_tasks ORDER BY created_at
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	946	reminders_due_before (fstring) :: SELECT * FROM reminder_tasks WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	1923	list_automation_definitions (fstring) :: SELECT * FROM automation_definitions ORDER BY created_at
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	3517	get_pending_mutations (fstring) :: SELECT * FROM pending_mutations WHERE ORDER BY created_at
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	3615	get_tombstones (fstring) :: SELECT * FROM sync_tombstones WHERE ORDER BY deleted_at
+tldw_chatbook/Scheduling/db/scheduled_tasks_db.py	3693	get_conflicts (fstring) :: SELECT * FROM sync_conflicts WHERE ORDER BY created_at
+tldw_chatbook/Stats/user_statistics.py	201	_get_activity_last_30_days :: SELECT DATE(timestamp) as day, COUNT(*) as count FROM messages WHERE deleted = 0 AND times
+tldw_chatbook/Stats/user_statistics.py	728	_get_conversation_streaks :: SELECT DATE(timestamp) as day, COUNT(DISTINCT conversation_id) as convs FROM messages WHER
+tldw_chatbook/Subscriptions/daily_report_demo.py	506	_watchlist_source_ids :: SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ? ORDER BY subscription
+tldw_chatbook/Subscriptions/local_watchlists_service.py	1844	_select_alert_rule_rows :: SELECT * FROM local_watchlist_alert_rules WHERE job_id = ? OR job_id IS NULL ORDER BY crea
+tldw_chatbook/Subscriptions/local_watchlists_service.py	2859	_evaluate_alert_rules_for_run :: SELECT * FROM local_watchlist_alert_rules WHERE enabled = 1 AND (job_id = ? OR job_id IS N
+tldw_chatbook/Subscriptions/local_watchlists_service.py	3002	_load_source_filters :: SELECT id, name, is_active, conditions, action, action_params, priority, is_include_requir
+tldw_chatbook/Subscriptions/local_watchlists_service.py	3030	_load_content_alert_rules :: SELECT id, name, is_active, conditions, action, action_params, priority FROM subscription_
+tldw_chatbook/Subscriptions/site_config_manager.py	464	list_configs :: SELECT domain, config_data, created_at, updated_at FROM site_configs ORDER BY domain
+tldw_chatbook/Subscriptions/site_config_manager.py	623	export_configs :: SELECT domain, config_data FROM site_configs ORDER BY domain
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	179	create_with_sources :: SELECT 1 FROM watchlist_sources WHERE watchlist_id = ?
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	419	list_sources :: SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ? ORDER BY added_at, su
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	444	list_watchlists_for_source :: SELECT watchlist_id FROM watchlist_sources WHERE subscription_id = ? ORDER BY added_at, wa
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	467	list_source_rows :: SELECT s.id, s.name, s.type, s.source FROM watchlist_sources ws JOIN subscriptions s ON s.
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	490	list_all_source_rows :: SELECT id, name, type FROM subscriptions ORDER BY LOWER(name), id
+tldw_chatbook/Subscriptions/watchlist_bundle_service.py	508	list_unassigned_source_rows :: SELECT s.id, s.name, s.type, s.source FROM subscriptions s WHERE NOT EXISTS ( SELECT 1 FRO
+tldw_chatbook/Sync_Interop/conflict_review.py	59	build_notes_organization_adoption_items :: SELECT review_id, domain, display_name, portable_path, state FROM notes_organization_adopt
+tldw_chatbook/Sync_Interop/manual_sync_control.py	402	_durable_dependency_ids :: SELECT head.entity, head.entity_id FROM sync_log AS head JOIN (SELECT entity, entity_id, M
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	334	_scan_resources :: SELECT domain, local_object_id, remote_object_id, resolution FROM notes_organization_adopt
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	353	_scan_resources (fstring) :: SELECT id, , AS name, version, deleted, sync_id FROM ORDER BY id
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	522	_link_intents (fstring) :: SELECT link. AS subject_id, link.keyword_id, keyword.version FROM AS link JOIN keywords AS
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	542	_link_intents (fstring) :: SELECT link. AS subject_id, link.keyword_id, keyword.version FROM AS link JOIN keywords AS
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	563	_link_intents (fstring) :: SELECT link. AS subject_id, link.keyword_id, keyword.version FROM AS link JOIN keywords AS
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	582	_link_intents (fstring) :: SELECT link. AS subject_id, link.keyword_id, keyword.version FROM AS link JOIN keywords AS
+tldw_chatbook/Sync_Interop/notes_organization_inventory.py	626	_add_sync_log_deletions :: SELECT change_id, entity, payload FROM sync_log WHERE operation = 'delete' AND entity IN (
+tldw_chatbook/Sync_Interop/notes_organization_sync_service.py	374	mutate (fstring) :: SELECT k.* FROM keywords k JOIN l ON l.keyword_id = k.id WHERE l. = ? AND k.deleted = 0
+tldw_chatbook/Sync_Interop/notes_organization_sync_service.py	1085	finalize_pending_note_organization_receipts :: SELECT receipt_id FROM note_organization_receipts ORDER BY created_at, receipt_id
+tldw_chatbook/Sync_Interop/notes_organization_sync_service.py	1729	_effective_folder_links :: SELECT DISTINCT m.folder_id, m.note_id FROM note_folder_memberships m JOIN note_folders f 
+tldw_chatbook/Sync_Interop/notes_organization_sync_service.py	2045	drain_pending_intents :: SELECT * FROM notes_organization_sync_intents WHERE server_profile_id = ? AND dataset_id =
+tldw_chatbook/Sync_Interop/notes_organization_sync_service.py	2198	_keep_local_blocks_intent :: SELECT domain, local_object_id, remote_object_id FROM notes_organization_adoption_reviews 
+tldw_chatbook/Sync_Interop/sync_state_repository.py	604	list_identity_mappings :: SELECT * FROM sync_identity_mappings WHERE (? IS NULL OR source_authority = ?) AND (? IS N
+tldw_chatbook/Sync_Interop/sync_state_repository.py	859	list_mirror_reports :: SELECT * FROM mirror_reports WHERE (? IS NULL OR domain = ?) ORDER BY report_id ASC
+tldw_chatbook/Sync_Interop/sync_state_repository.py	1247	clear_pending_personal_context_outbox :: SELECT outbox_id, envelope FROM sync_v2_local_outbox WHERE source_scope_key = ? AND datase
+tldw_chatbook/Sync_Interop/sync_state_repository.py	1304	has_pending_sync_v2_object :: SELECT client_envelope_id, envelope FROM sync_v2_local_outbox WHERE source_scope_key = ? A
+tldw_chatbook/Sync_Interop/sync_state_repository.py	1396	list_sync_v2_outbox_entries :: SELECT * FROM sync_v2_local_outbox WHERE source_scope_key = ? AND dataset_id = ? AND (? IS
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2081	list_sync_v2_profile_states :: SELECT server_profile_id, authenticated_principal_id, workspace_scope FROM sync_profile_st
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2483	_sync_v2_outbox_summary :: SELECT status, domain, COUNT(*) AS count FROM sync_v2_local_outbox WHERE source_scope_key 
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2516	_sync_v2_identity_summary :: SELECT mapping_status, domain, COUNT(*) AS count FROM sync_identity_mappings WHERE source_
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2912	_ensure_sync_v2_profile_columns :: PRAGMA table_info(sync_profile_state)
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2936	_ensure_sync_v2_outbox_columns :: PRAGMA table_info(sync_v2_local_outbox)
+tldw_chatbook/Sync_Interop/sync_state_repository.py	2949	_ensure_personal_context_link_columns :: PRAGMA table_info(personal_context_link_state)
+tldw_chatbook/UI/Screens/library_screen.py	31114	_review_set_live_ids (fstring) :: SELECT id FROM Media WHERE id IN () AND deleted = 0 AND is_trash = 0
+tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py	240	get_chrome_cookies :: SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE
+tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py	392	get_firefox_cookies :: SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ? ESCAPE '\'
+tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py	523	get_edge_cookies :: SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE
+tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py	517	list_pets :: SELECT pet_id FROM tamagotchis ORDER BY updated_at DESC
+tldw_chatbook/Workspaces/registry_service.py	1402	get_item_memberships :: SELECT * FROM workspace_memberships WHERE item_type = ? AND item_id = ? ORDER BY created_a
+tldw_chatbook/Workspaces/registry_service.py	1425	list_workspace_memberships :: SELECT * FROM workspace_memberships WHERE workspace_id = ? ORDER BY created_at ASC, item_t
+tldw_chatbook/Workspaces/registry_service.py	1466	list_workspace_source_memberships :: SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = ? AND item_type = 'media' 
+tldw_chatbook/Workspaces/registry_service.py	1512	list_workspace_note_memberships :: SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = ? AND item_type = 'note' A
+tldw_chatbook/Workspaces/registry_service.py	1848	list_quick_note_receipts (fstring) :: SELECT COUNT(*) FROM research_quick_note_receipts WHERE local_user_id = ? AND (? IS NULL O
+tldw_chatbook/Workspaces/registry_service.py	2375	complete_quick_note_delete :: SELECT workspace_id, payload FROM workspace_rag_scopes
+tldw_chatbook/Workspaces/registry_service.py	2472	list_workspace_conversations :: SELECT * FROM workspace_memberships WHERE workspace_id = ? AND item_type = ? ORDER BY crea
+tldw_chatbook/Workspaces/registry_service.py	2815	list_runtime_bindings :: SELECT * FROM workspace_runtime_bindings WHERE workspace_id = ? ORDER BY created_at ASC, b
+tldw_chatbook/Workspaces/registry_service.py	3076	reconcile_research_source_selection :: SELECT item_type, item_id FROM workspace_memberships WHERE workspace_id = ? AND role = 'so
+tldw_chatbook/Writing_Interop/local_writing_service.py	775	_ensure_direct_scene_schema :: PRAGMA table_info(writing_scenes)
+tldw_chatbook/Writing_Interop/local_writing_service.py	1030	list_versions :: SELECT * FROM writing_versions WHERE entity_type = ? AND entity_id = ? ORDER BY version_nu
+tldw_chatbook/Writing_Interop/local_writing_service.py	1108	list_trash (fstring) :: SELECT * FROM WHERE deleted = 1 ORDER BY last_modified DESC
+tldw_chatbook/Writing_Interop/local_writing_service.py	1309	list_manuscripts :: SELECT * FROM writing_manuscripts WHERE project_id = ? AND deleted = 0 ORDER BY sort_order
+tldw_chatbook/Writing_Interop/local_writing_service.py	1686	list_relationships :: SELECT * FROM writing_relationships WHERE project_id = ? AND deleted = 0 ORDER BY created_
+tldw_chatbook/Writing_Interop/local_writing_service.py	1814	list_plot_lines :: SELECT * FROM writing_plot_lines WHERE project_id = ? AND deleted = 0 ORDER BY sort_order 
+tldw_chatbook/Writing_Interop/local_writing_service.py	1900	list_plot_events :: SELECT * FROM writing_plot_events WHERE plot_line_id = ? AND deleted = 0 ORDER BY sort_ord
+tldw_chatbook/Writing_Interop/local_writing_service.py	2053	list_scene_characters :: SELECT l.scene_id, l.character_id, l.is_pov, c.name, c.role FROM writing_scene_characters 
+tldw_chatbook/Writing_Interop/local_writing_service.py	2099	list_scene_world_info :: SELECT l.scene_id, l.world_info_id, w.name, w.kind FROM writing_scene_world_info AS l JOIN
+tldw_chatbook/Writing_Interop/local_writing_service.py	2157	list_citations :: SELECT * FROM writing_citations WHERE scene_id = ? AND deleted = 0 ORDER BY created_at ASC
+tldw_chatbook/Writing_Interop/local_writing_service.py	2215	_project_corpus :: SELECT id, title, synopsis, content_markdown FROM writing_scenes WHERE project_id = ? AND 
+tldw_chatbook/Writing_Interop/local_writing_service.py	2223	_project_corpus :: SELECT id, name, role, full_name, appearance, personality, backstory, motivation, arc_summ
+tldw_chatbook/Writing_Interop/local_writing_service.py	2232	_project_corpus :: SELECT id, kind, name, description, properties_json, tags_json FROM writing_world_info WHE
+tldw_chatbook/Writing_Interop/local_writing_service.py	2240	_project_corpus :: SELECT id, source_type, source_id, source_title, excerpt, query_used FROM writing_citation
+tldw_chatbook/Writing_Interop/local_writing_service.py	2356	_analysis_text_for_project :: SELECT content_markdown FROM writing_scenes WHERE project_id = ? AND deleted = 0 ORDER BY 

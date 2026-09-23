@@ -1,0 +1,4 @@
+tldw_chatbook/Character_Chat/world_info_processor.py	678	len(content) // 4
+tldw_chatbook/Subscriptions/token_manager.py	113	len(text) / 4
+tldw_chatbook/TTS/backends/kokoro.py	130	len(buffer) // 4
+tldw_chatbook/TTS/backends/kokoro.py	954	len(sample_buffer) // 4
