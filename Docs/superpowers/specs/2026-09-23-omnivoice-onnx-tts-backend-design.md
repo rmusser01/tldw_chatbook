@@ -48,6 +48,18 @@ The reference ONNX implementation (github.com/AFun9/Omnivoice-onnx) is
 **unlicensed** — reference-only. We do not copy code from it. It also depends on
 torch/transformers at inference (it monkey-patches the PyTorch `generate()` loop),
 so it is not vendorable even if licensed.
+Two licensing facts shape the work:
+
+- The LM side descends from Apache-2.0 code (Qwen3-0.6B → k2-fsa/OmniVoice). We may
+  read and port from the k2-fsa upstream with attribution.
+- The audio tokenizer comes from Boson AI's Higgs Audio 2 under a Llama-3-style
+  community license. The repo already ships a Boson-derived `higgs` TTS backend, so
+  there is precedent; the acquisition consent step must still surface the dual
+  license explicitly.
+- The reference ONNX implementation (github.com/AFun9/Omnivoice-onnx) is
+  **unlicensed** — reference-only. We do not copy code from it. It also depends on
+  torch/transformers at inference (it monkey-patches the PyTorch `generate()` loop),
+  so it is not vendorable even if licensed.
 
 ## Goals
 
@@ -110,6 +122,13 @@ how non-streaming siblings behave).
   the upstream `generate()` at implementation time, with unit tests asserting exact
   token sequences for known prompts (plain, multilingual, clone-prefixed,
   instruct-framed).
+- **Tokenizer**: `tokenizer.json` loaded via the `tokenizers` library.
+- **Prompt construction** (top implementation risk): OmniVoice is Qwen3-derived;
+  prompts go through a chat template with language tags, and cloning interleaves
+  encoder-produced audio-prompt tokens into that template. `tokenizers` does BPE but
+  not chat templates. The backend ships a small formatter for this pinned model
+  version, driven by `tokenizer_config.json` (no Jinja, no torch), with unit tests
+  asserting exact token sequences for known prompts.
 - **Sampling loop**: numpy implementation of the upstream diffusion sampler — CFG via
   the block-diagonal `[2B, 1, S, S]` audio mask (conditional + unconditional in one
   LM call), 8 codebooks × 1025 logits per step, `num_step` iterations, then decoder →
@@ -124,6 +143,9 @@ how non-streaming siblings behave).
   unusable without it. **Cancellation** is cooperative, checked between diffusion
   steps; an individual LM forward cannot be interrupted — that granularity is
   documented and accepted.
+  synthesis off the UI thread; whole-utterance output. **Cancellation** is
+  cooperative, checked between diffusion steps; an individual LM forward cannot be
+  interrupted — that granularity is documented and accepted.
 - **Timeouts**: `generation_timeout` is computed from input length × RTF headroom ×
   safety factor rather than a flat constant (RTF 3–7 means a long utterance can
   legitimately take minutes); config override available.
@@ -138,6 +160,10 @@ clone reference supplies both the audio and its transcript (`reference_text` —
 already a validated, bounded field) → audio materialized and resampled to 24 kHz
 mono PCM → encoder session → codec tokens → acoustic prompt prefix for the LM.
 `max_reference_duration` (default ~30 s) enforced with a clear error.
+free), modeled on `higgs_voice_manager`. Clone flow: profile's ADR-051 canonical
+clone reference → materialized and resampled to 24 kHz mono PCM → encoder session →
+codec tokens → acoustic prompt prefix for the LM. `max_reference_duration`
+(default ~30 s) enforced with a clear error.
 
 ### Artifact catalog — `TTS/omnivoice_artifact_catalog.py`
 
@@ -150,6 +176,8 @@ consent step runs the ADR-080 machine-memory fit check (the engine wants ~1.2 GB
 RAM) and surfaces the full license stack: Apache-2.0 LM weights (with the card's
 anti-impersonation disclaimer) and the Boson Higgs Audio 2 Community License for
 the tokenizer.
+RAM) and surfaces the dual license (Apache-2.0 LM; Boson Higgs Audio 2 Community
+License for the tokenizer).
 
 ### Model resolution
 
@@ -185,6 +213,11 @@ tracing every module the `higgs` provider ID reaches):
 
 The implementation plan enumerates the exact edit in each; the spec's claim is only
 that all of the above are bounded, pattern-following edits.
+`omnivoice` joins `BUILT_IN_TTS_PROVIDER_IDS` as the 8th entry, flowing through the
+bounded touch-points that tuple governs: `legacy_catalogs`, `request_admission`,
+`profile_types`, `studio_preferences`, the `legacy_bridge` spec list, and
+`settings_speech_tts.py` validation/guidance (the sanctioned way that bounded set
+grows). Settings live under the existing `speech-tts` category; no new category.
 
 Config — `[OmniVoiceSettings]` (higgs-style `get_cli_setting`):
 
@@ -230,6 +263,7 @@ Proportionate to risk, per `lessons-testing-evidence.md`:
   (plain, multilingual, clone-prefixed, instruct-framed).
 - **Progress & cancellation**: step-progress callbacks fire per diffusion step;
   cancellation between steps aborts promptly and releases the generation lock.
+  (plain, multilingual, clone-prefixed).
 - **Catalog & resolution**: descriptor layout/sha tests; resolution order (config
   path → managed artifact → `not_configured`) against temp dirs.
 - **Settings/provider surface**: extend the existing `settings_speech_tts` and
@@ -270,6 +304,7 @@ notes. Existing ADRs 023 (registry), 051 (clone assets), 039 (settings ownership
 - Upstream weights & code: <https://huggingface.co/k2-fsa/OmniVoice> (Apache-2.0
   code and weights) and its GitHub repo — the canonical source to port the
   sampler and prompt logic from; paper: arXiv:2604.00688
+- Apache-2.0 upstream: <https://huggingface.co/k2-fsa/OmniVoice>
 - ADR-023 (TTS adapter registry), ADR-051 (clone reference assets), ADR-039 (TTS
   settings ownership), ADR-080 (machine-memory fit)
 - Prior art in-repo: `TTS/backends/higgs.py`, `TTS/backends/kokoro.py`,
