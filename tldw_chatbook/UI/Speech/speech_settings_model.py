@@ -93,7 +93,12 @@ PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-for
     'alltalk': (   'alltalk-format-select',
                    'alltalk-language-select',
                    'alltalk-url-input',
-                   'alltalk-voice-input')}
+                   'alltalk-voice-input'),
+    'omnivoice': (   'omnivoice-guidance-scale-input',
+                     'omnivoice-max-ref-duration-input',
+                     'omnivoice-model-root-input',
+                     'omnivoice-voices-browse-btn',
+                     'omnivoice-voices-dir-input')}
 
 #: What a provider cannot work without. Blank while its siblings are set is
 #: the `incomplete` state -- the one that fails at generation time with
@@ -109,6 +114,7 @@ REQUIRED_SETTINGS: dict[str, tuple[str, ...]] = {
     "kokoro": (),
     "chatterbox": (),
     "higgs": (),
+    "omnivoice": (),
     "defaults": (),
 }
 
@@ -232,6 +238,11 @@ ALL_SETTINGS_CONTROLS: frozenset[str] = frozenset((   'add-voice-blend-btn',
     'kokoro-use-onnx-switch',
     'kokoro-voice-blends-list',
     'kokoro-voice-mixing-switch',
+    'omnivoice-guidance-scale-input',
+    'omnivoice-max-ref-duration-input',
+    'omnivoice-model-root-input',
+    'omnivoice-voices-browse-btn',
+    'omnivoice-voices-dir-input',
     'openai-api-key-input',
     'openai-base-url-input',
     'openai-org-id-input',

@@ -80,6 +80,22 @@ PARAM_DEFAULTS: dict[str, dict[str, object]] = {
     "tts-higgs-voice-cloning-switch": {"value": True},
     "tts-higgs-multi-speaker-switch": {"value": True},
     "tts-higgs-delimiter-input": {"value": "|||", "placeholder": "Default: |||"},
+    # OmniVoice
+    "tts-omnivoice-num-steps-input": {
+        "value": "32",
+        "placeholder": "Default: 32",
+        "type": "number",
+    },
+    "tts-omnivoice-guidance-scale-input": {
+        "value": "2.0",
+        "placeholder": "Default: 2.0",
+        "type": "number",
+    },
+    "tts-omnivoice-max-ref-duration-input": {
+        "value": "30",
+        "placeholder": "Default: 30",
+        "type": "number",
+    },
     "tts-preprocess-text-switch": {"value": True},
     "tts-normalize-audio-switch": {"value": True},
     "tts-target-db-input": {
@@ -109,6 +125,10 @@ PARAM_LABELS: dict[str, str] = {
     "tts-higgs-voice-cloning-switch": "Voice cloning",
     "tts-higgs-multi-speaker-switch": "Multi-speaker",
     "tts-higgs-delimiter-input": "Delimiter",
+    # OmniVoice
+    "tts-omnivoice-num-steps-input": "Diffusion steps",
+    "tts-omnivoice-guidance-scale-input": "Guidance (CFG)",
+    "tts-omnivoice-max-ref-duration-input": "Max reference (s)",
     # Kokoro
     "tts-kokoro-use-onnx": "Use ONNX",
     # Shared audio post-processing

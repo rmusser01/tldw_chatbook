@@ -1418,6 +1418,8 @@ class SpeechCatalogMixin:
             choices.extend(self._chatterbox_profile_choices())
         elif provider_id == "higgs":
             choices.extend(self._higgs_profile_choices())
+        elif provider_id == "omnivoice":
+            choices.extend(self._omnivoice_profile_choices())
         elif provider_id == "kokoro":
             choices.extend(self._kokoro_blend_choices())
         return tuple(choices)
@@ -1485,6 +1487,31 @@ class SpeechCatalogMixin:
             ]
         except Exception:
             logger.warning("Saved Higgs voice profiles could not be loaded")
+            return []
+
+    @staticmethod
+    def _omnivoice_profile_choices() -> list[tuple[str, str]]:
+        try:
+            from tldw_chatbook.TTS.omnivoice_voice_manager import (
+                OmniVoiceVoiceManager,
+            )
+
+            voice_dir = Path.home() / ".config" / "tldw_cli" / "omnivoice_voices"
+            if not voice_dir.is_dir():
+                return []
+            profiles = OmniVoiceVoiceManager(voice_dir).list_profiles()
+            return [
+                (
+                    str(profile.get("display_name") or profile["name"]),
+                    f"profile:{profile['name']}",
+                )
+                for profile in profiles
+                if isinstance(profile, Mapping)
+                and isinstance(profile.get("name"), str)
+                and profile["name"]
+            ]
+        except Exception:
+            logger.warning("Saved OmniVoice voice profiles could not be loaded")
             return []
 
     def _catalog_health_copy(self, catalog: TTSProviderCatalog) -> str:

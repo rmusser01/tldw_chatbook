@@ -575,8 +575,9 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             raw int16 PCM, or any other supported format converted through
             audio_service.
         """
+        extra: dict[str, Any] = {}
         if request is not None:
-            extra = dict(getattr(request, "extra_params", None) or {})
+            extra.update(dict(getattr(request, "extra_params", None) or {}))
             if text is None:
                 text = request.input
             if not voice:
@@ -603,9 +604,32 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             candidate = Path(voice).expanduser()
             if candidate.suffix.lower() in _AUDIO_SUFFIXES and candidate.is_file():
                 reference_source = str(candidate)
+        # A managed voice profile carries the transcript cloning requires.
+        if voice.startswith("profile:"):
+            profile_audio, profile_text = self._load_voice_profile(
+                voice.removeprefix("profile:")
+            )
+            if profile_audio is None:
+                raise TTSOperationError(
+                    code="request_invalid",
+                    message=(
+                        "omnivoice: request_invalid — "
+                        f"voice profile '{voice.removeprefix('profile:')}' not found"
+                    ),
+                    retryable=False,
+                    operation_id=_OPERATION_ID,
+                )
+            reference_source = profile_audio
+            reference_text = profile_text
 
         timeout_factor = float(self.config.get("OMNIVOICE_TIMEOUT_FACTOR", _RTF_HEADROOM))
         num_steps = int(self.config.get("OMNIVOICE_NUM_STEPS", 32))
+        # Request-level playground knobs beat the config defaults.
+        if isinstance(extra.get("num_steps"), (int, float)) and extra["num_steps"] >= 1:
+            num_steps = int(extra["num_steps"])
+        guidance_override: float | None = None
+        if isinstance(extra.get("guidance_scale"), (int, float)):
+            guidance_override = float(extra["guidance_scale"])
         started = time.monotonic()
         loop = asyncio.get_running_loop()
 
@@ -645,6 +669,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                     num_steps,
                     speed,
                     timeout_factor,
+                    guidance_override,
                     lambda: self._cancel.is_set(),
                     progress,
                 )
@@ -825,6 +850,38 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     # -- reference encoding -------------------------------------------
 
+    def _load_voice_profile(self, profile_name: str) -> tuple[str | None, str | None]:
+        """Resolve a managed voice profile to (reference audio, transcript).
+
+        Profiles are the only clone source that carries the transcript the
+        model requires; store failures degrade to "not found" rather than
+        aborting synthesis with a store error.
+        """
+        try:
+            from tldw_chatbook.TTS.omnivoice_voice_manager import (
+                OmniVoiceVoiceManager,
+            )
+
+            voices_dir = Path(
+                str(
+                    self.config.get(
+                        "OMNIVOICE_VOICE_SAMPLES_DIR",
+                        "~/.config/tldw_cli/omnivoice_voices",
+                    )
+                )
+            ).expanduser()
+            manager = OmniVoiceVoiceManager(voices_dir)
+            profile = manager.get_profile(profile_name)
+            if profile is None:
+                return None, None
+            audio = manager.get_reference_audio_path(profile_name)
+            if audio is None or not audio.is_file():
+                return None, None
+            return str(audio), str(profile.get("reference_text") or "")
+        except Exception as exc:
+            logger.warning("OmniVoice voice profile lookup failed: {}", exc)
+            return None, None
+
     def _encode_reference(self, reference_audio: str) -> np.ndarray:
         """Encode reference audio as (8, T_ref) int64 codec codes.
 
@@ -875,8 +932,9 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         num_steps: int,
         speed: float,
         timeout_factor: float,
-        cancel_check: Callable[[], bool],
-        progress: Callable[[int, int], None] | None,
+        guidance_override: float | None = None,
+        cancel_check: Callable[[], bool] = lambda: False,
+        progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
         """Run prompt -> sampler -> decoder -> postprocess; return the waveform.
 
@@ -920,7 +978,11 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
         sampler_config = OmniVoiceSamplerConfig(
             num_step=num_steps,
-            guidance_scale=float(self.config.get("OMNIVOICE_GUIDANCE_SCALE", 2.0)),
+            guidance_scale=(
+                guidance_override
+                if guidance_override is not None
+                else float(self.config.get("OMNIVOICE_GUIDANCE_SCALE", 2.0))
+            ),
             t_shift=float(self.config.get("OMNIVOICE_T_SHIFT", 0.1)),
             layer_penalty_factor=float(
                 self.config.get("OMNIVOICE_LAYER_PENALTY_FACTOR", 5.0)

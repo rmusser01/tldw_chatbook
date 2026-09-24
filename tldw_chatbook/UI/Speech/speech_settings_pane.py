@@ -59,6 +59,7 @@ _PROVIDER_LABELS: Mapping[str, str] = {
     "chatterbox": "Chatterbox",
     "higgs": "Higgs",
     "alltalk": "AllTalk",
+    "omnivoice": "OmniVoice",
 }
 _PROVIDER_OPTIONS = tuple(
     (label, provider_id) for provider_id, label in _PROVIDER_LABELS.items()

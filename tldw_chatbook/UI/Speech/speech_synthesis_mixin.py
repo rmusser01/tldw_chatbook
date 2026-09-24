@@ -579,6 +579,32 @@ class SpeechSynthesisMixin:
             ] and not voice.startswith(("custom:", "profile:")):
                 # This is a saved profile - format it as profile:name
                 voice = f"profile:{voice}"
+        elif provider == "omnivoice":
+            # Collect OmniVoice-specific parameters
+            num_steps_input = self.query_one(
+                "#tts-omnivoice-num-steps-input", Input
+            ).value
+            guidance_input = self.query_one(
+                "#tts-omnivoice-guidance-scale-input", Input
+            ).value
+            if num_steps_input.strip():
+                extra_params["num_steps"] = int(float(num_steps_input))
+            if guidance_input.strip():
+                extra_params["guidance_scale"] = float(guidance_input)
+            # Cloning voices are managed profiles (they carry the transcript);
+            # a bare "custom" upload has no transcript to clone from.
+            if voice == "custom":
+                self.app.notify(
+                    "OmniVoice cloning needs a voice profile (created in the "
+                    "Voice Cloning window) — reference uploads carry no transcript",
+                    severity="warning",
+                )
+                self.query_one("#tts-generate-btn", Button).disabled = False
+                return
+            if voice not in ("default", "_separator", "_separator2") and (
+                not voice.startswith(("custom:", "profile:"))
+            ):
+                voice = f"profile:{voice}"
 
         # Log the request
         log = self.query_one("#tts-generation-log", RichLog)
