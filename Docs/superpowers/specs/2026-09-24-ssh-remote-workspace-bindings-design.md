@@ -42,11 +42,13 @@ local bindings or scratch.
 - The remote binding can be selected as the Console working folder, so
   AGENTS.md / AGENTS.override.md load from it under all existing ADR-068/069
   rules (byte caps, untrusted content, activation ledger, first-use consent).
-- **Availability guarantee** (the core requirement, with a named regression
-  test): an unreachable, auth-failing, or timing-out remote binding is
-  excluded from the run's admitted roots; sends still compose; local
-  bindings and scratch keep working; the context note says the remote root
-  was excluded and why.
+- **Availability guarantee, both directions** (the core requirement, with
+  named regression tests): (1) an unreachable, auth-failing, or
+  handshake-timing-out remote binding is excluded from the run's admitted
+  roots; sends still compose; local bindings and scratch keep working; the
+  context note says the remote root was excluded and why. (2) An operation
+  that runs past its deadline is a typed tool error that **never changes
+  the binding's status** — the next send admits the root again.
 - Nothing is installed, persisted, or left behind on the server — including
   **no orphaned processes after a timed-out call** (worker-side watchdog) and
   **no orphaned temp files after an aborted atomic write** (the watchdog
@@ -463,7 +465,10 @@ loudly at the type boundary until migrated. The migrations:
 Sites that today filter or special-case `local-filesystem` / do laptop-disk
 work per binding, to be migrated or explicitly extended (the implementation
 plan completes this list with a `grep -rn "local-filesystem\|LOCAL_FILESYSTEM"`
-pass; the OmniVoice spec's UI touch-point list is the format):
+pass; the OmniVoice spec's UI touch-point list is the format). Entries were
+verified against a mix of this branch and dev — line numbers drift and one
+site (`_call_context`) does not exist under that name on this branch at all
+— so the planning pass re-locates every entry on the implementation branch:
 
 - `Chat/console_chat_controller.py` — `_validate_project_instruction_binding`
   (admission), `_exclusion_paths_provider`,
