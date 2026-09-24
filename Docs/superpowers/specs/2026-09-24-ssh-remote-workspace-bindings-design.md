@@ -502,6 +502,16 @@ loudly at the type boundary until migrated. The migrations:
   per-call guard): for remote roots, admission = registry read + cached
   status (+ one synchronous ping at first selection, where the user is
   already waiting); the per-call guard is the worker's root pin.
+- **Identity freshness — parity with local per-run re-capture**: local
+  roots re-capture the directory chain on every run (the executor's
+  `__init__` plus per-call validation), so a root recreated between runs
+  (`rm -rf` + `git clone`) is simply re-captured on the next run. Remote
+  roots must not do worse: a pin failure is **not** BLOCKED — it marks the
+  cached identity **stale** and triggers the debounced re-probe, whose
+  ping re-captures the full chain (READY with fresh identity — the
+  recreated-root case), reports MISSING if the root is gone, or BLOCKED
+  "root rejected" if the root genuinely will not pin. A swapped symlink
+  is still caught: it fails the pin within the run, every time.
 
 ## Transport & executor
 
@@ -697,11 +707,20 @@ loudly at the type boundary until migrated. The migrations:
   target/interpreter charsets validated at add time with leading-dash
   rejection. Bundle bytes travel via stdin — invisible to `ps` on the
   server and never shell-parsed.
-- **Stdout contamination**: the worker's response begins with a fixed magic
-  byte sequence; the executor skips leading stdout bytes until the magic
-  (garbage cap ~4KB → typed "remote shell emits stdout noise" error with a
-  hint to guard `.bashrc`). Debian/Ubuntu source `.bashrc` for
-  `ssh host cmd`; unguarded rc files otherwise corrupt framing.
+- **Stdout contamination**: the worker's response begins with a fixed
+  16-byte magic constant; the executor scans **raw bytes** — not lines —
+  for the magic, discards everything up to and including it, and only
+  then hands the remainder to the line-based response parser, so noise
+  containing newlines cannot inject fake response lines; a constant
+  longer than plausible rc-file output makes accidental collision
+  negligible. A garbage cap (~4KB) with no magic found → typed "remote
+  shell emits stdout noise" error with a hint to guard `.bashrc`.
+  Debian/Ubuntu source `.bashrc` for `ssh host cmd`; unguarded rc files
+  otherwise corrupt framing. **The local worker does not grow a magic
+  prefix** — its pipe has no noise source and the local path stays
+  untouched; the bundle's IO entry point therefore differs from the local
+  worker's by exactly this strip-before-parse adapter, which lives in the
+  bundle build, not the shared worker code.
 - **Bundle**: committed, build-time-generated single file
   (`Tools/remote_worker_bundle.py`) assembled from the existing protocol
   framing, root pinning, `local_tool_impls` core, dispatch, and sensitive
@@ -745,19 +764,30 @@ loudly at the type boundary until migrated. The migrations:
      bucketed by the admitted marker (below), not by exit-code guessing.
      `resource.setrlimit(RLIMIT_CPU, …)` is an optional additional
      backstop.
-  The watchdog fires strictly **earlier** than the laptop-side kill
-  (laptop kill at `timeout_seconds + grace`, grace ≈ 5s, both measured
-  from spawn — now consistent because the worker's budget is the
-  remainder). The local ssh process-group kill is the last-resort
-  backstop. Either tier guarantees "nothing left behind" as far as
+  The laptop side runs **two anchored deadlines**: a marker-arrival
+  deadline at spawn + `timeout_seconds` + grace (no marker by then →
+  kill; the failure buckets as no-marker by construction), and a
+  completion deadline at `admitted_at + budget + grace`. Anchoring the
+  completion kill to the marker's arrival (not to spawn) is what makes
+  "watchdog strictly earlier" actually hold — the worker arms its tiers
+  at the same moment it emits the marker, both sides then count the same
+  remaining budget, and the ~5s grace absorbs channel latency and clock
+  drift (both sides measure durations from their own anchors, never wall
+  clocks). The local ssh
+  process-group kill is the last-resort backstop. Either tier guarantees
+  "nothing left behind" as far as
   processes go: no orphaned process; temp-file cleanup is best-effort
   from the Timer tier (the alarm tier cannot clean up — same bounded
   exception as the local worker). No separate `call_timeout_s` config —
   the existing constant is the single deadline source.
-- **New `ping` op**: returns root stat `(st_dev, st_ino, st_mode)`,
-  canonical remote path, remote python version, and bundle-hash echo — one
-  multiplexed round trip powering both the status probe and authority
-  capture.
+- **New `ping` op**: returns the **full directory identity chain** — the
+  root and every ancestor component's identity tuples in the exact form
+  the worker's `DirectoryChain(identities=(root_identity,
+  *ancestor_identities[1:]))` reconstruction consumes (a root-only stat
+  cannot build a request the worker will accept) — plus canonical remote
+  path, remote python version, and bundle-hash echo. One multiplexed
+  round trip powering the status probe, authority capture, and identity
+  re-capture.
 - **Timeouts, two classes by design**: `ConnectTimeout` bounds TCP only;
   connect/handshake timeouts (with the handshake/banner stall bounded by
   the same deadline machinery) are **transport failures** (no admitted
@@ -1149,12 +1179,16 @@ site (`_call_context`) does not exist under that name on this branch at all
   exists on the laptop with different contents — the laptop copy is never
   read, hashed, or stamped (all four CAS sites plus `_stale_write_refusal`
   and result redaction).
-6. **Composition & degradation**, including two **named availability
-  regression tests**: *workspace with remote BLOCKED + local READY → send
-  composes, local tools advertised, remote excluded, note mentions it*;
-  and the inverse direction — *a healthy remote whose op times out (75)
-  stays READY and is admitted on the next send*; plus cold-start-optimistic
-  admission.
+6. **Composition, degradation, and recovery**, including three **named
+  availability regression tests**: *workspace with remote BLOCKED + local
+  READY → send composes, local tools advertised, remote excluded, note
+  mentions it*; the inverse direction — *a healthy remote whose op times
+  out (75) stays READY and is admitted on the next send*; and *a BLOCKED
+  remote whose debounced background probe succeeds is re-admitted on the
+  next send with no user action*; plus cold-start-optimistic admission
+  and the identity-staleness path (*pin failure → identity marked stale →
+  re-probe re-captures the chain → READY with fresh identity*, the remote
+  `rm -rf && git clone` parity case).
 7. **3.10 floor**: CI compiles the bundle under a real 3.10
   (`uv python install 3.10`).
 8. **Opt-in marked test** with `ssh localhost` where key auth exists; plus
