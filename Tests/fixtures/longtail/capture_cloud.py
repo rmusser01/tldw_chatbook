@@ -157,6 +157,20 @@ def _choose_model(models_body: Any, spec: dict[str, Any]) -> str | None:
     return ids[0] if ids else None
 
 
+def _require_complete_stream(events: list[str], *, server: str) -> None:
+    """Refuse to write a degraded fixture: a failed streamed round that
+    silently yields no (or unterminated) events would otherwise rot the
+    stream evidence for servers whose pinned inventory is empty."""
+    if not events:
+        raise RuntimeError(
+            f"{server}: streamed round produced no SSE events -- refusing to write a degraded fixture"
+        )
+    if events[-1] != "[DONE]":
+        raise RuntimeError(
+            f"{server}: streamed round did not terminate in [DONE] -- refusing to write a degraded fixture"
+        )
+
+
 def _sanitized_replay_cmd(base_url: str, model: str) -> str:
     payload = {**PLAIN_PAYLOAD_TAIL, "model": model}
     return (
@@ -203,6 +217,7 @@ def capture_provider(name: str, spec: dict[str, Any]) -> bool:
         print(f"  ! streamed round failed: {error}")
         events = []
 
+    _require_complete_stream(events, server=name)
     fixture = {
         "server": name,
         "base_url": base_url,
@@ -220,11 +235,21 @@ def capture_provider(name: str, spec: dict[str, Any]) -> bool:
 
 
 def main() -> int:
-    captured = [capture_provider(name, spec) for name, spec in PROVIDERS.items()]
-    if not any(captured):
+    captured_any = False
+    failures: list[str] = []
+    for name, spec in PROVIDERS.items():
+        try:
+            if capture_provider(name, spec):
+                captured_any = True
+        except RuntimeError as error:  # degraded capture refused at write time
+            print(f"  FAIL ({name}): {error}")
+            failures.append(name)
+    if failures:
+        print(f"\nDegraded captures refused (no fixture written): {', '.join(failures)}")
+    if not captured_any:
         print("\nNo provider key found; no cloud fixtures written.")
         return 1
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

@@ -215,6 +215,20 @@ def _sanitized_replay_cmd(base_url: str, *, model: str | None) -> str:
     )
 
 
+def _require_complete_stream(events: list[str], *, server: str) -> None:
+    """Refuse to write a degraded fixture: a failed streamed round that
+    silently yields no (or unterminated) events would otherwise rot the
+    stream evidence for servers whose pinned inventory is empty."""
+    if not events:
+        raise RuntimeError(
+            f"{server}: streamed round produced no SSE events -- refusing to write a degraded fixture"
+        )
+    if events[-1] != "[DONE]":
+        raise RuntimeError(
+            f"{server}: streamed round did not terminate in [DONE] -- refusing to write a degraded fixture"
+        )
+
+
 def _write_fixture(
     server: str,
     base_url: str,
@@ -224,6 +238,7 @@ def _write_fixture(
     models_body: Any,
     replay_cmd: str,
 ) -> Path:
+    _require_complete_stream(events, server=server)
     fixture = {
         "server": server,
         "base_url": base_url,
@@ -473,11 +488,26 @@ def capture_vllm() -> bool:
 
 
 def main() -> int:
-    captured = [capture_llama_server(), capture_ollama(), capture_vllm()]
-    if not any(captured):
+    captured_any = False
+    failures: list[str] = []
+    captures = (
+        ("llama-server", capture_llama_server),
+        ("ollama", capture_ollama),
+        ("vllm", capture_vllm),
+    )
+    for name, capture in captures:
+        try:
+            if capture():
+                captured_any = True
+        except RuntimeError as error:  # degraded capture refused at write time
+            print(f"  FAIL ({name}): {error}")
+            failures.append(name)
+    if failures:
+        print(f"\nDegraded captures refused (no fixture written): {', '.join(failures)}")
+    if not captured_any:
         print("\nNo local server captured; no fixtures written.")
         return 1
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

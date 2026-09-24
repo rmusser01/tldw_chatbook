@@ -58,8 +58,30 @@ def load_fixtures() -> Iterator[Path]:
     yield from sorted(FIXTURE_DIR.glob("*.json"))
 
 
+def _require_complete_stream(fixture: dict[str, Any]) -> None:
+    """Loader-side completeness guard mirroring the capture scripts' guard.
+
+    An empty or unterminated stream_events list is a degraded capture, not
+    evidence: `stream_inventory([])` is all-empty sets, which would silently
+    match a clean-pinned server (ollama) and stay green while the stream
+    evidence rots. Fail loudly instead.
+    """
+    events = fixture.get("stream_events")
+    if not isinstance(events, list) or not events:
+        raise ValueError(
+            f"fixture {fixture.get('server', '?')}: stream_events is empty -- degraded capture"
+        )
+    if events[-1] != "[DONE]":
+        raise ValueError(
+            f"fixture {fixture.get('server', '?')}: stream_events does not terminate in [DONE]"
+            " -- degraded capture"
+        )
+
+
 def _fixture(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    _require_complete_stream(fixture)
+    return fixture
 
 
 def body_inventory(fixture: dict[str, Any]) -> dict[str, frozenset[str]]:
@@ -178,10 +200,38 @@ def test_stream_inventory_matches_pinned_evidence(server_fixture: dict[str, Any]
     assert computed == EXPECTED_INVENTORIES[server]["stream"]
 
 
+def test_fixture_loader_rejects_degraded_stream_evidence(tmp_path: Path) -> None:
+    """A streamless/unterminated fixture must fail loudly, never load.
+
+    Proves the loader-side completeness guard against a synthetic degraded
+    fixture (the capture scripts carry the same guard at write time).
+    """
+    base: dict[str, Any] = {
+        "server": "synthetic",
+        "base_url": "http://example",
+        "chat_response": {},
+        "tool_call_response": {},
+        "models_response": None,
+        "captured_at": "1970-01-01T00:00:00+00:00",
+        "capture_cmd": "curl <key>",
+    }
+    empty = tmp_path / "empty_stream.json"
+    empty.write_text(json.dumps({**base, "stream_events": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="empty"):
+        _fixture(empty)
+
+    unterminated = tmp_path / "unterminated_stream.json"
+    unterminated.write_text(json.dumps({**base, "stream_events": ["{}"]}), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"\[DONE\]"):
+        _fixture(unterminated)
+
+
 def test_replay_scaffolding_exercises_current_parser(server_fixture: dict[str, Any]) -> None:
     """Replay both parsers today: outcome is either a turn or a protocol error.
 
-    Task 4 replaces the tolerate-both branch with acceptance assertions.
+    Deliberately tautological for now (either outcome passes): its job is to
+    keep the replay helpers exercised until Task 4 replaces the
+    tolerate-both branch with real acceptance assertions.
     """
     body_outcomes: list[str] = []
     for field in ("chat_response", "tool_call_response"):
