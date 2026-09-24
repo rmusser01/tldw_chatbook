@@ -45,27 +45,58 @@ Payload-layer (Task 5) divergences from the zai template:
   quirks do not exist here -- the engine emits exactly the OpenAI body the
   record describes. Unknown keyword arguments are swallowed (``**_generic``)
   so one shared per-provider param map can drive every preset.
+
+Response-layer (Task 6) divergences from the zai template (spec: Generic
+hosted provider engine and presets design, "Data flow" step 4):
+
+- Provider-terminal finish reasons are record data
+  (``record.finish_provider_errors``) raising ``ChatProviderError`` with
+  ``record.key`` identity and 502, and the allowed terminal set is
+  ``record.finish_terminal`` -- not Z.ai's hardcoded sets.
+- ``record.reasoning_disposition`` gates reasoning everywhere: ``"ignored"``
+  drops it at the finish policy (terminal turns carry none);
+  ``"displayable"`` keeps it visible in stream deltas; ``"proprietary"``
+  keeps it private to the terminal turn. zai strips ``reasoning_content``
+  from visible deltas unconditionally (its disposition is proprietary).
+- ``record.response_allowances`` feed the shared hosted boundary's tolerated
+  extra top-level response/stream keys (Task 3 seam).
+- The stream wrapper's continuation candidate is built against the record's
+  key/protocol; the canonical-format parse round-trip still admits only the
+  continuation ``_PAIRINGS`` providers (moonshot/zai/deepseek) -- widening
+  pairings to registry data is Task 7's scope, same as the payload layer's
+  restore path.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
     ContinuationRestoreTarget,
+    ContinuationRound,
     ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
     validate_continuation_restore,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
+    HostedChatProtocolError,
+    HostedChatStream,
+    HostedChatTurn,
     ProviderPayloadValidators,
+    ReasoningDisposition,
     TOOL_FUNCTION_NAME,
     normalize_hosted_chat_base_url,
+    normalize_hosted_chat_response,
 )
 from tldw_chatbook.config import (
     ProviderSettingsError,
@@ -700,3 +731,312 @@ def _bounded_identifier(record: ProviderRecord, name: str, value: object) -> str
             f"{record.display_name} {name} is invalid."
         )
     return value
+
+
+# --- response layer (Task 6; ports zai.py's response-side wrappers) ---
+
+
+class HostedPresetFinishPolicy:
+    """Validate preset finishes and disposition-gated reasoning content.
+
+    Ports ``ZAIFinishPolicy`` with Z.ai's literal sets replaced by the
+    record's preset data: provider-terminal reasons raise a safe provider
+    error (record identity, 502, reason text never in the message), and the
+    allowed terminal set is ``record.finish_terminal``.
+    """
+
+    reasoning_disposition: ReasoningDisposition
+
+    def __init__(self, record: ProviderRecord) -> None:
+        self._record = record
+        # Registry data is maintainer-authored and typed ``str``; cast to
+        # the protocol's literal. An unknown value behaves like the
+        # conservative "proprietary" path (kept private, never displayed).
+        self.reasoning_disposition = cast(
+            ReasoningDisposition, record.reasoning_disposition
+        )
+
+    def validate_finish(
+        self,
+        *,
+        finish_reason: object,
+        has_text: bool,
+        has_calls: bool,
+    ) -> str:
+        record = self._record
+        if finish_reason in record.finish_provider_errors:
+            raise ChatProviderError(
+                provider=record.key,
+                message=(
+                    f"{record.display_name} ended the request with a "
+                    "provider terminal error."
+                ),
+                status_code=502,
+            )
+        if finish_reason not in record.finish_terminal:
+            raise HostedChatProtocolError(
+                f"{record.display_name} finish state is malformed."
+            )
+        if finish_reason == "tool_calls":
+            if not has_calls:
+                raise HostedChatProtocolError(
+                    f"{record.display_name} finish state is inconsistent."
+                )
+        elif has_calls or not has_text:
+            raise HostedChatProtocolError(
+                f"{record.display_name} finish state is inconsistent."
+            )
+        return cast(str, finish_reason)
+
+    def validate_reasoning_content(self, value: object) -> str | None:
+        if self.reasoning_disposition == "ignored":
+            return None
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise HostedChatProtocolError(
+                f"{self._record.display_name} reasoning content is malformed."
+            )
+        return value
+
+
+def normalize_hosted_provider_response(
+    record: ProviderRecord, response: object
+) -> HostedChatTurn:
+    """Normalize one official-shaped preset response through the hosted boundary.
+
+    Ports ``normalize_zai_response``: deep-copy, coerce dict tool arguments
+    to deterministic JSON strings (some gateways return dict arguments),
+    then delegate to ``normalize_hosted_chat_response`` with the record's
+    finish policy and tolerated extra keys. Protocol failures map to a
+    display-name provider error (502).
+
+    Args:
+        record: Registry preset driving finish policy, error copy, and the
+            tolerated extra response keys.
+        response: Raw provider response; never mutated.
+
+    Returns:
+        The normalized assistant turn.
+
+    Raises:
+        ChatProviderError: When the successful response is malformed, or the
+            preset declares its finish reason a provider terminal error.
+    """
+    validators = _validators_for(record)
+    safe = deepcopy(response)
+    try:
+        if isinstance(safe, Mapping):
+            choices = safe.get("choices")
+            if isinstance(choices, Sequence) and not isinstance(
+                choices, (str, bytes)
+            ):
+                for choice in choices:
+                    if not isinstance(choice, Mapping):
+                        continue
+                    message = choice.get("message")
+                    if not isinstance(message, Mapping):
+                        continue
+                    calls = message.get("tool_calls")
+                    if not isinstance(calls, Sequence) or isinstance(
+                        calls, (str, bytes)
+                    ):
+                        continue
+                    for call in calls:
+                        if not isinstance(call, dict):
+                            continue
+                        function = call.get("function")
+                        if not isinstance(function, dict):
+                            continue
+                        arguments = function.get("arguments")
+                        if isinstance(arguments, Mapping):
+                            if not validators.json_shape_is_bounded(arguments):
+                                raise HostedChatProtocolError(
+                                    f"{record.display_name} tool arguments "
+                                    "are malformed."
+                                )
+                            function["arguments"] = json.dumps(
+                                arguments,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                ensure_ascii=False,
+                            )
+                        elif not isinstance(arguments, str):
+                            raise HostedChatProtocolError(
+                                f"{record.display_name} tool arguments "
+                                "are malformed."
+                            )
+        return normalize_hosted_chat_response(
+            safe,
+            finish_policy=HostedPresetFinishPolicy(record),
+            allowed_extra_keys=record.response_allowances,
+        )
+    except ChatProviderError:
+        raise
+    except HostedChatProtocolError:
+        raise ChatProviderError(
+            provider=record.key,
+            message=(
+                f"{record.display_name} returned a malformed successful "
+                "response."
+            ),
+            status_code=502,
+        ) from None
+
+
+class HostedProviderStream(Iterator[dict[str, Any]]):
+    """Expose visible preset chunks while retaining private terminal state.
+
+    Ports ``ZAIStream``. ``reasoning_content`` is stripped from visible
+    deltas only when the record's disposition is not ``"displayable"``
+    (zai strips unconditionally); reasoning and control frames still get an
+    explicit empty ``content`` so generic consumers do not render fallback
+    diagnostics for them.
+    """
+
+    def __init__(
+        self,
+        stream: HostedChatStream,
+        *,
+        record: ProviderRecord,
+        resolution: HostedProviderResolution | None = None,
+        provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
+    ) -> None:
+        self._stream = stream
+        self._record = record
+        self._resolution = resolution
+        self._provider_continuations = tuple(provider_continuations)
+        self._reasoning_visible = record.reasoning_disposition == "displayable"
+
+    def __iter__(self) -> HostedProviderStream:
+        return self
+
+    def __next__(self) -> dict[str, Any]:
+        event = deepcopy(next(self._stream))
+        for choice in event.get("choices", ()):
+            if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
+                delta = choice["delta"]
+                if not self._reasoning_visible:
+                    delta.pop("reasoning_content", None)
+                # Reasoning and control frames have no visible content. Keep
+                # that explicit so generic consumers do not render fallback
+                # diagnostics for each private reasoning token.
+                if delta.get("content") is None and not delta.get("tool_calls"):
+                    delta["content"] = ""
+        return event
+
+    @property
+    def terminal_turn(self) -> HostedChatTurn:
+        """Return terminal state after clean stream exhaustion."""
+        return self._stream.terminal_turn
+
+    @property
+    def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        """Return a canonical candidate only after clean stream exhaustion."""
+        if self._resolution is None:
+            raise HostedChatProtocolError(
+                f"{self._record.display_name} stream metadata is incomplete."
+            )
+        return _hosted_continuation_candidate(
+            self.terminal_turn,
+            record=self._record,
+            resolution=self._resolution,
+            provider_continuations=self._provider_continuations,
+        )
+
+    def close(self) -> None:
+        """Close the owned underlying stream."""
+        self._stream.close()
+
+
+class HostedProviderResponse(dict[str, Any]):
+    """Public response mapping with terminal state kept out of the mapping."""
+
+    def __init__(
+        self,
+        value: Mapping[str, Any],
+        *,
+        terminal_turn: HostedChatTurn,
+        provider_continuation: ProviderContinuationCheckpoint | None,
+    ) -> None:
+        super().__init__(value)
+        self._terminal_turn = terminal_turn
+        self._provider_continuation = provider_continuation
+
+    @property
+    def terminal_turn(self) -> HostedChatTurn:
+        return self._terminal_turn
+
+    @property
+    def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        return self._provider_continuation
+
+
+def _hosted_continuation_candidate(
+    turn: HostedChatTurn,
+    *,
+    record: ProviderRecord,
+    resolution: HostedProviderResolution,
+    provider_continuations: Sequence[ProviderContinuationCheckpoint],
+) -> ProviderContinuationCheckpoint | None:
+    """Build the next canonical continuation checkpoint for one turn.
+
+    Ports ``_zai_continuation_candidate`` with Z.ai's identity strings
+    replaced by the record's key and continuation protocol. The final
+    canonical parse round-trip admits only the continuation ``_PAIRINGS``
+    providers today (moonshot/zai/deepseek); registry-derived pairings are
+    Task 7's scope, same as the payload layer's restore path.
+    """
+    active = tuple(
+        checkpoint
+        for checkpoint in provider_continuations
+        if checkpoint.state == "active"
+    )
+    if len(active) > 1:
+        raise HostedChatProtocolError(
+            f"{record.display_name} continuation state is ambiguous."
+        )
+    current = active[0] if active else None
+    protocol = record.continuation_protocol or "chat_completions"
+    if turn.tool_calls:
+        round_ = ContinuationRound(
+            assistant_content=turn.text,
+            reasoning_blocks=(turn.reasoning_content,)
+            if turn.reasoning_content is not None
+            else (),
+            calls=tuple(
+                ContinuationCall(
+                    call_id=cast(str, call["id"]),
+                    name=cast(str, call["function"]["name"]),
+                    arguments=cast(str, call["function"]["arguments"]),
+                    state="pending",
+                )
+                for call in turn.tool_calls
+            ),
+        )
+        candidate = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=(current.checkpoint_revision + 1 if current else 1),
+            provider=record.key,
+            protocol=protocol,
+            model=resolution.model,
+            api_base_url=resolution.base_url,
+            state="active",
+            rounds=((*current.rounds, round_) if current else (round_,)),
+        )
+    elif current is not None:
+        candidate = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=current.checkpoint_revision + 1,
+            provider=record.key,
+            protocol=protocol,
+            model=resolution.model,
+            api_base_url=resolution.base_url,
+            state="complete",
+            rounds=current.rounds,
+        )
+    else:
+        return None
+    return parse_provider_continuation_json(
+        dump_provider_continuation_json(candidate)
+    )
