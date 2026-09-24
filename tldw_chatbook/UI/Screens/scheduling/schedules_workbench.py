@@ -4678,6 +4678,16 @@ class SchedulesWorkbench(BaseAppScreen):
         sweep's own idempotence (a rerun is a no-op once every row has
         settled) makes the exact ordering against other mount-time work
         forgiving.
+
+        Tier-2 review S19: that deferral moved the ORDERING off `on_mount`
+        and nothing else. `run_worker(coroutine)` reschedules onto the SAME
+        event loop -- it is not a thread -- and `SyncEngine._settle_
+        orphaned_transfer_mutations` is a plain `def` doing
+        `get_pending_mutations`/`set_transfer_state`, so the loop still
+        blocked for the length of the sweep on every mount, proportional to
+        the pending-mutation count. Hence the `asyncio.to_thread` below:
+        the same "local DB read, off-thread" discipline every
+        `service.db.*` read in this file already uses.
         """
         service = self._service()
         if service is None:
@@ -4687,7 +4697,10 @@ class SchedulesWorkbench(BaseAppScreen):
 
         async def _settle() -> None:
             try:
-                service.sync_engine._settle_orphaned_transfer_mutations(target_owner)
+                await asyncio.to_thread(
+                    service.sync_engine._settle_orphaned_transfer_mutations,
+                    target_owner,
+                )
             except Exception:  # noqa: BLE001
                 # Qodo fix round (finding 3, LOW): name the active target
                 # and owner this sweep was settling against -- never the

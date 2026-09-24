@@ -24,6 +24,27 @@ in `test_library_modules_size_ratchet.py`, and the rest in
 listed here — its split and ratchet row are already tracked by **task-1378 /
 task-31202** (linked, not duplicated).
 
+**Correction, 2026-09-21 (tier-2 review, task-32901).** "Size ratchets now
+guard all of these" was true of the modules this file listed and false of the
+repository: four modules LARGER than three of the seven rows TASK-32809.2 added
+had no row anywhere, and four separate tier-2 slices each reported one of them
+independently. They now have rows in `test_module_size_ratchet.py`, pinned at
+their exact measured size as of `origin/dev` 9e33252708:
+
+| module | lines | class / methods | responsibilities (tier-2 count) |
+|---|---:|---|---|
+| `UI/Screens/watchlists_collections_screen.py` | 14,324 | `WatchlistsCollectionsScreen`, 392 methods | **12** — tree/scope navigation; watchlist CRUD; source CRUD + OPML; runs; notifications inbox; briefings (generate/keep/export/presets/cadence/schedules); scripts + cast; audio synthesis + playback + feed server; items reader (paging/snapshot/filter/search/status/star); rules + noise selectors; region-layout persistence + responsive relayout; keyboard actions |
+| `UI/Wizards/FirstRunSetupWizard.py` | 10,404 | — | obvious first extraction: `ProviderStep` (`:1148-3299`, ~2,150 lines of endpoint resolution / discovery / probe evidence that own no pixels outside `compose_step`) |
+| `UI/Screens/llm_screen.py` | 5,180 | `LLMScreen`, 173 methods | **7** |
+| `UI/Screens/change_review_screen.py` | 4,967 | 91 methods + 3 modal classes + 17 module functions | — |
+
+As everywhere else in this file, **recording a row opens no decomposition**;
+§2's field-ownership script has to run first. `test_library_modules_size_ratchet.py`'s
+glob is `Library_Modules/*_controller.py`, which matches none of these, and
+`test_screen_size_ratchet.py`'s rows additionally pin a per-class method count
+that needs a decomposition plan to be meaningful — hence the module ratchet,
+following the `personas_screen.py` precedent already there.
+
 ---
 
 ## `UI/Screens/chat_screen.py` — `ChatScreen`, ~25k lines
@@ -183,3 +204,43 @@ its two biggest), the `LibraryFileNotesWorkspace` 8,846-line widget whose git
 half duplicates the git panel beside it (report §W-library), `RAG_Search/`
 (6 of 14 files >600 lines), and the `DB/` remainder. Each is governed by the
 same recipe; none is opened here.
+
+---
+
+### `UI/Speech/` — a 5,707-line mixin namespace shared with no declared owner (tier-2 review S21, 2026-09-21)
+
+**Record only; explicitly NOT a decomposition candidate.** This is the inverse
+shape of everything above: the Speech Playground is already split -- five
+mixins totalling 5,707 lines feeding a 3,028-line pane -- and the problem is
+that the split has no ownership contract, not that a split is needed.
+
+Re-measured at `origin/dev` 9e33252708 (AST, `self.X = ...` write sites):
+
+| mixin | lines | attributes it assigns |
+|---|---:|---:|
+| `speech_catalog_mixin.py` | 1,859 | 31 |
+| `speech_playback_mixin.py` | 1,291 | 12 |
+| `speech_settings_mixin.py` | 1,194 | 6 |
+| `speech_profile_mixin.py` | 704 | 18 |
+| `speech_synthesis_mixin.py` | 659 | 5 |
+
+**13 attributes are written by two or more co-mounted mixins**, led by
+`_generation_operation_id` (3 mixins, 9 write sites), `_profile_save_suppressed`
+(3), `_provider_ids` (3), `_profile_effective_availability` (catalog x10 /
+profile x3), `_profile_preview_loading` (x5 / x3) and
+`_profile_voice_validation_token` (x3 / x4). None of the five declares
+ownership of any of them.
+
+**Why nothing was changed for this.** The review's own evidence records **zero
+live MRO collisions** among the four co-mounted mixins (the four method-name
+collisions all pair `SpeechSettingsMixin` with a mixin it never co-occurs
+with), and the one real double-dispatch is deliberate and documented at
+`speech_settings_pane.py:1538-1540`. The order dependency the finding raises --
+`speech_playground_pane.py:2734` calling `init_profile_state` a second time on
+preset re-adopt -- is guarded: that call site retires the generation context
+and the test authority immediately before re-initialising, which is exactly
+the invalidation that makes the re-zero safe. So the recommended fix (one
+`SpeechPlaygroundState` dataclass holding the 13 fields as `self._state`) is a
+mechanical rewrite of 40+ write sites across five files with **no observable
+behaviour change and no demonstrated defect**. Recorded here so a future
+`UI/Speech/` change starts from the ownership map instead of re-deriving it.
