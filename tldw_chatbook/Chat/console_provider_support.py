@@ -81,6 +81,7 @@ _PROVIDER_DISPLAY_NAMES = {
     "cohere": "Cohere",
     "custom": "Custom OpenAI",
     "custom_2": "Custom OpenAI 2",
+    "databricks": "Databricks",
     "deepseek": "DeepSeek",
     "google": "Google",
     "groq": "Groq",

@@ -2824,7 +2824,10 @@ async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
 @pytest.mark.asyncio
 async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() -> None:
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
-    from tldw_chatbook.Chat.provider_readiness import PROVIDERS_REQUIRING_API_KEY_KEYS
+    from tldw_chatbook.Chat.provider_readiness import (
+        PROVIDERS_REQUIRING_API_KEY_KEYS,
+        PROVIDERS_REQUIRING_BASE_URL_KEYS,
+    )
 
     handler_keys = frozenset(API_CALL_HANDLERS)
     api_settings: dict[str, dict[str, str]] = {}
@@ -2839,6 +2842,13 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
         )
         if identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS:
             settings["api_key"] = f"test-key-for-{identity.readiness_key}"
+        # ADR-179: per-account-host providers (databricks) stay blocked on a
+        # resolved key alone; the sweep's point is that a fully configured
+        # handler IS sendable, so give them their workspace URL too.
+        if identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+            settings["api_base_url"] = (
+                f"https://{identity.readiness_key}-workspace.example.test"
+            )
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(

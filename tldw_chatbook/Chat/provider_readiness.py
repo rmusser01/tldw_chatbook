@@ -56,6 +56,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
         "anthropic",
         "cohere",
+        "databricks",
         "deepseek",
         "google",
         "groq",
@@ -113,10 +114,33 @@ KEYLESS_PROVIDER_KEYS = frozenset(
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
+    # Registry parity (ADR-179): Databricks's conventional token env var is
+    # DATABRICKS_TOKEN, not the DATABRICKS_API_KEY convention the generic
+    # naming rule would derive -- this alias keeps readiness, the first-run
+    # wizard's "found in your environment" detection, and the engine's
+    # env candidates (provider_registry.DATABRICKS) looking for one name.
+    "databricks": "DATABRICKS_TOKEN",
     "mistralai": "MISTRAL_API_KEY",
     "qwencloud": "DASHSCOPE_API_KEY",
 }
 _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
+#: ADR-179: engine-driven providers whose workspace host is per-account, so
+#: no default base URL can ship (``provider_registry`` records carry
+#: ``default_base_url=None`` for these). A resolved API key alone must not
+#: mark them ready -- the send path (``LLM_Calls/hosted_provider_engine``)
+#: raises on a missing base URL -- so readiness blocks with copy naming the
+#: workspace URL until one of ``_BASE_URL_SETTING_KEYS`` is configured.
+PROVIDERS_REQUIRING_BASE_URL_KEYS = frozenset({"databricks"})
+#: Setting aliases that satisfy :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS`,
+#: in the same precedence order ``provider_setup_persistence`` persists
+#: endpoint keys (its ``_ENDPOINT_KEY_PRECEDENCE``).
+_BASE_URL_SETTING_KEYS = (
+    "api_base_url",
+    "api_base",
+    "base_url",
+    "api_url",
+    "endpoint",
+)
 _PROVIDER_KEY_PATTERN = re.compile(r"[a-z0-9_.]+")
 _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
@@ -138,6 +162,11 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Checking Claude subscription credential": ("incomplete", "credential_missing"),
     "Select a provider": ("incomplete", "provider_missing"),
     "Missing API key": ("incomplete", "credential_missing"),
+    # ADR-179: keyed provider whose per-account workspace host is
+    # unconfigured. The credential is present; the endpoint is the missing
+    # half, so the structured issue is endpoint_missing, and the blocked
+    # record still never retains the credential.
+    "Missing workspace URL": ("incomplete", "endpoint_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
 }
@@ -423,6 +452,17 @@ def _resolved_hosted_api_key(
     return None
 
 
+def _configured_base_url(
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Return the first configured workspace base URL alias, if any."""
+    for key in _BASE_URL_SETTING_KEYS:
+        value = provider_settings.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _invalid_settings_readiness(
     provider_name: str,
     provider_key: str,
@@ -605,6 +645,31 @@ def get_provider_readiness(
             configured_key = _resolved_hosted_api_key(provider_key, app_config, env)
         except ChatConfigurationError:
             return _invalid_settings_readiness(provider_name, provider_key)
+    # ADR-179: a resolved key is not enough for a provider whose workspace
+    # host is per-account -- without an explicit base URL the send path
+    # cannot reach any endpoint, so readiness blocks with copy naming the
+    # workspace URL instead of reporting a ready state that cannot send.
+    if (
+        configured_key
+        and provider_key in PROVIDERS_REQUIRING_BASE_URL_KEYS
+        and _configured_base_url(provider_settings) is None
+    ):
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=requires_api_key,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=env_var,
+            reason="Missing workspace URL",
+            recovery=(
+                f"Set api_base_url to your {provider_name} workspace host "
+                f"under [api_settings.{provider_key}] (for example "
+                "https://adb-1234567890123456.7.azuredatabricks.net); the "
+                "/openai/v1 path is appended automatically."
+            ),
+        )
     if configured_key:
         return ProviderReadiness(
             provider=provider_name,
