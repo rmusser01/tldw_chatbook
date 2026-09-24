@@ -622,7 +622,8 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             reference_source = profile_audio
             reference_text = profile_text
 
-        timeout_factor = float(self.config.get("OMNIVOICE_TIMEOUT_FACTOR", _RTF_HEADROOM))
+        # User multiplier on top of the built-in worst-case RTF headroom.
+        timeout_factor = float(self.config.get("OMNIVOICE_TIMEOUT_FACTOR", 1.0))
         num_steps = int(self.config.get("OMNIVOICE_NUM_STEPS", 32))
         # Request-level playground knobs beat the config defaults.
         if isinstance(extra.get("num_steps"), (int, float)) and extra["num_steps"] >= 1:

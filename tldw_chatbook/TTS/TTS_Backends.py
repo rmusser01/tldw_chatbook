@@ -380,7 +380,7 @@ class TTSBackendManager:
                     "OMNIVOICE_MAX_REFERENCE_DURATION", 30
                 ),
                 "OMNIVOICE_TIMEOUT_FACTOR": omnivoice_setting(
-                    "OMNIVOICE_TIMEOUT_FACTOR", 8.0
+                    "OMNIVOICE_TIMEOUT_FACTOR", 1.0
                 ),
                 "OMNIVOICE_SEED": omnivoice_setting("OMNIVOICE_SEED", None),
                 "OMNIVOICE_LANGUAGE": omnivoice_setting(

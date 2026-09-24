@@ -329,7 +329,7 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "OmniVoice ONNX TTS",
         AREA_MEDIA,
         ("onnxruntime", "tokenizers"),
-        "Settings → Speech & TTS",
+        "STTS",
         "OmniVoice ONNX TTS",
         OWNER_LIBRARY_MEDIA,
     ),
