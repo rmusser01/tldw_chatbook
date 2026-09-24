@@ -80,10 +80,13 @@ local bindings or scratch.
   was excluded and why.
   the binding's status** — the next send admits the root again.
 - Nothing is installed, persisted, or left behind on the server — including
-  **no orphaned processes after a timed-out call** (worker-side watchdog) and
-  **no orphaned temp files after an aborted atomic write** (the watchdog
-  unlinks the worker's registered temp files before it exits — see
-  "Worker-side watchdog").
+  **no orphaned processes after a timed-out call** (worker-side watchdog in
+  two tiers: a graceful Timer, plus an OS-level `signal.alarm` backstop
+  that cannot be starved by GIL-holding C code such as a catastrophic
+  `fs_grep` regex) and **no orphaned temp files after an aborted atomic
+  write** (the graceful tier unlinks the worker's registered temp files
+  before it exits; the alarm tier's strays are the same bounded exception
+  the local worker has always had — see "Worker-side watchdog").
   Each tool call runs a transient python3 process whose code arrives over
   the SSH session's stdin and vanishes with it. (ControlMaster sockets live
   on the laptop, not the server.)
@@ -244,8 +247,9 @@ so a timed-out call's process-group kill cannot take down the shared
 connection. Availability is the existing per-binding status model driven by
 a cheap `ping` op → `READY` / `BLOCKED` / `MISSING`, cached in memory (never
 read from the stored status column at admission), refreshed lazily, and
-learned from **transport-classified** op outcomes only (a slow op that times
-out is a typed error, never a status flip). **Run composition reads cache
+learned from **transport-classified** op outcomes only — classified by the
+protocol's existing `admitted` marker, not exit-code guessing (a slow op
+that times out is a typed error, never a status flip). **Run composition reads cache
 only — the dispatch hot path never touches the network or spawns a
 subprocess.** Degradation
 excludes the binding from the run exactly like a missing local folder.
@@ -655,26 +659,32 @@ loudly at the type boundary until migrated. The migrations:
   `ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=no -o ControlPath=<cm-dir>/%C [-p <port>] [-l <user>] -- <host> <python> -I -c '<bootstrap>'`
   — then stdin carries: N bytes of zlib-compressed bundle, then the framed
   request. The bootstrap is **exactly** (space-free; every character in the
+  one bounded read, as today). The bootstrap is **exactly** (space-free;
+  every character in the
   bootstrap charset above, and the charset test asserts this exact string):
   `exec(compile(__import__("zlib").decompress(__import__("sys").stdin.buffer.read(N)),"b","exec"))`
   (N embedded as a literal by the executor). `ssh -G` canonicalization
   builds its argv the same way from the same parsed parts.
 - **ControlMaster lifecycle — explicit, and the executor owns its health**:
   the first need for a host starts `ssh -MNf [opts] -o
-  ControlPersist=<control_persist> -- <host>` (same parsed-parts argv) in
-  its own session (`start_new_session=True`), outside any call's process
-  group, **under a per-host master lock** — two concurrent first calls
-  would otherwise race to create the same socket; the loser of the lock
-  finds the master already present. `ControlPersist` rides the `-MNf`
-  command itself so a master orphaned by an app crash (no clean
-  `ssh -O exit`) self-expires instead of living until the network drops.
-  Per-call clients use `ControlMaster=no` + the shared `ControlPath` —
-  which means **the executor, not OpenSSH, must detect and replace a dead
-  master** (with `auto`, a client would transparently start a replacement;
-  with `no`, it cannot): before first use per send batch, and on any
-  mux-protocol error from a call, the executor runs `ssh -O check` (a
-  failed mux connection counts as the same signal) and starts a fresh
-  master under the same lock if the check fails. The failed *call* still
+  ControlPersist=<control_persist> -o ServerAliveInterval=15 -o
+  ServerAliveCountMax=2 -- <host>` (same parsed-parts argv) in its own
+  session (`start_new_session=True`), outside any call's process group,
+  **under a per-host master lock** — two concurrent first calls would
+  otherwise race to create the same socket; the loser of the lock finds the
+  master already present. `ControlPersist` rides the `-MNf` command itself
+  so a master orphaned by an app crash (no clean `ssh -O exit`)
+  self-expires instead of living until the network drops. The
+  **keepalive options belong on the master only** — per-call clients ride
+  the shared connection and never run their own keepalives, so
+  ServerAlive on them does nothing. Per-call clients use
+  `ControlMaster=no` + the shared `ControlPath` — which means **the
+  executor, not OpenSSH, must detect and replace a dead master** (with
+  `auto`, a client would transparently start a replacement; with `no`, it
+  cannot). Detection is **failure-triggered only**: a failed mux
+  connection or mux-protocol error from a call starts a fresh master under
+  the same lock — no proactive `ssh -O check` per send batch, which would
+  cost a subprocess every batch. The failed *call* still
   returns a typed transport error — the restart is for subsequent calls,
   not a retry of the failed one. A deadline kill of a call therefore
   cannot take the shared connection or other in-flight calls with it, and
@@ -710,43 +720,54 @@ loudly at the type boundary until migrated. The migrations:
   app-config/data directories (which mean nothing on the server). ADR-174
   user exclusions ride the serialized request as relative paths and are
   matched worker-side.
-- **Worker-side watchdog**: the request already carries `timeout_seconds`
-  (today `WORKSPACE_HELPER_TIMEOUT_SECONDS = 300`); the bundle arms
-  `threading.Timer(request.timeout_seconds, _watchdog)` at request start,
-  where `_watchdog` **best-effort unlinks the worker's registered temp
-  files** (every atomic write registers its temp path in a module-level
-  list on creation and deregisters on success — `os._exit` skips `finally`
-  blocks, so the timer callback itself must do the cleanup) and then calls
-  `os._exit(75)`. Exit code **75** (`EX_TEMPFAIL`) is fixed and reserved
-  to the watchdog: ssh passes remote exit codes through, and 75 is neither
-  255 (which reads as "unreachable/auth" — a transport failure) nor 127
-  (interpreter missing); no other worker path may exit 75 (framed typed
-  errors exit 0). The executor maps exactly "remote exit 75" to the typed
-  tool error **"operation timed out"**, and — per the status-learning rule
-  — leaves the binding's status unchanged. The watchdog deadline is
-  strictly **earlier** than the laptop-side kill (same
-  `timeout_seconds` constant, laptop kill at `timeout_seconds + grace`,
-  grace ≈ 5s), so the outcome is decided by the watchdog's distinct exit
-  code rather than by an ambiguous local kill; the local ssh process-group
-  kill is the last-resort backstop (also a typed "timed out", also
-  status-unchanged — true network death is reported earlier by
-  `ServerAliveCountMax` expiry as ssh exit 255). This guarantees "nothing
-  left behind": no orphaned process, and no orphaned temp file from an
-  aborted atomic write. No separate `call_timeout_s` config — the existing
-  constant is the single deadline source.
+- **Worker-side watchdog, two tiers**: the request already carries
+  `timeout_seconds` (today `WORKSPACE_HELPER_TIMEOUT_SECONDS = 300`), but
+  the executor sends the **remaining budget** (`timeout_seconds −
+  elapsed_at_spawn`) — the server-side clock starts only after connect,
+  auth, and the ~40KB bundle transfer, so a fixed grace cannot guarantee
+  ordering. The bundle then arms:
+  1. `threading.Timer(budget, _watchdog)` — the graceful path: `_watchdog`
+     **unlinks the worker's registered temp files** (every atomic write
+     registers its temp path on creation and deregisters on success —
+     `os._exit` skips `finally` blocks, so the timer callback itself does
+     the cleanup), writes the stderr marker, and calls `os._exit(75)`.
+     Exit **75** (`EX_TEMPFAIL`) is fixed and reserved to the watchdog:
+     neither 255 nor 127, and no other worker path may exit 75 (the
+     worker's own failure paths exit 2).
+  2. `signal.alarm(budget + 2)` with the **default action and no Python
+     handler** — the OS-level backstop the worker cannot block. This is
+     required, not belt-and-braces: `fs_grep` compiles the model's
+     pattern with Python `re`, and C-level regex matching holds the
+     interpreter lock for its whole duration — a catastrophic pattern
+     starves the Timer for exactly the runaway op the watchdog exists
+     for. The alarm kills the process by signal; its ssh-reported exit
+     code is deliberately **not decoded** — post-admission failures are
+     bucketed by the admitted marker (below), not by exit-code guessing.
+     `resource.setrlimit(RLIMIT_CPU, …)` is an optional additional
+     backstop.
+  The watchdog fires strictly **earlier** than the laptop-side kill
+  (laptop kill at `timeout_seconds + grace`, grace ≈ 5s, both measured
+  from spawn — now consistent because the worker's budget is the
+  remainder). The local ssh process-group kill is the last-resort
+  backstop. Either tier guarantees "nothing left behind" as far as
+  processes go: no orphaned process; temp-file cleanup is best-effort
+  from the Timer tier (the alarm tier cannot clean up — same bounded
+  exception as the local worker). No separate `call_timeout_s` config —
+  the existing constant is the single deadline source.
 - **New `ping` op**: returns root stat `(st_dev, st_ino, st_mode)`,
   canonical remote path, remote python version, and bundle-hash echo — one
   multiplexed round trip powering both the status probe and authority
   capture.
 - **Timeouts, two classes by design**: `ConnectTimeout` bounds TCP only;
   connect/handshake timeouts (with the handshake/banner stall bounded by
-  the same deadline machinery) are **transport failures** and feed the
-  BLOCKED learning. An operation that connected and ran past its deadline
-  is **not** a transport failure — watchdog exit 75 or the laptop-side
-  kill both produce the typed "operation timed out" tool error with status
-  unchanged (see the watchdog and status-learning rules). Every call and
-  probe has the hard process-side deadline with process-group kill (the
-  hooks system's established pattern).
+  the same deadline machinery) are **transport failures** (no admitted
+  marker) and feed the BLOCKED learning. An operation that connected and
+  ran past its deadline is **not** a transport failure — the request
+  carries the remaining budget, and watchdog exit 75, the alarm backstop,
+  or the laptop-side kill all produce the typed "operation timed out"
+  tool error with status unchanged (see the watchdog and status-learning
+  rules). Every call and probe has the hard process-side deadline with
+  process-group kill (the hooks system's established pattern).
 - **Concurrency**: semaphore keyed by **resolved host / ControlPath
   identity** (not per binding) — sshd's `MaxSessions` is per connection and
   multiple bindings on one host share one master. Default cap 8, config
@@ -775,6 +796,9 @@ loudly at the type boundary until migrated. The migrations:
     right after pinning (`workspace_tool_worker.py`), and the parent
     already accepts the two-line admitted+final response
     (`_parse_worker_output`).
+    remote exit 127 (interpreter missing — "host lacks python3"), root
+    pin refused, stdout-noise magic-cap exceeded (the channel is
+    unusable).
   - **Admitted marker received, then anything** — watchdog exit 75, death
     by signal (alarm backstop), ssh exit 255 after admission (connection
     lost mid-op), laptop deadline kill, EOF without a final frame → typed
@@ -782,6 +806,9 @@ loudly at the type boundary until migrated. The migrations:
     **unchanged**. The marker is what disambiguates a stalled handshake
     (no marker — transport) from a slow op (marker seen — typed error)
     when the laptop kill fires.
+    **unchanged**. This also resolves the laptop-kill ambiguity revision 3
+    left open: a stalled handshake fails with no marker (transport), a
+    slow op fails after the marker (typed error).
   - Mux-protocol/mux-connection failure → typed transport error +
     failure-triggered master restart (cache untouched — only the
     restart's own no-marker 255/timeout flips it). Worker-side errors
@@ -1099,19 +1126,25 @@ site (`_call_context`) does not exist under that name on this branch at all
    one-strict-JSON acceptance contract (TASK-32855) must not weaken on
    either side.
 3. **Loopback integration (workhorse)**: execute the bundle via
-  `python3 -I -c` + stdin frames against a temp dir, no ssh — framing,
-  magic-prefix skip, pinning, all ops, CAS stamps (sha256+size),
+  `python3 -I -c` + stdin against a temp dir, no ssh — bundle-size prefix
+  handling and response-magic handling (both **transport** additions,
+  tested separately from protocol conformance), magic-prefix skip over
+  injected leading noise, pinning, all ops, CAS stamps (sha256+size),
   single-stream discipline, watchdog firing.
 4. **Fake-ssh**: stub `ssh` script simulating unreachable / exit-127 /
-  stdout noise / hang-past-deadline (asserting the typed "operation
-  timed out" result, the **watchdog's exit 75 observed before the laptop
-  kill**, **status cache unchanged after the timeout**), unknown-host —
-  proves the failure taxonomy, deadline ordering, the transport/non-
-  transport learning split, and **that the remote child is gone after
-  timeout**. A master-restart scenario (pre-existing dead master socket →
-  next call triggers check-and-restart and succeeds) and a concurrent
-  first-call race (two callers, one per-host lock, one master) are
-  covered here too.
+  stdout noise / hang-past-deadline, unknown-host — asserting the typed
+  "operation timed out" result, the **watchdog's exit 75 observed before
+  the laptop kill**, **status cache unchanged after the timeout**, and
+  **that the remote child is gone after timeout**. Includes a
+  **catastrophic-regex starvation case**: an `fs_grep` pattern that holds
+  the GIL past the budget (Timer starved) must be killed by the
+  `signal.alarm` backstop with no orphaned process, and must still bucket
+  as "operation timed out" via the admitted marker. Admitted-marker
+  bucketing is asserted in both directions (no-marker failure → BLOCKED;
+  post-admission failure → status unchanged). A master-restart scenario
+  (dead master socket → the failed call's mux error triggers restart and
+  the *next* call succeeds) and a concurrent first-call race (two
+  callers, one per-host lock, one master) are covered here too.
 5. **Wrong-file hazard (named test)**: a remote root whose path also
   exists on the laptop with different contents — the laptop copy is never
   read, hashed, or stamped (all four CAS sites plus `_stale_write_refusal`
@@ -1184,6 +1217,11 @@ ADR-181 is authored and committed **before Phase 0 code** (repo rule), and
    rejection), magic prefix, deadline + watchdog (exit 75, strictly before
    the laptop kill, temp-file cleanup), probe + status cache (optimistic
    cold start, transport-only op-outcome learning), failure taxonomy.
+   restart), hardened spawn (parsed-parts argv, leading-dash rejection),
+   response magic, two-tier deadline (remaining-budget Timer + exit 75,
+   `signal.alarm` backstop), admitted-marker failure bucketing, probe +
+   status cache (optimistic cold start, transport-only op-outcome
+   learning), failure taxonomy.
 3. **Server-side authority relocation**: `LocalRoot | RemoteRoot` type
    split; migrate request building, CAS hashing (worker-reported
    sha256+size), exclusions (worker-matched, serialized relative paths),
