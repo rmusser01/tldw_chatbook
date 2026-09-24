@@ -78,6 +78,7 @@ local bindings or scratch.
   excluded from the run's admitted roots; sends still compose; local
   bindings and scratch keep working; the context note says the remote root
   was excluded and why.
+  the binding's status** — the next send admits the root again.
 - Nothing is installed, persisted, or left behind on the server — including
   **no orphaned processes after a timed-out call** (worker-side watchdog) and
   **no orphaned temp files after an aborted atomic write** (the watchdog
@@ -919,6 +920,9 @@ pass; the OmniVoice spec's UI touch-point list is the format). Entries were
 verified on dev, which the implementation branch is cut from; the planning
 pass re-confirms each site there:
 pass; the OmniVoice spec's UI touch-point list is the format):
+verified against a mix of this branch and dev — line numbers drift and one
+site (`_call_context`) does not exist under that name on this branch at all
+— so the planning pass re-locates every entry on the implementation branch:
 
 - `Chat/console_chat_controller.py` — `_validate_project_instruction_binding`
   (admission), `_exclusion_paths_provider`,
