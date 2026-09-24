@@ -30,10 +30,16 @@ breadth. This design introduces:
 2. **A generic strict adapter engine** — parameterized by **preset records**
    (data, not code), absorbing the boilerplate currently duplicated between
    `zai.py` and `moonshot.py`, riding the existing `hosted_chat` wire boundary.
-3. **Curated presets** — Databricks first; Together, Fireworks, Cerebras,
-   Perplexity next; Azure OpenAI, Gemini's OpenAI-compatible layer, and AWS
-   Bedrock (via Bedrock's own OpenAI-compatible endpoints, verified
-   December 2025) after two small transport extensions.
+3. **Curated presets** — Databricks first; Together, Fireworks, Cerebras
+   next (Phase 2, with response allowances derived from captured real-server
+   fixtures — the evidence-gated rule applied to presets too); Azure OpenAI,
+   Gemini's OpenAI-compatible layer, and AWS Bedrock (via Bedrock's own
+   OpenAI-compatible endpoints, verified December 2025) after two small
+   transport extensions. **Perplexity is dropped (2026-09-24 ruling):
+   Sonar Chat Completions sunsets 2026-09-27 and the replacement Agent API
+   is a different wire that rejects Chat-Completions-only parameters — a
+   future preset once that API settles (the `hosted_chat` `responses` route
+   is the natural seam; tracked as open item O-4).**
 
 Adding a curated provider drops from "20-file ritual" to "one registry record
 + one preset record + one registration line + tests + docs".
@@ -301,15 +307,29 @@ real "OpenAI-compatible" servers do add benign fields (`service_tier`,
 Azure's `prompt_filter_results`, vLLM/Together extras). Rules:
 
 - **Curated presets:** unknown fields fail closed *unless* listed in the
-  preset's `response_allowances`. Allowances are recorded from a live-probe
-  envelope capture during the provider's phase — never guessed.
+  preset's `response_allowances`. Allowances apply at **every closed level**
+  of the OpenAI shape — top-level response keys, stream-event keys,
+  choice-level keys, and message/delta-level keys (real servers send
+  `logprobs: null` on choices, `refusal` on messages; Together sends
+  choice-level `logprobs`); an allowlisted value must be null or
+  shape-safe and is dropped, never passed through. Allowances are recorded
+  from captured real-server fixtures or live-probe envelopes during the
+  provider's phase — never guessed.
 - **Long tail (Phase 2 custom-ep family):** a deliberately *tolerant*
   profile — unknown-but-shape-safe top-level/event keys are ignored;
-  required-shape validation (choices, message, tool calls, usage) is never
-  relaxed. This is a documented weakening, scoped only to user-registered
-  endpoints, recorded in ADR-179.
+  unknown **null-valued** choice/message keys are ignored (the
+  `logprobs`/`stop_reason`/`refusal` pattern vLLM, llama-server, and
+  LM Studio emit); and `stop`/`length` finishes with empty text return an
+  empty reply instead of failing (small local models, and reasoning models
+  that exhaust `max_tokens` — the legacy path's behavior). Unknown
+  **non-null** choice/message keys still fail closed. The family's swap
+  onto this profile is **evidence-gated**: captured fixtures from real
+  long-tail servers must pass before the family moves. This is a
+  documented weakening, scoped only to user-registered endpoints,
+  recorded in ADR-179.
 - Allowances and the tolerant profile never bypass required-shape
-  validation, output bounds, or redaction.
+  validation (choices present, tool-call shape, usage shape), output
+  bounds, or redaction.
 
 ## Credentials and security (ADR-012 boundary intact)
 
@@ -362,20 +382,37 @@ Acceptance criteria:
 
 ### Phase 2 — Preset cheapness + long tail
 
-- [ ] Together, Fireworks, Cerebras, Perplexity presets: each is a record +
-      tests + docs; a "preset cost" test asserts no provider-specific Python
-      module is needed for a flag-clean OpenAI-compatible provider.
+- [ ] Real-server fixtures captured **before** the swap and preset landing:
+      long-tail servers (llama.cpp/llama-server, Ollama, vLLM where
+      runnable) plus Together and Cerebras via their free tiers; the same
+      fixtures gate the tolerant profile and seed each preset's
+      `response_allowances` (Perplexity dropped — see Summary).
+- [ ] Together, Fireworks, Cerebras presets: each is a record + tests +
+      docs; a "preset cost" test asserts no provider-specific Python module
+      is needed for a flag-clean OpenAI-compatible provider.
 - [ ] ADR-146 `openai_compatible` family executes via the engine (strict
-      tier) instead of `chat_with_custom_openai`; registry entries keep
+      tier) instead of `chat_with_custom_openai` — swapped at the gateway's
+      identity-resolution site (execution key only; readiness, saved
+      session identity, context-window lookups, and
+      `family_execution_key()` itself unchanged); registry entries keep
       `custom-ep:<slug>` identity, cached models, and credential precedence
-      (env → stored). Evidence-gated swap with parity tests against the old
-      path.
-- [ ] Keyless endpoints keep working: a `custom-ep` entry with no credential
-      executes via `auth_scheme="none"`, and curated cloud presets still
-      hard-require keys (parity-tested).
+      (env → stored). Evidence-gated on the captured fixtures; parity
+      tests against the old path include a saved-session regression
+      (provider="custom-ep:<slug>" still ready, identity unchanged).
+- [ ] Keyless endpoints keep working: a `custom-ep` entry with no
+      credential executes via `bearer_optional` auth, and curated cloud
+      presets still hard-require keys (parity-tested).
+- [ ] No parameter regression for local-server users: `custom-hosted`
+      carries the legacy custom-openai parameter surface (min_p, top_k,
+      seed, n, penalties, logit_bias, logprobs, thinking budget) via its
+      own param map and payload flags; its timeout/retry defaults read the
+      existing `api_settings.custom` values rather than hard-coded
+      literals.
 - [ ] The long-tail tolerant profile (see *Response variance and
-      strictness*) is implemented and covered by tests: unknown-but-shape-safe
-      fields ignored, required shapes still fail closed.
+      strictness*) is implemented and covered by the captured fixtures:
+      unknown-but-shape-safe top-level/event extras, null-valued
+      choice/message extras, and empty-text stop/length finishes accepted;
+      non-null unknown choice/message keys still fail closed.
 
 ### Phase 3 — Enterprise, key-based
 
