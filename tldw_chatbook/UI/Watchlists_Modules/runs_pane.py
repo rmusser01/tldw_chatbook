@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
@@ -456,7 +457,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             for item in items:
                 table.add_row(*self._run_item_row_cells(item))
         except Exception:
-            pass
+            # The table is now half-populated and the note beside it still
+            # describes the full row set, so this has to leave a trace
+            # somewhere -- unlike the not-composed-yet guard above, which is
+            # a no-op by design (tier-2 review S21 P3).
+            logger.opt(exception=True).debug(
+                "Failed to repopulate the watchlist run items table."
+            )
 
     def watch_run_items_note(self, note: str) -> None:
         """Repaint the Items empty/truncation note in place (review wave, I1).

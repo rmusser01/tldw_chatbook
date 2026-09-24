@@ -132,10 +132,10 @@ MEDIA_TYPE_MAP: dict[str, str] = {
     "book": "book",
     "zip": "zip",
     # --- XML family -----------------------------------------------------------
-    # Local_Ingestion/XML_Ingestion.py persists "xml_document"; "xml" is the
-    # local-ingest config/dispatch family label (currently unreachable —
-    # detect_file_type never returns it and the xml branch raises). No
-    # planner equivalent → identity.
+    # The retired Local_Ingestion/XML_Ingestion.py persisted "xml_document";
+    # "xml" is the local-ingest config/dispatch family label (currently
+    # unreachable — detect_file_type never returns it and the xml branch
+    # raises). No planner equivalent → identity.
     "xml_document": "xml_document",
     "xml": "xml",
     # --- Notes-import family ---------------------------------------------------

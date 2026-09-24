@@ -88,6 +88,21 @@ KOKORO_DOWNLOAD_TIMEOUT = (
 
 #: Log a progress line at most this often during a long download.
 _KOKORO_PROGRESS_INTERVAL_SECONDS = 2.0
+# Ceiling for any single Kokoro artifact transfer. The largest real one is the
+# ~330 MB PyTorch checkpoint, so this is generous, but it bounds a hostile or
+# broken endpoint that would otherwise stream until the disk filled.
+KOKORO_MAX_DOWNLOAD_BYTES = 768 * 1024 * 1024
+# Expected SHA-256 for the two pinned kokoro-onnx release artifacts.
+#
+# These are DELIBERATELY None: no expected digest for these URLs exists
+# anywhere in this repo or its upstream release notes, so there is nothing to
+# compare against. The code used to hash every byte, log the result, and then
+# log "Checksum verification skipped" -- verification theatre that read as a
+# guard in review. Populate these from a digest you have obtained and checked
+# yourself (`shasum -a 256` on a known-good copy) and the transfer below
+# becomes fail-closed with no other change.
+KOKORO_ONNX_MODEL_SHA256: str | None = None
+KOKORO_ONNX_VOICES_SHA256: str | None = None
 
 # Encoded requests retain at most five minutes of 24 kHz mono float32 audio
 # (28.8 MB). Raw PCM does not require a complete-file buffer.
@@ -138,6 +153,8 @@ def _kokoro_stream_download(
     *,
     label: str,
     hasher: "hashlib._Hash | None" = None,
+    expected_sha256: str | None = None,
+    max_bytes: int = KOKORO_MAX_DOWNLOAD_BYTES,
 ) -> str:
     """Stream ``url`` to ``destination`` atomically, with timeouts and progress.
 
@@ -153,13 +170,19 @@ def _kokoro_stream_download(
         url: Source URL.
         destination: Final path to place the file at.
         label: Human-readable name used in progress logs.
-        hasher: Optional hash object updated with each chunk.
+        hasher: Optional hash object updated with each chunk. This only
+            observes the bytes; verification is ``expected_sha256``.
+        expected_sha256: When given, the transfer is verified against it and
+            nothing is placed at ``destination`` unless it matches.
+        max_bytes: Ceiling on the transfer, checked against the declared
+            content-length and then against the bytes actually received.
 
     Returns:
         The destination path.
 
     Raises:
         requests.RequestException: On any transport failure or timeout.
+        ValueError: The transfer exceeds ``max_bytes`` or fails verification.
     """
     target = Path(destination)
     destination = str(validate_path(target.name, target.parent, redact_paths=True))
@@ -174,6 +197,13 @@ def _kokoro_stream_download(
             response.raise_for_status()
             total = response.headers.get("content-length")
             total_bytes = int(total) if total and total.isdigit() else 0
+            # Fast-fail on the declared size, then enforce the REAL streamed
+            # size below -- a lying content-length must not buy an unbounded
+            # transfer. Same two-step the audio downloader uses.
+            if total_bytes > max_bytes:
+                raise ValueError(
+                    f"{label}: declared size exceeds the {max_bytes} byte ceiling"
+                )
             written = 0
             last_log = time.monotonic()
 
@@ -185,13 +215,20 @@ def _kokoro_stream_download(
                 delete=False,
             ) as handle:
                 partial = handle.name
+                verifier = hashlib.sha256() if expected_sha256 else None
                 for chunk in response.iter_content(chunk_size=8192):
                     if not chunk:
                         continue
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise ValueError(
+                            f"{label}: exceeds the {max_bytes} byte ceiling"
+                        )
                     handle.write(chunk)
                     if hasher is not None:
                         hasher.update(chunk)
-                    written += len(chunk)
+                    if verifier is not None:
+                        verifier.update(chunk)
 
                     now = time.monotonic()
                     if now - last_log >= _KOKORO_PROGRESS_INTERVAL_SECONDS:
@@ -207,6 +244,10 @@ def _kokoro_stream_download(
                             )
                         last_log = now
 
+        if verifier is not None and verifier.hexdigest() != expected_sha256:
+            # Before os.replace, so a mismatched artifact never lands and the
+            # next run's os.path.exists check cannot adopt it.
+            raise ValueError(f"{label}: checksum mismatch")
         os.replace(partial, destination)
         logger.info(f"{label}: complete ({written / 1048576:.1f} MB)")
         return destination
@@ -443,7 +484,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Check if model files exist
             if not os.path.exists(self.model_path):
                 logger.info(f"Kokoro ONNX model not found at {self.model_path}")
-                # Download the model with checksum verification
+                # Download the model (see KOKORO_ONNX_MODEL_SHA256)
                 tmp_path = None
                 try:
                     logger.info("Downloading Kokoro ONNX model...")
@@ -453,11 +494,9 @@ class KokoroTTSBackend(LocalTTSBackend):
                         )
 
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
-                    # Expected SHA256 checksum for kokoro-v0_19.onnx
 
                     # task-19560: the transfer runs off the event loop with
-                    # timeouts; the checksum-verify + move below is unchanged.
-                    hasher = hashlib.sha256()
+                    # timeouts, and is byte-bounded by the downloader.
                     # Qodo #1 + #3: the previous form nested a string literal
                     # inside an f-string expression, which is only legal from
                     # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
@@ -475,18 +514,14 @@ class KokoroTTSBackend(LocalTTSBackend):
                         url,
                         tmp_path,
                         label="Kokoro ONNX model",
-                        hasher=hasher,
+                        expected_sha256=KOKORO_ONNX_MODEL_SHA256,
                     )
-
-                    # Verify checksum
-                    actual_checksum = hasher.hexdigest()
-                    logger.info(f"Downloaded file checksum: {actual_checksum}")
-
-                    # Note: For now, we'll just log the checksum since we don't have the actual expected value
-                    # In production, you should verify against known good checksums
-                    logger.warning(
-                        "Checksum verification skipped - no known checksum available"
-                    )
+                    if KOKORO_ONNX_MODEL_SHA256 is None:
+                        logger.warning(
+                            "Kokoro ONNX model: installed WITHOUT integrity "
+                            "verification -- no expected digest is pinned for "
+                            "this artifact (KOKORO_ONNX_MODEL_SHA256)."
+                        )
 
                     # Move to final location
                     model_dir = (
@@ -508,7 +543,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
             if not os.path.exists(self.voices_json):
                 logger.info(f"Kokoro voices file not found at {self.voices_json}")
-                # Download the voices.json with checksum verification
+                # Download the voices file (see KOKORO_ONNX_VOICES_SHA256)
                 tmp_path = None
                 try:
                     logger.info("Downloading Kokoro voices file...")
@@ -520,8 +555,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 
                     # task-19560: the transfer runs off the event loop with
-                    # timeouts; the checksum-verify + move below is unchanged.
-                    hasher = hashlib.sha256()
+                    # timeouts, and is byte-bounded by the downloader.
                     # Qodo #1 + #3: the previous form nested a string literal
                     # inside an f-string expression, which is only legal from
                     # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
@@ -539,12 +573,14 @@ class KokoroTTSBackend(LocalTTSBackend):
                         url,
                         tmp_path,
                         label="Kokoro voices file",
-                        hasher=hasher,
+                        expected_sha256=KOKORO_ONNX_VOICES_SHA256,
                     )
-
-                    # Log checksum for future reference
-                    actual_checksum = hasher.hexdigest()
-                    logger.info(f"Downloaded voices file checksum: {actual_checksum}")
+                    if KOKORO_ONNX_VOICES_SHA256 is None:
+                        logger.warning(
+                            "Kokoro voices file: installed WITHOUT integrity "
+                            "verification -- no expected digest is pinned for "
+                            "this artifact (KOKORO_ONNX_VOICES_SHA256)."
+                        )
 
                     # Move to final location
                     os.makedirs(os.path.dirname(self.voices_json), exist_ok=True)

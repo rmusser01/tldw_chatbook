@@ -8,13 +8,6 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
-/* ===== WIDGET: SiteConfigSettings (UI/SiteConfigSettings.py) ===== */
-
-    SiteConfigSettings {
-        height: 100%;
-        overflow: hidden;
-    }
-
 /* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
 
     TraceFiltersDialog { align: center middle; background: $background 70%; }

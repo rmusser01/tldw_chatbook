@@ -4,6 +4,8 @@ import ast
 from functools import cache
 from pathlib import Path
 import re
+import subprocess
+import sys
 import warnings
 
 import pytest
@@ -45,8 +47,6 @@ CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 #: real `_consume_pending_console_prompt_insert` body lives here now.
 CONSOLE_PROMPTS_PATH = PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
-MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
-MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
 MEDIA_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "media_events.py"
 LEGACY_CHAT_ROOT_NAMES = (
     "rag_expansion_provider_value",
@@ -219,7 +219,6 @@ ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
 RECENT_WORK_SCREEN_PATHS = (
     PRODUCTION_ROOT / "UI" / "Screens" / "home_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "workflows_screen.py",
-    PRODUCTION_ROOT / "UI" / "Screens" / "schedules_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py",
 )
 RETIRED_HANDOFF_FIELDS = (
@@ -1897,10 +1896,6 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
             ("WorkflowsScreen", "on_mount"),
             ("WorkflowsScreen", "_latest_console_follow_item"),
         },
-        "tldw_chatbook/UI/Screens/schedules_screen.py": {
-            ("SchedulesScreen", "on_mount"),
-            ("SchedulesScreen", "_latest_console_follow_item"),
-        },
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
             ("SchedulesWorkbench", "_latest_console_follow_item_from_adapter"),
         },
@@ -1958,6 +1953,44 @@ def test_legacy_state_exports_remain_serialization_compatible() -> None:
     assert AppState.from_dict(payload).to_dict() == payload
 
 
+def test_state_package_does_not_drag_dead_modules_onto_the_boot_path() -> None:
+    """The one live leaf import must not import the four dead siblings.
+
+    tier-2 review S17 P3: `UI/Screens/chat_screen.py` imports
+    `state.ui_state`, which runs `state/__init__.py`, which eagerly imported
+    `app_state`, `chat_state`, `navigation_state` and `notes_state` -- four
+    modules with no production consumer -- putting all of them in
+    `sys.modules` at ui-ready (ADR-097's boot budget).
+    """
+    probe = (
+        "import sys;"
+        "import tldw_chatbook.state.ui_state;"
+        "print([n for n in ("
+        "'tldw_chatbook.state.app_state',"
+        "'tldw_chatbook.state.chat_state',"
+        "'tldw_chatbook.state.navigation_state',"
+        "'tldw_chatbook.state.notes_state',"
+        ") if n in sys.modules])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=str(PROJECT_ROOT),
+    )
+
+    assert result.stdout.strip().endswith("[]"), result.stdout
+
+
+def test_state_package_exports_still_resolve_lazily() -> None:
+    """__all__ must keep working after the exports go lazy."""
+    import tldw_chatbook.state as state_package
+
+    for name in state_package.__all__:
+        assert getattr(state_package, name) is not None, name
+
+
 def test_legacy_state_docs_describe_compatibility_not_live_authority() -> None:
     app_state_source = (PRODUCTION_ROOT / "state" / "app_state.py").read_text(
         encoding="utf-8"
@@ -2010,27 +2043,6 @@ def test_tldw_cli_has_no_retired_media_destination_state() -> None:
             violations[name] = collector.occurrences
 
     assert violations == {}
-
-
-def test_media_runtime_state_is_constructed_only_by_the_destination() -> None:
-    app_occurrences = _occurrences(APP_PATH, "MediaRuntimeState")
-    screen_occurrences = _occurrences(MEDIA_SCREEN_PATH, "MediaRuntimeState")
-    window_occurrences = _occurrences(MEDIA_WINDOW_PATH, "MediaRuntimeState")
-
-    assert app_occurrences == []
-    assert screen_occurrences == []
-    assert any(
-        kind == "name_load" and "MediaWindow.__init__" in ".".join(scopes)
-        for _path, kind, scopes, _line in window_occurrences
-    )
-
-
-def test_media_window_has_no_duplicate_media_active_view_descriptor() -> None:
-    media_window_class = _class_definition(MEDIA_WINDOW_PATH, "MediaWindow")
-    collector = _NamedOccurrenceCollector(MEDIA_WINDOW_PATH, "media_active_view")
-    collector.visit(media_window_class)
-
-    assert collector.occurrences == []
 
 
 def test_media_events_module_contains_contracts_not_root_handlers() -> None:

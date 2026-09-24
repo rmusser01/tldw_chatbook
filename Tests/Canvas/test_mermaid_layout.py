@@ -9,7 +9,7 @@ import pytest
 
 from Tests.Canvas.mermaid_probe import run_mermaid_case
 
-CASES = json.loads((Path(__file__).parent / "fixtures/mermaid/layout.json").read_text())
+CASES = json.loads((Path(__file__).parent / "fixtures/mermaid/layout.json").read_text(encoding="utf-8"))
 
 
 def test_release_resource_probe_accounts_for_library_and_near_limit_scene():

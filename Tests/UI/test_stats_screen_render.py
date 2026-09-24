@@ -55,3 +55,29 @@ async def test_stats_screen_renders_stat_cards_with_real_db(tmp_path):
         )
         assert not list(app.screen.query(".error-container"))
         assert laid_out, "stat card value label never laid out (clipped?)"
+
+
+def test_one_statistics_result_schedules_one_display_rebuild():
+    """tier-2 review S19 P3: `_apply_statistics_result` wrote three reactives
+    in sequence and each watcher queued its own
+    `call_after_refresh(refresh_stats_display)` -- and `call_after_refresh`
+    does not coalesce, so one worker result rebuilt the whole stats pane
+    (`remove_children()` + a full remount) several times over.
+
+    Runs without an app: the reactive watchers are stubbed, so nothing here
+    needs a mounted screen.
+    """
+    from types import SimpleNamespace
+
+    screen = StatsScreen(SimpleNamespace())
+    fired: list[str] = []
+    screen.watch_stats_data = lambda value: fired.append("stats_data")
+    screen.watch_error_message = lambda value: fired.append("error_message")
+    screen.watch_is_loading = lambda value: fired.append("is_loading")
+
+    screen._apply_statistics_result({"total_conversations": 1}, None)
+
+    assert fired == [], fired
+    assert screen.stats_data == {"total_conversations": 1}
+    assert screen.error_message is None
+    assert screen.is_loading is False
