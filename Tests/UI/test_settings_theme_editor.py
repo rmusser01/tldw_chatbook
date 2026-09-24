@@ -1136,3 +1136,107 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
         await pilot.pause()
         restored = app.available_themes[shipped.name]
         assert str(getattr(restored, "primary", "")).upper() != "#123456"
+
+
+def _shipped_variables(name: str) -> dict:
+    """A shipped theme's own extra variables (the two per-palette text tints
+    are re-derived for every palette, so they are not carried)."""
+    from tldw_chatbook.css.Themes.themes import _READABLE_TEXT_HUES
+
+    theme = next(t for t in ALL_THEMES if getattr(t, "name", None) == name)
+    return {k: v for k, v in theme.variables.items() if k not in _READABLE_TEXT_HUES}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_clone_save_reload_keeps_shipped_variables(
+    request, tmp_path
+):
+    """TASK-32940: a shipped theme's AA variables survive Clone -> Save ->
+    reload (startup loader and editor) -> Apply."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    expected = _shipped_variables("apricot")
+    assert "text-muted" in expected
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("apricot")
+        await pilot.pause()
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+
+        [saved] = [t for t in load_user_themes(tmp_path) if t.name == "apricot_copy"]
+        assert {k: saved.variables.get(k) for k in expected} == expected
+        assert {k: app.available_themes["apricot_copy"].variables.get(k) for k in expected} == expected
+
+        editor.load_theme("textual-dark")
+        editor.load_user_theme("apricot_copy")
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        applied = app.available_themes[app.theme]
+        assert {k: applied.variables.get(k) for k in expected} == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_apply_unmodified_catalog_theme_uses_catalog_name(
+    request, tmp_path
+):
+    """TASK-32940: applying a shipped theme untouched selects it by name, with
+    no lossy custom_ copy registered."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("apricot")
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "apricot"
+        assert "custom_apricot" not in app.available_themes
+
+        # An edited palette still applies as the custom_ copy, variables kept.
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "custom_apricot"
+        expected = _shipped_variables("apricot")
+        applied = app.available_themes["custom_apricot"].variables
+        assert {k: applied.get(k) for k in expected} == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_survives_backup_recovery_pause(
+    request, tmp_path, monkeypatch
+):
+    """TASK-32942: a RecoveryRequired from the raw theme-directory scope must
+    not crash the editor; the tree says the files are unavailable."""
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import raw_participants
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    @contextmanager
+    def paused_scope(*_args, **_kwargs):
+        raise RecoveryRequired("process_pause_still_active")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(raw_participants, "_scope", paused_scope)
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.is_mounted
+        labels = _user_theme_labels(editor)
+        assert any("backup/recovery" in label for label in labels)

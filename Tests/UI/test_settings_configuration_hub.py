@@ -12916,27 +12916,64 @@ def test_settings_appearance_theme_options_include_registered_user_themes():
     assert [value for _label, value in options].count("textual-dark") == 1
 
 
+async def _dirty_theme_editor(screen, pilot):
+    await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+    for _ in range(6):
+        await pilot.pause()
+    editor = screen.query_one("#settings-theme-editor")
+    editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+    for _ in range(6):
+        await pilot.pause()
+    assert screen.theme_editor_modified is True
+    return editor
+
+
+async def _leave_theme_and_choose(screen, pilot, button_id: str) -> None:
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    screen._select_category(SettingsCategoryId.APPEARANCE.value)
+    for _ in range(6):
+        await pilot.pause()
+    assert isinstance(pilot.app.screen, ThemeLeaveModal)
+    assert screen.active_category == SettingsCategoryId.THEME.value
+    await pilot.click(button_id)
+    await pilot.app.workers.wait_for_complete()
+    for _ in range(6):
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
-async def test_theme_dirty_flag_clears_when_leaving_the_category():
-    """TASK-31252: leaving Theme drops the in-progress edit, so the rail marker
-    and inspector row must not keep saying 'unsaved' on the next visit."""
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_stay_keeps_category_and_edit(request):
+    """TASK-32941: leaving Theme with edits asks first; Stay keeps both."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-theme")
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
-        for _ in range(6):
-            await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
-        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
-        for _ in range(6):
-            await pilot.pause()
-        assert screen.theme_editor_modified is True
+        editor = await _dirty_theme_editor(screen, pilot)
 
-        screen._select_category(SettingsCategoryId.APPEARANCE.value)
-        for _ in range(6):
-            await pilot.pause()
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-stay")
+        assert screen.active_category == SettingsCategoryId.THEME.value
+        assert screen.theme_editor_modified is True
+        assert editor.is_mounted
+        assert editor.query_one("#settings-theme-color-primary", Input).value == "#123456"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_discard_clears_the_dirty_flag(request):
+    """TASK-31252 + TASK-32941: Discard leaves, and the rail marker and
+    inspector row stop saying 'unsaved' on the next visit."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _dirty_theme_editor(screen, pilot)
+
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-discard")
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
         assert screen.theme_editor_modified is False
 
         screen._select_category(SettingsCategoryId.THEME.value)
@@ -12945,6 +12982,29 @@ async def test_theme_dirty_flag_clears_when_leaving_the_category():
             await pilot.pause()
         note = screen.query_one("#settings-theme-unsaved-note", Static)
         assert "No" in str(note.renderable)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_save_writes_then_leaves(request):
+    """TASK-32941: Save stores the theme file, then leaves the category."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        editor = await _dirty_theme_editor(screen, pilot)
+        name_input = editor.query_one("#settings-theme-name", Input)
+        name_input.disabled = False
+        name_input.value = "leave_saved"
+        await pilot.pause()
+        saved_path = editor.custom_themes_path / "leave_saved.toml"
+
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-save")
+        assert saved_path.exists()
+        assert "#123456" in saved_path.read_text(encoding="utf-8")
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        assert screen.theme_editor_modified is False
 
 
 def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):

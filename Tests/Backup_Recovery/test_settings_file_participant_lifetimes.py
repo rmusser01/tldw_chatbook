@@ -55,8 +55,9 @@ def test_theme_constructor_has_no_directory_effect_during_pause(
     )
     pause = storage._begin_local_pause()
     try:
-        with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
-            SettingsThemeEditor()
+        # TASK-32942: the refusal degrades (the tree says the files are
+        # unavailable) instead of crashing Settings' compose.
+        SettingsThemeEditor()
         assert not (tmp_path / "new").exists()
     finally:
         pause.resume()

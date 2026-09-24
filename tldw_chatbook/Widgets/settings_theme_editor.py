@@ -3,27 +3,80 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import toml
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Click, Key
 from textual.message import Message
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
-from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
+from ..css.Themes.themes import (
+    _READABLE_TEXT_HUES,
+    ALL_THEMES,
+    create_theme_from_dict,
+)
 from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
 
 
 from ..Backup_Recovery import raw_participants as raw
+from ..Backup_Recovery.bootstrap import RecoveryRequired
+
+#: TASK-32942: shown in the tree while backup/recovery holds the theme files.
+THEMES_UNAVAILABLE_LABEL = "Theme files unavailable while backup/recovery is in progress"
+
+
+ThemeLeaveChoice = Literal["save", "discard", "cancel"]
+
+
+class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
+    """Ask before leaving Theme with unsaved edits (TASK-32941).
+
+    Mirrors the Speech & TTS leave guard (``_GlobalSpeechTTSLeaveModal``).
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Stay", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-theme-leave-modal", classes="settings-rag-profile-modal"):
+            yield Static("Unsaved theme changes", classes="destination-section")
+            yield Static(
+                "Save this theme before leaving, or discard the changes?",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Stay", id="settings-theme-leave-stay")
+                yield Button("Discard", id="settings-theme-leave-discard")
+                yield Button("Save", id="settings-theme-leave-save", variant="primary")
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-theme-leave-stay")
+    def _stay(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-theme-leave-discard")
+    def _discard(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("discard")
+
+    @on(Button.Pressed, "#settings-theme-leave-save")
+    def _save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("save")
 
 
 class SettingsThemeEditor(Vertical):
@@ -104,14 +157,25 @@ class SettingsThemeEditor(Vertical):
         from ..config import get_user_themes_dir
 
         self.custom_themes_path = get_user_themes_dir()
-        with raw._scope(self, "theme_directory", writing=True) as operation:
-            raw._mkdirs(operation)
+        try:
+            with raw._scope(self, "theme_directory", writing=True) as operation:
+                raw._mkdirs(operation)
+        except RecoveryRequired:
+            # TASK-32942: a backup/recovery pause must not crash Settings;
+            # _load_user_themes reports the files as unavailable instead.
+            pass
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
         # TASK-31258: the user theme file the palette was loaded from (or last
         # saved to); re-saving it is an update, saving over another is an
         # overwrite that asks first.
         self._loaded_user_theme: str | None = None
+        # TASK-32940: the loaded theme's extra colour variables (shipped AA
+        # fixes such as text-muted), carried through Apply/Save/Export.
+        self._theme_variables: dict[str, str] = {}
+        # The catalog theme currently loaded, so an unmodified Apply can
+        # select it by name instead of registering a lossy copy.
+        self._loaded_catalog_theme: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -288,15 +352,19 @@ class SettingsThemeEditor(Vertical):
 
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
-        with raw._scope(self, "theme_directory") as operation:
-            for theme_file in raw._check(operation).observed_files:
-                try:
-                    with raw._file(operation, theme_file, "r") as f:
-                        theme_data = toml.load(f)
-                    theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
-                    parent_node.add_leaf(theme_name, data="user")
-                except Exception as e:
-                    logger.error(f"Failed to load user theme {theme_file}: {e}")
+        try:
+            with raw._scope(self, "theme_directory") as operation:
+                for theme_file in raw._check(operation).observed_files:
+                    try:
+                        with raw._file(operation, theme_file, "r") as f:
+                            theme_data = toml.load(f)
+                        theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
+                        parent_node.add_leaf(theme_name, data="user")
+                    except Exception as e:
+                        logger.error(f"Failed to load user theme {theme_file}: {e}")
+        except RecoveryRequired:
+            # TASK-32942: data=None, so selecting the row loads nothing.
+            parent_node.add_leaf(THEMES_UNAVAILABLE_LABEL)
 
     @on(Tree.NodeSelected)
     def on_theme_selected(self, event: Tree.NodeSelected) -> None:
@@ -311,6 +379,7 @@ class SettingsThemeEditor(Vertical):
         """Load a theme for editing."""
         self.current_theme_name = theme_name
         self._loaded_user_theme = None
+        self._loaded_catalog_theme = None
 
         name_input = self.query_one("#settings-theme-name", Input)
         name_input.value = theme_name
@@ -330,6 +399,14 @@ class SettingsThemeEditor(Vertical):
         else:
             self.current_theme_data = self._extract_theme_colors(theme)
             self.is_dark_theme = bool(getattr(theme, "dark", True))
+            # text-primary/text-accent are re-derived per palette by
+            # create_theme_from_dict, so only the theme's own extras carry.
+            self._theme_variables = {
+                key: value
+                for key, value in (theme.variables or {}).items()
+                if key not in _READABLE_TEXT_HUES
+            }
+            self._loaded_catalog_theme = theme_name
 
         self._update_color_inputs()
         self._update_dark_mode_checkbox()
@@ -352,6 +429,8 @@ class SettingsThemeEditor(Vertical):
 
                 self.current_theme_name = theme_name
                 self.current_theme_data = theme_data.get("colors", {})
+                self._theme_variables = dict(theme_data.get("variables", {}) or {})
+                self._loaded_catalog_theme = None
                 self.is_dark_theme = theme_data.get("theme", {}).get("dark", True)
 
                 name_input = self.query_one("#settings-theme-name", Input)
@@ -553,11 +632,19 @@ class SettingsThemeEditor(Vertical):
         if self._require_theme_name() is None:
             return
         try:
-            theme_dict = {**self.current_theme_data, "dark": self.is_dark_theme}
-            theme = create_theme_from_dict(
-                name=f"custom_{self.current_theme_name}",
-                theme_dict=theme_dict,
-            )
+            if (
+                not self.is_modified
+                and self._loaded_catalog_theme == self.current_theme_name
+            ):
+                # TASK-32940: an untouched catalog theme applies as itself.
+                theme = self.app.available_themes.get(self.current_theme_name) or next(
+                    t for t in ALL_THEMES if t.name == self.current_theme_name
+                )
+            else:
+                theme = create_theme_from_dict(
+                    name=f"custom_{self.current_theme_name}",
+                    theme_dict=self._theme_dict(),
+                )
             self.app.register_theme(theme)
             self.app.theme = theme.name
             self.app.notify(
@@ -586,10 +673,7 @@ class SettingsThemeEditor(Vertical):
             self.app.notify("Cannot overwrite built-in themes", severity="warning")
             return
 
-        theme_data = {
-            "theme": {"name": theme_name, "dark": self.is_dark_theme},
-            "colors": self.current_theme_data,
-        }
+        theme_data = self._theme_file_data(theme_name)
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
 
         # TASK-31258: writing over another saved theme is one keypress from
@@ -632,11 +716,7 @@ class SettingsThemeEditor(Vertical):
 
             # TASK-31250: register at once so Appearance and the palette can
             # offer the theme without a restart.
-            self.app.register_theme(
-                create_theme_from_dict(
-                    theme_name, {**self.current_theme_data, "dark": self.is_dark_theme}
-                )
-            )
+            self.app.register_theme(create_theme_from_dict(theme_name, self._theme_dict()))
 
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
@@ -658,6 +738,23 @@ class SettingsThemeEditor(Vertical):
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(f"Failed to save theme: {e}", severity="error")
+
+    def _theme_dict(self) -> dict[str, Any]:
+        """The working palette as ``create_theme_from_dict`` input."""
+        theme_dict: dict[str, Any] = {**self.current_theme_data, "dark": self.is_dark_theme}
+        if self._theme_variables:
+            theme_dict["variables"] = dict(self._theme_variables)
+        return theme_dict
+
+    def _theme_file_data(self, theme_name: str) -> dict[str, Any]:
+        """The working palette as saved/exported TOML (``[variables]`` optional)."""
+        data: dict[str, Any] = {
+            "theme": {"name": theme_name, "dark": self.is_dark_theme},
+            "colors": self.current_theme_data,
+        }
+        if self._theme_variables:
+            data["variables"] = dict(self._theme_variables)
+        return data
 
     @on(Button.Pressed, "#settings-theme-set-default")
     def on_set_launch_default(self) -> None:
@@ -929,13 +1026,7 @@ class SettingsThemeEditor(Vertical):
 
         export_path = Path.home() / "Downloads" / f"{name}_theme.toml"
 
-        theme_data = {
-            "theme": {
-                "name": self.current_theme_name,
-                "dark": self.is_dark_theme,
-            },
-            "colors": self.current_theme_data,
-        }
+        theme_data = self._theme_file_data(self.current_theme_name)
 
         if export_path.exists():
             # TASK-31258: never silently replace an earlier export.

@@ -129,7 +129,8 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
 
-    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``
+    and, when the palette has any, ``[variables]``.
     Unreadable files, and files without the primary colour Textual requires,
     are skipped with a warning so one bad file cannot block startup
     (TASK-31250).
@@ -157,6 +158,10 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
             name = str(meta.get("name") or path.stem).strip() or path.stem
             colors = dict(data.get("colors", {}) or {})
             colors["dark"] = bool(meta.get("dark", True))
+            # TASK-32940: extra colour variables the editor carried over.
+            variables = dict(data.get("variables", {}) or {})
+            if variables:
+                colors["variables"] = variables
             themes.append(create_theme_from_dict(name, colors))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this

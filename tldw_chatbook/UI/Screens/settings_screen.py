@@ -288,7 +288,7 @@ from .settings_config_models import (
     SettingsOwnershipRecord,
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
-from ...Widgets.settings_theme_editor import SettingsThemeEditor
+from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -3184,6 +3184,8 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        self._theme_leave_in_progress = False
+        self._theme_leave_bypass = False
         self._speech_tts_model_library_route_token: str | None = None
         self._speech_tts_navigation_attempts: list[
             tuple[str, dict[str, object], str | None]
@@ -23905,9 +23907,52 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    async def _confirm_theme_category_leave(
+        self,
+        category_value: str,
+        restore_focus: bool,
+    ) -> None:
+        """Save / Discard / Stay before an edited theme is remounted away (TASK-32941)."""
+
+        try:
+            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            if choice == "cancel":
+                return
+            if choice == "save":
+                try:
+                    editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+                except QueryError:
+                    return
+                editor.on_save_theme()
+                if editor.is_modified:
+                    # Save refused (bad name) or is waiting on its overwrite
+                    # confirmation: stay so the edit is not lost.
+                    return
+            self._theme_leave_bypass = True
+            self._select_category(category_value, restore_focus=restore_focus)
+        finally:
+            self._theme_leave_bypass = False
+            self._theme_leave_in_progress = False
+
     def _select_category(
         self, category_value: str, *, restore_focus: bool = False
     ) -> None:
+        if (
+            self.active_category == SettingsCategoryId.THEME.value
+            and category_value != SettingsCategoryId.THEME.value
+            and self.theme_editor_modified
+            and getattr(self, "is_mounted", False)
+            and not self._theme_leave_bypass
+        ):
+            if not self._theme_leave_in_progress:
+                self._theme_leave_in_progress = True
+                self.run_worker(
+                    self._confirm_theme_category_leave(category_value, restore_focus),
+                    group="settings-theme-category-leave",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+            return
         if (
             self.active_category == SettingsCategoryId.SPEECH_TTS.value
             and category_value != SettingsCategoryId.SPEECH_TTS.value
@@ -24021,6 +24066,8 @@ class SettingsScreen(BaseAppScreen):
         ):
             # TASK-31252: leaving Theme remounts the editor and drops the
             # in-progress edit, so the dirty displays must not outlive it.
+            # TASK-32941: reached only after the leave guard above resolved
+            # (Save or Discard) or on an unmounted screen.
             self.theme_editor_modified = False
             self._refresh_theme_modified_widgets()
         category_changed = category_value != self.active_category

@@ -470,7 +470,8 @@ the **New / Clone / Delete / Export** row, and a **Themes** tree that lists
 **Your themes** first and open, then **Built-in**, then the **Shipped themes**
 catalog collapsed. Selecting a theme in the tree only loads it for editing; it
 never changes the running app. **Actions** come next: **Apply** applies the
-palette **for this session only** and writes nothing; **Save** stores it as a
+palette **for this session only** and writes nothing (a shipped or built-in
+theme applied without edits is selected by its own name); **Save** stores it as a
 TOML file in your profile's `themes/` folder and registers it at once, so it
 appears in **Appearance** → **Theme** and in the palette's "Theme: Switch
 to…" list without a restart (built-ins can't be overwritten, and saving over
@@ -487,7 +488,14 @@ and pressing Enter or Space. The **Live Preview** is a Console-shaped stub that
 repaints as you type. **New** starts a theme from the palette currently loaded;
 **Clone** does the same and appends `_copy` to the name. **Delete** removes a
 saved theme after confirmation; **Export** writes it to your Downloads folder
-and asks before replacing an earlier export.
+and asks before replacing an earlier export. A theme cloned from a shipped one
+keeps that theme's extra readability colours (muted text, footer keys, input
+selection) through Apply, Save and Export — they are stored in a `[variables]`
+table in the TOML. Leaving Theme with unsaved edits asks **Stay**, **Discard**,
+or **Save** (Escape stays); Save that needs an overwrite confirmation or a
+valid name keeps you on Theme. While a backup or recovery holds the theme
+files, **Your themes** reads "Theme files unavailable while backup/recovery is
+in progress" instead of listing them.
 
 ### Interface — Splash Screen
 
@@ -972,6 +980,9 @@ saved in the editor now registers at once, appears in Appearance → Theme and
 the palette, and loads at the next launch via **Set as launch default**;
 swatches, the Dark toggle and the preset target are painted; Actions sit above
 the palette; the rest of this page's content unchanged from the prior stamp).*
+*Interface — Theme amended on fix/theme-harden — 2026-09-24 (tasks 32940-32942:
+shipped-theme variables carried, leave guard, backup-pause state; covered by
+automated tests, not re-driven live).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
 menu now leaves the strip scrolled so "F4 Settings" is visible and
