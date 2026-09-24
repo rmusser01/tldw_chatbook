@@ -610,7 +610,7 @@ def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
     # ingest source is any file on the user's own disk, so there is no
     # permitted root to confine it to -- only NUL bytes, traversal shapes and
     # shell metacharacters to refuse. Only the returned path is used below.
-    path = validate_path_simple(file_path)
+    path = validate_path_simple(file_path, reject_shell_metacharacters=False)
     max_bytes = max_text_file_bytes()
     with path.open("rb") as handle:
         size = os.fstat(handle.fileno()).st_size

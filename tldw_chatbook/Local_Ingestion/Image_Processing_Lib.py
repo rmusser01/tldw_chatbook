@@ -144,7 +144,7 @@ def reject_image_decompression_bomb(image_path: Union[str, Path]) -> Path:
             processing failures, so callers must not swallow them into an
             original-bytes fallback.
     """
-    image_path = validate_path_simple(image_path)
+    image_path = validate_path_simple(image_path, reject_shell_metacharacters=False)
     if not PIL_AVAILABLE:
         return image_path
     try:
