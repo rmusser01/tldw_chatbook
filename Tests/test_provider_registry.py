@@ -61,6 +61,42 @@ def test_native_tools_flags_match_native_tools_module():
     assert NATIVE_TOOLS_PROVIDERS == NATIVE_TOOLS_KEYS - {"databricks"}
 
 
+def test_identity_fields_match_config_tables():
+    # api_key_env_var / default api_base_url must be transcribed EXACTLY
+    # from the shipped [api_settings.*] tables (the e080a2fb92-class bug
+    # guard: a wrong env var or URL must fail here, not at a user's first
+    # call). A record's table is keyed by its dispatch key or its config
+    # key (lowercased), e.g. mistral -> [api_settings.mistralai],
+    # custom-openai-api -> [api_settings.custom]. databricks is excluded:
+    # it ships no defaults (workspace host is per-account).
+    import tomllib
+
+    from tldw_chatbook.config import CONFIG_TOML_CONTENT
+
+    tables = tomllib.loads(CONFIG_TOML_CONTENT)["api_settings"]
+    checked = 0
+    for record in ALL_RECORDS:
+        if record.key == "databricks":
+            continue
+        table_key = next(
+            (k for k in (record.key, record.config_key.lower()) if k in tables),
+            None,
+        )
+        assert table_key is not None, f"no [api_settings.*] table for {record.key}"
+        table = tables[table_key]
+        assert record.api_key_env_var == table.get("api_key_env_var"), (
+            f"{record.key}: api_key_env_var {record.api_key_env_var!r} != "
+            f"[api_settings.{table_key}] {table.get('api_key_env_var')!r}"
+        )
+        if "api_base_url" in table:
+            assert record.default_base_url == table["api_base_url"], (
+                f"{record.key}: default_base_url {record.default_base_url!r} != "
+                f"[api_settings.{table_key}] {table['api_base_url']!r}"
+            )
+        checked += 1
+    assert checked > 0
+
+
 def test_databricks_preset_shape():
     record = DATABRICKS
     assert record.key == "databricks"
