@@ -17,7 +17,7 @@ from textual.events import Click, Key
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.theme import Theme
+from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from ..css.Themes.themes import (
@@ -77,6 +77,8 @@ class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
     def _save(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss("save")
+
+_INVALID_COLOUR_TEXT = "Invalid — use #RRGGBB"
 
 
 class SettingsThemeEditor(Vertical):
@@ -307,6 +309,7 @@ class SettingsThemeEditor(Vertical):
                     text,
                     id=f"settings-theme-preview-{suffix}",
                     classes="settings-theme-preview-row",
+                    markup=False,  # task-32946: "[ Send ]" is literal text
                 )
 
     def on_mount(self) -> None:
@@ -365,6 +368,10 @@ class SettingsThemeEditor(Vertical):
         except RecoveryRequired:
             # TASK-32942: data=None, so selecting the row loads nothing.
             parent_node.add_leaf(THEMES_UNAVAILABLE_LABEL)
+            return
+        if not parent_node.children:
+            # task-32945: no data, so on_theme_selected ignores it.
+            parent_node.add_leaf("(none yet)")
 
     @on(Tree.NodeSelected)
     def on_theme_selected(self, event: Tree.NodeSelected) -> None:
@@ -526,7 +533,7 @@ class SettingsThemeEditor(Vertical):
                 swatch.set_styles(background=None)
                 swatch.remove_class("theme-preview-dark-ink", "theme-preview-light-ink")
                 swatch.add_class("theme-preview-invalid")
-                swatch.update("Invalid")
+                swatch.update(_INVALID_COLOUR_TEXT)
 
     def _validate_color_input(self, color_value: str) -> bool:
         """Validate a color input value."""
@@ -582,7 +589,7 @@ class SettingsThemeEditor(Vertical):
                     # says so instead of silently turning black.
                     event.input.add_class("settings-invalid-input")
                     if color_name in self.color_swatches:
-                        self.color_swatches[color_name].update("invalid")
+                        self.color_swatches[color_name].update(_INVALID_COLOUR_TEXT)
 
     @on(Input.Changed, "#settings-theme-name")
     def on_theme_name_changed(self, event: Input.Changed) -> None:
@@ -840,7 +847,7 @@ class SettingsThemeEditor(Vertical):
 
     def _is_catalog_theme(self, name: str) -> bool:
         """True for Textual built-ins and shipped ALL_THEMES names."""
-        return name in ("textual-dark", "textual-light") or any(
+        return name in BUILTIN_THEMES or any(
             getattr(theme, "name", None) == name for theme in ALL_THEMES
         )
 
@@ -923,7 +930,7 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-delete")
     def on_delete_theme(self) -> None:
         """Delete the current user theme."""
-        built_in_names = {"textual-dark", "textual-light"}
+        built_in_names = set(BUILTIN_THEMES)
         shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
 
         if self._require_theme_name() is None:
@@ -1203,8 +1210,8 @@ class SettingsThemeEditor(Vertical):
         self._load_user_themes(user_node)
 
         builtin_node = tree.root.add("Built-in", expand=True)
-        builtin_node.add_leaf("textual-dark", data="catalog")
-        builtin_node.add_leaf("textual-light", data="catalog")
+        for theme_name in BUILTIN_THEMES:  # task-32945: all of Textual's
+            builtin_node.add_leaf(theme_name, data="catalog")
 
         shipped_node = tree.root.add("Shipped themes", expand=False)
         for theme in ALL_THEMES:

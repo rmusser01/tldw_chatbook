@@ -2761,6 +2761,15 @@ class SettingsScreen(BaseAppScreen):
         ("e", "settings_personal_context_edit", "Edit profile record"),
         ("d", "settings_personal_context_delete", "Delete profile record"),
         ("x", "settings_personal_context_export", "Export profile"),
+        # task-32943: F6 itself is the app-global binding that delegates to
+        # action_focus_next_workbench_pane; the reverse needs its own.
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -9698,6 +9707,12 @@ class SettingsScreen(BaseAppScreen):
             )
         # TASK-31250: the user's saved themes are registered with the app at
         # startup and after Save; offer them like the shipped catalog.
+        # task-32945: the registry also holds Textual's own themes, so
+        # "(saved)" is claimed only when a user theme file backs the name.
+        from textual.theme import BUILTIN_THEMES
+
+        themes_dir = _theme_save_target()
+        labels = {label for label, _value in options}
         registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
         for theme_name in registered:
             # custom_<name> is Apply's process-only registration of an unsaved
@@ -9705,9 +9720,15 @@ class SettingsScreen(BaseAppScreen):
             if theme_name in seen or theme_name.startswith("custom_"):
                 continue
             seen.add(theme_name)
-            options.append(
-                (f"{theme_name.replace('_', ' ').replace('-', ' ').title()} (saved)", theme_name)
-            )
+            label = theme_name.replace("_", " ").replace("-", " ").title()
+            if (themes_dir / f"{theme_name}.toml").is_file():
+                label += " (saved)"
+            elif theme_name in BUILTIN_THEMES:
+                label += " (Textual)"
+            if label in labels:
+                label = f"{label} · {theme_name}"
+            labels.add(label)
+            options.append((label, theme_name))
         current_theme = str(self._appearance_setting_values()["default_theme"])
         if current_theme and current_theme not in seen:
             options.append((f"Current: {current_theme}", current_theme))
@@ -22602,11 +22623,64 @@ class SettingsScreen(BaseAppScreen):
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
 
-    def _jk_category_navigation_blocked(self) -> bool:
-        """Guard the screen-wide j/k category bindings (task-1373).
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: rail -> detail -> inspector -> rail (task-32943)."""
+        self._focus_relative_settings_pane(1)
 
-        j/k are armed from any focus so power users can move between
-        categories without first focusing the rail, but they must never
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: the F6 cycle in reverse (task-32943)."""
+        self._focus_relative_settings_pane(-1)
+
+    def _focus_relative_settings_pane(self, direction: int) -> None:
+        """Focus the first focusable widget of the next non-empty pane.
+
+        The rail lands on the active category button rather than its filter
+        box; a pane with nothing focusable (an inspector of plain text) is
+        skipped.
+        """
+        chain = self.focus_chain
+        targets = []
+        for pane_id in (
+            "settings-category-pane",
+            "settings-detail-pane",
+            "settings-impact-pane",
+        ):
+            try:
+                pane = self.query_one(f"#{pane_id}")
+            except QueryError:
+                continue
+            members = [w for w in chain if pane in w.ancestors_with_self]
+            if not members:
+                continue
+            target = members[0]
+            if pane_id == "settings-category-pane":
+                active_id = f"settings-category-{self.active_category}"
+                target = next((w for w in members if w.id == active_id), target)
+            targets.append((pane, target))
+        if not targets:
+            return
+        focused = self._focused_widget()
+        current = next(
+            (
+                index
+                for index, (pane, _target) in enumerate(targets)
+                if pane in getattr(focused, "ancestors_with_self", ())
+            ),
+            None,
+        )
+        if current is None:
+            index = 0 if direction > 0 else len(targets) - 1
+        else:
+            index = (current + direction) % len(targets)
+        targets[index][1].focus()
+
+    def _jk_category_navigation_blocked(self) -> bool:
+        """Guard the j/k category bindings (task-1373, narrowed by task-32944).
+
+        j/k work without first focusing a category button -- from the rail
+        or with nothing focused (landing on the screen) -- but not from the
+        detail or inspector panes: there they yanked focus out of the Theme
+        editor's Tree, preset swatches and buttons. They must also never
         steal keys from text editing or option search: Input/TextArea
         consume printable keys before this screen's on_key fires (the
         isinstance check is belt-and-braces for widgets that do not), a
@@ -22617,7 +22691,15 @@ class SettingsScreen(BaseAppScreen):
         focused = self._focused_widget()
         if isinstance(focused, (Input, TextArea, Select)):
             return True
-        return any(select.expanded for select in self.query(Select))
+        if any(select.expanded for select in self.query(Select)):
+            return True
+        if focused is None:
+            return False
+        try:
+            rail = self.query_one("#settings-category-pane")
+        except QueryError:
+            return True
+        return rail not in getattr(focused, "ancestors_with_self", ())
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Apply destination-specific navigation context after cross-screen routing.

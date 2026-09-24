@@ -1240,3 +1240,73 @@ async def test_settings_theme_editor_survives_backup_recovery_pause(
         assert editor.is_mounted
         labels = _user_theme_labels(editor)
         assert any("backup/recovery" in label for label in labels)
+
+
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_tree_lists_every_textual_builtin(request, tmp_path):
+    """task-32945: Built-in lists all of Textual's themes, not just two."""
+    from textual.theme import BUILTIN_THEMES
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        builtin = next(n for n in tree.root.children if str(n.label) == "Built-in")
+        assert [str(c.label) for c in builtin.children] == list(BUILTIN_THEMES)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_empty_your_themes_says_none_yet(request, tmp_path):
+    """task-32945: an empty 'Your themes' node says so; selecting it is inert."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        user_node = tree.root.children[0]
+        assert [str(c.label) for c in user_node.children] == ["(none yet)"]
+        name_before = editor.current_theme_name
+        tree.select_node(user_node.children[0])
+        await pilot.pause()
+        assert editor.current_theme_name == name_before
+        assert editor.is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_preview_accent_row_renders_brackets(
+    request, tmp_path
+):
+    """task-32946: '[ Send ]' was parsed as markup and vanished."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        row = editor.query_one("#settings-theme-preview-accent")
+        assert "[ Send ]" in str(row.render())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_invalid_colour_names_the_format(request, tmp_path):
+    """task-32946: one spelling of the invalid state, with a format hint."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#12"
+        await pilot.pause()
+        assert str(editor.color_swatches["primary"].render()) == "Invalid — use #RRGGBB"
+        editor._update_color_swatch("error", "#GGGGGG")
+        assert str(editor.color_swatches["error"].render()) == "Invalid — use #RRGGBB"
