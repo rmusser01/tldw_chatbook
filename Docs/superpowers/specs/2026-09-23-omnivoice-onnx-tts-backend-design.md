@@ -50,16 +50,22 @@ torch/transformers at inference (it monkey-patches the PyTorch `generate()` loop
 so it is not vendorable even if licensed.
 Two licensing facts shape the work:
 
-- The LM side descends from Apache-2.0 code (Qwen3-0.6B → k2-fsa/OmniVoice). We may
-  read and port from the k2-fsa upstream with attribution.
-- The audio tokenizer comes from Boson AI's Higgs Audio 2 under a Llama-3-style
-  community license. The repo already ships a Boson-derived `higgs` TTS backend, so
-  there is precedent; the acquisition consent step must still surface the dual
-  license explicitly.
-- The reference ONNX implementation (github.com/AFun9/Omnivoice-onnx) is
-  **unlicensed** — reference-only. We do not copy code from it. It also depends on
-  torch/transformers at inference (it monkey-patches the PyTorch `generate()` loop),
-  so it is not vendorable even if licensed.
+- **Code**: the k2-fsa/OmniVoice code (and the `pip install omnivoice` package) is
+  Apache-2.0. We may read and port the sampler/prompt logic with attribution.
+- **LM weights**: k2-fsa states the upstream weights are **CC-BY-NC** (training-data
+  constraints, e.g. Emilia); the ct03 ONNX export is a quantized derivative, so the
+  restriction carries through. Chatbook is AGPL but never redistributes weights —
+  acquisition is download-on-user-consent — so this is workable, but the consent step
+  must state the non-commercial restriction and the card's anti-impersonation
+  disclaimer explicitly.
+- **Audio tokenizer**: from Boson AI's Higgs Audio 2 under a Llama-3-style community
+  license. The repo already ships a Boson-derived `higgs` TTS backend, so there is
+  precedent; the consent step surfaces this too.
+
+The reference ONNX implementation (github.com/AFun9/Omnivoice-onnx) is
+**unlicensed** — reference-only. We do not copy code from it. It also depends on
+torch/transformers at inference (it monkey-patches the PyTorch `generate()` loop),
+so it is not vendorable even if licensed.
 
 ## Goals
 
@@ -178,6 +184,9 @@ anti-impersonation disclaimer) and the Boson Higgs Audio 2 Community License for
 the tokenizer.
 RAM) and surfaces the dual license (Apache-2.0 LM; Boson Higgs Audio 2 Community
 License for the tokenizer).
+RAM) and surfaces the full license stack: CC-BY-NC LM weights (non-commercial use;
+anti-impersonation disclaimer) and the Boson Higgs Audio 2 Community License for
+the tokenizer.
 
 ### Model resolution
 
@@ -305,6 +314,8 @@ notes. Existing ADRs 023 (registry), 051 (clone assets), 039 (settings ownership
   code and weights) and its GitHub repo — the canonical source to port the
   sampler and prompt logic from; paper: arXiv:2604.00688
 - Apache-2.0 upstream: <https://huggingface.co/k2-fsa/OmniVoice>
+  code, CC-BY-NC weights) and its GitHub repo — the canonical source to port the
+  sampler and prompt logic from; paper: arXiv:2604.00688
 - ADR-023 (TTS adapter registry), ADR-051 (clone reference assets), ADR-039 (TTS
   settings ownership), ADR-080 (machine-memory fit)
 - Prior art in-repo: `TTS/backends/higgs.py`, `TTS/backends/kokoro.py`,
