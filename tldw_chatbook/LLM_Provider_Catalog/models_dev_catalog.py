@@ -25,7 +25,7 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+from ..Utils.atomic_file_ops import atomic_write_text
 
 #: The upstream aggregate catalog.
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -131,14 +131,11 @@ class ModelsDevCache:
 
 
 def _write_cache_file(disk_path: Path, body: Any, etag: str | None) -> None:
-    # TASK-32901: this used to mkstemp/write/os.replace with no flush and no
-    # fsync, so a power loss between the write and writeback published a
-    # zero-length file under the real name -- and `load` treats a corrupt
-    # cache as merely "rejected", so the loss is silent.
     disk_path = Path(disk_path)
     disk_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"etag": etag, "body": body}, ensure_ascii=False)
-    atomic_write_text(disk_path, payload)
+    # private=True keeps the owner-only mode this writer already had.
+    atomic_write_text(disk_path, payload, private=True)
 
 
 def fetch_models_dev(

@@ -1688,3 +1688,23 @@ def test_requeue_still_refuses_a_cancelled_job() -> None:
     registry.mark_cancelled(job.job_id)
 
     assert registry.requeue(job.job_id) is None
+
+
+def test_attach_remote_replaces_the_stored_job_instead_of_mutating_it() -> None:
+    """tier-2 review S05 P3: `attach_remote` was the one mutator that edited
+    the stored dataclass in place, so a listener holding a reference from
+    `iter_jobs_for_listeners()` saw the registry's internals change under it.
+    The module docstring states the opposite contract for every transition.
+    """
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    held = next(iter(registry.iter_jobs_for_listeners()))
+    assert held.job_id == job.job_id
+    assert held.remote_job_id is None
+
+    registry.attach_remote(job.job_id, remote_job_id="99", batch_id="b7")
+
+    assert held.remote_job_id is None
+    assert held.batch_id is None
+    assert registry.get_job(job.job_id).remote_job_id == "99"
+    assert registry.get_job(job.job_id).batch_id == "b7"

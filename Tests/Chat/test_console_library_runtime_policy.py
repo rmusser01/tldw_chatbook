@@ -251,3 +251,26 @@ def test_mismatched_parent_child_authorities_do_not_cross_authenticate():
 
     assert registry.register_builtin_library_provider(child, parent_authority) is False
     assert registry.list_catalog() == []
+
+
+def test_runtime_factory_builds_the_direct_provider_from_a_bare_app():
+    """TASK-32892 P0-1: the runtime-owned factory is the one production uses.
+
+    `ConsoleRuntime.ensure_chat_controller` binds
+    `_library_provider_for_app` over whatever the screen passed, so this
+    function -- not `ConsoleLibraryActivityController.build_provider` -- is
+    what every shipped Console run calls. It passed a `collections_service=`
+    keyword that `LocalLibraryToolService.__init__` stopped accepting in
+    5dd1077df6, so on the DEFAULT configuration (`direct_library_tools`
+    True) it raised `TypeError`, the controller swallowed it into one
+    WARNING, and the agent ran with none of the Library tools.
+    """
+    from tldw_chatbook.Chat.console_runtime import _library_provider_for_app
+
+    app = SimpleNamespace(local_library_collections_service=object())
+    context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
+
+    provider = _library_provider_for_app(app, context)
+
+    assert isinstance(provider, LibraryToolProvider)
+    assert len(provider.list_catalog()) == len(LIBRARY_TOOL_DESCRIPTORS)

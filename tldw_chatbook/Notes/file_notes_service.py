@@ -23,6 +23,10 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionBinding,
     SessionChange,
 )
+from tldw_chatbook.Utils.file_durability import (
+    flush_file,
+    fsync_parent_directory,
+)
 from tldw_chatbook.Utils.path_validation import get_safe_relative_path
 
 if TYPE_CHECKING:
@@ -585,6 +589,12 @@ class FileNotesService:
                 fchmod = getattr(os, "fchmod", None)
                 if fchmod is not None:
                     fchmod(temporary.fileno(), file_mode)
+                # task-32896: not Utils.atomic_file_ops -- that helper
+                # publishes as soon as it has the bytes, leaving no seam for
+                # the content-hash recheck two lines below (nor for the
+                # preserved file mode). The barriers are added in place so
+                # the recheck survives.
+                flush_file(temporary.fileno())
             if fchmod is None:
                 os.chmod(temporary_path, file_mode)
 
@@ -593,6 +603,7 @@ class FileNotesService:
                 return _result("conflict", relative_path, "Disk bytes changed")
             os.replace(temporary_path, path)
             temporary_path = None
+            fsync_parent_directory(path.parent)
         except FileNotFoundError:
             return _result("missing", relative_path)
         except OSError as error:
@@ -762,6 +773,10 @@ class FileNotesService:
                     fchmod = getattr(os, "fchmod", None)
                     if fchmod is not None:
                         fchmod(target.fileno(), stat.S_IMODE(source_stat.st_mode))
+                    # task-32896: not Utils.atomic_file_ops -- this streams
+                    # from an open source fd rather than holding the bytes,
+                    # and rechecks source identity before publishing.
+                    flush_file(target.fileno())
             if fchmod is None:
                 os.chmod(temporary_path, stat.S_IMODE(source_stat.st_mode))
             content_hash = digest.hexdigest()
@@ -795,6 +810,9 @@ class FileNotesService:
                 if error.errno in {errno.ELOOP, errno.ENOTDIR}:
                     return _result("unsafe", destination_path, str(error))
                 return _result("error", destination_path, str(error))
+            # Every handler above returns, so reaching here means the link
+            # published; persist the directory entry that names it.
+            fsync_parent_directory(destination.parent)
         except OSError as error:
             return _result("error", destination_path, str(error))
         finally:

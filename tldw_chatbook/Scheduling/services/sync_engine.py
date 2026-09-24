@@ -263,7 +263,15 @@ class SyncEngine:
                     )
 
     async def pull(self, owner_id: str | None = None) -> None:
-        """Public entry point to pull server reminders for the given owner."""
+        """Public entry point to pull server reminders for the given owner.
+
+        ``owner_id`` is the scope to sync, NOT a product decision: server rows
+        must only ever be mirrored under a ``"server:"`` scope (ADR-077), and
+        the caller that knows which server is connected is
+        ``SchedulingService`` -- see its ``sync_now``/``_active_server_owner_id``
+        (TASK-32892 P0-2). This layer stores under whatever it is handed,
+        because its push half legitimately operates on locally-owned rows.
+        """
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
             return
@@ -346,6 +354,8 @@ class SyncEngine:
             self._record_sync_error(str(exc), target_owner)
 
     async def sync_now(self, owner_id: str | None = None) -> SyncOutcome:
+        # `owner_id` is the scope to sync -- see `pull`'s docstring for why
+        # the "must be a server scope" rule lives on `SchedulingService`.
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
             return SyncOutcome("not_applicable")

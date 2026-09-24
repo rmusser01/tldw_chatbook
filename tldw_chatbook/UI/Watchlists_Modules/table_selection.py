@@ -33,6 +33,7 @@ source, which is what arms `Preview`/`Check now` on arrival.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -133,3 +134,28 @@ def highlight_is_user_driven(event: Any) -> bool:
     """
     table = getattr(event, "data_table", None)
     return bool(table is not None and table.has_focus)
+
+
+def row_with_id(rows: Iterable[Mapping[str, Any]], row_id: str) -> Any:
+    """The first row whose canonical id matches ``row_id``, else ``None``.
+
+    Tier-2 review S21 [D4]: five panes in this package carried a
+    byte-identical copy of this scan (``select_run_by_id``,
+    ``select_item_by_id`` twice, ``select_rule_by_id``,
+    ``select_source_by_id``), and all five of them already import this
+    module. The coercion rule -- ``str(row.get("id") or "")``, so a missing,
+    ``None`` or integer id compares the same way on every pane -- is what
+    this module's own "capture IDENTITY, never a row INDEX" contract rests
+    on, and it has to be ONE rule for that to mean anything.
+
+    Args:
+        rows: The pane's current rows, in display order.
+        row_id: The canonical id to find, already coerced to ``str``.
+
+    Returns:
+        The matching row mapping, or ``None`` when no row carries that id.
+    """
+    for candidate in rows:
+        if str(candidate.get("id") or "") == row_id:
+            return candidate
+    return None

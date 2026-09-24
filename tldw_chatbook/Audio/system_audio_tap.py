@@ -232,11 +232,19 @@ def ensure_helper(
     if swiftc is None:
         return None
     target.parent.mkdir(parents=True, exist_ok=True)
-    result = run(
-        [swiftc, "-O", "-o", str(target), str(helper_source_path()),
-         "-framework", "CoreAudio", "-framework", "AVFoundation"],
-        capture_output=True, text=True,
-    )
+    try:
+        result = run(
+            [swiftc, "-O", "-o", str(target), str(helper_source_path()),
+             "-framework", "CoreAudio", "-framework", "AVFoundation"],
+            capture_output=True, text=True,
+            # This docstring promises never to raise for a failed build, and
+            # a wedged swiftc is a failed build -- `probe` below already
+            # bounds its own pactl call the same way.
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("audiotap helper compile timed out")
+        return None
     if getattr(result, "returncode", 1) != 0 or not target.exists():
         logger.warning(
             "audiotap helper compile failed: {}",

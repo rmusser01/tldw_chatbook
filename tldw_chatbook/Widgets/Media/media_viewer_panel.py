@@ -2029,79 +2029,32 @@ class MediaViewerPanel(Container):
         analysis_version = current_analysis_data.get("version_number", "unsaved")
         analysis_uuid = current_analysis_data.get("uuid", "")
 
-        from textual.widgets import Button, Label
-        from textual.containers import Container, Horizontal
-        from textual.screen import ModalScreen
+        # The confirm dialog used to be a `ModalScreen` subclass defined
+        # INSIDE this worker body, so every Delete press built a fresh type
+        # -- a new `_MessagePumpMeta` `@on` snapshot and a new `DEFAULT_CSS`
+        # registration for the session -- and that one-off dialog had no
+        # BINDINGS, no escape handling and no safe-dismiss, the only modal in
+        # its slice outside the repo's `Widgets/modal_dismissal` convention.
+        # `DeleteConfirmationDialog` is that convention
+        # (`ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool])`),
+        # and it returns its answer through `dismiss(value)` instead of an
+        # instance attribute read back after the await (tier-2 review S23).
+        from ..delete_confirmation_dialog import DeleteConfirmationDialog
 
-        class DeleteConfirmDialog(ModalScreen):
-            """Confirmation dialog for analysis deletion."""
+        confirmed = await self.app.push_screen(
+            DeleteConfirmationDialog(
+                item_type="Analysis",
+                item_name=(
+                    "unsaved"
+                    if analysis_version == "unsaved"
+                    else f"version {analysis_version}"
+                ),
+                permanent=True,
+            ),
+            wait_for_dismiss=True,
+        )
 
-            DEFAULT_CSS = """
-            DeleteConfirmDialog {
-                align: center middle;
-            }
-            
-            DeleteConfirmDialog > Container {
-                width: 60;
-                height: 11;
-                background: $surface;
-                border: thick $primary;
-                padding: 1;
-            }
-            
-            DeleteConfirmDialog .dialog-content {
-                width: 100%;
-                height: auto;
-                content-align: center middle;
-                margin-bottom: 2;
-            }
-            
-            DeleteConfirmDialog .dialog-buttons {
-                layout: horizontal;
-                width: 100%;
-                height: 3;
-                align: center middle;
-            }
-            
-            DeleteConfirmDialog .dialog-buttons Button {
-                margin: 0 1;
-            }
-            """
-
-            def __init__(self, version_number: Any):
-                super().__init__()
-                self.version_number = version_number
-                self.result = False
-
-            def compose(self) -> ComposeResult:
-                with Container():
-                    with Container(classes="dialog-content"):
-                        if self.version_number == "unsaved":
-                            yield Label("Delete this unsaved analysis?")
-                        else:
-                            yield Label(
-                                f"Delete analysis version {self.version_number}?"
-                            )
-                        yield Label("This action cannot be undone.", classes="warning")
-                    with Horizontal(classes="dialog-buttons"):
-                        yield Button("Delete", variant="error", id="confirm-delete")
-                        yield Button("Cancel", variant="default", id="cancel-delete")
-
-            @on(Button.Pressed, "#confirm-delete")
-            def confirm(self) -> None:
-                self.result = True
-                self.dismiss()
-
-            @on(Button.Pressed, "#cancel-delete")
-            def cancel(self) -> None:
-                self.result = False
-                self.dismiss()
-
-        # Show dialog
-        dialog = DeleteConfirmDialog(analysis_version)
-        await self.app.push_screen(dialog, wait_for_dismiss=True)
-
-        if dialog.result:
+        if confirmed:
             # Perform deletion
             if analysis_version != "unsaved" and analysis_uuid:
                 # Delete from database (only if we have a UUID)
