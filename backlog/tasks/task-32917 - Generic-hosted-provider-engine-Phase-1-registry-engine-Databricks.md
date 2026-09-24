@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Robert'
 created_date: '2026-09-24 01:01'
-updated_date: '2026-09-24 17:12'
+updated_date: '2026-09-24 19:30'
 labels: []
 dependencies: []
 ---
@@ -36,5 +36,5 @@ ADR: backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Phase 1 implementation complete (Tasks 1-14). Live gate (Task 14) built and skip-gated; running it needs DATABRICKS_TOKEN + DATABRICKS_HOST — run before marking Done. Plan executed via subagent-driven development; ledger in .superpowers/sdd/2026-09-23-generic-hosted-provider-engine-phase1/progress.md
+Phase 1 implementation complete (Tasks 1-14, 27 commits). LIVE GATE PENDING: maintainer has no Databricks instance available (2026-09-24). Run when workspace access exists: DATABRICKS_TOKEN+DATABRICKS_HOST .venv/bin/python -m pytest -q Tests/Chat/test_live_databricks_api.py -s — settles spec O-1 (listing route), captures response envelope for allowances, confirms native-tools flag. AC 'live-verified' intentionally unchecked; do not mark Done until it runs.
 <!-- SECTION:NOTES:END -->
