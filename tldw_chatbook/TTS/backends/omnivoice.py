@@ -24,6 +24,7 @@ from loguru import logger
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
 from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_ONNX_REQUIRED_PATHS
 from tldw_chatbook.TTS.omnivoice_prompt import (
@@ -54,6 +55,13 @@ _PEAK_CEILING = 0.99  # normalization never clips
 _AUDIO_SUFFIXES = (
     ".wav", ".mp3", ".flac", ".ogg", ".oga", ".m4a", ".mp4", ".opus", ".aac", ".wma",
 )
+
+# Native outputs are wav/pcm; the rest convert through audio_service (kokoro
+# sibling routing). soundfile alone can encode wav/flac; mp3/opus/aac need
+# pydub (+ ffmpeg).
+_NATIVE_FORMATS = ("wav", "pcm")
+_SOUNDFILE_FORMATS = ("wav", "flac")
+_SUPPORTED_FORMATS = ("mp3", "wav", "opus", "aac", "flac", "pcm")
 
 _OPERATION_ID = "omnivoice"
 
@@ -494,6 +502,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         self._cancel = asyncio.Event()
         # Set by _encode_reference under the generation lock (single-flight).
         self._last_reference_rms: float | None = None
+        self.audio_service = get_audio_service()
 
     # -- lifecycle ----------------------------------------------------
 
@@ -530,13 +539,13 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         logger.info("OmniVoiceOnnxTTSBackend: closed")
 
     def get_capabilities(self) -> dict[str, Any]:
-        """Batch-only engine: one WAV/PCM chunk per utterance, cloning on."""
+        """Batch-only engine: one chunk per utterance, cloning on (kokoro set)."""
         return {
             "streaming": False,
             "voice_cloning": True,
             "multi_speaker": False,
             "sample_rate": _SAMPLE_RATE,
-            "formats": ("wav", "pcm"),
+            "formats": list(_SUPPORTED_FORMATS),
         }
 
     # -- generation ---------------------------------------------------
@@ -562,7 +571,9 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         direct ``text``/``voice`` keywords.
 
         Yields:
-            One chunk of WAV bytes (or raw int16 PCM when requested).
+            One chunk of audio bytes in the requested format — native WAV or
+            raw int16 PCM, or any other supported format converted through
+            audio_service.
         """
         if request is not None:
             extra = dict(getattr(request, "extra_params", None) or {})
@@ -660,10 +671,82 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             f"OmniVoiceOnnxTTSBackend: generated {duration:.2f}s of audio "
             f"in {elapsed:.2f}s ({duration / elapsed if elapsed > 0 else 0:.1f}x realtime)"
         )
-        if response_format == "pcm":
+        # Format routing happens after the generation lock (kokoro.py:976
+        # pattern): wav/pcm are native; everything else converts honestly —
+        # no WAV bytes labeled as the requested format.
+        requested_format = str(response_format or "wav").lower()
+        if requested_format == "pcm":
             yield _pcm_bytes(waveform)
-        else:
+        elif requested_format == "wav":
             yield _wav_bytes(waveform, _SAMPLE_RATE)
+        else:
+            yield await self._convert_format(waveform, requested_format)
+
+    async def _convert_format(self, waveform: np.ndarray, target_format: str) -> bytes:
+        """Encode the waveform in a non-native format via audio_service.
+
+        Raises:
+            TTSOperationError: ``request_invalid`` for formats outside the
+                supported set, ``dependency_missing`` when no converter for
+                the format is installed, ``generation_failed`` when the
+                conversion itself fails.
+        """
+        if target_format not in _SUPPORTED_FORMATS:
+            raise TTSOperationError(
+                code="request_invalid",
+                message=(
+                    f"omnivoice: request_invalid — response_format "
+                    f"{target_format!r} is not supported; supported formats: "
+                    f"{', '.join(_SUPPORTED_FORMATS)}"
+                ),
+                retryable=False,
+                operation_id=_OPERATION_ID,
+                recovery_action="choose_supported_format",
+            )
+        if not self._conversion_available(target_format):
+            raise TTSOperationError(
+                code="dependency_missing",
+                message=(
+                    f"omnivoice: dependency_missing — encoding "
+                    f"{target_format!r} needs pydub (plus ffmpeg) or soundfile; "
+                    f"pip install pydub"
+                ),
+                retryable=False,
+                operation_id=_OPERATION_ID,
+                recovery_action="install_conversion_dependency",
+            )
+        try:
+            return await self.audio_service.convert_audio(
+                waveform,
+                target_format,
+                source_format="pcm",
+                sample_rate=_SAMPLE_RATE,
+            )
+        except TTSOperationError:
+            raise
+        except (RuntimeError, ValueError) as e:
+            logger.opt(exception=True).error(
+                f"OmniVoiceOnnxTTSBackend: conversion to {target_format} failed: {e}"
+            )
+            raise TTSOperationError(
+                code="generation_failed",
+                message=f"OmniVoice audio conversion to {target_format!r} failed.",
+                retryable=True,
+                operation_id=_OPERATION_ID,
+                recovery_action="retry",
+            ) from e
+
+    @staticmethod
+    def _conversion_available(target_format: str) -> bool:
+        """Whether audio_service can encode the format in this environment."""
+        from tldw_chatbook.TTS import audio_service as audio_service_module
+
+        if audio_service_module.PYDUB_AVAILABLE:
+            return True
+        return bool(
+            audio_service_module.SOUNDFILE_AVAILABLE
+            and target_format in _SOUNDFILE_FORMATS
+        )
 
     # -- lazy loading -------------------------------------------------
 

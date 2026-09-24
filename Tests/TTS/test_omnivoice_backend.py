@@ -456,6 +456,135 @@ async def test_generate_pcm_format_yields_raw_int16(
     assert chunks[0][:4] != b"RIFF"
 
 
+# --- response-format routing --------------------------------------------------
+
+
+class _StubConvertService:
+    """audio_service stand-in recording the conversion request."""
+
+    def __init__(self, payload: bytes = b"fake-encoded-bytes") -> None:
+        self.payload = payload
+        self.calls: list[dict] = []
+
+    async def convert_audio(self, audio_data, target_format, source_format=None, sample_rate=None):
+        self.calls.append(
+            {
+                "samples": getattr(audio_data, "size", None),
+                "dtype": getattr(audio_data, "dtype", None),
+                "target_format": target_format,
+                "source_format": source_format,
+                "sample_rate": sample_rate,
+            }
+        )
+        return self.payload
+
+
+async def test_generate_mp3_request_converts_via_audio_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The schema-default mp3 request must convert, never WAV-labeled mp3."""
+    from tldw_chatbook.TTS import audio_service as audio_service_module
+    from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch)
+    stub = _StubConvertService(b"ID3-fake-mp3")
+    monkeypatch.setattr(backend, "audio_service", stub)
+    monkeypatch.setattr(audio_service_module, "PYDUB_AVAILABLE", True)
+
+    request = OpenAISpeechRequest(
+        model="omnivoice", input="hello world", voice=""
+        # response_format intentionally left at the schema default: "mp3"
+    )
+    chunks = [c async for c in backend.generate_speech_stream(request)]
+    assert chunks == [b"ID3-fake-mp3"]
+    assert chunks[0][:4] != b"RIFF"
+    # the engine handed the float32 waveform to the converter as 24 kHz pcm
+    (call,) = stub.calls
+    assert call["target_format"] == "mp3"
+    assert call["source_format"] == "pcm"
+    assert call["sample_rate"] == 24000
+    assert call["samples"] > 0
+    assert str(call["dtype"]) == "float32"
+
+
+async def test_generate_conversion_failure_maps_generation_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.TTS import audio_service as audio_service_module
+
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch)
+    monkeypatch.setattr(audio_service_module, "PYDUB_AVAILABLE", True)
+
+    class ExplodingService:
+        async def convert_audio(self, *args, **kwargs):
+            raise RuntimeError("ffmpeg exploded")
+
+    monkeypatch.setattr(backend, "audio_service", ExplodingService())
+    with pytest.raises(TTSOperationError) as err:
+        async for _ in backend.generate_speech_stream(
+            text="hello world", voice="", response_format="mp3"
+        ):
+            pass
+    assert err.value.code == "generation_failed"
+
+
+async def test_unsupported_format_maps_request_invalid() -> None:
+    backend = OmniVoiceOnnxTTSBackend({})
+    with pytest.raises(TTSOperationError) as err:
+        await backend._convert_format(np.zeros(8, dtype=np.float32), "wma")
+    assert err.value.code == "request_invalid"
+    assert "mp3" in str(err.value)
+    assert "wav" in str(err.value)
+
+
+async def test_generate_flac_converts_with_real_audio_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.TTS import audio_service as audio_service_module
+
+    if audio_service_module.PYDUB_AVAILABLE or not audio_service_module.SOUNDFILE_AVAILABLE:
+        pytest.skip("requires the soundfile-only conversion path")
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch)
+    chunks = [
+        c
+        async for c in backend.generate_speech_stream(
+            text="hello world", voice="", response_format="flac"
+        )
+    ]
+    assert len(chunks) == 1
+    assert chunks[0][:4] == b"fLaC"
+
+
+async def test_generate_mp3_without_converter_maps_dependency_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.TTS import audio_service as audio_service_module
+
+    if audio_service_module.PYDUB_AVAILABLE:
+        pytest.skip("requires the soundfile-only conversion path")
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch)
+    with pytest.raises(TTSOperationError) as err:
+        async for _ in backend.generate_speech_stream(
+            text="hello world", voice="", response_format="mp3"
+        ):
+            pass
+    assert err.value.code == "dependency_missing"
+
+
+def test_capabilities_advertise_supported_formats() -> None:
+    backend = OmniVoiceOnnxTTSBackend({})
+    formats = backend.get_capabilities()["formats"]
+    assert set(formats) == {"mp3", "wav", "opus", "aac", "flac", "pcm"}
+
+
 # --- lifecycle hygiene --------------------------------------------------------
 
 
