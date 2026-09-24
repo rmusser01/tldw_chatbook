@@ -11237,11 +11237,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 593,
+    "owner_files": 594,
     "path_privacy_candidate_calls": 685,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
     "task_492_calls": 1360,
-    "task_494_calls": 7505
+    "task_494_calls": 7507
   }
 }
