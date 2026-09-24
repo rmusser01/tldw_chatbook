@@ -25,6 +25,12 @@ def test_api_settings_databricks_defaults():
     # The workspace host is per-account: the shipped table must NOT pin an
     # api_base_url (DATABRICKS.default_base_url is None).
     assert "api_base_url" not in parsed["api_settings"]["databricks"]
+    # No shipped default model either: a PRESENT-but-blank value would fail
+    # closed at engine resolution (only the UNSET key resolves to the
+    # payload-gated ""), so the key must be absent, matching
+    # settings_defaults (Task 12 review fix).
+    assert "model" not in parsed["api_settings"]["databricks"]
+    assert "model" not in DATABRICKS.settings_defaults
 
 
 def test_databricks_classified_cloud():

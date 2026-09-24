@@ -4338,9 +4338,12 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.databricks] # Matches key in [providers]; values mirror provider_registry.DATABRICKS.settings_defaults (ADR-179)
     # Databricks Model Serving / AI Gateway. The workspace host is
     # per-account, so NO api_base_url ships here: the user configures their
-    # workspace URL (the engine appends the /openai/v1 suffix).
+    # workspace URL (the engine appends the /openai/v1 suffix). No `model`
+    # key ships either: served models are workspace-configured and fill via
+    # discovery/seeding — a PRESENT-but-blank value would be rejected by the
+    # engine resolver (present-but-blank settings fail closed; only the
+    # UNSET key resolves to the payload-gated ""), so the key stays absent.
     api_key_env_var = "DATABRICKS_TOKEN"
-    model = "" # No universal default: served models are workspace-configured
     timeout = 90
     retries = 3
     retry_delay = 5.0

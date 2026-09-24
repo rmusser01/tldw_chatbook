@@ -89,7 +89,10 @@ DATABRICKS = ProviderRecord(
     auto_refresh=True,
     settings_defaults={
         "api_key_env_var": "DATABRICKS_TOKEN",
-        "model": "",
+        # No "model" key: served models are workspace-configured and fill via
+        # discovery/seeding. The resolver's unset path yields "" (payload-
+        # gated); a shipped present-but-blank value would fail closed at
+        # resolution, so the key stays absent (Task 12 review fix).
         "streaming": True,
         "timeout": 90,
         "retries": 3,
