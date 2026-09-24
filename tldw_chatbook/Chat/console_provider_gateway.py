@@ -163,12 +163,16 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatTurn,
     ReasoningDisposition,
 )
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    HostedPresetFinishPolicy,
+)
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
 )
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -241,6 +245,41 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
         "zai": ZAIFinishPolicy,
     }
 )
+_FinishPolicy = (
+    type[MoonshotFinishPolicy] | type[ZAIFinishPolicy] | HostedPresetFinishPolicy
+)
+_RESOLVED_FINISH_POLICIES: dict[str, _FinishPolicy] = {}
+
+
+def resolve_finish_policy(key: str) -> _FinishPolicy | None:
+    """Resolve one provider key's hosted thinking finish policy.
+
+    Generic gateway entry (ADR-179): hand-written provider policies win via
+    the static map; engine-driven registry presets resolve to a stateless
+    ``HostedPresetFinishPolicy`` built from their record; every other key
+    resolves to ``None`` (thinking disposition stays ``"ignored"``).
+    Resolved policies are cached per key because they are stateless.
+
+    Args:
+        key: Normalized (stripped, lowercased) provider execution key.
+
+    Returns:
+        The finish policy for hosted thinking round-trips, or ``None`` when
+        the key has no hosted thinking policy.
+    """
+    cached = _RESOLVED_FINISH_POLICIES.get(key)
+    if cached is not None:
+        return cached
+    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    if policy is None:
+        record = RECORDS_BY_KEY.get(key)
+        if record is None or not record.engine_driven:
+            return None
+        policy = HostedPresetFinishPolicy(record)
+    _RESOLVED_FINISH_POLICIES[key] = policy
+    return policy
+
+
 _AdapterResult = TypeVar("_AdapterResult")
 
 
@@ -432,7 +471,7 @@ def _thinking_stream_capability(
                 THINKING_ENVELOPE_VERSION if disposition == "displayable" else None
             ),
         }
-    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    policy = resolve_finish_policy(key)
     disposition: ReasoningDisposition = (
         policy.reasoning_disposition if policy is not None else "ignored"
     )
