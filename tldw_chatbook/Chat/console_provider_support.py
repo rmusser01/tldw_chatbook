@@ -114,11 +114,27 @@ def _provider_display_name(provider_key: str) -> str:
 
 # ADR-066: per-execution-key wire formats for Console thinking controls.
 # Level = reasoning_effort; budget = thinking_budget_tokens.
+CUSTOM_OPENAI_EXECUTION_KEYS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2", "custom-hosted"}
+)
+"""The custom-endpoint family's execution keys (ADR-179 Phase 2 Task 6).
+
+Every gateway/trace surface keyed on the custom family's EXECUTION keys
+must consume THIS constant, never a bare literal set: the engine swap
+routes ``openai_compatible`` custom-ep entries through ``custom-hosted``,
+and a literal set would drop the swapped key from base-URL forwarding,
+credential decisions, and thinking support in one silent step. Identity
+surfaces (aliases, readiness maps, dispatch registration) keep their own
+spellings -- they key on ``custom``/``custom-ep:<slug>``, which
+``family_execution_key`` resolves to the legacy slots
+(ADR-179 Phase 2 Task 6 decision 1). Guarded by the literal-grep test
+``Tests/Chat/test_custom_openai_execution_keys_constant.py``.
+"""
 _LLAMA_CPP_THINKING_KEYS = frozenset(
     {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
 )
 _VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
-_CUSTOM_OPENAI_THINKING_KEYS = frozenset({"custom-openai-api", "custom-openai-api-2"})
+_CUSTOM_OPENAI_THINKING_KEYS = CUSTOM_OPENAI_EXECUTION_KEYS
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
 _TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})

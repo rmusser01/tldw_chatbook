@@ -131,6 +131,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
@@ -228,9 +229,11 @@ def _max_trace_accumulated_bytes() -> int:
 
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
-_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
-    {"custom-openai-api", "custom-openai-api-2"}
-)
+# ADR-179 Phase 2 Task 6: the whole custom execution family (including the
+# swapped engine key) decides credentials at the gateway and passes
+# ``api_key_resolved`` -- without membership here the swapped key's
+# ``api_key_resolved`` is never sent.
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = CUSTOM_OPENAI_EXECUTION_KEYS
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -6807,13 +6810,11 @@ class ConsoleProviderGateway:
                 ]
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
             "vllm",
             "local_vllm",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_base_url"] = resolution.base_url or None
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
@@ -6889,11 +6890,9 @@ class ConsoleProviderGateway:
             kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             # These adapters otherwise consult process-global config after
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the

@@ -41,13 +41,15 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         # OpenAI shape and translate canonical assistant/tool continuation.
         # Joined Console tests exercise the real dispatcher and HTTP boundary.
         "qwencloud",
+        # ADR-179 Phase 2 Task 6: the whole custom execution family (the
+        # legacy slots and the swapped engine key) forwards OpenAI tools
+        # and returns the raw OpenAI-compatible response shape. Kept as
+        # literals (not the shared custom-keys constant) because this
+        # module is deliberately pure -- no provider imports; membership
+        # is guarded by the registry parity test
+        # (NATIVE_TOOLS_PROVIDERS == provider_registry.NATIVE_TOOLS_KEYS).
         "custom-openai-api",
         "custom-openai-api-2",
-        # ADR-179 Phase 2 Task 6: the swapped custom-endpoint execution key
-        # forwards OpenAI tools and returns the raw OpenAI-compatible
-        # response shape through the hosted engine exactly as the legacy
-        # custom handlers did (registry parity keeps this set equal to
-        # provider_registry.NATIVE_TOOLS_KEYS).
         "custom-hosted",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
         # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
