@@ -1,25 +1,26 @@
 """Per-server inventory of unknown keys at each closed allowlist level,
 computed by set difference from captured fixtures. Empty sets are valid.
-Tasks 4/6 must drive every long-tail inventory to acceptance under the
-custom profile, and cloud inventories into preset allowances — the SAME
-fixtures replayed through BOTH parsers (non-streaming body AND the
-ordered stream events) once the widening lands."""
+Task 4's flip: every long-tail inventory parses under the custom profile
+(tolerant + the logprobs/stop_reason choice allowances) through the
+engine's own path — BOTH parsers (non-streaming body AND the ordered
+stream events). Cloud fixtures flip in Task 5, under preset allowances."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
 
-from tldw_chatbook.LLM_Calls.hosted_chat import (
-    HostedChatProtocolError,
-    HostedChatStream,
-    HostedChatTurn,
-    normalize_hosted_chat_response,
-)
+from tldw_chatbook.LLM_Calls import hosted_provider_engine
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    HostedProviderResolution,
+    HostedProviderStream,
+)
+from tldw_chatbook.provider_registry import DATABRICKS
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "longtail"
 
@@ -131,55 +132,70 @@ def stream_inventory(fixture: dict[str, Any]) -> dict[str, frozenset[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Replay helpers — Task 4 flips these from "either outcome" scaffolding to
-# acceptance assertions (every long-tail body AND stream must parse under
-# the widened custom profile).
+# Task 4 flip: every captured long-tail body AND stream must parse clean
+# under the custom profile (tolerant + the logprobs/stop_reason choice
+# allowances) through the ENGINE's own path — factory transport
+# construction, HostedPresetFinishPolicy, and both response wrappers.
 # ---------------------------------------------------------------------------
 
-
-class _StrictFinishPolicy:
-    """Mirror of the strict finish/reasoning policy used by hosted_chat tests."""
-
-    reasoning_disposition = "ignored"
-
-    def validate_finish(
-        self, *, finish_reason: object, has_text: bool, has_calls: bool
-    ) -> str:
-        if finish_reason not in {"stop", "tool_calls", "length"}:
-            raise HostedChatProtocolError("finish state is malformed")
-        if (finish_reason == "tool_calls") != has_calls:
-            raise HostedChatProtocolError("finish state conflicts with calls")
-        if finish_reason == "stop" and not has_text:
-            raise HostedChatProtocolError("finish state has no text")
-        return str(finish_reason)
-
-    def validate_reasoning_content(self, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise HostedChatProtocolError("reasoning is malformed")
-        return value
+# The synthetic custom profile: exactly the record shape Task 6's real
+# CUSTOM_HOSTED will ship (tolerant + the two fixture-known non-null choice
+# allowances). The future record's shape is pinned via this synthetic only.
+_CUSTOM_PROFILE = replace(
+    DATABRICKS,
+    tolerant_response_extras=True,
+    choice_allowances=frozenset({"logprobs", "stop_reason"}),
+)
 
 
-_REPLAY_POLICY = _StrictFinishPolicy()
+def _custom_profile_resolution(streaming: bool) -> HostedProviderResolution:
+    return HostedProviderResolution(
+        provider="databricks",  # the synthetic keeps Databricks' key
+        model="longtail",
+        api_key="secret",
+        base_url="http://127.0.0.1/v1",
+        timeout=10.0,
+        retries=0,
+        retry_delay=0.0,
+        streaming=streaming,
+    )
 
 
-def replay_body(body: dict[str, Any]) -> HostedChatTurn:
-    """Replay one captured body through the current strict parser.
+def replay_under_custom_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    body: dict[str, Any] | None = None,
+    stream_events: list[str] | None = None,
+) -> Any:
+    """Replay one captured envelope through the engine under the custom profile.
 
-    Raises HostedChatProtocolError while any unknown key remains outside
-    the closed allowlists; Task 4 asserts acceptance instead.
+    Monkeypatches the resolver/transport the handler-test way, so the replay
+    exercises the engine's own factory transport construction and response
+    wrappers — not a hand-built HostedChatStream.
     """
-    return normalize_hosted_chat_response(body, finish_policy=_REPLAY_POLICY)
-
-
-def replay_stream(events: list[str]) -> HostedChatTurn:
-    """Replay the captured ordered SSE payloads through the strict stream parser."""
-    records = iter([SSERecord(event=None, data=payload) for payload in events])
-    stream = HostedChatStream(records, finish_policy=_REPLAY_POLICY)
-    for _ in stream:
-        pass
-    return stream.terminal_turn
+    streaming = stream_events is not None
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda _record, **_kwargs: _custom_profile_resolution(streaming),
+    )
+    if streaming:
+        records = iter(
+            [SSERecord(event=None, data=payload) for payload in stream_events]
+        )
+        monkeypatch.setattr(
+            hosted_provider_engine, "owned_json_post", lambda **_kwargs: records
+        )
+    else:
+        monkeypatch.setattr(
+            hosted_provider_engine, "owned_json_post", lambda **_kwargs: body
+        )
+    handler = hosted_provider_engine.build_hosted_chat_handler(_CUSTOM_PROFILE)
+    return handler(
+        input_data=[{"role": "user", "content": "Say ok."}],
+        api_key="secret",
+        streaming=streaming,
+    )
 
 
 @pytest.fixture(params=[p.stem for p in load_fixtures()], ids=lambda s: s)
@@ -226,28 +242,47 @@ def test_fixture_loader_rejects_degraded_stream_evidence(tmp_path: Path) -> None
         _fixture(unterminated)
 
 
-def test_replay_scaffolding_exercises_current_parser(server_fixture: dict[str, Any]) -> None:
-    """Replay both parsers today: outcome is either a turn or a protocol error.
-
-    Deliberately tautological for now (either outcome passes): its job is to
-    keep the replay helpers exercised until Task 4 replaces the
-    tolerate-both branch with real acceptance assertions.
-    """
-    body_outcomes: list[str] = []
+def test_longtail_bodies_parse_under_the_custom_profile(
+    server_fixture: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every captured body (plain + tool) parses through the engine under
+    the custom profile: tolerant extras dropped (llama-server ``timings``,
+    ollama tool-call ``index``), allowlisted choice extras dropped, and the
+    tool-call turns keep their calls with extras stripped."""
     for field in ("chat_response", "tool_call_response"):
         body = server_fixture.get(field)
         if not isinstance(body, dict):
             continue
-        try:
-            replay_body(body)
-            body_outcomes.append("turn")
-        except HostedChatProtocolError:
-            body_outcomes.append("protocol-error")
-    assert body_outcomes, "fixture must carry at least one replayable body"
+        result = replay_under_custom_profile(monkeypatch, body=body)
+        expected_reason = body["choices"][0]["finish_reason"]
+        assert result["choices"][0]["finish_reason"] == expected_reason
+        assert result.terminal_turn.finish_reason == expected_reason
+        message = result["choices"][0]["message"]
+        if expected_reason == "tool_calls":
+            # Controller ruling (a): ollama's call objects carry an extra
+            # ``index``; the normalized calls keep id/type/function only.
+            assert message["tool_calls"]
+            for call in message["tool_calls"]:
+                assert set(call) == {"id", "type", "function"}
 
-    try:
-        replay_stream(list(server_fixture.get("stream_events") or []))
-        stream_outcome = "turn"
-    except HostedChatProtocolError:
-        stream_outcome = "protocol-error"
-    assert stream_outcome in {"turn", "protocol-error"}
+
+def test_longtail_streams_parse_under_the_custom_profile(
+    server_fixture: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every captured ordered stream replays to a clean terminal turn.
+
+    Both long-tail servers terminate without a usage frame (controller
+    ruling b): the tolerant profile turns that into a usage-None turn, not
+    the "terminated before required metadata" failure. llama-server's
+    terminal-event ``timings`` rides the tolerant event-level drop.
+    """
+    stream = replay_under_custom_profile(
+        monkeypatch, stream_events=list(server_fixture["stream_events"])
+    )
+    assert isinstance(stream, HostedProviderStream)
+    frames = list(stream)
+    assert frames, "every captured event must replay as a visible frame"
+    terminal = stream.terminal_turn
+    assert terminal.finish_reason == "stop"
+    assert terminal.text, "the captured plain-turn streams carry content"
+    assert terminal.usage is None

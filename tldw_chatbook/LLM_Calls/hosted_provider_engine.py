@@ -65,6 +65,16 @@ hosted provider engine and presets design, "Data flow" step 4):
   from visible deltas unconditionally (its disposition is proprietary).
 - ``record.response_allowances`` feed the shared hosted boundary's tolerated
   extra top-level response/stream keys (Task 3 seam).
+- Phase 2 Task 4: ``record.choice_allowances``/``record.message_allowances``
+  subtract at the choice and message/delta levels (value rule: null, scalar,
+  or shape-safe mapping -- validated then dropped), and
+  ``record.tolerant_response_extras`` (custom family only) switches the
+  fixture-gated long-tail tolerant profile: shape-safe unknown top/event
+  keys dropped; null-valued unknown choice/message keys dropped (non-null
+  ones still fail closed unless level-allowlisted); tool-call objects may
+  carry extra keys (id/type/function stay mandatory); a stream terminal
+  without usage becomes a usage-None turn; and the finish policy accepts
+  stop/length with empty text and no calls (legacy empty reply).
 - The stream wrapper's continuation candidate is built against the record's
   key/protocol; the canonical-format parse round-trip admits the
   continuation ``_PAIRINGS`` providers, which Task 7 widened with
@@ -829,7 +839,13 @@ class HostedPresetFinishPolicy:
                 raise HostedChatProtocolError(
                     f"{record.display_name} finish state is inconsistent."
                 )
-        elif has_calls or not has_text:
+        elif has_calls or (
+            not has_text and not record.tolerant_response_extras
+        ):
+            # Tolerant profile (custom family, ADR-179 Phase 2): stop/length
+            # with empty text and no calls is the legacy empty reply -- an
+            # empty-text turn, not a failure. stop/length WITH calls and
+            # tool_calls WITHOUT calls still fail closed above/here.
             raise HostedChatProtocolError(
                 f"{record.display_name} finish state is inconsistent."
             )
@@ -917,6 +933,9 @@ def normalize_hosted_provider_response(
             safe,
             finish_policy=HostedPresetFinishPolicy(record),
             allowed_extra_keys=record.response_allowances,
+            allowed_choice_keys=record.choice_allowances,
+            allowed_message_keys=record.message_allowances,
+            tolerant_top_level_extras=record.tolerant_response_extras,
         )
     except ChatProviderError:
         raise
@@ -1306,6 +1325,9 @@ def _send_hosted_chat_request(
                     cast(Iterator[Any], raw),
                     finish_policy=HostedPresetFinishPolicy(record),
                     allowed_extra_keys=record.response_allowances,
+                    allowed_choice_keys=record.choice_allowances,
+                    allowed_message_keys=record.message_allowances,
+                    tolerant_top_level_extras=record.tolerant_response_extras,
                 ),
                 record=record,
                 resolution=resolution,

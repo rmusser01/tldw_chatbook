@@ -68,7 +68,25 @@ class ProviderRecord:
     )
     reasoning_effort_key: str | None = None
     extra_body_fields: Mapping[str, object] = field(default_factory=dict)
+    # Tolerated extra response/stream keys, LEVEL-KEYED (ADR-179 Phase 2):
+    # ``response_allowances`` keeps its Phase 1 meaning (top-level response
+    # and stream-event keys only); ``choice_allowances`` subtracts at the
+    # choice level (body and stream choice); ``message_allowances`` at the
+    # message/delta level. Level-allowlisted values follow the value rule
+    # (null, scalar, or shape-safe mapping), validated then dropped -- never
+    # passed through to the normalized turn. Existing strict presets
+    # (moonshot/zai byte-identity) ship all three empty.
     response_allowances: frozenset[str] = frozenset()
+    choice_allowances: frozenset[str] = frozenset()
+    message_allowances: frozenset[str] = frozenset()
+    # Long-tail tolerant profile (custom family only, ADR-179 Phase 2,
+    # fixture-gated): shape-safe unknown top/event keys dropped; null-valued
+    # unknown choice/message keys dropped (non-null ones still fail closed
+    # unless level-allowlisted); tool-call objects may carry extra keys
+    # (id/type/function stay mandatory); a stream terminal without usage
+    # becomes a usage-None turn; the engine finish policy accepts stop/
+    # length with empty text and no calls (legacy empty reply).
+    tolerant_response_extras: bool = False
     reasoning_disposition: str = "ignored"
     # Auth contract of the engine's credential resolution and transport:
     # "bearer" hard-requires a key (a missing key is an actionable

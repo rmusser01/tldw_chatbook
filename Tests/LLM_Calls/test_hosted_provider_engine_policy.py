@@ -48,6 +48,14 @@ _PROVIDER_ERRORS = replace(
         {"sensitive", "model_context_window_exceeded", "network_error"}
     ),
 )
+# Phase 2 Task 4 synthetic custom profile: the exact shape Task 6's real
+# CUSTOM_HOSTED record will ship (tolerant + the two fixture-known non-null
+# choice allowances). Pins the future record via the synthetic only.
+_TOLERANT = replace(
+    DATABRICKS,
+    tolerant_response_extras=True,
+    choice_allowances=frozenset({"logprobs", "stop_reason"}),
+)
 
 
 # --- finish policy (brief's tests + ported zai policy tests) ---
@@ -198,6 +206,100 @@ def test_response_allowances_flow_through_the_shared_boundary():
     allowed = replace(DATABRICKS, response_allowances=frozenset({"databricks_field"}))
     turn = normalize_hosted_provider_response(allowed, response)
     assert turn.text == "Answer"
+    assert turn.finish_reason == "stop"
+
+
+# --- Phase 2 Task 4: tolerant finish branch + level-keyed plumb-through ---
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_tolerant_finish_policy_accepts_empty_text_without_calls(finish_reason):
+    """Legacy empty-reply behavior for the custom family: stop/length with
+    no text and no calls is an empty-text turn, not a protocol failure."""
+    policy = HostedPresetFinishPolicy(_TOLERANT)
+    assert (
+        policy.validate_finish(
+            finish_reason=finish_reason, has_text=False, has_calls=False
+        )
+        == finish_reason
+    )
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_tolerant_finish_policy_still_fails_calls_conflicts(finish_reason):
+    policy = HostedPresetFinishPolicy(_TOLERANT)
+    with pytest.raises(HostedChatProtocolError):
+        policy.validate_finish(
+            finish_reason=finish_reason, has_text=False, has_calls=True
+        )
+
+
+def test_tolerant_finish_policy_still_fails_tool_calls_without_calls():
+    policy = HostedPresetFinishPolicy(_TOLERANT)
+    with pytest.raises(HostedChatProtocolError):
+        policy.validate_finish(
+            finish_reason="tool_calls", has_text=True, has_calls=False
+        )
+
+
+def test_tolerant_finish_policy_still_fails_non_terminal_reasons():
+    policy = HostedPresetFinishPolicy(_TOLERANT)
+    with pytest.raises(HostedChatProtocolError):
+        policy.validate_finish(
+            finish_reason="content_filter", has_text=False, has_calls=False
+        )
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_strict_finish_policy_still_rejects_empty_text(finish_reason):
+    """Default (non-tolerant) records keep the Phase 1 byte-identical
+    behavior: an empty-text stop/length finish is a protocol failure."""
+    with pytest.raises(HostedChatProtocolError):
+        HostedPresetFinishPolicy(DATABRICKS).validate_finish(
+            finish_reason=finish_reason, has_text=False, has_calls=False
+        )
+
+
+def test_engine_response_plumbs_tolerant_profile_and_level_allowances():
+    response = {
+        "id": "chatcmpl-x",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "qwen",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Ok."},
+                "finish_reason": "stop",
+                "logprobs": None,
+                "stop_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+        "timings": {"prompt_ms": 20.5},  # llama-server top-level extra
+    }
+
+    with pytest.raises(ChatProviderError):
+        normalize_hosted_provider_response(DATABRICKS, response)
+
+    turn = normalize_hosted_provider_response(_TOLERANT, response)
+    assert turn.text == "Ok."
+    assert turn.finish_reason == "stop"
+    assert set(turn.assistant_message) == {"role", "content"}
+
+
+def test_engine_tolerant_response_accepts_legacy_empty_text_stop():
+    response = {
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": ""},
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    turn = normalize_hosted_provider_response(_TOLERANT, response)
+    assert turn.text == ""
     assert turn.finish_reason == "stop"
 
 
