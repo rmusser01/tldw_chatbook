@@ -53,6 +53,7 @@ from .items_pane import (
     NextUnreadRequested,
     RefreshItemsRequested,
 )
+from .table_selection import row_with_id
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -948,12 +949,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
 
     def select_item_by_id(self, item_id: str) -> None:
         """Select the item with the given id and notify listeners."""
-        item = None
-        for candidate in self.items:
-            if str(candidate.get("id") or "") == item_id:
-                item = candidate
-                break
-        self.selected_item = item
+        self.selected_item = row_with_id(self.items, item_id)
 
     def displayed_items(self) -> list[dict[str, Any]]:
         """The items actually rendered as rows right now (headers excluded).

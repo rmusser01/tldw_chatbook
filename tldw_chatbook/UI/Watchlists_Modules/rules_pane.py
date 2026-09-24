@@ -11,7 +11,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
-from .table_selection import highlight_is_user_driven
+from .table_selection import highlight_is_user_driven, row_with_id
 
 
 class RuleSelected(Message):
@@ -260,12 +260,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
 
     def select_rule_by_id(self, rule_id: str) -> None:
         """Select the rule with the given id and notify listeners."""
-        rule = None
-        for candidate in self.rules:
-            if str(candidate.get("id") or "") == rule_id:
-                rule = candidate
-                break
-        self.selected_rule = rule
+        self.selected_rule = row_with_id(self.rules, rule_id)
 
     def watch_selected_rule(self, rule: dict[str, Any] | None) -> None:
         if self.is_mounted:

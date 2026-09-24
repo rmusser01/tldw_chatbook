@@ -4873,9 +4873,20 @@ class LocalMediaReadingService:
             "GIT_ALLOW_PROTOCOL": "https:ssh",
             "GIT_PROTOCOL_FROM_USER": "0",
         }
-        completed = subprocess.run(
-            command, capture_output=True, text=True, check=False, env=clone_env
-        )
+        try:
+            # A clone against a hostile or merely unreachable host otherwise
+            # pins the calling worker thread forever; 10 minutes is well past
+            # any legitimate --depth 1 clone.
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=clone_env,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("git clone timed out") from exc
         if completed.returncode != 0:
             message = (
                 completed.stderr.strip()

@@ -2542,6 +2542,14 @@ class EvalsScreen(LabScreen):
         finished_ok = False
         db: Optional[EvalsDB] = None
         run_id: Optional[str] = None
+        #: Set the instant the persistence thread is handed the work. Moving
+        #: persistence onto `asyncio.to_thread` introduced an await point
+        #: where there was none, so a worker cancellation (screen teardown)
+        #: can now land WHILE the thread is writing -- and that thread cannot
+        #: be stopped, so `save_report`'s own status stamp still lands. The
+        #: `except asyncio.CancelledError` stamp below must not race it with
+        #: a contradictory "cancelled".
+        persist_started = False
         try:
             db = self._view_model.db
             if db is None:
@@ -2604,44 +2612,107 @@ class EvalsScreen(LabScreen):
                 ),
                 progress=self._on_skill_eval_progress,
             )
-            if runner.judge_result is not None:
-                for artifact in runner.judge_result.artifacts:
-                    save_artifact(db, run_id, artifact)
-            if runner.sim_result is not None:
-                for cell in runner.sim_result.cells:
-                    # Qodo F8: map every cell field explicitly --
-                    # ``save_artifact`` persists only sample_id/input/raw/
-                    # parsed/kind, so spreading the raw cell dropped its
-                    # prompt_index/repeat/activated/error evidence.
-                    save_artifact(
-                        db,
-                        run_id,
-                        {
-                            "sample_id": (
-                                f"sim-{cell['prompt_index']}-{cell['repeat']}"
-                            ),
-                            "kind": "sim",
-                            "input": {
-                                "prompt_index": cell["prompt_index"],
-                                "repeat": cell["repeat"],
-                            },
-                            "parsed": {
-                                "activated": cell["activated"],
-                                "error": cell["error"],
-                            },
-                            "raw": str(cell.get("raw") or ""),
-                        },
-                    )
             status = "cancelled" if cancel_token.is_cancelled else "completed"
-            save_report(db, run_id, report, status=status)
+
+            def _persist() -> None:
+                """Every `eval_results` row + the report, on ONE thread.
+
+                Tier-2 review S18. `save_artifact` -> `EvalsDB.store_result`
+                opens `with self.connection(): with conn:` -- one committed
+                transaction per call -- and a deep run persists 16 judge
+                cells plus `deep_sim_total` (50) sim cells. Measured on a
+                file-backed `EvalsDB`: 66 serial `store_result` calls cost
+                108-137 ms, i.e. 7-8 dropped frames of frozen UI at the end
+                of every deep run, because this worker is a plain coroutine
+                (`run_worker(self._run_skill_eval_worker, ...)`, no
+                `thread=True`) and so runs on the event loop. `EvalsDB`
+                keeps `threading.local` connections opened with
+                `check_same_thread=False`, so the hop is safe as-is; nothing
+                in this closure touches the DOM.
+                """
+                if runner.judge_result is not None:
+                    for artifact in runner.judge_result.artifacts:
+                        save_artifact(db, run_id, artifact)
+                if runner.sim_result is not None:
+                    for cell in runner.sim_result.cells:
+                        # Qodo F8: map every cell field explicitly --
+                        # ``save_artifact`` persists only sample_id/input/raw/
+                        # parsed/kind, so spreading the raw cell dropped its
+                        # prompt_index/repeat/activated/error evidence.
+                        save_artifact(
+                            db,
+                            run_id,
+                            {
+                                "sample_id": (
+                                    f"sim-{cell['prompt_index']}-{cell['repeat']}"
+                                ),
+                                "kind": "sim",
+                                "input": {
+                                    "prompt_index": cell["prompt_index"],
+                                    "repeat": cell["repeat"],
+                                },
+                                "parsed": {
+                                    "activated": cell["activated"],
+                                    "error": cell["error"],
+                                },
+                                "raw": str(cell.get("raw") or ""),
+                            },
+                        )
+                save_report(db, run_id, report, status=status)
+
+            def _persistence_outcome(done: "asyncio.Future[None]") -> None:
+                """Retrieve an orphaned persistence failure so it is logged.
+
+                Only reachable when the await below was cancelled and the
+                shielded write then failed on its own; without this the
+                exception is never retrieved and asyncio merely warns.
+                """
+                if done.cancelled():
+                    return
+                failure = done.exception()
+                if failure is not None:
+                    # Type only -- see the `except Exception` clause below.
+                    logger.warning(
+                        "Skill eval persistence failed "
+                        "(exception_category={}).",
+                        type(failure).__name__,
+                    )
+
+            persist_started = True
+            if db.is_memory_db:
+                # `EvalsDB` hands each thread its own `threading.local`
+                # connection, and for `:memory:` a new connection is a new,
+                # EMPTY database -- measured directly: 20 tables on the
+                # calling thread, 0 on an `asyncio.to_thread` worker, so the
+                # first `save_artifact` died with `OperationalError` and the
+                # run never reached a terminal status. The hop exists to keep
+                # 108-137 ms of *file* I/O off the loop; an in-memory store
+                # has no such cost, so it stays on this thread.
+                _persist()
+            else:
+                # Shielded: cancelling this await does NOT cancel the work.
+                # `asyncio.to_thread` submits to an executor, and a
+                # `concurrent.futures.Future` still sitting in the queue
+                # cancels successfully -- so an unshielded teardown could
+                # discard the write entirely, leaving the run stuck at
+                # `running` forever while the clause below skipped its stamp.
+                # Shielding lets the thread finish and write its own terminal
+                # status, which is what `persist_started` already assumes.
+                persistence = asyncio.ensure_future(asyncio.to_thread(_persist))
+                persistence.add_done_callback(_persistence_outcome)
+                await asyncio.shield(persistence)
             finished_ok = True
         except asyncio.CancelledError:
             # Re-raised, never swallowed -- Textual's worker bookkeeping
             # needs to observe the real cancellation (the character
             # worker's identical clause's own rule). Stamping is
-            # best-effort first: no report exists on this path, so the
-            # stamp is the bare run-status update.
-            if run_id is not None and db is not None:
+            # best-effort first: on this path no report has been written, so
+            # the stamp is the bare run-status update -- UNLESS the
+            # cancellation landed on the persistence await, in which case the
+            # thread is still running and `save_report` writes the real
+            # status itself. Stamping "cancelled" over it would be a second,
+            # unordered writer contradicting a run that did complete.
+            if run_id is not None and db is not None and not persist_started:
                 try:
                     db.update_run(run_id, {"status": "cancelled"})
                 except Exception:

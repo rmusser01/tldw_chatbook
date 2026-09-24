@@ -486,6 +486,15 @@ async def _default_process_launcher(
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # TASK-32892 P0-3: session leader, so this managed child is
+            # never collateral of a process-group signal aimed at the
+            # app's own group (the six in-repo precedents do the same).
+            # TASK-32892: deliberately NO start_new_session here. This teardown
+            # kills only the direct child (terminate/kill, no killpg), so the
+            # flag would buy no extra reach while removing the terminal process
+            # group's SIGHUP/SIGINT -- currently the only thing reaping a
+            # grandchild. The flag and a group kill have to land together;
+            # audio_player.py has the killpg, which is why it keeps the flag.
         )
     finally:
         _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)

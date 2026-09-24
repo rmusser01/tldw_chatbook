@@ -14,7 +14,20 @@ _MODEL_ID_MAX_CHARS = 120
 class ModelDiscoveryCache:
     """Store discovered model snapshots by provider key and endpoint fingerprint."""
 
-    def __init__(self, *, max_snapshots: int = 128, max_models: int = 4096) -> None:
+    # TASK-32925: 2x DISCOVERED_MODEL_MAX_COUNT, so one full-size catalog
+    # cannot evict every other provider's snapshot.
+    def __init__(self, *, max_snapshots: int = 128, max_models: int = 8192) -> None:
+        """Create an empty cache with snapshot and total-model bounds.
+
+        Args:
+            max_snapshots: Most provider/endpoint snapshots kept (1-4096);
+                the oldest is evicted past this.
+            max_models: Most models kept across all snapshots (1-100,000);
+                the oldest snapshots are evicted past this.
+
+        Raises:
+            ValueError: If either bound is not an int within its range.
+        """
         if type(max_snapshots) is not int or not 1 <= max_snapshots <= 4096:
             raise ValueError("max_snapshots is invalid")
         if type(max_models) is not int or not 1 <= max_models <= 100_000:

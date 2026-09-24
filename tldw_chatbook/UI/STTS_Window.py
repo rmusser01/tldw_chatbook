@@ -48,6 +48,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
 )
 from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.UI.Speech.speech_effects_pane import SpeechEffectsPane
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenStudioPreferencesRequested,
@@ -1432,7 +1433,17 @@ class AudioBookGenerationWidget(Widget):
 
             # Log preview generation
             log = self.query_one("#audiobook-generation-log", RichLog)
-            log.write(f"[yellow]Generating preview for: {chapter.title}[/yellow]")
+            # `escape_markup`: this RichLog is `markup=True` (see compose),
+            # so `RichLog._make_renderable` runs the whole line through
+            # `Text.from_markup`. Chapter titles come from chapter detection
+            # over imported text -- "Chapter 3 [draft]" loses that segment
+            # silently, and a title containing "[/" raises `MarkupError`,
+            # which this method's own `except` turns into "Failed to
+            # generate preview" with no preview produced at all.
+            log.write(
+                f"[yellow]Generating preview for: "
+                f"{escape_markup(chapter.title)}[/yellow]"
+            )
 
             # Create TTS request event
             from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (

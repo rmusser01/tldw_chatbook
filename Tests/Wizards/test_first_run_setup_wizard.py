@@ -2,7 +2,7 @@
 
 import inspect
 import json
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -9636,6 +9636,47 @@ async def test_rag_step_commit_reads_pressed_radio_without_changed_event():
 
 
 @pytest.mark.asyncio
+async def test_rag_step_survives_a_markup_shaped_embedding_model_id():
+    """tier-2 review S21 P3: embedding model ids come from the user's
+    `[embedding_config] models` table and were fed straight to a
+    markup-parsing `RadioButton` label, then read back out of it. A `[dim]`
+    segment silently vanished from the committed config; a `[/]` one raised
+    `MarkupError` out of `compose()`.
+    """
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    hostile = "embed-[dim]-v1"
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "embedding_config": {"models": {hostile: {}, "embed-[/]-v2": {}}}
+            }
+        ),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
+        deps_installed=lambda: True,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-rag-model-choice", RadioSet)
+        target = next(
+            button for button in radio_set.query(RadioButton) if button.name == hostile
+        )
+        radio_set._pressed_button = target
+
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"embedding_config": {"default_model_id": hostile}}
+
+
+@pytest.mark.asyncio
 async def test_tools_step_commits_only_changed_gates():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -13304,3 +13345,29 @@ def test_handed_off_failure_category_survives_a_malformed_outcome():
     owner = SimpleNamespace(_selected_provider_outcomes={key: object()})
 
     assert _handed_off_failure_category(owner, key) == "request failed"
+
+
+def test_provider_connection_ui_draft_cannot_be_pickled():
+    """tier-2 review S21 P3: the wizard's own "memory-only" draft sealed
+    `copy`/`deepcopy` but not `pickle`, so `pickle.dumps` emitted the
+    plaintext API key. Its sibling `ProviderCredentialDraft` seals all four.
+    """
+    import pickle
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _ProviderConnectionUiDraft,
+    )
+
+    secret = "sk-ui-draft-secret"
+    draft = _ProviderConnectionUiDraft(endpoint="http://x", api_key=secret)
+
+    assert secret not in repr(draft)
+    for operation in (
+        lambda: copy(draft),
+        lambda: deepcopy(draft),
+        lambda: pickle.dumps(draft),
+        lambda: pickle.dumps(draft, protocol=2),
+    ):
+        with pytest.raises(TypeError, match="memory-only") as exc_info:
+            operation()
+        assert secret not in str(exc_info.value)

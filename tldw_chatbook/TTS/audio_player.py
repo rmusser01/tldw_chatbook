@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+import os
 import subprocess
 import platform
 import shutil
@@ -147,6 +148,44 @@ class AudioPlayerInfo:
     total_pause_duration: float = 0.0  # Total time spent paused
     duration: Optional[float] = None  # Total duration of the file
     position: float = 0.0  # Current playback position in seconds
+
+
+def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
+    """SIGKILL a wedged player's process group -- never the app's own.
+
+    TASK-32892 P0-3. A `Popen` child started without `start_new_session`
+    inherits OUR process group, so `killpg(getpgid(child.pid))` is suicide:
+    it takes down the TUI (and the terminal's whole foreground group) with
+    no shutdown, no `close_tts_resources()`, no DB quiesce. `play()`'s three
+    spawn sites now detach, and this refuses the signal anyway when the group
+    still resolves to ours -- the same belt-and-braces pairing
+    `Event_Handlers/LLM_Management_Events/server_lifecycle.py`
+    `_signal_server_process_group` uses (TASK-32806.5).
+
+    Args:
+        process: The wedged player handle, if any.
+    """
+    if os.name != "posix":
+        return
+    import signal
+
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError) as exc:
+        logger.debug(f"Failed to resolve player process group: {exc}")
+        return
+    if pgid <= 0 or pgid == os.getpgrp():
+        logger.warning(
+            f"Refusing to SIGKILL process group {pgid}: it is the app's own"
+        )
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError) as exc:
+        logger.debug(f"Failed to kill process group: {exc}")
 
 
 class SimpleAudioPlayer:
@@ -346,7 +385,13 @@ class SimpleAudioPlayer:
                     ]
                     self._mpv_socket = socket_path
                     self._current.process = subprocess.Popen(
-                        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        # TASK-32892 P0-3: session leader, so the child's
+                        # pid IS its group id and `stop()`'s last-resort
+                        # `killpg` cannot resolve to the APP's own group.
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=(os.name == "posix"),
                     )
                 elif self._player_name == "mplayer":
                     # For mplayer slave mode, we need pipes
@@ -355,10 +400,14 @@ class SimpleAudioPlayer:
                         stdin=subprocess.PIPE,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
+                        start_new_session=(os.name == "posix"),
                     )
                 else:
                     self._current.process = subprocess.Popen(
-                        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=(os.name == "posix"),
                     )
 
                 self._current.file_path = file_path
@@ -549,16 +598,7 @@ class SimpleAudioPlayer:
                             logger.warning("Process kill timed out")
                             # For macOS, try using os.killpg if process is stuck
                             if self._system == "Darwin":
-                                try:
-                                    import os
-                                    import signal
-
-                                    os.killpg(
-                                        os.getpgid(self._current.process.pid),
-                                        signal.SIGKILL,
-                                    )
-                                except Exception as e:
-                                    logger.debug(f"Failed to kill process group: {e}")
+                                _kill_player_process_group(self._current.process)
                     except Exception as e:
                         logger.error(f"Error stopping playback: {e}")
                     finally:

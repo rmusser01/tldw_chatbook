@@ -8,6 +8,7 @@ e-books, etc.) without going through the UI, leveraging existing processing capa
 
 import json
 import math
+import os
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -523,6 +524,99 @@ _TEXT_CHUNK_TYPES = frozenset(
 # call shape or keyless dispatch -- so the OCR text is analyzed by this
 # module's shared chat_api_call tail like plaintext/html.
 _TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article", "image"})
+
+
+#: Ceiling applied when ``media_processing.max_text_file_size_mb`` is absent,
+#: unset, or unusable.
+DEFAULT_TEXT_FILE_SIZE_MB = 50
+#: Upper bound accepted from config. Not a policy on the user's own disk, just
+#: a floor under "this number is a typo": past it the setting has stopped
+#: expressing a memory ceiling at all.
+MAX_TEXT_FILE_SIZE_MB = 1_000_000
+
+
+def max_text_file_bytes() -> int:
+    """Return the whole-file read ceiling for text-shaped ingest sources.
+
+    Symmetric with ``LocalAudioProcessor``/``LocalVideoProcessor``, which read
+    ``media_processing.max_audio_file_size_mb`` (500) and
+    ``media_processing.max_video_file_size_mb`` (2000) the same way, including
+    the explicit ``None`` fallback for a config key present but unset.
+
+    An unusable value falls back to ``DEFAULT_TEXT_FILE_SIZE_MB`` with a
+    warning rather than propagating: a bare ``int(max_mb)`` raised on
+    non-numeric text -- on every plaintext, HTML and MOBI read -- and accepted
+    ``0`` or a negative, which refuses every file the user ever offers while
+    looking like a working configuration.
+
+    Returns:
+        The cap in bytes.
+    """
+    from ..config import get_cli_setting
+    from ..Utils.input_validation import validate_bounded_integer
+
+    max_mb = get_cli_setting(
+        "media_processing.max_text_file_size_mb", DEFAULT_TEXT_FILE_SIZE_MB
+    )
+    if max_mb is None:
+        max_mb = DEFAULT_TEXT_FILE_SIZE_MB
+    try:
+        max_mb = validate_bounded_integer(
+            max_mb, minimum=1, maximum=MAX_TEXT_FILE_SIZE_MB
+        )
+    except ValueError as exc:
+        # The offending value is echoed so the user can find their typo, but
+        # LENGTH-BOUNDED: this is a persistent sink and the key holds whatever
+        # text config.toml happens to contain.
+        logger.warning(
+            "media_processing.max_text_file_size_mb is unusable "
+            f"({max_mb!r:.60}: {exc}); falling back to "
+            f"{DEFAULT_TEXT_FILE_SIZE_MB} MB."
+        )
+        max_mb = DEFAULT_TEXT_FILE_SIZE_MB
+    return max_mb * 1024 * 1024
+
+
+def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
+    """Read a text-shaped ingest file whole, refusing anything over the cap.
+
+    ``Path.read_bytes()`` on an ingest path is unbounded: plaintext and HTML
+    were read entirely into memory with no ceiling at all, while the audio and
+    video processors beside them have had one for their own sources all along.
+
+    The ceiling binds the READ, not a preceding size report: the file is
+    opened once, ``fstat``-ed through that same descriptor as a fast refusal
+    for the ordinary oversize case, and then read with an explicit bound. A
+    pathname ``stat()`` followed by ``read_bytes()`` measured one object and
+    consumed another, so a file appended to in between -- ingesting a log that
+    is still being written, no attacker required -- went past the ceiling.
+
+    Args:
+        file_path: Path to the file to read.
+
+    Returns:
+        The file's bytes, never more than the configured cap.
+
+    Raises:
+        FileIngestionError: The file is larger than the configured cap. Message
+            shape matches the audio/video limit errors verbatim.
+    """
+    path = Path(file_path)
+    max_bytes = max_text_file_bytes()
+    with path.open("rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > max_bytes:
+            raise FileIngestionError(
+                f"File size ({size / (1024 * 1024):.2f} MB) exceeds limit"
+            )
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        # It grew under us. ``len(data)`` is a floor on its real size, which is
+        # all the message needs and all we are willing to read to find out.
+        raise FileIngestionError(
+            f"File size ({len(data) / (1024 * 1024):.2f} MB) exceeds limit"
+        )
+    return data
 
 
 def _decode_ingest_text(
@@ -1486,7 +1580,7 @@ def parse_local_file_for_ingest(
             # the old "chunking will be handled by the database" comment
             # described a placeholder that never chunked anything.
             content, decode_warnings = _decode_ingest_text(
-                file_path.read_bytes(), encoding
+                read_ingest_file_bytes(file_path), encoding
             )
 
             # Simple result structure for plaintext
@@ -1512,7 +1606,7 @@ def parse_local_file_for_ingest(
             # (task-3301) Decoded per the form's Encoding selection -- the
             # old strict-utf-8 open failed the whole job on latin-1 bytes.
             html_content, decode_warnings = _decode_ingest_text(
-                file_path.read_bytes(), encoding
+                read_ingest_file_bytes(file_path), encoding
             )
 
             # Parse HTML and extract text
