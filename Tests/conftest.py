@@ -1138,6 +1138,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+            # ADR-179 Task 4: the engine resolution suite drives
+            # resolve_hosted_request without app_config on its preset-rule
+            # cases, which reads get_runtime_config_snapshot on the guarded
+            # config loader (same admission signature as test_hosted_chat.py
+            # above).
+            "test_hosted_provider_engine_resolution.py",
         }
     )
     test_data_dir = (
