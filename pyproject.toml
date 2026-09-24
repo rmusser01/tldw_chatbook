@@ -285,6 +285,11 @@ higgs_tts = [
     "soundfile",  # For audio file I/O
     "transformers",  # For tokenization and text processing
 ]
+omnivoice_tts = [
+    "onnxruntime",  # ONNX engine sessions (LM / encoder / decoder)
+    "tokenizers>=0.20,<1",  # loads tokenizer.json without transformers
+    "numpy",  # sampling loop + audio post-processing (base dep, restated)
+]
 nemo = [
     "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
     "torch",  # Required by NeMo
