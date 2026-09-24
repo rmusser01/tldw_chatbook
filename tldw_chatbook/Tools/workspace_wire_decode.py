@@ -21,8 +21,9 @@ from typing import Any
 WIRE_VERSION = 1
 
 # Mirrors ``Tools/git_tool_impls.GIT_MAX_OUTPUT_BYTES``. Kept as a literal
-# because this module must not import tldw_chatbook code; the parent's
-# protocol tests exercise the ceiling relationship independently.
+# because this module must not import tldw_chatbook code; the literals are
+# pinned to the live domain constants by
+# ``Tests/Tools/test_workspace_wire_decode.py::test_wire_cap_literals_match_live_domain_constants``.
 _GIT_MAX_OUTPUT_BYTES = 1_000_000
 # Mirrors ``Tools/patch_tool_impls.PATCH_MAX_BYTES`` / ``PATCH_MAX_FILES``
 # (same literal-only rule as above).

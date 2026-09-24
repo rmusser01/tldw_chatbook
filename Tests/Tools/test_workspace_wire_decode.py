@@ -18,6 +18,8 @@ from typing import Any, Callable
 import pytest
 
 from tldw_chatbook.Tools import workspace_wire_decode as wire_module
+from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
+from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES, PATCH_MAX_FILES
 from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceProtocolError,
     WorkspaceToolRequest,
@@ -584,6 +586,25 @@ def test_response_rejects_malformed_bytes(mangle: Callable[[bytes], bytes]) -> N
 def test_response_rejects_non_bytes_input() -> None:
     with pytest.raises(WireDecodeError):
         decode_response('{"version": 1}')  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Shared-constant parity with the live domain caps
+# ---------------------------------------------------------------------------
+
+
+def test_wire_cap_literals_match_live_domain_constants() -> None:
+    """Pin the decoder's mirrored cap literals to the live domain constants.
+
+    The decoder must not import tldw_chatbook modules (worker bundle), so
+    the patch/git caps are mirrored as literals. Without this guard a
+    domain-cap bump would silently split the parent/decoder accept/reject
+    boundary for large patches or oversized responses.
+    """
+    assert wire_module._PATCH_MAX_BYTES == PATCH_MAX_BYTES
+    assert wire_module._PATCH_MAX_FILES == PATCH_MAX_FILES
+    assert wire_module._GIT_MAX_OUTPUT_BYTES == GIT_MAX_OUTPUT_BYTES
+    assert wire_module.MAX_RESPONSE_BYTES == (GIT_MAX_OUTPUT_BYTES * 6) + (64 * 1024)
 
 
 # ---------------------------------------------------------------------------
