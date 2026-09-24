@@ -267,13 +267,6 @@ def _read_normalized_wav(path: Path) -> tuple[array[float], float]:
     return array("f", (sample / 32768.0 for sample in samples)), frame_count / 16_000
 
 
-#: Ceiling on the one-file ffmpeg conversion to 16 kHz mono PCM. ffmpeg on a
-#: malformed or truncated container can block indefinitely; the repo's own
-#: precedent for a named per-module constant is
-#: `Media_Playback/stream_resolve.py`'s `YTDLP_TIMEOUT_SECONDS`.
-FFMPEG_CONVERT_TIMEOUT_SECONDS = 600
-
-
 def _pcm_16k_mono(
     audio_path: Path,
     *,

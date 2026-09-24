@@ -29,7 +29,6 @@ from . import dictionary_file_participants as dictionary_files
 from . import mcp_source_participants as mcp_sources
 from . import settings_file_participants as settings_files
 from . import storage_admission as storage
-from .native_platform import flush_directory, flush_file
 from .profile_paths import lexical_path, user_data_dir
 
 
@@ -901,19 +900,6 @@ def _file(operation, path, mode):
                 state.uncertain = True
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
             state.files.remove(text)
-            if mode in {"w", "a"}:
-                # Atomic is not durable. TextIOWrapper.close only flushed to
-                # the page cache (closefd=False keeps the descriptor), so
-                # without this the following os.replace publishes a NAME whose
-                # inode is not yet committed -- an empty or truncated live
-                # config after a crash, with nothing in the journal to say so.
-                # Every sibling publication path in this package pairs
-                # flush_file with flush_directory; this one had neither.
-                try:
-                    flush_file(fd)
-                except BaseException:
-                    state.uncertain = True
-                    raise
     finally:
         # closefd=False makes descriptor lifetime independent of wrapper GC.
         if native is not None and not native.closed:

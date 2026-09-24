@@ -259,9 +259,6 @@ def ensure_helper(
             [swiftc, "-O", "-o", str(target), str(helper_source_path()),
              "-framework", "CoreAudio", "-framework", "AVFoundation"],
             capture_output=True, text=True,
-            # This docstring promises never to raise for a failed build, and
-            # a wedged swiftc is a failed build -- `probe` below already
-            # bounds its own pactl call the same way.
             timeout=SWIFTC_COMPILE_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
