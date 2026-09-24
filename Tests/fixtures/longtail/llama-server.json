@@ -1,0 +1,103 @@
+{
+  "server": "llama-server",
+  "base_url": "http://127.0.0.1:8901",
+  "chat_response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Ok! How can I assist you today?"
+        }
+      }
+    ],
+    "created": 1790283265,
+    "model": "/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515",
+    "system_fingerprint": "b11146-7fe450e19",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 10,
+      "prompt_tokens": 32,
+      "total_tokens": 42,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "id": "chatcmpl-iNdY3e6w6Nf3Y38unEst0ctfey6c1cHx",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 32,
+      "prompt_ms": 20.462,
+      "prompt_per_token_ms": 0.6394375,
+      "prompt_per_second": 1563.8744990714495,
+      "predicted_n": 10,
+      "predicted_ms": 28.369,
+      "predicted_per_token_ms": 3.152111111111111,
+      "predicted_per_second": 317.24769995417535
+    }
+  },
+  "tool_call_response": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Tokyo\"}"
+              },
+              "id": "SfbwarcHrLpOQugS59EptzGfMOPJGtvb"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1790283265,
+    "model": "/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515",
+    "system_fingerprint": "b11146-7fe450e19",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 21,
+      "prompt_tokens": 179,
+      "total_tokens": 200,
+      "prompt_tokens_details": {
+        "cached_tokens": 18
+      }
+    },
+    "id": "chatcmpl-xsciS0Y0TFVpoW9RgZ3P4VIRvVI3SCFi",
+    "timings": {
+      "cache_n": 18,
+      "prompt_n": 161,
+      "prompt_ms": 78.22,
+      "prompt_per_token_ms": 0.4858385093167702,
+      "prompt_per_second": 2058.2971107133726,
+      "predicted_n": 21,
+      "predicted_ms": 50.214,
+      "predicted_per_token_ms": 2.5107,
+      "predicted_per_second": 398.29529613255266
+    }
+  },
+  "stream_events": [
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\"Ok\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\",\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" what\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" can\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" I\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" help\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" you\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\" with\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"content\":\"?\"}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\"}",
+    "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{}}],\"created\":1790283265,\"id\":\"chatcmpl-DQ9fska1DFrNia40RmmxlqnhhEAlNAyR\",\"model\":\"/Users/macbook-dev/.ollama/models/blobs/sha256-c5396e06af294bd101b30dce59131a76d2b773e76950acc870eda801d3ab0515\",\"system_fingerprint\":\"b11146-7fe450e19\",\"object\":\"chat.completion.chunk\",\"timings\":{\"cache_n\":31,\"prompt_n\":1,\"prompt_ms\":2.721,\"prompt_per_token_ms\":2.721,\"prompt_per_second\":367.5119441381845,\"predicted_n\":10,\"predicted_ms\":22.159,\"predicted_per_token_ms\":2.462111111111111,\"predicted_per_second\":406.15551243287155}}",
+    "[DONE]"
+  ],
+  "models_response": null,
+  "captured_at": "2026-09-24T20:54:25+00:00",
+  "capture_cmd": "curl -s http://127.0.0.1:8901/v1/chat/completions -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"Say ok.\"}],\"max_tokens\":32}'"
+}
