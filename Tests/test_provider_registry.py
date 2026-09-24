@@ -24,9 +24,9 @@ def test_records_unique_and_complete():
 
 
 def test_audited_set_matches_handlers():
-    # Until Task 8 flips the derivation, the literal set lacks "databricks"
-    # (the registry already includes it). Compare excluding it.
-    assert SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS == AUDITED_ENDPOINT_KEYS - {"databricks"}
+    # Since Task 8 the audited set is derived from the registry (ADR-179),
+    # so it tracks AUDITED_ENDPOINT_KEYS exactly.
+    assert SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS == AUDITED_ENDPOINT_KEYS
 
 
 def test_cloud_classification_matches_config():

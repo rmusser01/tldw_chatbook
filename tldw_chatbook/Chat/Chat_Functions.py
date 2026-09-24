@@ -78,6 +78,13 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_mlx_lm,
 )
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (  # noqa: E402
+    build_hosted_chat_handler,
+)
+from tldw_chatbook.provider_registry import (  # noqa: E402
+    AUDITED_ENDPOINT_KEYS,
+    DATABRICKS,
+)
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
@@ -131,6 +138,7 @@ API_CALL_HANDLERS = {
     "moonshot": chat_with_moonshot,
     "zai": chat_with_zai,
     "qwencloud": chat_with_qwencloud,
+    "databricks": build_hosted_chat_handler(DATABRICKS),
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
@@ -183,49 +191,42 @@ def _project_instruction_messages_for_handler(
     ]
 
 
-# Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
-# The parity test then forces every newly registered chat handler through the
+# Kept explicit via the provider registry (ADR-179): the set is registry-
+# derived (every canonical dispatch key plus its legacy aliases), and the
+# parity test still forces every newly registered chat handler through the
 # sensitive auxiliary-request audit before it can silently join the dispatch
 # surface.
-SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(
-    {
-        "openai",
-        "anthropic",
-        "cohere",
-        "groq",
-        "openrouter",
-        "deepseek",
-        "mistral",
-        "mistralai",
-        "google",
-        "huggingface",
-        "moonshot",
-        "zai",
-        "qwencloud",
-        "llama_cpp",
-        "koboldcpp",
-        "oobabooga",
-        "tabbyapi",
-        "vllm",
-        "local-llm",
-        "ollama",
-        "aphrodite",
-        "custom-openai-api",
-        "custom-openai-api-2",
-        "mlx_lm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "local_mlx_lm",
-    }
-)
+SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(AUDITED_ENDPOINT_KEYS)
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
 corresponding handler functions (e.g., `chat_with_openai`). This is used by
 `chat_api_call` to route requests to the appropriate LLM provider.
 FIXME: The mappings and handlers should be validated for correctness.
 """
+
+# Shared parameter map for engine-driven providers (ADR-179): the zai-parity
+# key set, verified against the ``build_hosted_chat_handler`` closure signature
+# (provider-invented kwargs such as ``do_sample``/``request_id`` are not mapped).
+ENGINE_PROVIDER_PARAM_MAP = {
+    "api_key": "api_key",
+    "messages_payload": "input_data",
+    "temp": "temp",
+    "system_message": "system_message",
+    "streaming": "streaming",
+    "maxp": "maxp",  # maps to top_p
+    "model": "model",
+    "max_tokens": "max_tokens",
+    "tools": "tools",
+    "tool_choice": "tool_choice",
+    "stop": "stop",
+    "response_format": "response_format",
+    "user_identifier": "user",
+    "reasoning_effort": "reasoning_effort",
+    "provider_continuations": "provider_continuations",
+    "request_timeout": "request_timeout",
+    "request_retries": "request_retries",
+    "request_retry_delay": "request_retry_delay",
+}
 
 # 2. Parameter mapping for each provider
 # Maps generic chat_api_call param name to provider-specific param name
@@ -819,26 +820,8 @@ PROVIDER_PARAM_MAP = {
         "request_retries": "request_retries",
         "request_retry_delay": "request_retry_delay",
     },
-    "zai": {
-        "api_key": "api_key",
-        "messages_payload": "input_data",
-        "temp": "temp",
-        "system_message": "system_message",
-        "streaming": "streaming",
-        "maxp": "maxp",  # maps to top_p
-        "model": "model",
-        "max_tokens": "max_tokens",
-        "tools": "tools",
-        "tool_choice": "tool_choice",
-        "stop": "stop",
-        "response_format": "response_format",
-        "user_identifier": "user",
-        "reasoning_effort": "reasoning_effort",
-        "provider_continuations": "provider_continuations",
-        "request_timeout": "request_timeout",
-        "request_retries": "request_retries",
-        "request_retry_delay": "request_retry_delay",
-    },
+    "zai": ENGINE_PROVIDER_PARAM_MAP,
+    "databricks": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 """
