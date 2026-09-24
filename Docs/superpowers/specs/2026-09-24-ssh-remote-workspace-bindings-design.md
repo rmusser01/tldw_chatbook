@@ -12,6 +12,10 @@ origin/dev at merge time.** Interacts with (by filename):
 `069-console-project-instruction-local-state-and-preflight`,
 `101/102` (pinned-worker seam), `174` (workspace binding exclusions — not
 173, which is the UTC-timestamp decision on dev).
+Status: Draft (pending review)
+Related ADR: ADR-181 (to be created with this design; confirm the next free
+number at planning — 179 and 180 are claimed). Amends no ADR; interacts with
+ADR-005, ADR-028, ADR-032, ADR-069, ADR-101/102, ADR-173.
 
 ## Problem
 
@@ -63,6 +67,19 @@ local bindings or scratch.
   Each tool call runs a transient python3 process whose code arrives over
   the SSH session's stdin and vanishes with it. (ControlMaster sockets live
   on the laptop, not the server.)
+  toggle and CAS read-before-write stamps. Tools execute **server-side**.
+- The remote binding can be selected as the Console working folder, so
+  AGENTS.md / AGENTS.override.md load from it under all existing ADR-068/069
+  rules (byte caps, untrusted content, activation ledger, first-use consent).
+- **Availability guarantee** (the core requirement, with a named regression
+  test): an unreachable, auth-failing, or timing-out remote binding is
+  excluded from the run's admitted roots; sends still compose; local
+  bindings and scratch keep working; the context note says the remote root
+  was excluded and why.
+- Nothing is installed, persisted, or left behind on the server: each tool
+  call runs a transient python3 process whose code arrives over the SSH
+  session's stdin and vanishes with it. (ControlMaster sockets live on the
+  laptop, not the server.)
 - Chatbook stores no SSH credentials. Authentication is fully delegated to
   the user's ssh-agent / `~/.ssh/config` (BatchMode; never prompt).
 - Server prerequisites: sshd with exec, and `python3` ≥ 3.10 (overridable
@@ -80,6 +97,8 @@ local bindings or scratch.
   per-root change-review setup work; since no finalization actions exist for
   remote rows in v1, capturing rows nobody can act on is noise. SSH bindings
   fire no change-review setup and capture nothing in v1.
+- Change-review **finalization actions** (revert/keep/apply) on remote rows
+  — rows may be captured (see Decision), but finalization is deferred.
 - RAG indexing of remote roots; background status polling; remote-side
   bundle caching; credential storage or management of any kind.
 - Accepting `ssh://…` URIs as path arguments (no second path grammar —
@@ -173,6 +192,45 @@ excludes the binding from the run exactly like a missing local folder.
   host nesting/duplicate checks become correct. Fresh `ssh -G` resolution
   happens only on add, edit, manual refresh, and workspace open (async) —
   never in the send path.
+local fork. Per tool call, chatbook spawns
+`ssh <target> [mux options] -- python3 -I -c '<bootstrap>'`, writes a
+**zlib-compressed, stdlib-only worker bundle** followed by the standard
+length-prefixed `WorkspaceToolRequest` frame to the subprocess's stdin, and
+reads the framed `WorkspaceToolResponse` from stdout (magic-prefixed to
+survive noisy remote shell rc files). The worker pins the remote root
+(`O_DIRECTORY|O_NOFOLLOW`, `fchdir`, `(st_dev, st_ino)` identity) exactly as
+the local worker does — from the worker's perspective the remote root *is* a
+local filesystem, so pinning, confinement, atomic writes, and CAS identity
+checks all keep their current semantics and run server-side.
+
+Warm connections come from OpenSSH ControlMaster multiplexing that chatbook
+manages on the laptop. Availability is the existing per-binding status
+model: a cheap `ping` op maps to `READY` / `BLOCKED` (unreachable) /
+`MISSING` (reachable, root path gone), status is cached and refreshed
+lazily, and **run composition reads cache only — the dispatch hot path
+never touches the network or spawns a subprocess**. Degradation excludes the
+binding from the run exactly like a missing local folder.
+
+## Binding model & data layer
+
+- New `RuntimeBindingKind.SSH_FILESYSTEM = "ssh-filesystem"`. The
+  `workspace_runtime_bindings` table already stores `binding_kind` as text —
+  **no schema migration**. An SSH binding is a row with a different kind,
+  locator, and metadata. Bindings remain device-local (the workspaces DB is
+  local), and `save_runtime_binding`'s default-workspace rejection applies
+  unchanged.
+- **Locator**: `ssh://[user@]host[:port]/absolute/path`. The host may be an
+  `~/.ssh/config` alias; user/port/jumps resolve through the user's config.
+- **Canonical locator** (fingerprint source): computed at add/edit time via
+  `ssh -G <target>` — the config-**expanded symbolic** identity (HostName as
+  written in config, port, user, host lowercased; never DNS-resolved to an
+  IP) plus the normalized path. Stored with the binding; dispatch compares
+  stored fingerprint vs. binding row as a pure local string compare.
+  Benefits: cosmetic alias edits don't trip re-consent; a config change that
+  actually moves the destination does (ADR-069 retarget semantics);
+  same-host nesting/duplicate checks become correct. Fresh `ssh -G`
+  re-resolution happens only on add, edit, manual refresh, and workspace
+  open (async) — never in the send path.
 - **Registry**: `add_ssh_binding(workspace_id, target, path, *,
   allow_write=False)` mirroring `add_folder_binding` — absolute POSIX path
   required (no `~`), nesting/overlap checks only between SSH bindings on
@@ -202,6 +260,13 @@ excludes the binding from the run exactly like a missing local folder.
     sh/bash/zsh/fish/csh quoting.
 - **Status semantics** (recomputed lazily like local bindings; reason
   strings live in the ephemeral layer):
+  `{"access": "rw"|"ro", "python": "python3"}`. **Charset validation** on
+  user/host/port/interpreter (conservative `[A-Za-z0-9_./-]`-style classes;
+  no spaces, quotes, or shell metacharacters) because these values cross a
+  remote shell command line. `scrub_secret_metadata` discipline unchanged:
+  no credentials in metadata, ever.
+- **Status semantics** (recomputed lazily like local bindings; never
+  persisted as durable truth — reason strings live in the ephemeral layer):
 
   | Probe (ping op) result | Status | Effect |
   |---|---|---|
@@ -215,6 +280,9 @@ excludes the binding from the run exactly like a missing local folder.
   cache admits the binding; a dead host costs one typed mid-run error and
   flips the cache to BLOCKED for subsequent sends. This matches the
   availability-first posture and the op-outcome learning below.
+  | Connection/auth/timeout, python missing, pin refused | `BLOCKED` | excluded from run roots; reason surfaced ("unreachable", "host lacks python3", "root rejected: symlink") |
+  | Connects, root path absent | `MISSING` | excluded; "missing on host" |
+
 - **Selected working folder + failures**: fingerprint mismatch or `MISSING`
   → explicit re-selection (ADR-069 consistency). `BLOCKED` (transient
   network) → the dispatch degrades to scratch + local bindings with a
@@ -305,6 +373,10 @@ loudly at the type boundary until migrated. The migrations:
   recreated-root case), reports MISSING if the root is gone, or BLOCKED
   "root rejected" if the root genuinely will not pin. A swapped symlink
   is still caught: it fails the pin within the run, every time.
+- **Status cache learning**: op outcomes feed the cache — a
+  transport-classified failure flips the binding to `BLOCKED` immediately;
+  any successful op or probe flips it back. Degradation compounds
+  send-to-send without polling.
 
 ## Transport & executor
 
@@ -455,6 +527,42 @@ loudly at the type boundary until migrated. The migrations:
   tool error with status unchanged (see the watchdog and status-learning
   rules). Every call and probe has the hard process-side deadline with
   process-group kill (the hooks system's established pattern).
+- **Spawn** (per call):
+  `ssh <resolved-target> -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ControlMaster=auto -o ControlPath=<app-state>/ssh-cm/%C -o ControlPersist=<cfg> -- <python> -I -c '<bootstrap>'`
+  — then stdin carries: N bytes of zlib-compressed bundle, then the framed
+  request. The bootstrap is
+  `import sys,zlib;exec(compile(zlib.decompress(sys.stdin.buffer.read(N)),"b","exec"))`.
+  N is embedded as a literal by the executor.
+- **Shell safety**: the bootstrap charset is restricted (letters, digits,
+  `. , ( ) " ; _`) so it stays literal under sh/bash/zsh/fish/csh quoting;
+  enforced by test. Target/interpreter charsets validated at add time.
+  Bundle bytes travel via stdin — invisible to `ps` on the server and never
+  shell-parsed. `ServerAlive*` options make a laptop sleep/wake stale master
+  self-reap in ~30s; the per-call hard deadline is the backstop;
+  `ControlMaster=auto` recovers with a fresh master.
+- **Stdout contamination**: the worker's response begins with a fixed magic
+  byte sequence; the executor skips leading stdout bytes until the magic
+  (garbage cap ~4KB → typed "remote shell emits stdout noise" error with a
+  hint to guard `.bashrc`). Debian/Ubuntu source `.bashrc` for
+  `ssh host cmd`; unguarded rc files otherwise corrupt framing.
+- **Bundle**: committed, build-time-generated single file
+  (`Tools/remote_worker_bundle.py`) assembled from the existing protocol
+  framing, root pinning, `local_tool_impls` core, dispatch, and
+  sensitive-path modules by `Tools/build_remote_worker_bundle.py`.
+  Constraints: **stdlib-only**, python ≥ 3.10 floor, reads frames only from
+  the same buffered stdin stream the bootstrap used (build script emits the
+  IO entry point to take the stream as an argument). Compression ~4:1 puts
+  per-call overhead at ~40KB. A **drift-guard test** rebuilds and diffs, and
+  scans for 3.11+ stdlib imports (`tomllib`, `typing.Self`,
+  `asyncio.TaskGroup`, …) so the floor is enforced, not documented. Each
+  call logs the bundle hash for audit.
+- **New `ping` op**: returns root stat `(st_dev, st_ino, st_mode)`,
+  canonical remote path, remote python version, and bundle-hash echo — one
+  multiplexed round trip powering both the status probe and authority
+  capture.
+- **Timeouts**: `ConnectTimeout` bounds TCP only; every call and probe also
+  has a hard process-side deadline with process-group kill (the hooks
+  system's established pattern). Config `call_timeout_s` default 60s.
 - **Concurrency**: semaphore keyed by **resolved host / ControlPath
   identity** (not per binding) — sshd's `MaxSessions` is per connection and
   multiple bindings on one host share one master. Default cap 8, config
@@ -495,6 +603,10 @@ loudly at the type boundary until migrated. The migrations:
     restart's own no-marker 255/timeout flips it). Worker-side errors
     return a framed `failure` response and exit 2 rather than dying
     silently.
+- **Failure taxonomy** (feeds BLOCKED reasons): ssh exit 255 → unreachable
+  or auth; remote exit 127 → interpreter missing; deadline kill → timeout;
+  mux-protocol error → stale master; magic-cap exceeded → noisy shell.
+  Worker-side exceptions return framed typed errors rather than stream EOF.
 - **BatchMode limitations, documented**: agent-confirmed keys (`ssh-add -c`)
   fail rather than prompt; unknown host keys fail closed (correct default);
   channel integrity for the bundle inherits the user's
@@ -516,6 +628,16 @@ loudly at the type boundary until migrated. The migrations:
 - **Split authority** (same fail-closed posture, no added latency):
   client-side per call — registry row re-read, fingerprint match, access
   match, cache not BLOCKED (catches retarget/permission changes); server
+  `metadata["access"]`, `RemoteWorkspaceToolExecutor` in the executor slot.
+  Client-side path normalization is lexical (reject `..` escapes, hidden
+  paths); the worker re-validates fully server-side — same defense-in-depth
+  as today.
+- **Alias uniqueness** across all admitted roots of a run is enforced at
+  composition with deterministic disambiguation (`proj`, `proj-2`);
+  ambiguous alias routing is impossible by construction.
+- **Split authority** (same fail-closed posture, no added latency):
+  client-side per call — registry row re-read, fingerprint match, access
+  match, status not BLOCKED (catches retarget/permission changes); server
   side per call — the worker's root pin re-validates `(st_dev, st_ino)`
   before executing anything, catching symlink/mount drift inside the same
   round trip.
@@ -530,6 +652,12 @@ loudly at the type boundary until migrated. The migrations:
   | git_* | call-time typed error "git tools not yet supported on SSH bindings"; still advertised for local aliases on mixed runs |
   | Change review | none in v1 — no `binding_added` change-review setup, no row capture (finalization doesn't exist for remote rows; rows nobody can act on are noise) |
   | Sensitive-path denylist + ADR-174 user exclusions | remote-home-relative denylist ships in the bundle; per-binding exclusions ride the request as relative paths, matched worker-side |
+  | fs_write / fs_edit / fs_patch | full parity incl. CAS stamps (ledger stores worker-reported stat tuples as opaque identity; re-check runs in-worker) |
+  | Read-only binding | mutating specs not advertised (existing `any_write` preflight) |
+  | Result spill to local scratch | unchanged |
+  | git_* | call-time typed error "git tools not yet supported on SSH bindings"; still advertised for local aliases on mixed runs |
+  | Change review | rows captured for remote writes (diffs ride the write response if planning confirms `test_write_file_diff_capture.py`'s path; metadata-only rows otherwise); finalization actions on remote rows deferred |
+  | Sensitive-path denylist + ADR-173 user exclusions | static denylist ships in the bundle; per-binding serialized `sensitive_exclusions` ride the request unchanged |
 
 - **Model-facing surface**: remote roots appear only as
   `ssh://alias/path` URIs in the context note alongside an explicit
@@ -544,6 +672,8 @@ loudly at the type boundary until migrated. The migrations:
 - **AGENTS.md from remote**: `_validate_project_instruction_binding`
   accepts `ssh-filesystem` + cache-READY; the resolver's reads route through
   the executor via a bounded-read op (bytes + stat in one call); nested
+  accepts `ssh-filesystem` + `READY`; the resolver's reads route through the
+  executor via a bounded-read op (bytes + stat in one call); nested
   discovery's directory chain uses worker stats for `BindingRootIdentity`.
   Everything above the IO layer — caps, untrusted-content rules, ledger,
   lazy activation, first-use consent — unchanged. Instruction-loading
@@ -558,6 +688,12 @@ loudly at the type boundary until migrated. The migrations:
   the failed
   call itself still returns its typed error; write idempotency is
   unknowable; retrying a long op doubles the wait.
+  transport-error tool result and the run continues on local roots.
+  **Retry rule**: one transparent retry, **read ops only**, only for
+  connection-level fast failures classified before any response bytes
+  (dead master, connection refused). Never for writes (idempotency
+  unknowable) and never after a deadline kill (retrying a 60s grep doubles
+  the wait).
 - **Hot-path rule (load-bearing)**: run composition reads cached status
   only. Stale-READY → mid-run typed error handles it; stale-BLOCKED →
   binding stays excluded (which is the availability requirement). Probes
@@ -605,6 +741,9 @@ pass re-confirms each site there:
 - `UI/Screens/settings_screen.py` — `_render_workspace_folder_bindings`
   and add/toggle/remove handlers.
 - `Workspaces/change_review` setup scheduled off `binding_added`.
+  op-outcome learning). The only synchronous probe is add-binding, where
+  the user is already waiting — and even that is advisory: a failing probe
+  lets you save the binding with the reason shown, so setup works offline.
 
 ## UX surfaces & configuration
 
@@ -622,6 +761,9 @@ pass re-confirms each site there:
   `connect_timeout_s` (3), `max_concurrent_calls` (8). Deadlines reuse
   `WORKSPACE_HELPER_TIMEOUT_SECONDS`; no separate call-timeout knob. No
   master enable flag — the feature is dormant unless an SSH binding exists.
+  `connect_timeout_s` (3), `call_timeout_s` (60), `max_concurrent_calls`
+  (8). No master enable flag — the feature is dormant unless an SSH binding
+  exists.
 
 ## Security posture (ADR-181 content)
 
@@ -631,6 +773,7 @@ pass re-confirms each site there:
   commit-time-built, drift-guarded, hash-logged per call, shell-charset
   validated end to end, with leading-dash option injection rejected at
   validation.
+  validated end to end.
 - Remote AGENTS.md is untrusted repo content under every ADR-068/069 rule;
   it never grants permission. Permission gates, hooks (deny-only
   PreToolUse), and approval effects apply to remote ops identically —
@@ -639,6 +782,8 @@ pass re-confirms each site there:
 - Sensitive-path denylist enforced server-side in the bundle against a
   remote-home-relative list; ADR-174 user exclusions ride the serialized
   request and match worker-side.
+- Sensitive-path denylist enforced server-side in the bundle; ADR-173 user
+  exclusions ride the serialized request.
 - Remote file content transits the user's own SSH channel — same trust as
   their manual ssh. Host-key policy is the user's ssh config decision;
   BatchMode's unknown-host fail-closed is the default posture.
@@ -712,6 +857,27 @@ pass re-confirms each site there:
   a genuine live run against a real server before any task is marked Done
   (`lessons-live-verification.md`).
 9. Existing suites stay green: `test_workspace_file_roots`,
+  confinement equivalent to the local worker's.
+
+## Testing
+
+1. **Unit**: locator parse/canonicalize (aliases, ports, IPv6 brackets),
+  charset validators, status mapping, bundle drift-guard + 3.10-compat
+  scan, bootstrap shell-safety charset, compression round-trip.
+2. **Loopback integration (workhorse)**: execute the bundle via
+  `python3 -I -c` + stdin frames against a temp dir, no ssh — framing,
+  magic-prefix skip, pinning, all ops, CAS stamps, single-stream
+  discipline.
+3. **Fake-ssh**: stub `ssh` script simulating unreachable / exit-127 /
+  stdout noise / hang-past-deadline / unknown-host — proves the failure
+  taxonomy and deadline kills.
+4. **Composition & degradation**, including the **named availability
+  regression test**: *workspace with remote BLOCKED + local READY → send
+  composes, local tools advertised, remote excluded, note mentions it*.
+5. **Opt-in marked test** with `ssh localhost` where key auth exists;
+  plus a genuine live run against a real server before any task is marked
+  Done (`lessons-live-verification.md`).
+6. Existing suites stay green: `test_workspace_file_roots`,
   `test_local_tool_provider`, `test_project_instruction_resolver`,
   `test_console_project_instructions`, `test_workspace_tool_executor`,
   `test_workspace_tool_protocol`, `test_local_tool_impls`, and neighbors.
@@ -753,6 +919,20 @@ on the branch this spec was drafted against.
    config, user-guide docs, repo AGENTS.md note.
 
 ADR-181 is authored and committed **before Phase 0 code** (repo rule), and
+## Rollout (four independently testable phases)
+
+1. **Foundation**: binding kind, registry methods, locator
+  canonicalization + charset validation, bundle build + drift guard,
+  loopback executor — zero network code.
+2. **Transport**: ssh spawn, mux management, magic/deadline/retry,
+  probe + status cache (with op-outcome learning), failure taxonomy.
+3. **Run integration**: admitted roots with remote executors, alias
+  uniqueness, degraded composition, AGENTS.md remote reads, change-review
+   row capture.
+4. **Surface**: Settings form, picker/switcher entries, context note,
+  `[console_ssh]` config, user-guide docs, repo AGENTS.md note.
+
+ADR-181 is authored and committed **before Phase 1 code** (repo rule), and
 linked from the backlog task, plan, and implementation notes.
 
 ## Alternatives considered
@@ -767,3 +947,4 @@ linked from the backlog task, plan, and implementation notes.
 | Per-call `ssh -G` canonicalization at dispatch | Subprocess spawn in the send path violates the hot-path rule; resolved identity is stored at add/edit instead. |
 | Transparent mid-run read retry | The executor's failure-triggered master restart covers stale masters between calls; retrying the failed op itself is still excluded (write idempotency unknowable; long ops double the wait). Revisit only with measurements. |
 | Change-review row capture in v1 | `binding_added` schedules per-root review setup; with no finalization actions for remote rows, captured rows are unactionable noise. |
+| Per-call `ssh -G` canonicalization at dispatch | Subprocess spawn in the send path violates the hot-path rule; resolved identity is stored at add/edit instead. |
