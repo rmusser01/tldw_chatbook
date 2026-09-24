@@ -53,3 +53,26 @@ earlier run of the same bench exists, **Compare with previous** shows the
 composite and per-dimension deltas between the two reports. A preflight check blocks
 the run early if the chosen models aren't configured. Skill bodies longer
 than 8,000 characters are truncated in the prompts and the report says so.
+
+## Speech: the OmniVoice (ONNX) provider
+
+The speech sub-area offers **OmniVoice (Local)** as a TTS provider: a
+CPU-only ONNX int8hq engine for multilingual speech with zero-shot voice
+cloning, independent of the audio.cpp runtime.
+
+- **Install**: `pip install ".[omnivoice_tts]"` (onnxruntime + tokenizers),
+  then fetch the model in the model browser — the consent step states the
+  license stack: the LM weights are **CC-BY-NC** (non-commercial use; no
+  impersonation) and the audio tokenizer is under the Boson Higgs Audio 2
+  Community License. Or point `[OmniVoiceSettings] model_root` at a local
+  copy of the `ct03/omnivoice-onnx-int8hq` tree.
+- **Latency**: the engine runs at roughly 3–7× real time on desktop CPUs —
+  a 10 s clip can take well over half a minute. It is a batch provider:
+  expect progress reporting per diffusion step, not streaming audio.
+- **Quality/speed dial**: **Diffusion steps** (default 32; lower is faster,
+  slightly rougher) and **Guidance (CFG)** are per-request knobs in the
+  speech playground.
+- **Voice cloning**: cloning needs the reference clip *and its exact
+  transcript*, so clone voices are managed as profiles in the Voice
+  Cloning window (which asks for the transcript). A bare reference upload
+  in the playground cannot clone.
