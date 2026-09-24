@@ -41,23 +41,23 @@ def test_cloud_classification_matches_config():
 def test_auto_refresh_flags_match_catalog_settings():
     # Same style as the cloud-classification parity: the literal list is in
     # [providers]-key form, so compare it against the config keys of the
-    # records flagged auto_refresh. Until Task 11 adds "Databricks" to the
-    # literal list, compare excluding databricks.
+    # records flagged auto_refresh. Task 12 added "Databricks" to the literal
+    # list, so full equality holds with no exclusions.
     from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
         AUTO_REFRESH_PROVIDER_LIST_KEYS,
     )
     auto_refresh_config_keys = {
-        RECORDS_BY_KEY[key].config_key
-        for key in AUTO_REFRESH_KEYS - {"databricks"}
+        RECORDS_BY_KEY[key].config_key for key in AUTO_REFRESH_KEYS
     }
     assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == auto_refresh_config_keys
 
 
 def test_native_tools_flags_match_native_tools_module():
-    # NATIVE_TOOLS_PROVIDERS is keyed by dispatch (record) keys. Until
-    # Task 12 adds "databricks" to the literal set, compare excluding it.
+    # NATIVE_TOOLS_PROVIDERS is keyed by dispatch (record) keys. Task 12
+    # added "databricks" to the literal set, so full equality holds with no
+    # exclusions.
     from tldw_chatbook.Agents.native_tools import NATIVE_TOOLS_PROVIDERS
-    assert NATIVE_TOOLS_PROVIDERS == NATIVE_TOOLS_KEYS - {"databricks"}
+    assert NATIVE_TOOLS_PROVIDERS == NATIVE_TOOLS_KEYS
 
 
 def test_identity_fields_match_config_tables():

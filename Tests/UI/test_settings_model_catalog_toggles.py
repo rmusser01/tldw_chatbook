@@ -141,6 +141,7 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "OpenRouter": True,
                 "QwenCloud": True,
                 "ZAI": False,
+                "Databricks": True,
             }
             expected_write = {
                 "OpenAI": False,
@@ -150,6 +151,7 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "OpenRouter": True,
                 "QwenCloud": False,
                 "ZAI": False,
+                "Databricks": False,
             }
             for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
                 assert (

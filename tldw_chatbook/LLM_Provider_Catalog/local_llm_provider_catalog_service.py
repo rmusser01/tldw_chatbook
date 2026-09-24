@@ -58,9 +58,13 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
 )
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    resolve_hosted_engine_request,
+)
 from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
 from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from ..config import (
     LOCAL_PROVIDERS,
@@ -73,7 +77,12 @@ from ..config import (
 
 DiscoveryClient = Callable[..., Awaitable[ModelDiscoveryResult]]
 SettingsLoader = Callable[[], Mapping[str, Any]]
-_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
+# Providers whose endpoint+credential resolve through their exact hosted-send
+# resolver instead of generic api_settings endpoint echo. databricks is the
+# engine-driven member (ADR-179): its record preset resolves the workspace
+# host (appending the /openai/v1 suffix) and the DATABRICKS-token credential
+# exactly the chat path's engine handler does.
+_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai", "databricks"})
 
 
 class LocalLLMProviderCatalogService:
@@ -270,8 +279,18 @@ class LocalLLMProviderCatalogService:
                 app_config=config,
                 environ=self.environ,
             )
-        else:
+        elif provider_key == "zai":
             resolution = resolve_zai_request(
+                app_config=config,
+                environ=self.environ,
+            )
+        else:
+            # Engine-driven presets (databricks, ADR-179): resolve through
+            # the same public engine seam the chat path dispatches through,
+            # so discovery's base URL (incl. the /openai/v1 suffix append)
+            # and credential match a real send exactly.
+            resolution = resolve_hosted_engine_request(
+                RECORDS_BY_KEY[provider_key],
                 app_config=config,
                 environ=self.environ,
             )

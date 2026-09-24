@@ -60,6 +60,11 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         # extra — live-gated 2026-07-17
         # (Docs/superpowers/qa/cohere-native-2026-07/).
         "cohere",
+        # ADR-179 Task 12: the hosted engine preset forwards ``tools`` and
+        # returns the raw OpenAI-compatible response shape (Databricks AI
+        # Gateway external models); confirmed (or honestly disabled) at the
+        # Task 14 live gate.
+        "databricks",
     }
 )
 

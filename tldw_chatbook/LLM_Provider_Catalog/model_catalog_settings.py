@@ -18,6 +18,7 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "OpenRouter",
     "QwenCloud",
     "ZAI",
+    "Databricks",
 )
 
 SELECTOR_MERGE_CAP = 50

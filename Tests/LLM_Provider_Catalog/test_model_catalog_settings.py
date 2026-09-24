@@ -57,7 +57,7 @@ def test_zero_stale_hours_is_allowed():
     assert settings.stale_after_hours == 0.0
 
 
-def test_qwencloud_is_seventh_auto_refresh_cloud_provider():
+def test_auto_refresh_cloud_provider_list_is_pinned():
     assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == {
         "OpenAI",
         "Anthropic",
@@ -66,6 +66,7 @@ def test_qwencloud_is_seventh_auto_refresh_cloud_provider():
         "OpenRouter",
         "QwenCloud",
         "ZAI",
+        "Databricks",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 7
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 8
     assert SELECTOR_MERGE_CAP == 50
