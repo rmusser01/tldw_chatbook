@@ -312,6 +312,53 @@ def fresh_dictionary_library(monkeypatch):
     return module
 
 
+def test_dictionary_history_publication_flushes_its_own_bytes(
+    configured_db, monkeypatch
+):
+    """A durable rename over non-durable contents is the classic corruption.
+
+    ``raw_participants._replace`` fsynced the destination DIRECTORY after
+    ``os.replace`` while ``_file`` closed the temporary without ever flushing
+    its descriptor. A power loss could then persist the directory entry and
+    leave it pointing at a file whose blocks were never written. The config
+    route happens to be covered because ``Utils/private_paths`` flushes its
+    own writes; the MCP, chat-source and dictionary routes were not.
+
+    The temporary BECOMES the destination, so the published inode is the one
+    that had to be flushed. Asserting on that inode rather than on "some
+    regular file was fsynced" is deliberate: other writers in this flow flush
+    their own files, and the looser assertion passes on the unfixed code.
+    """
+    import os
+    import stat
+
+    from tldw_chatbook.Backup_Recovery import chat_source_participants as chat
+
+    db, _ = configured_db
+    source = chat.build_dictionary_service(db)
+    source.create_dictionary({"name": "seed"})
+
+    seen: list[os.stat_result] = []
+    real_fsync = os.fsync
+
+    def spy(fd):
+        try:
+            seen.append(os.fstat(fd))
+        except OSError:  # pragma: no cover - fd already closed
+            pass
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    source.create_dictionary({"name": "durable"})
+
+    published = source.history_store_path.stat()
+    assert any(
+        stat.S_ISREG(entry.st_mode)
+        and (entry.st_dev, entry.st_ino) == (published.st_dev, published.st_ino)
+        for entry in seen
+    ), "the published history's own bytes were never flushed before publication"
+
+
 def test_failed_dictionary_publication_keeps_cache_and_sticky_core_evidence(
     configured_db,
 ):

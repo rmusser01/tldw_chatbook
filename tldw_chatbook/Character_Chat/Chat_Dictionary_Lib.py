@@ -16,6 +16,7 @@ from loguru import logger
 
 # Local Imports
 from ..Backup_Recovery import dictionary_file_participants as _dictionary_files
+from .world_info_regex import validate_regex_pattern
 from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
@@ -210,8 +211,20 @@ class ChatDictionary:
                     )
                     self.is_regex = False
                     return self.raw_key
+                # ReDoS screen -- best-effort, NOT a backstop. A dictionary
+                # key is user-supplied (editor, imported file, or DB row) and
+                # the compiled pattern is later run with .search()/.subn()
+                # against message text on the send path, so a catastrophic
+                # pattern hangs the app. This rejects the shapes
+                # world_info_regex's module docstring enumerates and lets the
+                # residual ones through; Python ``re`` cannot be portably
+                # time-bounded, so closing those needs a different matcher,
+                # not a longer heuristic. Same fail-closed downgrade
+                # world_info_processor applies, and the same one this function
+                # already applies to a bad pattern.
+                validate_regex_pattern(pattern_to_compile)
                 return re.compile(pattern_to_compile, self.key_flags)
-            except re.error as e:
+            except (re.error, ValueError) as e:
                 logging.warning(
                     f"Invalid regex '{pattern_to_compile}' with flags '{self.key_flags}' (from raw key '{self.raw_key}'): {e}. "
                     f"Treating as literal string."

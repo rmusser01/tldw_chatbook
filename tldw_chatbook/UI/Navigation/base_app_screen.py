@@ -123,21 +123,13 @@ class BaseAppScreen(Screen):
         existing Textual idiom, closes the gap at its root: any widget about
         to be recomposed away is released *before* it can be orphaned.
 
-        task-31946: this is also the ONE seam that puts KEYBOARD focus back
-        after a whole-screen recompose. ``Widget.recompose()`` removes every
-        child, so the widget holding focus goes with them and nothing
-        re-picks a target on remount -- ``screen.focused`` ends ``None`` and
-        the keyboard is dead until the user clicks. PR F patched that on the
-        Library's Media route only (``LibraryScreen.refresh``); a background
-        job tick or an ad-hoc repaint on any other route still dropped it.
-        Capturing here rather than at each call site is what makes it one
-        seam: every ``refresh(recompose=True)`` on any screen in the app
-        goes through this method. The restore itself is
-        ``restore_focus_after_recompose``, which subclasses override (the
-        Library composes its Media rules into it) so there is exactly ONE
-        restore callback per recompose, never two competing ones.
+        task-31946 put the KEYBOARD focus capture/restore here too. Tier-2
+        review S19 moved it one level down, into ``recompose()`` itself --
+        see that method's docstring. This override keeps only the
+        capture-time mouse release, which is deliberately separate: it has
+        to fire the moment ``refresh()`` is CALLED, before the deferred
+        teardown, which is the whole point of task-627's two-stage guard.
         """
-        focus_identity: Optional[str] = None
         if recompose and self.is_running:
             try:
                 self.app.capture_mouse(None)
@@ -145,34 +137,9 @@ class BaseAppScreen(Screen):
                 logger.debug(
                     "Mouse-capture release before recompose skipped.", exc_info=True
                 )
-            focus_identity = self._focus_identity_for_recompose()
-        result = super().refresh(
+        return super().refresh(
             *regions, repaint=repaint, layout=layout, recompose=recompose
         )
-        if focus_identity is not None:
-            # ``call_after_refresh`` (not ``call_next``): Textual only
-            # SCHEDULES the teardown here -- ``Widget.refresh`` queues
-            # ``_check_recompose`` via ``call_next``, which always runs
-            # before the ``InvokeLater`` that ``call_after_refresh``
-            # posts, so the new children exist by the time this runs.
-            #
-            # TWO hops on purpose. ``call_after_refresh`` posts an
-            # ``InvokeLater`` message, so callbacks run in POST order --
-            # and a subclass queues its own post-recompose work AFTER
-            # calling ``super().refresh()``, i.e. behind this one. Posting
-            # the real restore from inside the first hop puts it at the
-            # BACK of that queue instead, so the restore always runs after
-            # the subclass's own passes. Concretely (PR L review item 3):
-            # the Library's stage-visibility pass hides containers, and a
-            # widget that becomes hidden BLURS ITSELF (``Widget._on_hide``
-            # -> ``blur()``), so a restore that landed before it would put
-            # focus straight back to ``None``. ``Widget.focusable`` reads
-            # ``visible``, which cannot see a hide that has not happened
-            # yet -- ordering is the only fix.
-            self.call_after_refresh(
-                self._queue_focus_restore_after_recompose, focus_identity
-            )
-        return result
 
     def _queue_focus_restore_after_recompose(self, previous: Optional[str]) -> None:
         """Re-post the restore behind everything else this refresh queued."""
@@ -319,6 +286,19 @@ class BaseAppScreen(Screen):
         that stale case from a widget a *later*, entirely unrelated
         interaction has since legitimately captured (which must be left
         alone).
+
+        **Focus restore lives here, not in ``refresh()`` (tier-2 review
+        S19).** task-31946 built the capture/restore pair as "the ONE seam"
+        but put it in ``refresh(recompose=True)``, which is only one of the
+        two doors into a recompose: nine production call sites reach the
+        teardown by awaiting ``recompose()`` directly (``workflows_screen``,
+        three ``Library_Modules``, and six in ``library_screen``), and every
+        one of them lost ``screen.focused`` with no restore queued.
+        ``Widget.refresh(recompose=True)`` schedules ``_check_recompose``,
+        which calls exactly this coroutine, so capturing here covers BOTH
+        doors by construction -- and it reads focus at teardown time rather
+        than at ``refresh()``-call time, which is strictly more accurate.
+        The two-hop queue order below is unchanged and still load-bearing.
         """
         try:
             monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
@@ -327,8 +307,29 @@ class BaseAppScreen(Screen):
         except Exception:  # noqa: BLE001, S110 - diagnostics cannot interfere with teardown
             pass
         self.release_mouse_capture_for_teardown()
+        focus_identity = (
+            self._focus_identity_for_recompose() if self.is_running else None
+        )
         await super().recompose()
         self.sweep_stale_mouse_capture()
+        if focus_identity is not None:
+            # TWO hops on purpose. ``call_after_refresh`` posts an
+            # ``InvokeLater`` message, so callbacks run in POST order -- and
+            # a caller queues its own post-recompose work (via
+            # ``call_after_refresh`` right after ``self.refresh(recompose=
+            # True)``) BEFORE this coroutine ever runs. Posting the real
+            # restore from inside a first hop puts it at the BACK of that
+            # queue, so the restore always runs after the caller's own
+            # passes. Concretely (PR L review item 3): the Library's
+            # stage-visibility pass hides containers, and a widget that
+            # becomes hidden BLURS ITSELF (``Widget._on_hide`` -> ``blur()``),
+            # so a restore that landed before it would put focus straight
+            # back to ``None``. ``Widget.focusable`` reads ``visible``,
+            # which cannot see a hide that has not happened yet -- ordering
+            # is the only fix.
+            self.call_after_refresh(
+                self._queue_focus_restore_after_recompose, focus_identity
+            )
         self.post_message(self.ContentsRebuilt(self))
 
     def release_mouse_capture_for_teardown(self) -> None:

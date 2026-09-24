@@ -958,14 +958,22 @@ class LibraryIngestJobRegistry:
         index = self._find_index(job_id)
         if index is None:
             return None
-        job = self._jobs[index]
-        if remote_job_id is not None:
-            job.remote_job_id = str(remote_job_id)
-        if batch_id is not None:
-            job.batch_id = str(batch_id)
+        current = self._jobs[index]
+        updated = replace(
+            current,
+            remote_job_id=(
+                str(remote_job_id)
+                if remote_job_id is not None
+                else current.remote_job_id
+            ),
+            batch_id=(
+                str(batch_id) if batch_id is not None else current.batch_id
+            ),
+        )
+        self._jobs[index] = updated
         self._notify_listeners()
-        self._persist(job)
-        return _copy_job(job)
+        self._persist(updated)
+        return _copy_job(updated)
 
     def mark_parsing(
         self, job_id: str, *, detected_type: str = ""

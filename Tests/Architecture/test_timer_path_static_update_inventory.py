@@ -134,6 +134,21 @@ DEFERRAL_SHIMS = frozenset(
 #   UNREACHABLE   -- the module has no importer anywhere in the repo.
 #
 CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
+    # -- tldw_chatbook/UI/Screens/backup_restore_screen.py
+    (
+        "tldw_chatbook/UI/Screens/backup_restore_screen.py",
+        "BackupRestoreScreen._refresh_status",
+        "status",
+    ): (
+        "NOT-PER-TICK: equality-gated on Static.content (tier-2 review S19), "
+        "so the 5 Hz poll no longer repaints unchanged copy. The text is "
+        "multi-line and varies in height -- path/profile/issue lines are "
+        "appended conditionally -- so a CHANGED value must keep the default "
+        "layout pass. Same shape as SchedulesWorkbench._update_static_content "
+        "below. The poll is additionally paused in on_screen_suspend, so it "
+        "does not tick at all behind the file-picker screens this screen "
+        "pushes over itself."
+    ),
     # -- tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py
     (
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",

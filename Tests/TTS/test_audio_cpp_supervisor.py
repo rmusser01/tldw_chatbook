@@ -1359,6 +1359,14 @@ async def test_spawn_uses_exact_argv_cwd_stdin_and_environment(
         "stdin": asyncio.subprocess.DEVNULL,
         "stdout": asyncio.subprocess.PIPE,
         "stderr": asyncio.subprocess.PIPE,
+        # TASK-32892 P0-3: a deliberate contract change. The supervisor owns
+        # this child's lifetime, so it is spawned as a session leader rather
+        # than into the app's own process group -- the pairing every other
+        # managed-subprocess site in this repo uses, and the one that keeps a
+        # group-directed signal aimed at a wedged sibling from reaching it.
+        # Kept inside the exact-kwargs assertion on purpose: changing how
+        # this process is spawned should always have to be stated here.
+        "start_new_session": os.name == "posix",
     }
     await supervisor.stop()
 

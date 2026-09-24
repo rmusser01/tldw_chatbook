@@ -184,7 +184,11 @@ def test_keyfile_provider_creates_key_pre_restricted(tmp_path, monkeypatch):
     modes_used = []
     real_open = os.open
     def spy_open(path, flags, mode=0o777, *a, **kw):
-        modes_used.append(mode)
+        # Only CREATING opens carry a mode. Since task-32896 the write also
+        # opens the parent directory read-only for the durability barrier;
+        # that open has no mode and must not be counted here.
+        if flags & os.O_CREAT:
+            modes_used.append(mode)
         return real_open(path, flags, mode, *a, **kw)
     monkeypatch.setattr(os, "open", spy_open)
 

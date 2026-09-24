@@ -454,10 +454,21 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             button.focus()
 
     def _start_catalog_refresh(self) -> None:
+        # ``exit_on_error=False``, matching the five ``_guard_*`` workers in
+        # this file: ``_apply_catalog_state`` is the one body here whose
+        # ``query_one`` calls all run AFTER an await -- and one of those
+        # awaits (`_flush_quick_note_before_owner_switch`) can park on
+        # ``push_screen_wait`` for unbounded user time. The "research_
+        # workspace" route is not ``reusable``, so navigating away unmounts
+        # the screen and the resumed body queries a torn-down tree. At the
+        # ``run_worker`` default the resulting ``NoMatches`` reaches
+        # ``App._handle_exception`` and exits the app instead of failing the
+        # one worker.
         self.run_worker(
             self._refresh_workspace_catalog(),
             group="research-workspace-catalog",
             exclusive=True,
+            exit_on_error=False,
         )
 
     async def _refresh_workspace_catalog(self) -> None:

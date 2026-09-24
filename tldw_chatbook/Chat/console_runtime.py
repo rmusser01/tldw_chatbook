@@ -633,8 +633,32 @@ def _apply_world_info_for_app(
     return apply_world_info_to_message(db, conversation_id, None, text, history or [])
 
 
-def _library_provider_for_app(app: Any, turn_context: Any | None = None) -> Any | None:
-    """Build one Library provider from frozen authority and app services."""
+def _library_provider_for_app(
+    app: Any,
+    turn_context: Any | None = None,
+    **activity_kwargs: Any,
+) -> Any | None:
+    """Build one Library provider from frozen authority and app services.
+
+    The single builder for both Console entry points.
+    `ConsoleLibraryActivityController.build_provider` used to hold a
+    byte-for-byte copy of this body and delegates here instead
+    (TASK-32892 P0-1): the copies drifted when 5dd1077df6 retired
+    `LocalLibraryToolService`'s `collections_service` parameter and updated only
+    one of them, and because `ensure_chat_controller` binds THIS function over
+    whatever the screen passed, the stale copy was the one every shipped run
+    called -- raising `TypeError` on the default configuration and costing the
+    agent all 24 Library tools behind one swallowed warning.
+
+    Args:
+        app: Application instance whose local service attributes are read live.
+        turn_context: Immutable production turn context, if available.
+        **activity_kwargs: Provider activity-capture bindings, when a view owns
+            one (`activity_attempt_id` / `activity_sink`).
+
+    Returns:
+        Configured provider, or ``None`` without a turn context.
+    """
     if turn_context is None:
         return None
     if not turn_context.library_authority.direct_library_tools:
@@ -643,7 +667,8 @@ def _library_provider_for_app(app: Any, turn_context: Any | None = None) -> Any 
         )
 
         return LibraryRagToolProvider(
-            getattr(app, "library_rag_search_service", None)
+            getattr(app, "library_rag_search_service", None),
+            **activity_kwargs,
         )
 
     from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
@@ -678,12 +703,11 @@ def _library_provider_for_app(app: Any, turn_context: Any | None = None) -> Any 
         prompt_service=getattr(app, "local_prompt_service", None),
         skills_service=getattr(app, "local_skills_service", None),
         conversation_service=getattr(app, "local_chat_conversation_service", None),
-        collections_service=getattr(app, "local_library_collections_service", None),
         media_chunk_service=media_chunk_service,
         notes_scope_service=getattr(app, "notes_scope_service", None),
         policy_enforcer=getattr(app, "service_policy_enforcer", None),
     )
-    return LibraryToolProvider(service)
+    return LibraryToolProvider(service, **activity_kwargs)
 
 
 def _default_session_settings_for_app(app: Any) -> Any:
