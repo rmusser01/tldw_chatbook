@@ -498,7 +498,11 @@ table in the TOML. Leaving Theme with unsaved edits asks **Stay**, **Discard**,
 or **Save** (Escape stays); Save that needs an overwrite confirmation or a
 valid name keeps you on Theme. While a backup or recovery holds the theme
 files, **Your themes** reads "Theme files unavailable while backup/recovery is
-in progress" instead of listing them.
+in progress" instead of listing them. The card's buttons are bracketed
+chips — Apply, Save, Reset and Delete keep their colour as label and brackets,
+and a focused button fills with that colour — and each preset swatch is framed
+by thin side rules that thicken into brackets when it has focus, so a preset
+close to the card colour still reads as a cell.
 
 ### Interface — Splash Screen
 
@@ -1067,3 +1071,7 @@ rail-scoped; Appearance labels Textual themes "(Textual)" and only file-backed
 themes "(saved)"; the Theme tree's Built-in group lists all Textual themes;
 the invalid-colour swatch reads "Invalid — use #RRGGBB". Pinned by pilot tests,
 not driven live.*
+*Verified against `fix/theme-contrast` @ dev 6ddc582839 — 2026-09-24
+(task-32947): Theme card chips, swatch frames and the Dark-theme off glyph
+measured from painted cells at 190x55 under textual-dark, textual-light,
+gruvbox_dark and solarized_light.*

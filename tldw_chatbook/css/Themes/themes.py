@@ -56,9 +56,20 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
     return ensure_readable_text_hues(Theme(**theme_args))
 
 
-#: Generated text tints the Console rail paints ordinary text with
-#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
-_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+#: Generated text tints the app paints ordinary text with (TASK-31429:
+#: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent). TASK-32947
+#: adds the three status tints: the Settings > Theme card labels Save / Reset /
+#: Delete with them, and the only other consumers are Textual's own text uses
+#: (syntax highlighting, flat buttons, `$ds-status-error-readable`), so pinning
+#: them can only raise contrast -- 21 themes failed AA on text-success, 27 on
+#: text-warning (textual-light among them), 5 built-ins on text-error.
+_READABLE_TEXT_HUES = (
+    "text-primary",
+    "text-accent",
+    "text-success",
+    "text-warning",
+    "text-error",
+)
 _AA_RATIO = 4.5
 
 
@@ -81,7 +92,7 @@ def _contrast_ratio(a: Color, b: Color) -> float:
 
 
 def ensure_readable_text_hues(theme: Theme) -> Theme:
-    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+    """Pin the readable ``text-*`` tints (_READABLE_TEXT_HUES) to AA in place.
 
     Textual derives both as a 66% tint of the theme's contrast text toward
     the hue; on mid-tone palettes (20 of the 70 shipped themes, and any

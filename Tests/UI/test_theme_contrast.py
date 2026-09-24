@@ -86,10 +86,19 @@ def test_resolved_readable_tokens_clear_aa_on_every_theme(theme: Theme) -> None:
     own surfaces — these feed the ds readable tokens since task-31264;
     task-31283 extended the gate from the Orb 12 to every registered theme.
     TASK-31429 adds `text-primary` / `text-accent`: the Console rail paints
-    the active workspace/conversation and every label's value with them."""
+    the active workspace/conversation and every label's value with them.
+    TASK-32947 adds `text-success` / `text-warning`: the Settings > Theme
+    card labels Save / Reset with them."""
     resolved = _resolved_variables(theme)
     surfaces = [Color.parse(resolved[k]) for k in ("surface", "panel")]
-    for token in ("text-error", "text-muted", "text-primary", "text-accent"):
+    for token in (
+        "text-error",
+        "text-muted",
+        "text-primary",
+        "text-accent",
+        "text-success",
+        "text-warning",
+    ):
         for surface in surfaces:
             blended = _resolve_color(resolved[token], surface)
             ratio = _ratio(blended.hex, surface.hex)
