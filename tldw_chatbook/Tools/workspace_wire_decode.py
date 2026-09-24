@@ -410,7 +410,7 @@ def _validate_argument_value(value: Any, *, kind: str) -> None:
         _require_string(value, "argument text")
         return
     if kind == "glob_pattern":
-        _validate_glob_pattern(value)
+        validate_glob_pattern(value)
         return
     if kind == "patch":
         _require_string(value, "patch diff", cap=_PATCH_MAX_BYTES)
@@ -463,7 +463,14 @@ def _validate_argument_value(value: Any, *, kind: str) -> None:
     raise WireDecodeError("invalid argument schema")
 
 
-def _validate_glob_pattern(value: Any) -> str:
+def validate_glob_pattern(value: Any) -> str:
+    """Validate a platform-neutral, root-relative glob grammar.
+
+    Public because the pinned dispatcher (stdlib-only import closure,
+    Phase 0c) validates ``fs_glob`` patterns through this module rather
+    than the parent's pydantic protocol module. Raises ``WireDecodeError``
+    where the parent's ``WorkspaceProtocolError`` flavour would.
+    """
     if type(value) is not str:
         raise WireDecodeError("glob pattern must be a string")
     if "\x00" in value:

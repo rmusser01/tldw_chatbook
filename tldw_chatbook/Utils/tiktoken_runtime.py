@@ -7,9 +7,14 @@ import hashlib
 import inspect
 import os
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+# No module-scope pydantic import: this module is imported (and its
+# installer executed) by the package ``__init__``, which every
+# ``tldw_chatbook`` import runs — including the pinned workspace worker,
+# whose import closure must stay stdlib-only (Phase 0c). The manifest
+# models below are therefore defined inside ``_manifest_by_url``, which
+# runs once on first manifest read; behavior is unchanged.
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "tiktoken_cache"
 _MANIFEST_PATH = _ASSET_DIR / "manifest.json"
@@ -20,67 +25,72 @@ class BundledTiktokenAssetError(RuntimeError):
     """A requested tiktoken table is absent from or invalid in the bundle."""
 
 
-class _ManifestFile(BaseModel):
-    """One reviewed tiktoken source and its immutable cache identity."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    encoding: Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"]
-    url: str = Field(
-        pattern=r"^https://openaipublic\.blob\.core\.windows\.net/",
-        min_length=1,
-    )
-    cache_key: str = Field(pattern=r"^[0-9a-f]{40}$")
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-
-class _ManifestLicense(BaseModel):
-    """Redistribution evidence recorded with the reviewed assets."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    spdx: Literal["MIT"]
-    source: str = Field(min_length=1)
-    clarification: str = Field(pattern=r"^https://", min_length=1)
-    gpt2_additional_source: str = Field(pattern=r"^https://", min_length=1)
-
-
-class _TiktokenManifest(BaseModel):
-    """Complete schema for the package-owned tiktoken manifest."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    schema_version: Literal[1]
-    tiktoken_version: Literal["0.14.0"]
-    constructor_module: Literal["tiktoken_ext.openai_public"]
-    constructor_path: Literal["tiktoken_ext/openai_public.py"]
-    read_file_cached_signature: Literal[
-        "read_file_cached(blobpath: str, expected_hash: str | None = None) -> bytes"
-    ]
-    cache_key_algorithm: Literal["sha1(source_url UTF-8 bytes)"]
-    model_to_encoding_coverage: dict[
-        str,
-        Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"],
-    ] = Field(min_length=1)
-    license: _ManifestLicense
-    update_procedure: list[str] = Field(min_length=1)
-    files: list[_ManifestFile] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def reject_duplicate_file_identities(self) -> Self:
-        """Reject entries that would be silently replaced in the URL index."""
-        urls = [entry.url for entry in self.files]
-        cache_keys = [entry.cache_key for entry in self.files]
-        if len(set(urls)) != len(urls):
-            raise ValueError("manifest contains duplicate source URLs")
-        if len(set(cache_keys)) != len(cache_keys):
-            raise ValueError("manifest contains duplicate cache keys")
-        return self
-
-
 @lru_cache(maxsize=1)
-def _manifest_by_url() -> dict[str, _ManifestFile]:
+def _manifest_by_url() -> dict[str, Any]:
     """Load the reviewed asset manifest once, indexed by source URL."""
+    from pydantic import (
+        BaseModel,
+        ConfigDict,
+        Field,
+        ValidationError,
+        model_validator,
+    )
+
+    class _ManifestFile(BaseModel):
+        """One reviewed tiktoken source and its immutable cache identity."""
+
+        model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+        encoding: Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"]
+        url: str = Field(
+            pattern=r"^https://openaipublic\.blob\.core\.windows\.net/",
+            min_length=1,
+        )
+        cache_key: str = Field(pattern=r"^[0-9a-f]{40}$")
+        sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    class _ManifestLicense(BaseModel):
+        """Redistribution evidence recorded with the reviewed assets."""
+
+        model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+        spdx: Literal["MIT"]
+        source: str = Field(min_length=1)
+        clarification: str = Field(pattern=r"^https://", min_length=1)
+        gpt2_additional_source: str = Field(pattern=r"^https://", min_length=1)
+
+    class _TiktokenManifest(BaseModel):
+        """Complete schema for the package-owned tiktoken manifest."""
+
+        model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+        schema_version: Literal[1]
+        tiktoken_version: Literal["0.14.0"]
+        constructor_module: Literal["tiktoken_ext.openai_public"]
+        constructor_path: Literal["tiktoken_ext/openai_public.py"]
+        read_file_cached_signature: Literal[
+            "read_file_cached(blobpath: str, expected_hash: str | None = None) -> bytes"
+        ]
+        cache_key_algorithm: Literal["sha1(source_url UTF-8 bytes)"]
+        model_to_encoding_coverage: dict[
+            str,
+            Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"],
+        ] = Field(min_length=1)
+        license: _ManifestLicense
+        update_procedure: list[str] = Field(min_length=1)
+        files: list[_ManifestFile] = Field(min_length=1)
+
+        @model_validator(mode="after")
+        def reject_duplicate_file_identities(self) -> Self:
+            """Reject entries that would be silently replaced in the URL index."""
+            urls = [entry.url for entry in self.files]
+            cache_keys = [entry.cache_key for entry in self.files]
+            if len(set(urls)) != len(urls):
+                raise ValueError("manifest contains duplicate source URLs")
+            if len(set(cache_keys)) != len(cache_keys):
+                raise ValueError("manifest contains duplicate cache keys")
+            return self
+
     try:
         manifest = _TiktokenManifest.model_validate_json(_MANIFEST_PATH.read_bytes())
         return {entry.url: entry for entry in manifest.files}

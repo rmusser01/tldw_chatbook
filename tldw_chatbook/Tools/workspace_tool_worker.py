@@ -1,11 +1,24 @@
-"""Fixed one-shot stdin/stdout worker for pinned workspace operations."""
+"""Fixed one-shot stdin/stdout worker for pinned workspace operations.
+
+Import closure (Phase 0c): this module's transitive imports must stay
+stdlib-only — Task 8 concatenates the closure into a remote worker bundle,
+and ``Tests/Tools/test_worker_import_closure.py`` is the gate. Frames are
+decoded by ``Tools/workspace_wire_decode.py`` (the stdlib counterpart of
+the parent's pydantic serde in ``Tools/workspace_tool_protocol.py``) and
+responses are emitted as JSON with the exact serialization the parent's
+``WorkspaceToolResponse.from_bytes`` accepts.
+"""
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import unicodedata
-from typing import BinaryIO
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, BinaryIO
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_root_pin import (
@@ -16,15 +29,36 @@ from tldw_chatbook.Tools.workspace_tool_dispatch import (
     WorkspaceToolDispatchError,
     execute_pinned_operation,
 )
-from tldw_chatbook.Tools.workspace_tool_protocol import (
+from tldw_chatbook.Tools.workspace_wire_decode import (
     MAX_REQUEST_BYTES,
-    WorkspaceProtocolError,
-    WorkspaceToolRequest,
-    WorkspaceToolResponse,
+    WIRE_VERSION,
+    WireDecodeError,
+    decode_request,
+    decode_response,
 )
-from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    DirectoryIdentity,
+)
 
 _MAX_DOMAIN_ERROR_CHARS = 300
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedRequest:
+    """Attribute view over one decoded frame, for pinning and dispatch.
+
+    Field-for-field the decoded payload of ``decode_request``; the wire
+    decoder has already applied every admission check the parent's
+    ``WorkspaceToolRequest.from_bytes`` applies.
+    """
+
+    operation_id: str
+    operation: str
+    root_locator: Path = field(repr=False)
+    root_identity: DirectoryIdentity
+    ancestor_identities: tuple[DirectoryIdentity, ...]
+    arguments: dict[str, Any] = field(repr=False)
 
 
 def run_workspace_worker(
@@ -40,8 +74,8 @@ def run_workspace_worker(
         _emit(stdout, _failure("unknown", "invalid_request", started))
         return 2
     try:
-        request = WorkspaceToolRequest.from_bytes(raw)
-    except WorkspaceProtocolError:
+        request = _decode_request(raw)
+    except WireDecodeError:
         _emit(stdout, _failure("unknown", "invalid_request", started))
         return 2
 
@@ -53,29 +87,25 @@ def run_workspace_worker(
         with pin_workspace_root(request.root_locator, chain) as root:
             _emit(
                 stdout,
-                WorkspaceToolResponse(
-                    operation_id=request.operation_id,
+                _frame(
+                    request.operation_id,
                     outcome="admitted",
                     code="root_pinned",
                     result=None,
                     error=None,
-                    elapsed_ms=_elapsed_ms(started),
-                    truncated=False,
-                    cleanup_proven=True,
+                    started=started,
                 ),
             )
             result = execute_pinned_operation(request, root)
         _emit(
             stdout,
-            WorkspaceToolResponse(
-                operation_id=request.operation_id,
+            _frame(
+                request.operation_id,
                 outcome="success",
                 code="ok",
                 result=result,
                 error=None,
-                elapsed_ms=_elapsed_ms(started),
-                truncated=False,
-                cleanup_proven=True,
+                started=started,
             ),
         )
         return 0
@@ -107,22 +137,67 @@ def run_workspace_worker(
         return 2
 
 
+def _decode_request(raw: bytes) -> _DecodedRequest:
+    """Decode one admitted frame into the worker's pinned-request view."""
+    payload = decode_request(raw)
+    return _DecodedRequest(
+        operation_id=payload["operation_id"],
+        operation=payload["operation"],
+        root_locator=Path(payload["root_locator"]),
+        root_identity=_identity(payload["root_identity"]),
+        ancestor_identities=tuple(
+            _identity(item) for item in payload["ancestor_identities"]
+        ),
+        arguments=payload["arguments"],
+    )
+
+
+def _identity(payload: Mapping[str, Any]) -> DirectoryIdentity:
+    return DirectoryIdentity(
+        device=payload["device"],
+        inode=payload["inode"],
+        mode=payload["mode"],
+        reparse=payload["reparse"],
+    )
+
+
+def _frame(
+    operation_id: str,
+    *,
+    outcome: str,
+    code: str,
+    result: str | None,
+    error: str | None,
+    started: float,
+) -> dict[str, Any]:
+    """Build one response payload in the parent's fixed field order."""
+    return {
+        "version": WIRE_VERSION,
+        "operation_id": operation_id,
+        "outcome": outcome,
+        "code": code,
+        "result": result,
+        "error": error,
+        "elapsed_ms": _elapsed_ms(started),
+        "truncated": False,
+        "cleanup_proven": True,
+    }
+
+
 def _failure(
     operation_id: str,
     code: str,
     started: float,
     *,
     message: str = "workspace operation failed",
-) -> WorkspaceToolResponse:
-    return WorkspaceToolResponse(
-        operation_id=operation_id,
+) -> dict[str, Any]:
+    return _frame(
+        operation_id,
         outcome="failure",
         code=code,
         result=None,
         error=message,
-        elapsed_ms=_elapsed_ms(started),
-        truncated=False,
-        cleanup_proven=True,
+        started=started,
     )
 
 
@@ -145,8 +220,22 @@ def _elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1_000))
 
 
-def _emit(stdout: BinaryIO, response: WorkspaceToolResponse) -> None:
-    stdout.write(response.to_bytes() + b"\n")
+def _encode_frame(payload: Mapping[str, Any]) -> bytes:
+    try:
+        return json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise WireDecodeError("protocol frame cannot be serialized") from error
+
+
+def _emit(stdout: BinaryIO, payload: Mapping[str, Any]) -> None:
+    frame = _encode_frame(payload)
+    decode_response(frame)
+    stdout.write(frame + b"\n")
     stdout.flush()
 
 

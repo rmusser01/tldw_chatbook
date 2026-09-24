@@ -206,7 +206,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 
-from loguru import logger
+
+def _debug(message: str) -> None:
+    """Emit one resolution-failure diagnostic.
+
+    Loguru is imported here rather than at module scope: this module sits
+    inside the pinned workspace worker's stdlib-only import closure
+    (Phase 0c), so merely importing it must not pull loguru. Every call
+    site is a rare resolution-failure path, so the import cost lands only
+    when a diagnostic is actually emitted — the same laziness rule the
+    ``config``/Skills/RAG imports throughout this module already follow.
+    """
+    from loguru import logger
+
+    logger.debug(message)
 
 #: Directory prefixes that are refused along with everything beneath them.
 #: The LOCATION rule (see the module docstring): used where the directory
@@ -328,7 +341,7 @@ def _resolved(path_str: str) -> Path | None:
     try:
         return Path(path_str).expanduser().resolve()
     except Exception as exc:  # noqa: BLE001 - fail-closed for ANY resolution failure
-        logger.debug(f"sensitive_paths: could not resolve {path_str!r}: {exc}")
+        _debug(f"sensitive_paths: could not resolve {path_str!r}: {exc}")
         return None
 
 
@@ -358,9 +371,7 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
         try:
             resolved.append(accessor())
         except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-            logger.debug(
-                f"sensitive_paths: could not resolve {accessor_name}: {exc}"
-            )
+            _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
     return tuple(resolved)
 
 
@@ -403,12 +414,12 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
     try:
         resolved.append(_config._get_effective_config_path())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve config.toml path: {exc}")
+        _debug(f"sensitive_paths: could not resolve config.toml path: {exc}")
 
     try:
         user_data_dir = _config.get_user_data_dir()
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
     else:
         resolved.append(user_data_dir / "mcp_permissions.json")
         resolved.append(user_data_dir / "local_mcp_store.json")
@@ -461,7 +472,7 @@ def _sensitive_skill_trust_dir() -> Path | None:
     try:
         user_data_dir = _config.get_user_data_dir()
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
         return None
 
     local_skills_store_dir = default_local_skills_store_dir(user_data_dir)
@@ -517,22 +528,22 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
     try:
         resolved.append(_config.get_user_data_dir())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
 
     try:
         resolved.append(_config._get_effective_config_path().parent)
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve effective config dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve effective config dir: {exc}")
 
     try:
         resolved.append(default_chroma_persist_directory())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve chroma persist dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve chroma persist dir: {exc}")
 
     try:
         resolved.append(default_rag_profiles_dir())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve rag profiles dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve rag profiles dir: {exc}")
 
     return tuple(resolved)
 
@@ -612,7 +623,7 @@ def resolve_sensitive_context() -> SensitivePathContext:
     try:
         user_data_dir = _resolved(str(_config.get_user_data_dir()))
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
         user_data_dir = None
 
     skill_trust_dir = _sensitive_skill_trust_dir()

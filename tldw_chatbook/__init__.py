@@ -60,19 +60,37 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # own sinks untouched -- if it removed the default sink, `remove(0)` raises
 # ValueError and this block installs nothing, because that host owns the
 # logging configuration (and any diagnose=True sink it installed on purpose).
+#
+# Phase 0c (pinned worker import closure): the sink replacement is gated on
+# loguru ALREADY being imported, so importing this package (which every
+# ``tldw_chatbook`` import runs, the stdlib-only workspace worker's
+# included) no longer pulls loguru in itself. The two arms together keep
+# the security invariant above intact:
+#
+# * loguru already in ``sys.modules`` (the ``Tests/conftest.py`` case, and
+#   any host that imported it first): the explicit ``remove(0)`` +
+#   ``add(diagnose=False, backtrace=True)`` below runs exactly as before,
+#   because in this arm the env var alone provably arrived too late.
+# * loguru not yet imported: the eager ``LOGURU_DIAGNOSE=0`` setdefault
+#   above lands before loguru's first import anywhere (nothing in this
+#   package can import loguru before this init ran), so loguru's own
+#   auto-init sink is constructed with ``diagnose=False`` and its default
+#   ``backtrace=True`` -- the same sink configuration the explicit
+#   replacement below installs.
 os.environ.setdefault("LOGURU_DIAGNOSE", "0")
-try:
-    from loguru import logger as _pkg_init_loguru_logger
-
+if "loguru" in sys.modules:
     try:
-        _pkg_init_loguru_logger.remove(0)
-    except ValueError:
+        from loguru import logger as _pkg_init_loguru_logger
+
+        try:
+            _pkg_init_loguru_logger.remove(0)
+        except ValueError:
+            pass
+        else:
+            _pkg_init_loguru_logger.add(sys.stderr, diagnose=False, backtrace=True)
+    except Exception:
+        # Logging safety must never be the reason package import fails.
         pass
-    else:
-        _pkg_init_loguru_logger.add(sys.stderr, diagnose=False, backtrace=True)
-except Exception:
-    # Logging safety must never be the reason package import fails.
-    pass
 
 
 def _install_textual_compatibility_shims() -> None:

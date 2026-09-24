@@ -30,8 +30,6 @@ production callers and was retired in TASK-545 P3.
 
 from typing import Any
 
-from loguru import logger
-
 from .tool_executor import (
     Tool,
     DateTimeTool,
@@ -85,7 +83,12 @@ def __getattr__(name: str) -> Any:
         # binds to None when its optional dependency isn't installed) — but
         # keep the original traceback visible so a genuine import-time BUG
         # in the tool module can't hide behind a later NoneType error
-        # (PR #672 review). Non-ImportError exceptions propagate.
+        # (PR #672 review). Non-ImportError exceptions propagate. Loguru
+        # is imported here, not at module scope: this package init is part
+        # of the pinned worker's stdlib-only import closure (Phase 0c),
+        # and only this rare fallback path ever logs.
+        from loguru import logger
+
         logger.debug(
             f"Optional tool {name!r} unavailable; binding to None.",
             exc_info=True,

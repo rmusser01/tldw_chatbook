@@ -10,7 +10,12 @@ import stat
 import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
-from loguru import logger
+
+# No module-scope loguru import: this module sits inside the pinned
+# workspace worker's stdlib-only import closure (Phase 0c), so merely
+# importing it must not pull loguru. Logging happens only on actual
+# validation-failure paths, which import it lazily below — the same rule
+# the telemetry wrappers directly underneath already follow.
 
 
 # Telemetry belongs to actual validation calls; pure recovery path parsing must
@@ -159,6 +164,8 @@ def validate_path(
     Raises:
         ValueError: If the path is invalid or attempts directory traversal
     """
+    from loguru import logger
+
     start_time = time.time()
     log_counter("path_validation_validate_path_attempt")
     redacted_failure: str | None = None
@@ -458,6 +465,8 @@ def validate_path_simple(
     Raises:
         ValueError: If the path contains security risks
     """
+    from loguru import logger
+
     start_time = time.time()
     log_counter("path_validation_validate_path_simple_attempt")
 

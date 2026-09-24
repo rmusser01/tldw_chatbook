@@ -1,9 +1,18 @@
-"""Dispatch closed workspace operations against one retained root pin."""
+"""Dispatch closed workspace operations against one retained root pin.
+
+Part of the pinned worker's stdlib-only import closure (Phase 0c): nothing
+here may import the parent's pydantic protocol module. Request frames
+arrive already decoded/validated; dispatch consumes the attribute surface
+``_PinnedOperationRequest`` describes (the parent's
+``WorkspaceToolRequest`` dataclass and the worker's decoded-request view
+both satisfy it).
+"""
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any, Protocol
 
 from tldw_chatbook.Tools.git_tool_impls import (
     git_blame,
@@ -34,9 +43,8 @@ from tldw_chatbook.Tools.workspace_root_pin import (
     PinnedWorkspaceRoot,
     WorkspaceRootPinError,
 )
-from tldw_chatbook.Tools.workspace_tool_protocol import (
-    WorkspaceProtocolError,
-    WorkspaceToolRequest,
+from tldw_chatbook.Tools.workspace_wire_decode import (
+    WireDecodeError,
     validate_glob_pattern,
 )
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
@@ -50,8 +58,15 @@ class WorkspaceToolDispatchError(RuntimeError):
         self.code = code
 
 
+class _PinnedOperationRequest(Protocol):
+    """The attribute surface dispatch consumes from one admitted request."""
+
+    operation: str
+    arguments: dict[str, Any]
+
+
 def execute_pinned_operation(
-    request: WorkspaceToolRequest,
+    request: _PinnedOperationRequest,
     root: PinnedWorkspaceRoot,
 ) -> str:
     """Execute one supported request relative to ``root`` or refuse it."""
@@ -109,7 +124,7 @@ def execute_pinned_operation(
     if request.operation == "fs_glob":
         try:
             pattern = validate_glob_pattern(request.arguments["pattern"])
-        except WorkspaceProtocolError:
+        except WireDecodeError:
             raise WorkspaceToolDispatchError(
                 "invalid_request", "workspace glob pattern is invalid"
             ) from None
@@ -130,7 +145,7 @@ def execute_pinned_operation(
         )
 
 
-def _git_request(request: WorkspaceToolRequest) -> str:
+def _git_request(request: _PinnedOperationRequest) -> str:
     """Run one closed read-only Git operation beneath the retained root."""
     discovered = shutil.which("git")
     if discovered is None:
@@ -175,7 +190,7 @@ def _git_request(request: WorkspaceToolRequest) -> str:
 
 
 def _request_relative_path(
-    request: WorkspaceToolRequest, root: PinnedWorkspaceRoot
+    request: _PinnedOperationRequest, root: PinnedWorkspaceRoot
 ) -> Path:
     """Return one request path validated as lexical root-relative text."""
     try:
@@ -188,7 +203,7 @@ def _request_relative_path(
 
 
 def _request_exclusions(
-    request: WorkspaceToolRequest, field: str
+    request: _PinnedOperationRequest, field: str
 ) -> tuple[SensitiveExclusion, ...]:
     """Decode the parent's fixed bounded exclusions without filesystem discovery."""
     return tuple(
@@ -198,7 +213,7 @@ def _request_exclusions(
 
 
 def _request_mutation_path(
-    request: WorkspaceToolRequest, root: PinnedWorkspaceRoot
+    request: _PinnedOperationRequest, root: PinnedWorkspaceRoot
 ) -> Path:
     """Validate a mutation target's live lexical and resolved location."""
     relative = _request_relative_path(request, root)
@@ -214,7 +229,7 @@ def _request_mutation_path(
     return relative
 
 
-def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> str:
+def _patch_request(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) -> str:
     """Reparse a bounded patch and require its exact parent-admitted targets."""
     try:
         plans = parse_patch_targets(request.arguments["diff"])
