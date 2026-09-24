@@ -68,6 +68,13 @@ def test_identity_fields_match_config_tables():
     # key (lowercased), e.g. mistral -> [api_settings.mistralai],
     # custom-openai-api -> [api_settings.custom]. databricks is excluded:
     # it ships no defaults (workspace host is per-account).
+    # custom-hosted is excluded the same way (ADR-179 Phase 2 Task 6): it
+    # is an execution key, not an identity -- no table of its own (its
+    # fallbacks ride [api_settings.custom] via defaults_settings_section,
+    # under the legacy handler's key spellings), no env var (credentials
+    # are gateway/entry-resolved; the section's own api_key_env_var flows
+    # through the settings read), and no default URL (the per-entry URL is
+    # forwarded explicitly).
     import tomllib
 
     from tldw_chatbook.config import CONFIG_TOML_CONTENT
@@ -75,7 +82,7 @@ def test_identity_fields_match_config_tables():
     tables = tomllib.loads(CONFIG_TOML_CONTENT)["api_settings"]
     checked = 0
     for record in ALL_RECORDS:
-        if record.key == "databricks":
+        if record.key == "databricks" or record.defaults_settings_section:
             continue
         table_key = next(
             (k for k in (record.key, record.config_key.lower()) if k in tables),

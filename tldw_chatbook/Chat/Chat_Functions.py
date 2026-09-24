@@ -84,6 +84,7 @@ from tldw_chatbook.LLM_Calls.hosted_provider_engine import (  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
     CEREBRAS,
+    CUSTOM_HOSTED,
     DATABRICKS,
     FIREWORKS,
     TOGETHER,
@@ -145,6 +146,11 @@ API_CALL_HANDLERS = {
     "together": build_hosted_chat_handler(TOGETHER),
     "fireworks": build_hosted_chat_handler(FIREWORKS),
     "cerebras": build_hosted_chat_handler(CEREBRAS),
+    # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
+    # gateway identity site swaps ``openai_compatible`` custom-ep entries to
+    # this key when ``[console] custom_endpoints_use_engine`` is on. The
+    # named legacy slots above stay untouched (kill-switch fallback).
+    "custom-hosted": build_hosted_chat_handler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
@@ -833,6 +839,41 @@ PROVIDER_PARAM_MAP = {
     "cerebras": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
+
+# Custom-endpoint engine surface (ADR-179 Phase 2 Task 6): the legacy
+# "custom-openai-api" map, copied verbatim so the swapped "custom-hosted"
+# execution key accepts exactly the generic kwargs the legacy handler did
+# (set/value parity is pinned by Tests/Chat/test_custom_endpoint_engine_swap.py;
+# the engine closure accepts every mapped provider-side name, including
+# ``user_identifier`` and the gateway's ``api_key_resolved`` decision flag).
+CUSTOM_PROVIDER_PARAM_MAP = {
+    "api_key": "api_key",
+    "api_key_resolved": "api_key_resolved",
+    "messages_payload": "input_data",
+    "temp": "temp",
+    "system_message": "system_message",
+    "streaming": "streaming",
+    "maxp": "maxp",
+    "minp": "minp",
+    "topk": "topk",
+    "model": "model",
+    "max_tokens": "max_tokens",
+    "seed": "seed",
+    "stop": "stop",
+    "response_format": "response_format",
+    "n": "n",
+    "user_identifier": "user_identifier",
+    "tools": "tools",
+    "tool_choice": "tool_choice",
+    "logit_bias": "logit_bias",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "logprobs": "logprobs",
+    "top_logprobs": "top_logprobs",
+    "reasoning_effort": "reasoning_effort",
+    "thinking_budget_tokens": "thinking_budget_tokens",
+}
+PROVIDER_PARAM_MAP["custom-hosted"] = CUSTOM_PROVIDER_PARAM_MAP
 """
 Maps generic parameter names used in `chat_api_call` to provider-specific
 parameter names for each LLM API. This allows `chat_api_call` to use a

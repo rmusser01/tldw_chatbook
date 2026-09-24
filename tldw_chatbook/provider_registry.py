@@ -97,6 +97,12 @@ class ProviderRecord:
     auth_scheme: str = "bearer"
     continuation_protocol: str | None = "chat_completions"
     discovery_route: str = "models"
+    # Settings-table fallbacks (Phase 2 Task 6): when set, the engine's
+    # resolution reads this ``api_settings`` section (instead of a table
+    # keyed by ``key``) for per-call sampling/streaming/transport fallbacks
+    # under the legacy handler's exact key spellings. Explicit request
+    # kwargs still win; ``settings_defaults`` is the last resort.
+    defaults_settings_section: str | None = None
 
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
@@ -224,6 +230,70 @@ CEREBRAS = ProviderRecord(
     base_url_suffix=None,
     reasoning_disposition="ignored",
     auth_scheme="bearer",
+)
+
+# --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
+# The engine-driven execution surface for the ADR-146 custom-endpoint
+# ``openai_compatible`` family, swapped in at the Console gateway identity
+# site when ``[console] custom_endpoints_use_engine`` is on. Identity,
+# readiness, and saved sessions keep the ``custom``/``custom-ep:<slug>``
+# spellings -- only the execution key changes, so this record deliberately
+# ships NO env var (credentials are entry-resolved by the gateway;
+# ``[api_settings.custom].api_key_env_var`` still flows through the
+# settings section when the engine resolves a key on its own) and no
+# default base URL (the per-entry URL is forwarded explicitly; a direct
+# call without one fails with actionable copy). Fallbacks read the legacy
+# ``[api_settings.custom]`` table via ``defaults_settings_section`` under
+# ``chat_with_custom_openai``'s exact key spellings (``api_timeout`` et al;
+# the shipped table's ``timeout`` spellings were never read by the legacy
+# handler and stay unread). ADR-066 custom row: ``reasoning_effort`` is
+# consumed verbatim; a thinking budget is accepted and dropped (strict
+# OpenAI proxies may reject llama.cpp-specific fields).
+CUSTOM_HOSTED = ProviderRecord(
+    key="custom-hosted",
+    config_key="Custom-hosted",
+    display_name="Custom Hosted",
+    classification=_LOCAL,
+    api_key_env_var=None,
+    api_key_env_candidates=(),
+    default_base_url=None,
+    native_tools=True,
+    reasoning_effort=True,
+    auto_refresh=False,
+    settings_defaults={
+        "streaming": False,
+        "max_tokens": 4096,
+        "timeout": 120,
+        "retries": 1,
+        "retry_delay": 1.0,
+    },
+    engine_driven=True,
+    payload_flags=frozenset(
+        {
+            "temperature",
+            "top_p",
+            "min_p",
+            "top_k",
+            "max_tokens",
+            "stop",
+            "response_format",
+            "seed",
+            "n",
+            "user",
+            "presence_penalty",
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "top_logprobs",
+            "thinking_budget_tokens",
+        }
+    ),
+    choice_allowances=frozenset({"logprobs", "stop_reason"}),
+    tolerant_response_extras=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer_optional",
+    continuation_protocol="chat_completions",
+    defaults_settings_section="custom",
 )
 
 # --- existing cloud providers (opaque identity records) ---
@@ -384,7 +454,7 @@ MLX_LM = ProviderRecord(
 ALL_RECORDS: tuple[ProviderRecord, ...] = (
     OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,
     HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,
-    TOGETHER, FIREWORKS, CEREBRAS,
+    TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )

@@ -112,7 +112,9 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from loguru import logger
+
+from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -156,6 +158,18 @@ class HostedProviderResolution:
     retries: int
     retry_delay: float
     streaming: bool
+    # Section-backed sampler fallbacks (records with a
+    # ``defaults_settings_section`` only, Task 6): values read from the
+    # legacy ``api_settings`` section when the caller supplies none. Other
+    # records leave these None -- their payloads stay caller-driven.
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    max_tokens: int | None = None
+    seed: int | None = None
+    stop: object = None
+    response_format: object = None
 
 
 def resolve_hosted_request(
@@ -206,15 +220,30 @@ def resolve_hosted_request(
         raise validators.configuration_error(
             f"{record.display_name} api_settings must be a configuration table."
         )
+    settings_key = (
+        record.defaults_settings_section
+        if record.defaults_settings_section is not None
+        else record.key
+    )
     try:
-        settings = provider_settings_for_key(api_settings, record.key)
+        settings = provider_settings_for_key(api_settings, settings_key)
     except ProviderSettingsError:
         raise validators.configuration_error(
-            f"{record.display_name} api_settings.{record.key} must be one "
+            f"{record.display_name} api_settings.{settings_key} must be one "
             "unambiguous configuration table."
         ) from None
     defaults = record.settings_defaults
     transport_settings = dict(settings)
+    if record.defaults_settings_section is not None:
+        # Legacy transport spellings (chat_with_custom_openai): the section
+        # spells the api_* forms; the plain forms were never read there.
+        for legacy_name, canonical_name in (
+            ("api_timeout", "timeout"),
+            ("api_retries", "retries"),
+            ("api_retry_delay", "retry_delay"),
+        ):
+            if legacy_name in settings and canonical_name not in settings:
+                transport_settings[canonical_name] = settings[legacy_name]
     if explicit_timeout is not None:
         transport_settings["timeout"] = explicit_timeout
     if explicit_retries is not None:
@@ -226,6 +255,11 @@ def resolve_hosted_request(
         record, explicit=explicit_api_key, settings=settings, environ=environment
     )
     base_url = _resolve_base_url(record, explicit=explicit_base_url, settings=settings)
+    section_sampling = (
+        _resolve_section_sampling(record, settings)
+        if record.defaults_settings_section is not None
+        else None
+    )
     return HostedProviderResolution(
         provider=record.key,
         model=_resolve_string(
@@ -253,6 +287,7 @@ def resolve_hosted_request(
             settings=settings,
             default=_settings_default(defaults, "streaming", True),
         ),
+        **(section_sampling or {}),
     )
 
 
@@ -418,6 +453,100 @@ def _resolve_streaming(
     return value
 
 
+def _resolve_section_sampling(
+    record: ProviderRecord, settings: Mapping[str, object]
+) -> dict[str, object]:
+    """Read one legacy settings section's per-call sampler fallbacks.
+
+    ``chat_with_custom_openai`` read, per call, ``temperature`` (fallback
+    ``temp``), ``top_p`` (``maxp``), ``top_k`` (``topk``), ``min_p``
+    (``minp``), ``max_tokens`` (default 4096), ``seed``, ``stop``, and
+    ``response_format`` from its ``api_settings`` section. The engine reads
+    the same spellings, strictly validated; absent keys resolve to the
+    record's ``settings_defaults`` (or None when no default ships). The
+    legacy string coercions (``streaming = "true"``) are NOT ported: the
+    strict engine fails closed with actionable copy instead.
+    """
+    validators = _validators_for(record)
+    defaults = record.settings_defaults
+    resolved: dict[str, object] = {}
+    samplers: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("temperature", ("temperature", "temp")),
+        ("top_p", ("top_p", "maxp")),
+        ("min_p", ("min_p", "minp")),
+    )
+    for name, spellings in samplers:
+        value = _first_present(settings, spellings)
+        if value is not None:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0 <= float(value) <= 1
+            ):
+                raise validators.configuration_error(
+                    f"{record.display_name} {name} is invalid."
+                )
+            resolved[name] = float(value)
+    top_k = _first_present(settings, ("top_k", "topk"))
+    if top_k is not None:
+        # A count, not a probability: 0 is llama-family "off" (the shipped
+        # table spells it) and flows through exactly as the legacy handler
+        # passed it.
+        if type(top_k) is not int or top_k < 0:
+            raise validators.configuration_error(
+                f"{record.display_name} top_k is invalid."
+            )
+        resolved["top_k"] = top_k
+    max_tokens = settings.get("max_tokens")
+    if max_tokens is not None:
+        resolved["max_tokens"] = validators.positive_integer(
+            "max_tokens", max_tokens
+        )
+    else:
+        default_max_tokens = _settings_default(defaults, "max_tokens", None)
+        if default_max_tokens is not None:
+            resolved["max_tokens"] = validators.positive_integer(
+                "max_tokens", default_max_tokens
+            )
+    seed = settings.get("seed")
+    if seed is not None:
+        if type(seed) is not int:
+            raise validators.configuration_error(
+                f"{record.display_name} seed is invalid."
+            )
+        resolved["seed"] = seed
+    stop = settings.get("stop")
+    if stop is not None:
+        try:
+            validators.normalize_stop(stop)
+        except ChatBadRequestError:
+            raise validators.configuration_error(
+                f"{record.display_name} stop is invalid."
+            ) from None
+        resolved["stop"] = stop
+    response_format = settings.get("response_format")
+    if response_format is not None:
+        try:
+            validators.normalize_response_format(response_format)
+        except ChatBadRequestError:
+            raise validators.configuration_error(
+                f"{record.display_name} response_format is invalid."
+            ) from None
+        resolved["response_format"] = response_format
+    return resolved
+
+
+def _first_present(
+    settings: Mapping[str, object], names: tuple[str, ...]
+) -> object:
+    """Return the first present value among the legacy key spellings."""
+    for name in names:
+        if name in settings:
+            return settings.get(name)
+    return None
+
+
 def _url_path(candidate: str) -> str | None:
     """Return the URL path, or None when the candidate cannot be split."""
     try:
@@ -459,6 +588,14 @@ def build_hosted_chat_payload(
     seed: object = None,
     n: object = None,
     user: object = None,
+    min_p: object = None,
+    top_k: object = None,
+    presence_penalty: object = None,
+    frequency_penalty: object = None,
+    logit_bias: object = None,
+    logprobs: object = None,
+    top_logprobs: object = None,
+    thinking_budget_tokens: object = None,
     **_generic: object,
 ) -> dict[str, Any]:
     """Build one validated engine request without mutating inputs.
@@ -485,6 +622,18 @@ def build_hosted_chat_payload(
         seed: Integer seed; requires the ``seed`` flag.
         n: Positive completion count; requires the ``n`` flag.
         user: Bounded caller identity; requires the ``user`` flag.
+        min_p: Sampler in [0, 1]; requires the ``min_p`` flag (custom
+            family, Task 6).
+        top_k: Positive integer; requires the ``top_k`` flag (custom family).
+        presence_penalty: Penalty in [-2, 2]; requires its flag.
+        frequency_penalty: Penalty in [-2, 2]; requires its flag.
+        logit_bias: Bounded token-id to bias mapping; requires its flag.
+        logprobs: Boolean logprob request; requires its flag.
+        top_logprobs: Count in [0, 20]; requires ``logprobs`` and its flag.
+        thinking_budget_tokens: Positive thinking budget; requires its flag.
+            Accepted-and-dropped per the ADR-066 custom row (the record's
+            reasoning composition decides emission; the custom family drops
+            it so strict OpenAI proxies never see llama.cpp-specific fields).
         **_generic: Unknown keywords are ignored (one shared per-provider
             param map drives every preset).
 
@@ -508,11 +657,31 @@ def build_hosted_chat_payload(
         # the payload layer gates it (readiness requires key and URL, not a
         # model) instead of sending a modelless request.
         raise bad_request(f"{record.display_name} model is required.")
+    # Section-backed sampler fallbacks (Task 6): a caller-supplied value
+    # wins over the resolution's settings-section value (the resolution is
+    # explicit > section > record-defaults in source order).
+    if temperature is None:
+        temperature = resolution.temperature
+    if top_p is None:
+        top_p = resolution.top_p
+    if min_p is None:
+        min_p = resolution.min_p
+    if top_k is None:
+        top_k = resolution.top_k
+    if max_tokens is None:
+        max_tokens = resolution.max_tokens
+    if seed is None:
+        seed = resolution.seed
+    if stop is None:
+        stop = resolution.stop
+    if response_format is None:
+        response_format = resolution.response_format
     stream = resolution.streaming if streaming is None else streaming
     if type(stream) is not bool:
         raise bad_request(f"{record.display_name} streaming must be a boolean.")
     _validate_sampler(record, "temperature", temperature)
     _validate_sampler(record, "top_p", top_p)
+    _validate_sampler(record, "min_p", min_p)
     messages = _normalize_messages(
         record, messages_payload, system_message=system_message
     )
@@ -529,6 +698,14 @@ def build_hosted_chat_payload(
         payload["temperature"] = temperature
     if top_p is not None:
         payload["top_p"] = top_p
+    if min_p is not None:
+        payload["min_p"] = min_p
+    if top_k is not None:
+        _require_payload_flag(record, "top_k")
+        if type(top_k) is not int or top_k < 0:
+            # Non-negative: 0 is llama-family "off" and is forwarded as-is.
+            raise bad_request(f"{record.display_name} top_k is invalid.")
+        payload["top_k"] = top_k
     if max_tokens is not None:
         _require_payload_flag(record, "max_tokens")
         payload["max_tokens"] = validators.positive_integer("max_tokens", max_tokens)
@@ -548,6 +725,45 @@ def build_hosted_chat_payload(
     if n is not None:
         _require_payload_flag(record, "n")
         payload["n"] = validators.positive_integer("n", n)
+    if presence_penalty is not None:
+        payload["presence_penalty"] = _validate_penalty(
+            record, "presence_penalty", presence_penalty
+        )
+    if frequency_penalty is not None:
+        payload["frequency_penalty"] = _validate_penalty(
+            record, "frequency_penalty", frequency_penalty
+        )
+    if logit_bias is not None:
+        payload["logit_bias"] = _validate_logit_bias(record, logit_bias)
+    if logprobs is not None:
+        _require_payload_flag(record, "logprobs")
+        if type(logprobs) is not bool:
+            raise bad_request(f"{record.display_name} logprobs is invalid.")
+        payload["logprobs"] = logprobs
+    if top_logprobs is not None:
+        _require_payload_flag(record, "top_logprobs")
+        if (
+            type(top_logprobs) is not int
+            or not 0 <= top_logprobs <= 20
+            or logprobs is not True
+        ):
+            # The legacy handler silently ignored top_logprobs without
+            # logprobs=True; the strict engine surfaces the hidden intent
+            # instead of dropping it.
+            raise bad_request(f"{record.display_name} top_logprobs is invalid.")
+        payload["top_logprobs"] = top_logprobs
+    if thinking_budget_tokens is not None:
+        _require_payload_flag(record, "thinking_budget_tokens")
+        validators.positive_integer(
+            "thinking_budget_tokens", thinking_budget_tokens
+        )
+        # ADR-066 composition is record data: only a record whose
+        # composition consumes a budget emits one. Today every engine
+        # record follows the custom row (accepted, validated, dropped).
+        logger.debug(
+            "{} thinking budget is not consumable on this wire format; dropped",
+            record.key,
+        )
     if user is not None:
         _require_payload_flag(record, "user")
         payload["user"] = _bounded_identifier(record, "user", user)
@@ -775,6 +991,45 @@ def _validate_sampler(record: ProviderRecord, name: str, value: object) -> None:
         or not 0 <= float(value) <= 1
     ):
         raise validators.bad_request(f"{record.display_name} {name} is invalid.")
+
+
+def _validate_penalty(record: ProviderRecord, name: str, value: object) -> float:
+    """Validate one OpenAI penalty in [-2, 2], flag-gated (Task 6)."""
+    validators = _validators_for(record)
+    _require_payload_flag(record, name)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not -2 <= float(value) <= 2
+    ):
+        raise validators.bad_request(f"{record.display_name} {name} is invalid.")
+    return float(value)
+
+
+def _validate_logit_bias(
+    record: ProviderRecord, value: object
+) -> dict[str, float]:
+    """Validate an OpenAI logit_bias mapping, flag-gated (Task 6)."""
+    validators = _validators_for(record)
+    _require_payload_flag(record, "logit_bias")
+    if not isinstance(value, Mapping) or not validators.json_shape_is_bounded(value):
+        raise validators.bad_request(f"{record.display_name} logit_bias is invalid.")
+    normalized: dict[str, float] = {}
+    for token, bias in value.items():
+        if (
+            not isinstance(token, str)
+            or not token
+            or isinstance(bias, bool)
+            or not isinstance(bias, (int, float))
+            or not math.isfinite(float(bias))
+            or not -100 <= float(bias) <= 100
+        ):
+            raise validators.bad_request(
+                f"{record.display_name} logit_bias is invalid."
+            )
+        normalized[token] = float(bias)
+    return normalized
 
 
 def _bounded_identifier(record: ProviderRecord, name: str, value: object) -> str:
@@ -1190,6 +1445,8 @@ def build_hosted_chat_handler(
         system_message: str | None = None,
         temp: float | None = None,
         maxp: float | None = None,
+        minp: float | None = None,
+        topk: int | None = None,
         streaming: bool | None = False,
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
@@ -1199,13 +1456,29 @@ def build_hosted_chat_handler(
         stop: str | list[str] | None = None,
         response_format: dict[str, Any] | None = None,
         user: str | None = None,
+        user_identifier: str | None = None,
+        seed: int | None = None,
+        n: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        logprobs: bool | None = None,
+        top_logprobs: int | None = None,
         reasoning_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
         provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
         request_timeout: float | None = None,
         request_retries: int | None = None,
         request_retry_delay: float | None = None,
+        api_key_resolved: bool | None = None,
     ) -> dict[str, Any] | HostedProviderStream:
         del custom_prompt_arg
+        # api_key_resolved: the Console gateway passes it after making the
+        # credential decision itself. The engine's explicit ``api_key``
+        # already wins resolution, so the flag needs no separate handling
+        # here -- accepting it keeps the shared custom param map (and the
+        # gateway's kwargs projection) loadable for this handler.
+        del api_key_resolved
         started_at = time.time()
         labels = {"model": model or "configured", "streaming": str(bool(streaming))}
         log_counter(f"{record.key}_api_request", labels=labels)
@@ -1218,6 +1491,8 @@ def build_hosted_chat_handler(
                 system_message=system_message,
                 temp=temp,
                 maxp=maxp,
+                minp=minp,
+                topk=topk,
                 streaming=streaming,
                 max_tokens=max_tokens,
                 tools=tools,
@@ -1225,8 +1500,16 @@ def build_hosted_chat_handler(
                 tool_choice=tool_choice,
                 stop=stop,
                 response_format=response_format,
-                user=user,
+                user=user if user is not None else user_identifier,
                 reasoning_effort=reasoning_effort,
+                thinking_budget_tokens=thinking_budget_tokens,
+                seed=seed,
+                n=n,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                logprobs=logprobs,
+                top_logprobs=top_logprobs,
                 provider_continuations=provider_continuations,
                 request_timeout=request_timeout,
                 request_retries=request_retries,
@@ -1263,6 +1546,8 @@ def _send_hosted_chat_request(
     system_message: str | None,
     temp: float | None,
     maxp: float | None,
+    minp: float | None,
+    topk: int | None,
     streaming: bool | None,
     max_tokens: int | None,
     tools: list[dict[str, Any]] | None,
@@ -1272,6 +1557,14 @@ def _send_hosted_chat_request(
     response_format: dict[str, Any] | None,
     user: str | None,
     reasoning_effort: str | None,
+    thinking_budget_tokens: int | None,
+    seed: int | None,
+    n: int | None,
+    presence_penalty: float | None,
+    frequency_penalty: float | None,
+    logit_bias: dict[str, float] | None,
+    logprobs: bool | None,
+    top_logprobs: int | None,
     provider_continuations: Sequence[ProviderContinuationCheckpoint],
     request_timeout: float | None,
     request_retries: int | None,
@@ -1299,10 +1592,20 @@ def _send_hosted_chat_request(
         provider_continuations=provider_continuations,
         temperature=temp,
         top_p=maxp,
+        min_p=minp,
+        top_k=topk,
         max_tokens=max_tokens,
         stop=stop,
         response_format=response_format,
+        seed=seed,
+        n=n,
         user=user,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        logit_bias=logit_bias,
+        logprobs=logprobs,
+        top_logprobs=top_logprobs,
+        thinking_budget_tokens=thinking_budget_tokens,
     )
     try:
         raw = owned_json_post(

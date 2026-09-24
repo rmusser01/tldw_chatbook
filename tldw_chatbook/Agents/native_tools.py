@@ -43,6 +43,12 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "qwencloud",
         "custom-openai-api",
         "custom-openai-api-2",
+        # ADR-179 Phase 2 Task 6: the swapped custom-endpoint execution key
+        # forwards OpenAI tools and returns the raw OpenAI-compatible
+        # response shape through the hosted engine exactly as the legacy
+        # custom handlers did (registry parity keeps this set equal to
+        # provider_registry.NATIVE_TOOLS_KEYS).
+        "custom-hosted",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
         # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
         # back to OpenAI shape — live-gated against the real API 2026-07-17
