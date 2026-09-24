@@ -9073,6 +9073,7 @@ class SettingsScreen(BaseAppScreen):
             "chatterbox": "chatterbox",
             "higgs": "higgs",
             "alltalk": "alltalk",
+            "omnivoice": "omnivoice",
         }
         for alias, provider_id in aliases.items():
             if alias in query:
