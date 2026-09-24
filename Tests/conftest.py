@@ -1144,6 +1144,17 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # config loader (same admission signature as test_hosted_chat.py
             # above).
             "test_hosted_provider_engine_resolution.py",
+            # ADR-179 Task 11: three pre-existing red suites with the same
+            # admission signature -- the Kimi/Z.ai native-tool suite drives
+            # the real hosted handlers (owned_json_post session construction
+            # reads the guarded config loader), and the two console
+            # continuation suites drive the real Console controller submit
+            # path whose config reads go through the same admission. None of
+            # them re-selects a config itself, so they keep the bootstrap
+            # profile like the hosted-chat class above.
+            "test_kimi_zai_native_tools.py",
+            "test_console_continuation_review_fixes.py",
+            "test_console_trace_transform_continuations.py",
         }
     )
     test_data_dir = (
