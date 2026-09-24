@@ -635,12 +635,13 @@ class SpeechPlaybackMixin:
             return
 
         if self._ensure_audio_player():
-            # Cancel any existing progress timer first
-            if self._progress_timer_task and not self._progress_timer_task.done():
-                self._progress_timer_task.cancel()
-                self._progress_timer_task = None
-                logger.debug("Cancelled existing progress timer")
-
+            # No cancel here (tier-2 review S21). This method is synchronous,
+            # so it could only fire-and-forget `.cancel()` -- and it also
+            # NULLED `_progress_timer_task`, which made the awaited barrier
+            # in `_play_audio_async` below a no-op: the old loop was still
+            # unwinding through its `except CancelledError` reset block,
+            # writing the same three widgets, while the new one started.
+            # `_play_audio_async` retires the old timer properly.
             self._sync_active_transport_actions()
             self.query_one("#audio-player-status", Static).update(
                 "Playing current result…"
@@ -696,9 +697,24 @@ class SpeechPlaybackMixin:
                     logger.debug(f"Stop result: {stop_result}")
                     self._release_playback_artifact()
 
-                    # Small delay to ensure clean state
                     import asyncio
 
+                    # Retire the OUTGOING progress timer here -- immediately
+                    # after the old player is stopped and its artifact
+                    # released, and before anything of the replacement is
+                    # prepared (Qodo #2813 finding 2). It used to be retired
+                    # only after `play()` succeeded, which left the old loop
+                    # alive across the PCM copy and the play() await; the
+                    # loop releases whatever sits in `_active_playback_release`
+                    # when it sees an idle player, so the only thing keeping
+                    # it off the REPLACEMENT lease was the accident that no
+                    # `await` separated the install below from the retire.
+                    # Retiring first makes the safety structural: no timer
+                    # from the previous playback is alive while the next one
+                    # is being set up, so none can free the new PCM copy.
+                    await self._retire_progress_timer()
+
+                    # Small delay to ensure clean state
                     await asyncio.sleep(0.2)
 
                     # Check state after stop
@@ -753,18 +769,12 @@ class SpeechPlaybackMixin:
                     logger.debug(f"Play result: {success}")
 
                     if success:
+                        # Safe to install now: the outgoing timer was retired
+                        # to completion above, before play() was even called,
+                        # so nothing can observe an idle player and release
+                        # this lease out from under the audio that is playing.
                         self._active_playback_release = release_artifact
                         release_artifact = None
-
-                        # Cancel any existing progress timer
-                        if (
-                            self._progress_timer_task
-                            and not self._progress_timer_task.done()
-                        ):
-                            self._progress_timer_task.cancel()
-                            await asyncio.sleep(
-                                0.05
-                            )  # Small delay to ensure cancellation
 
                         # Start new progress timer
                         self._progress_timer_task = asyncio.create_task(
@@ -866,14 +876,13 @@ class SpeechPlaybackMixin:
                     self.query_one("#pause-audio-btn", Button).label = "Pause"
                     self._sync_active_transport_actions()
                     self.app.notify("Playback resumed", severity="information")
-                    # Cancel any existing timer and restart
-                    if (
-                        self._progress_timer_task
-                        and not self._progress_timer_task.done()
-                    ):
-                        self._progress_timer_task.cancel()
+                    # Retire the old timer to completion and restart. This
+                    # site previously cancelled with NO delay at all before
+                    # starting the replacement, so both loops wrote the same
+                    # three widgets while the first unwound.
                     import asyncio
 
+                    await self._retire_progress_timer()
                     self._progress_timer_task = asyncio.create_task(
                         self._update_progress_timer()
                     )
@@ -903,20 +912,15 @@ class SpeechPlaybackMixin:
         """Stop audio playback asynchronously and report a safe idle result."""
         try:
             logger.debug("_stop_audio_async called")
-            # Cancel progress timer if running
-            if self._progress_timer_task and not self._progress_timer_task.done():
-                self._progress_timer_task.cancel()
-                self._progress_timer_task = None
+            # Retire the progress timer to completion before touching the
+            # transport widgets below -- otherwise the loop's own exit block
+            # repaints them right back.
+            await self._retire_progress_timer()
 
             # Force stop any playback
             success = await self.app.audio_player.stop()
             logger.debug(f"Stop result: {success}")
             self._release_playback_artifact()
-
-            # Also ensure progress timer is cancelled
-            if self._progress_timer_task and not self._progress_timer_task.done():
-                self._progress_timer_task.cancel()
-                await asyncio.sleep(0.1)  # Give it time to cancel
 
             # Always reset button states regardless of success
             # (audio may have already finished playing)
@@ -1150,6 +1154,33 @@ class SpeechPlaybackMixin:
         if not self.query_one("#stop-audio-btn", Button).disabled:
             self._stop_audio()
 
+    async def _retire_progress_timer(self) -> None:
+        """Cancel the progress loop and WAIT for it to finish unwinding.
+
+        Tier-2 review S21 [D1/D3]. Six sites used to cancel this task and
+        then either sleep a hardcoded 50-100 ms, or continue immediately.
+        `Task.cancel()` only REQUESTS cancellation: the loop still has to be
+        resumed to raise `CancelledError`, run its `except` branch and its
+        "ensure UI is reset on exit" block -- which writes
+        `#audio-player-transport` and `#audio-player-status`, the same
+        widgets a freshly started replacement timer writes. A sleep is a
+        guess, not a barrier; two of the six sites had no sleep at all.
+        Awaiting the task itself IS the barrier.
+
+        `asyncio.gather(..., return_exceptions=True)` rather than a bare
+        `await task`: gather returns the task's own `CancelledError` as a
+        result instead of re-raising it here, while a cancellation of the
+        CALLER still propagates normally.
+        """
+        import asyncio
+
+        task = self._progress_timer_task
+        self._progress_timer_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
     async def _update_progress_timer(self) -> None:
         """Update progress bar during playback"""
         import asyncio
@@ -1266,9 +1297,7 @@ class SpeechPlaybackMixin:
             self.app.workers.cancel_group(self, "stts-playback")
             self.app.workers.cancel_group(self, "replace_tts_result_after_playback")
             # Cancel any active progress timer
-            if self._progress_timer_task and not self._progress_timer_task.done():
-                self._progress_timer_task.cancel()
-                await asyncio.sleep(0.05)
+            await self._retire_progress_timer()
 
             # Cancel any active play worker
             if (

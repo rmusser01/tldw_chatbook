@@ -849,3 +849,31 @@ def test_run_item_row_title_strips_control_characters():
     cells = RunsPane._run_item_row_cells({"title": "Evil\x9b31mTitle"})
     assert "\x9b" not in cells[0].plain
     assert "Evil" in cells[0].plain and "31mTitle" in cells[0].plain
+
+
+def test_a_failed_items_repopulate_is_logged_not_silently_partial():
+    """tier-2 review S21 P3: `watch_run_items` wrapped `clear()` plus the
+    whole `add_row` loop in `except Exception: pass`, so a failed insert left
+    a half-populated Items table beside a note describing the full row set,
+    with nothing logged anywhere.
+    """
+    from loguru import logger
+
+    class ExplodingTable:
+        def clear(self):
+            return None
+
+        def add_row(self, *cells):
+            raise RuntimeError("row insert exploded")
+
+    pane = RunsPane()
+    pane.query_one = lambda *args, **kwargs: ExplodingTable()
+
+    records: list[str] = []
+    sink_id = logger.add(records.append, level="DEBUG")
+    try:
+        pane.watch_run_items([{"title": "a"}])
+    finally:
+        logger.remove(sink_id)
+
+    assert any("run items table" in line for line in records), records

@@ -23,7 +23,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
 # They never touch the network: every client below is an injected
 # httpx.MockTransport, which the socket guard independently confirms.
 pytestmark = pytest.mark.local_server_probe
-_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
+_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024  # TASK-32925: sized for full provider catalogs
 
 
 def _client(handler) -> httpx.AsyncClient:

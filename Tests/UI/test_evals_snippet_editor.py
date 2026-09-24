@@ -99,6 +99,22 @@ def evals_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db))
 
 
+async def _drive_import(editor, pilot, path) -> None:
+    """Run one import to completion.
+
+    The blocking read half is a worker THREAD now (Qodo #2813 finding 5:
+    `push_screen` callbacks are the UI thread, and CLAUDE.md's rule is
+    "workers for operations >100ms"), so a single `pilot.pause()` no longer
+    spans an import. Awaiting the worker is deterministic where a pause
+    count would be a guess.
+    """
+    editor._handle_import_file_selected(path)
+    worker = editor._import_worker
+    if worker is not None:
+        await worker.wait()
+    await pilot.pause()
+
+
 def _make_dataset(
     db: EvalsDB, name: str, snippets: list[dict], **extra_metadata
 ) -> str:
@@ -711,8 +727,7 @@ async def test_plain_text_import_assigns_uuids_and_persists_inline(
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(txt_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, txt_path)
 
     stored = evals_db.get_dataset(dataset_id)
     samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
@@ -737,8 +752,7 @@ async def test_csv_import_round_trips_the_group_field(evals_app, evals_db, tmp_p
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(csv_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, csv_path)
 
     stored = evals_db.get_dataset(dataset_id)
     samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
@@ -773,8 +787,7 @@ async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tm
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
 
     stored = evals_db.get_dataset(dataset_id)
     samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
@@ -810,8 +823,7 @@ async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_open
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
 
         # Re-select the dataset, exactly like a user reopening it after
         # import -- must not crash the detail pane a second time.
@@ -849,11 +861,9 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
         # Re-importing the SAME export -- the round-trip case.
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
 
         # Selecting the dataset again is the real regression check (see
         # the illegal-id test above for why): the historical crash left
@@ -884,8 +894,7 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(csv_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, csv_path)
 
     assert any(
         severity == "error" for _message, severity in evals_app.app_instance.notifications
@@ -925,8 +934,7 @@ async def test_import_notification_names_the_skipped_count_when_entries_are_drop
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
 
     info_messages = [
         message
@@ -960,8 +968,7 @@ async def test_import_notification_omits_the_skipped_clause_when_nothing_is_drop
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(json_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, json_path)
 
     info_messages = [
         message
@@ -995,8 +1002,7 @@ async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(csv_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, csv_path)
 
         # The app must still be alive and the screen still responsive --
         # the crash this guards against propagates out of the callback and
@@ -1034,8 +1040,7 @@ async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
-        editor._handle_import_file_selected(missing_path)
-        await pilot.pause()
+        await _drive_import(editor, pilot, missing_path)
 
         editor_still_here = evals_app.screen.query_one(
             "#evals-snippet-editor", SnippetEditor

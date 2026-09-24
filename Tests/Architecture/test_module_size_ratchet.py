@@ -24,6 +24,28 @@ not duplicated here (core-review TASK-32809.2 AC#2).
 
 First recorded 2026-09-19 by core-review TASK-32809.2, each row at its exact
 measured size as of `origin/dev`.
+
+**Second pass, 2026-09-21 (tier-2 review, task-32901).** TASK-32809.2's
+hand-picked list missed four modules LARGER than three of the seven rows it
+did pick — the tier-2 review found them in four separate slices, each slice
+independently reporting "god module with no ratchet row":
+
+* `UI/Wizards/FirstRunSetupWizard.py` (10,404) — the largest module in the
+  repo with no row at all (S21). `backlog/docs/size-decomposition-candidates-
+  2026-09-18.md` says "Size ratchets now guard all of these" and does not
+  list `UI/Wizards/` anywhere.
+* `UI/Screens/watchlists_collections_screen.py` (14,319) — one class, 392
+  methods, roughly double the method count of the biggest budgeted
+  non-`chat`/`library` class (S18). Neither `test_screen_size_ratchet.py`
+  (which holds only `chat_screen` and `library_screen`) nor this file had it.
+* `UI/Screens/llm_screen.py` (5,180) and `UI/Screens/change_review_screen.py`
+  (4,967) — the other two S18 named.
+
+They are budgeted HERE rather than in `test_screen_size_ratchet.py` because
+that file's rows also pin a method count per named class, which needs a
+decomposition plan to be meaningful; `personas_screen.py` is the standing
+precedent for a screen living in this file. No split is proposed by adding a
+row — `backlog/docs/library-decomposition-recipe.md` governs any split.
 """
 
 from __future__ import annotations
@@ -52,6 +74,12 @@ _BUDGETS: dict[str, int] = {
     # governed row. Pinned at their exact measurement, like every row here.
     "tldw_chatbook/TTS/profile_repository.py": 6304,
     "tldw_chatbook/TTS/TTS_Generation.py": 4046,
+    # Added 2026-09-21 (task-32901), each at its exact measured size as of
+    # `origin/dev` 9e33252708 — see the module docstring's second pass.
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 10404,
+    "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
+    "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

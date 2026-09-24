@@ -10,8 +10,22 @@ Handles conflict resolution when importing content that may already exist.
 
 from enum import Enum
 from typing import Dict, Any, Optional, Callable
-from datetime import datetime
 from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+
+_PREVIEW_CHARS = 100
+
+
+def _preview(text: Any) -> str:
+    """Shorten `text` for a conflict prompt, marking it only if it was cut.
+
+    An unconditional ``+ "..."`` tells the user a 3-character description was
+    truncated when it was not (tier-2 review S17 P3).
+    """
+    value = str(text or "")
+    if len(value) <= _PREVIEW_CHARS:
+        return value
+    return value[:_PREVIEW_CHARS] + "..."
 
 
 class ConflictResolution(Enum):
@@ -142,9 +156,9 @@ class ConflictResolver:
                 "type": "character",
                 "existing_name": existing.get("name", "Unknown"),
                 "existing_created": existing.get("created_at", "Unknown"),
-                "existing_description": existing.get("description", "")[:100] + "...",
+                "existing_description": _preview(existing.get("description")),
                 "incoming_name": incoming.get("name", "Unknown"),
-                "incoming_description": incoming.get("description", "")[:100] + "...",
+                "incoming_description": _preview(incoming.get("description")),
             }
 
             return self.ask_callback(conflict_info)
@@ -201,7 +215,10 @@ class ConflictResolver:
         # Simple merge strategy: append content with separator
         merged = existing.copy()
 
-        separator = f"\n\n---\n[Imported from chatbook on {datetime.now().strftime('%Y-%m-%d %H:%M')}]\n\n"
+        # The separator is baked into the user's note content permanently, so
+        # it must be an unambiguous instant, not the merging machine's local
+        # clock (tier-2 review S17 P3).
+        separator = f"\n\n---\n[Imported from chatbook on {utc_now_iso()}]\n\n"
 
         merged["content"] = (
             existing.get("content", "") + separator + incoming.get("content", "")

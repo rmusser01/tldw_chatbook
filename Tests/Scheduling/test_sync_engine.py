@@ -3935,3 +3935,133 @@ async def test_pull_results_reports_honest_copy_when_route_missing_despite_capab
     assert "scheduled_task_not_found" not in outcome.phase_errors[0], (
         "the raw server error code must not leak into the user-facing copy"
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_on_this_device_mirrors_server_rows_under_the_server_scope(
+    tmp_path,
+):
+    """TASK-32892 P0-2: the review's reproduction, end to end.
+
+    The Schedules workbench hands `service.owner_id` -- the view toggle --
+    straight to `sync_now`. On "This device" with a server connected, the
+    server's own reminders were mirrored under `owner_id="local"`. Every
+    ADR-077 execution guard keys on the `"server:"` PREFIX
+    (`scheduler/queue.py is_server_scoped_owner`), so such a row reads as NOT
+    server-scoped and the local queue arms it: a second, unattended firing
+    of every occurrence alongside the server's own scheduler, which is
+    ADR-077's explicitly rejected "both sides execute" alternative.
+
+    `SyncEngine` is deliberately NOT where this is enforced -- it stores
+    under whatever scope it is handed, and its push half legitimately
+    operates on locally-owned rows. Only `SchedulingService` knows which
+    server is connected, which is what `_active_server_owner_id`'s own
+    docstring says.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-1", "title": "Server-owned standup"}]
+    }
+    service = SchedulingService(
+        db,
+        server_client,
+        runtime_source="local",  # the user is looking at "This device"
+        app_getter=lambda: SimpleNamespace(active_server_id="u1"),
+    )
+
+    await service.sync_now(service.owner_id)
+
+    assert db.list_reminder_tasks(owner_id="local") == [], (
+        "the server's reminder was mirrored under a locally-executed owner"
+    )
+    mirrored = db.list_reminder_tasks(owner_id="server:u1")
+    assert [row["server_id"] for row in mirrored] == ["srv-1"]
+    assert is_server_scoped_owner(mirrored[0]["owner_id"])
+
+
+@pytest.mark.asyncio
+async def test_sync_keeps_the_view_owner_when_no_server_is_connected(tmp_path):
+    """No server to re-scope to means the sync stays exactly as it was."""
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    service = SchedulingService(db, AsyncMock(), runtime_source="local")
+
+    assert service.sync_target_owner_id() == "local"
+    assert service.sync_target_owner_id("server:u9") == "server:u9"
+
+
+@pytest.mark.asyncio
+async def test_service_sync_targets_the_connected_server_not_the_view(tmp_path):
+    """The resolution itself, at the seam the workbench calls."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    service = SchedulingService(
+        db,
+        AsyncMock(),
+        runtime_source="local",
+        app_getter=lambda: SimpleNamespace(active_server_id="u1"),
+    )
+    seen: list[str] = []
+
+    async def _record(owner_id):
+        seen.append(owner_id)
+        return "outcome"
+
+    service.sync_engine.sync_now = _record
+
+    assert await service.sync_now("local") == "outcome"
+    assert seen == ["server:u1"]
+
+
+@pytest.mark.asyncio
+async def test_sync_retargets_a_stale_server_owner_to_the_active_server(tmp_path):
+    """Qodo #2799-1: a server-scoped owner is not automatically the RIGHT
+    server. `set_owner("server:u1")` sticks on the long-lived service, but
+    `SchedulingServerClient.list_reminders()` takes no owner -- it reaches
+    whatever server the notifications service is currently pointed at. Once
+    the active server becomes u2, the shipped early-return kept handing the
+    sync `"server:u1"`, so u2's reminders and automation results were
+    mirrored under u1's scope."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    service = SchedulingService(
+        db,
+        AsyncMock(),
+        runtime_source="local",
+        app_getter=lambda: SimpleNamespace(active_server_id="u2"),
+    )
+    service.set_owner("server:u1")  # the view still names the previous server
+
+    assert service.sync_target_owner_id() == "server:u2"
+    assert service.sync_target_owner_id("server:u1") == "server:u2"
+
+    seen: list[str] = []
+
+    async def _record(owner_id):
+        seen.append(owner_id)
+        return "outcome"
+
+    service.sync_engine.sync_now = _record
+    await service.sync_now(service.owner_id)
+    assert seen == ["server:u2"], "the pull was written under the stale scope"
