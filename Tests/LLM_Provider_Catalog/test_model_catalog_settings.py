@@ -67,6 +67,10 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "QwenCloud",
         "ZAI",
         "Databricks",
+        # ADR-179 Phase 2 Task 5: inference-cloud engine presets.
+        "Together",
+        "Fireworks",
+        "Cerebras",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 8
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 11
     assert SELECTOR_MERGE_CAP == 50

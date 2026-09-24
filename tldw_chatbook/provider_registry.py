@@ -129,6 +129,103 @@ DATABRICKS = ProviderRecord(
     auth_scheme="bearer",
 )
 
+# --- Inference-cloud presets (ADR-179 Phase 2 Task 5) ---
+# Together / Fireworks / Cerebras: strict engine presets whose entire
+# implementation is this record plus one dispatch entry (no per-provider
+# LLM_Calls module).
+#
+# ALLOWANCES ARE PROVISIONAL PENDING FIRST LIVE CAPTURE: this environment
+# holds no provider keys, so Task 2 captured NO cloud fixtures, and all
+# three records ship EMPTY response/choice/message allowance sets -- the
+# strict parser unchanged. Task 7's live probes capture real envelopes and
+# reconcile these sets (amend, never silent).
+#
+# Memory of expected extras (recorded here as memory, NOT as live
+# allowances -- fixture-unproven): Together -- a top-level ``prompt``
+# string (the prompt tokens actually shown) and choice-level ``logprobs``;
+# Cerebras -- a top-level ``time_info`` object on some responses.
+#
+# Fireworks hides reasoning behind its own API surface (response_format
+# modes), so its disposition is "proprietary"; Together and Cerebras
+# reason transparently but are not wired to a reasoning_effort parameter.
+TOGETHER = ProviderRecord(
+    key="together",
+    config_key="Together",
+    display_name="Together",
+    classification=_CLOUD,
+    api_key_env_var="TOGETHER_API_KEY",
+    api_key_env_candidates=("TOGETHER_API_KEY",),
+    default_base_url="https://api.together.xyz/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "TOGETHER_API_KEY",
+        # No "model" key: models fill via discovery/seeding; the unset key
+        # resolves to the payload-gated "" (Phase 1 blank-model lesson --
+        # a shipped present-but-blank value would fail closed).
+        "streaming": True,
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5.0,
+    },
+    pricing_seeds={},       # per-model pricing lands with the catalog
+    engine_driven=True,
+    base_url_suffix=None,   # the default URL is already complete
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+FIREWORKS = ProviderRecord(
+    key="fireworks",
+    config_key="Fireworks",
+    display_name="Fireworks",
+    classification=_CLOUD,
+    api_key_env_var="FIREWORKS_API_KEY",
+    api_key_env_candidates=("FIREWORKS_API_KEY",),
+    default_base_url="https://api.fireworks.ai/inference/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "FIREWORKS_API_KEY",
+        # No "model" key (see TOGETHER): discovery/seeding fills models.
+        "streaming": True,
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5.0,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    reasoning_disposition="proprietary",  # reasoning behind its own API surface
+    auth_scheme="bearer",
+)
+CEREBRAS = ProviderRecord(
+    key="cerebras",
+    config_key="Cerebras",
+    display_name="Cerebras",
+    classification=_CLOUD,
+    api_key_env_var="CEREBRAS_API_KEY",
+    api_key_env_candidates=("CEREBRAS_API_KEY",),
+    default_base_url="https://api.cerebras.ai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "CEREBRAS_API_KEY",
+        # No "model" key (see TOGETHER): discovery/seeding fills models.
+        "streaming": True,
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5.0,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+
 # --- existing cloud providers (opaque identity records) ---
 # api_key_env_var / default api_base_url transcribed EXACTLY from config.py's
 # [api_settings.*] tables (lines ~4166-4325) and, where a table defines no
@@ -287,6 +384,7 @@ MLX_LM = ProviderRecord(
 ALL_RECORDS: tuple[ProviderRecord, ...] = (
     OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,
     HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,
+    TOGETHER, FIREWORKS, CEREBRAS,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )

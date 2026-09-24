@@ -96,6 +96,36 @@ def test_identity_fields_match_config_tables():
     assert checked > 0
 
 
+def test_inference_cloud_keys_join_every_parity_surface():
+    # Task 5 (ADR-179 Phase 2): together/fireworks/cerebras join the
+    # audited set, cloud classification, auto-refresh, native tools,
+    # engine records, and dispatch. Every one of those surfaces is now a
+    # full-equality comparison with no exclusions (Tasks 8/9/11/12), so
+    # this pins each key's membership explicitly.
+    from tldw_chatbook.config import _cloud_provider_keys
+    from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+        AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    )
+    from tldw_chatbook.Agents.native_tools import NATIVE_TOOLS_PROVIDERS
+
+    for key, config_key in (
+        ("together", "Together"),
+        ("fireworks", "Fireworks"),
+        ("cerebras", "Cerebras"),
+    ):
+        record = RECORDS_BY_KEY[key]
+        assert record.engine_driven is True
+        assert key in {r.key for r in ENGINE_RECORDS}
+        assert config_key in CLOUD_PROVIDER_CONFIG_KEYS
+        assert config_key in _cloud_provider_keys
+        assert key in AUTO_REFRESH_KEYS
+        assert config_key in AUTO_REFRESH_PROVIDER_LIST_KEYS
+        assert key in NATIVE_TOOLS_KEYS
+        assert key in NATIVE_TOOLS_PROVIDERS
+        assert key in AUDITED_ENDPOINT_KEYS
+        assert callable(API_CALL_HANDLERS.get(key))
+
+
 def test_databricks_preset_shape():
     record = DATABRICKS
     assert record.key == "databricks"

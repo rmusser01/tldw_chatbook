@@ -80,6 +80,9 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         # Databricks AI Gateway base (the engine preset's /openai/v1 suffix,
         # ADR-179); also the standard Groq served-path prefix.
         "/openai/v1",
+        # Fireworks served-path base (the engine preset's default URL,
+        # ADR-179 Phase 2); models live at /inference/v1/models.
+        "/inference/v1",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -351,7 +354,12 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         return normalized_path
     if normalized_path == "/v1":
         return "/v1/models"
-    if normalized_path in {"/api/v1", "/api/paas/v4", "/openai/v1"}:
+    if normalized_path in {
+        "/api/v1",
+        "/api/paas/v4",
+        "/openai/v1",
+        "/inference/v1",
+    }:
         return f"{normalized_path}/models"
     if normalized_path in {"/completion", "/completions"}:
         return "/v1/models"

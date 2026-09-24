@@ -4134,6 +4134,11 @@ OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemin
 QwenCloud = ["qwen3.8-max"]
 ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
 Databricks = [] # Empty: model availability is workspace-dependent; fills via discovery or manual seeding
+# Inference clouds (ADR-179 Phase 2): engine presets with no per-provider
+# module; empty model lists fill via discovery or manual seeding.
+Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
+Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
+Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4344,6 +4349,40 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     # engine resolver (present-but-blank settings fail closed; only the
     # UNSET key resolves to the payload-gated ""), so the key stays absent.
     api_key_env_var = "DATABRICKS_TOKEN"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # --- Inference clouds (ADR-179 Phase 2) ---
+    # Engine presets (provider_registry.TOGETHER/FIREWORKS/CEREBRAS): no
+    # per-provider handler module exists. Each table mirrors its record's
+    # settings_defaults plus the default api_base_url (the record's
+    # default_base_url). No `model` key ships (same blank-model lesson as
+    # databricks): models fill via discovery or manual seeding, and the
+    # UNSET key resolves to the payload-gated "".
+    [api_settings.together] # Matches key in [providers]
+    api_key_env_var = "TOGETHER_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.together.xyz/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.fireworks] # Matches key in [providers]
+    api_key_env_var = "FIREWORKS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.fireworks.ai/inference/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.cerebras] # Matches key in [providers]
+    api_key_env_var = "CEREBRAS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.cerebras.ai/v1"
     timeout = 90
     retries = 3
     retry_delay = 5.0

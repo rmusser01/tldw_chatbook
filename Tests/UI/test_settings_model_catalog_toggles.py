@@ -142,6 +142,10 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "QwenCloud": True,
                 "ZAI": False,
                 "Databricks": True,
+                # ADR-179 Phase 2 Task 5: inference-cloud engine presets.
+                "Together": True,
+                "Fireworks": True,
+                "Cerebras": True,
             }
             expected_write = {
                 "OpenAI": False,
@@ -152,6 +156,9 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "QwenCloud": False,
                 "ZAI": False,
                 "Databricks": False,
+                "Together": False,
+                "Fireworks": False,
+                "Cerebras": False,
             }
             for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
                 assert (

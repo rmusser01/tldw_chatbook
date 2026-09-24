@@ -78,11 +78,13 @@ class ConsoleProviderCatalogEntry:
 
 _PROVIDER_DISPLAY_NAMES = {
     "anthropic": "Anthropic",
+    "cerebras": "Cerebras",
     "cohere": "Cohere",
     "custom": "Custom OpenAI",
     "custom_2": "Custom OpenAI 2",
     "databricks": "Databricks",
     "deepseek": "DeepSeek",
+    "fireworks": "Fireworks",
     "google": "Google",
     "groq": "Groq",
     "huggingface": "Hugging Face",
@@ -96,6 +98,7 @@ _PROVIDER_DISPLAY_NAMES = {
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
     "qwencloud": "QwenCloud",
+    "together": "Together",
     "vllm": "vLLM",
     "zai": "Z.ai",
 }

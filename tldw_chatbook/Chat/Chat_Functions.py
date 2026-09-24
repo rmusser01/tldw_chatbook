@@ -83,7 +83,10 @@ from tldw_chatbook.LLM_Calls.hosted_provider_engine import (  # noqa: E402
 )
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
+    CEREBRAS,
     DATABRICKS,
+    FIREWORKS,
+    TOGETHER,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
@@ -139,6 +142,9 @@ API_CALL_HANDLERS = {
     "zai": chat_with_zai,
     "qwencloud": chat_with_qwencloud,
     "databricks": build_hosted_chat_handler(DATABRICKS),
+    "together": build_hosted_chat_handler(TOGETHER),
+    "fireworks": build_hosted_chat_handler(FIREWORKS),
+    "cerebras": build_hosted_chat_handler(CEREBRAS),
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
@@ -822,6 +828,9 @@ PROVIDER_PARAM_MAP = {
     },
     "zai": ENGINE_PROVIDER_PARAM_MAP,
     "databricks": ENGINE_PROVIDER_PARAM_MAP,
+    "together": ENGINE_PROVIDER_PARAM_MAP,
+    "fireworks": ENGINE_PROVIDER_PARAM_MAP,
+    "cerebras": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 """

@@ -55,9 +55,11 @@ SUBSCRIPTION_SOURCE = "subscription:claude_code"
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
         "anthropic",
+        "cerebras",
         "cohere",
         "databricks",
         "deepseek",
+        "fireworks",
         "google",
         "groq",
         "huggingface",
@@ -67,6 +69,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "openai",
         "openrouter",
         "qwencloud",
+        "together",
         "zai",
     }
 )

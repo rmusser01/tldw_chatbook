@@ -450,7 +450,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
     assert (
         "Model catalog auto-refresh failed "
         "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, QwenCloud, ZAI, "
-        "Databricks): RuntimeError"
+        "Databricks, Together, Fireworks, Cerebras): RuntimeError"
     ) in text
     # No traceback (diagnose=True would dump frame locals) and no exception
     # message, which may carry endpoint URLs or credentials.

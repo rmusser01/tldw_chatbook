@@ -65,6 +65,13 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         # Gateway external models); confirmed (or honestly disabled) at the
         # Task 14 live gate.
         "databricks",
+        # ADR-179 Phase 2 Task 5: the inference-cloud engine presets
+        # (together/fireworks/cerebras) advertise OpenAI-shaped tools and
+        # tool-history through the same strict engine closure; confirmed (or
+        # honestly disabled) at the Task 7 live probes.
+        "together",
+        "fireworks",
+        "cerebras",
     }
 )
 
