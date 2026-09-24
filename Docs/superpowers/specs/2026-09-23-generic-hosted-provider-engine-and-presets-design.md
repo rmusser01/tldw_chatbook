@@ -307,26 +307,34 @@ real "OpenAI-compatible" servers do add benign fields (`service_tier`,
 Azure's `prompt_filter_results`, vLLM/Together extras). Rules:
 
 - **Curated presets:** unknown fields fail closed *unless* listed in the
-  preset's `response_allowances`. Allowances apply at **every closed level**
-  of the OpenAI shape — top-level response keys, stream-event keys,
-  choice-level keys, and message/delta-level keys (real servers send
-  `logprobs: null` on choices, `refusal` on messages; Together sends
-  choice-level `logprobs`); an allowlisted value must be null or
-  shape-safe and is dropped, never passed through. Allowances are recorded
-  from captured real-server fixtures or live-probe envelopes during the
-  provider's phase — never guessed.
+  preset's allowances. **Allowances are keyed by level** —
+  `response_allowances` (top-level response + stream-event keys, Phase 1's
+  existing meaning, unchanged for moonshot/zai), plus
+  `choice_allowances` and `message_allowances` (default empty; where they
+  apply, an allowlisted value must be null, a scalar, or a shape-safe
+  mapping — validated then dropped, never passed through). Real servers
+  send `logprobs` objects on choices when logprobs are requested,
+  `refusal` on messages, choice-level `stop_reason` scalars when a stop
+  fires; allowances accept those explicitly. Moonshot's and zai's
+  top-level allowances are pinned byte-identical — the level split exists
+  so curated allowances can never quietly widen to other levels.
+  Allowances are recorded from captured real-server fixtures or live-probe
+  envelopes during the provider's phase — never guessed.
 - **Long tail (Phase 2 custom-ep family):** a deliberately *tolerant*
   profile — unknown-but-shape-safe top-level/event keys are ignored;
-  unknown **null-valued** choice/message keys are ignored (the
-  `logprobs`/`stop_reason`/`refusal` pattern vLLM, llama-server, and
-  LM Studio emit); and `stop`/`length` finishes with empty text return an
-  empty reply instead of failing (small local models, and reasoning models
-  that exhaust `max_tokens` — the legacy path's behavior). Unknown
-  **non-null** choice/message keys still fail closed. The family's swap
-  onto this profile is **evidence-gated**: captured fixtures from real
-  long-tail servers must pass before the family moves. This is a
-  documented weakening, scoped only to user-registered endpoints,
-  recorded in ADR-179.
+  unknown **null-valued** choice/message keys are ignored; and
+  `stop`/`length` finishes with empty text return an empty reply instead
+  of failing (small local models, and reasoning models that exhaust
+  `max_tokens` — the legacy path's behavior). Non-null unknown
+  choice/message keys fail closed **unless allowlisted** — the custom
+  family's allowances explicitly carry the two known non-null cases
+  (`choice.logprobs` as object-or-null when logprobs were requested;
+  `choice.stop_reason` as any scalar). The family's swap onto this
+  profile is **evidence-gated**: captured fixtures from real long-tail
+  servers — including a tool-call round and a **streamed** round per
+  server, replayed through both the non-streaming and streaming parsers —
+  must pass before the family moves. This is a documented weakening,
+  scoped only to user-registered endpoints, recorded in ADR-179.
 - Allowances and the tolerant profile never bypass required-shape
   validation (choices present, tool-call shape, usage shape), output
   bounds, or redaction.
@@ -384,35 +392,43 @@ Acceptance criteria:
 
 - [ ] Real-server fixtures captured **before** the swap and preset landing:
       long-tail servers (llama.cpp/llama-server, Ollama, vLLM where
-      runnable) plus Together and Cerebras via their free tiers; the same
-      fixtures gate the tolerant profile and seed each preset's
-      `response_allowances` (Perplexity dropped — see Summary).
+      runnable — expected to be skipped on macOS, in which case
+      vLLM-specific keys are documented as unverified memory, not
+      evidence) plus Together and Cerebras via their free tiers. Each
+      capture includes a plain round, a **tool-call round**, and a
+      **streamed** round; cloud captures also record `GET /models`
+      (verifying each preset's discovery route). Stored capture metadata
+      never contains credentials. The fixtures gate the tolerant profile
+      (replayed through both parsers) and seed each preset's level-keyed
+      allowances.
 - [ ] Together, Fireworks, Cerebras presets: each is a record + tests +
       docs; a "preset cost" test asserts no provider-specific Python module
-      is needed for a flag-clean OpenAI-compatible provider.
+      is needed for a flag-clean OpenAI-compatible provider; moonshot/zai
+      allowance behavior pinned byte-identical under the level split.
 - [ ] ADR-146 `openai_compatible` family executes via the engine (strict
       tier) instead of `chat_with_custom_openai` — swapped at the gateway's
-      identity-resolution site (execution key only; readiness, saved
-      session identity, context-window lookups, and
-      `family_execution_key()` itself unchanged); registry entries keep
-      `custom-ep:<slug>` identity, cached models, and credential precedence
-      (env → stored). Evidence-gated on the captured fixtures; parity
-      tests against the old path include a saved-session regression
-      (provider="custom-ep:<slug>" still ready, identity unchanged).
-- [ ] Keyless endpoints keep working: a `custom-ep` entry with no
-      credential executes via `bearer_optional` auth, and curated cloud
-      presets still hard-require keys (parity-tested).
-- [ ] No parameter regression for local-server users: `custom-hosted`
-      carries the legacy custom-openai parameter surface (min_p, top_k,
-      seed, n, penalties, logit_bias, logprobs, thinking budget) via its
-      own param map and payload flags; its timeout/retry defaults read the
-      existing `api_settings.custom` values rather than hard-coded
-      literals.
+      identity-resolution site (execution key only), with the gateway's
+      base-URL and credential forwarding covering the new key via one
+      shared `CUSTOM_OPENAI_EXECUTION_KEYS` constant replacing every
+      literal set keyed on the custom family (a grep test keeps new bare
+      literals out); readiness, saved-session identity, and
+      `family_execution_key()` itself unchanged; a saved-session
+      regression test pins it. A `[console] custom_endpoints_use_engine`
+      switch (default on) can return the family to the legacy handler
+      without a code revert.
+- [ ] No behavior regression for custom-endpoint users: reasoning effort
+      composes exactly as the legacy handler composed it (ADR-066,
+      including the llama-family reasoning-budget translation), and all
+      `api_settings.custom` fallbacks the legacy handler read — sampling,
+      max_tokens (4096), seed, stop, response_format, streaming (False),
+      timeouts/retries — carry over as resolution defaults.
+- [ ] Keyless endpoints keep working via `bearer_optional` auth; curated
+      cloud presets still hard-require keys (parity-tested).
 - [ ] The long-tail tolerant profile (see *Response variance and
       strictness*) is implemented and covered by the captured fixtures:
-      unknown-but-shape-safe top-level/event extras, null-valued
-      choice/message extras, and empty-text stop/length finishes accepted;
-      non-null unknown choice/message keys still fail closed.
+      shape-safe top-level/event extras, null-valued choice/message extras,
+      the two allowlisted non-null cases (`choice.logprobs`,
+      `choice.stop_reason`), and empty-text stop/length finishes.
 
 ### Phase 3 — Enterprise, key-based
 
