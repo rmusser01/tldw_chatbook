@@ -244,10 +244,19 @@ def test_stream_reasoning_and_control_frames_do_not_become_console_fallback_copy
     assert response.terminal_turn.finish_reason == "stop"
 
 
-def test_stream_strips_reasoning_from_visible_deltas_for_kept_dispositions():
-    # Non-displayable (here: proprietary) records keep reasoning private to
-    # the terminal turn; visible deltas never carry it.
-    frames = list(_engine_stream(_PROPRIETARY))
+@pytest.mark.parametrize(
+    "record, terminal_reasoning",
+    [(DATABRICKS, None), (_PROPRIETARY, "PRIVATE")],
+    ids=["ignored", "proprietary"],
+)
+def test_stream_strips_reasoning_from_visible_deltas_for_non_displayable_records(
+    record, terminal_reasoning
+):
+    # Both non-displayable dispositions share one strip flag in the
+    # implementation; pin the delta-level pop for each so a refactor that
+    # breaks either case fails here (the gateway tests cannot see a leaked
+    # reasoning_content: they render chunks from delta content only).
+    frames = list(_engine_stream(record))
     reasoning_delta = frames[1]["choices"][0]["delta"]
     assert "reasoning_content" not in reasoning_delta
     assert reasoning_delta["content"] == ""
@@ -256,9 +265,10 @@ def test_stream_strips_reasoning_from_visible_deltas_for_kept_dispositions():
     assert frames[0]["choices"][0]["delta"]["content"] == ""
     assert frames[3]["choices"][0]["delta"]["content"] == ""
     assert frames[2]["choices"][0]["delta"]["content"] == "Evidence."
-    terminal = _engine_stream(_PROPRIETARY)
+    terminal = _engine_stream(record)
     list(terminal)  # terminal metadata exists only after clean exhaustion
-    assert terminal.terminal_turn.reasoning_content == "PRIVATE"
+    # Ignored drops reasoning everywhere; proprietary keeps it terminal-only.
+    assert terminal.terminal_turn.reasoning_content == terminal_reasoning
 
 
 def test_stream_displayable_disposition_keeps_reasoning_visible():
