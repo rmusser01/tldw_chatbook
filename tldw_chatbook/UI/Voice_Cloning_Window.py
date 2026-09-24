@@ -32,6 +32,7 @@ from textual import work
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 from ..TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
 from ..TTS.backends.voice_manager_base import VoiceManagerBase
+from ..TTS.omnivoice_voice_manager import OmniVoiceVoiceManager
 from ..config import get_cli_setting
 from ..Utils.input_validation import escape_markup
 from ..Widgets.enhanced_file_picker import (
@@ -193,6 +194,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                     options=[
                         ("Higgs Audio", "higgs"),
                         ("Chatterbox", "chatterbox"),
+                        ("OmniVoice", "omnivoice"),
                         ("GPT-SoVITS (Coming Soon)", "gpt-sovits"),
                     ],
                     value="higgs",
@@ -309,6 +311,16 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                 )
             ).expanduser()
             self.backend_managers["chatterbox"] = ChatterboxVoiceManager(chatterbox_dir)
+
+            # Initialize OmniVoice
+            omnivoice_dir = Path(
+                get_cli_setting(
+                    "OmniVoiceSettings",
+                    "voice_samples_dir",
+                    "~/.config/tldw_cli/omnivoice_voices",
+                )
+            ).expanduser()
+            self.backend_managers["omnivoice"] = OmniVoiceVoiceManager(omnivoice_dir)
 
             # GPT-SoVITS placeholder
             # self.backend_managers["gpt-sovits"] = GPTSoVITSVoiceManager(...)
@@ -501,14 +513,21 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
                     # Create profile using the current backend manager
                     manager = self.backend_managers.get(self.current_backend)
                     if manager:
-                        success, message = manager.create_profile(
-                            profile_name=profile_data["name"],
-                            reference_audio_path=str(path),
-                            display_name=profile_data["display_name"],
-                            language=profile_data["language"],
-                            description=profile_data["description"],
-                            tags=profile_data["tags"],
-                        )
+                        create_kwargs: Dict[str, Any] = {
+                            "profile_name": profile_data["name"],
+                            "reference_audio_path": str(path),
+                            "display_name": profile_data["display_name"],
+                            "language": profile_data["language"],
+                            "description": profile_data["description"],
+                            "tags": profile_data["tags"],
+                        }
+                        if self.current_backend == "omnivoice":
+                            # Only OmniVoice consumes the transcript; sibling
+                            # manager signatures do not accept it.
+                            create_kwargs["reference_text"] = profile_data.get(
+                                "reference_text", ""
+                            )
+                        success, message = manager.create_profile(**create_kwargs)
 
                         if success:
                             self.notify(message, severity="information")
@@ -517,7 +536,11 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
                             self.notify(message, severity="error")
 
                 # Push the profile dialog
-                dialog = VoiceProfileDialog(str(path), on_submit=handle_profile_data)
+                dialog = VoiceProfileDialog(
+                    str(path),
+                    on_submit=handle_profile_data,
+                    request_reference_text=(self.current_backend == "omnivoice"),
+                )
                 self.app.push_screen(dialog)
 
         # Show file picker
