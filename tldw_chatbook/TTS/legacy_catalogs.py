@@ -26,6 +26,7 @@ LEGACY_MODELS = {
     "chatterbox": ("chatterbox",),
     "higgs": ("higgs-audio-v2",),
     "alltalk": ("alltalk",),
+    "omnivoice": ("omnivoice-int8hq",),
 }
 LEGACY_DEFAULT_MODELS = {
     "openai": "tts-1",
@@ -34,6 +35,7 @@ LEGACY_DEFAULT_MODELS = {
     "chatterbox": "chatterbox",
     "higgs": "higgs-audio-v2",
     "alltalk": "alltalk",
+    "omnivoice": "omnivoice-int8hq",
 }
 LEGACY_MODEL_LABELS = {
     "openai": {
@@ -53,6 +55,7 @@ LEGACY_MODEL_LABELS = {
     "chatterbox": {"chatterbox": "Chatterbox 0.5B"},
     "higgs": {"higgs-audio-v2": "Higgs Audio V2 3B"},
     "alltalk": {"alltalk": "AllTalk TTS"},
+    "omnivoice": {"omnivoice-int8hq": "OmniVoice int8hq (ONNX)"},
 }
 OPENAI_VOICES = (
     "alloy",
@@ -145,6 +148,7 @@ LEGACY_DEFAULT_VOICES = {
     "chatterbox": "default",
     "higgs": "professional_female",
     "alltalk": "alloy",
+    "omnivoice": "default",
 }
 LEGACY_VOICE_OPTIONS = {
     "openai": tuple((voice.title(), voice) for voice in OPENAI_VOICES),
@@ -174,6 +178,10 @@ LEGACY_VOICE_OPTIONS = {
         ("Upload Reference Audio", "custom"),
     ),
     "alltalk": tuple((voice.title(), voice) for voice in ALLTALK_VOICES),
+    "omnivoice": (
+        ("Default", "default"),
+        ("Upload Reference Audio", "custom"),
+    ),
 }
 
 _ALL_VISIBLE_FORMATS = ("mp3", "opus", "aac", "flac", "wav", "pcm")
@@ -184,6 +192,7 @@ _VOICES = {
     "chatterbox": ("default",),
     "higgs": ("default",),
     "alltalk": ALLTALK_VOICES,
+    "omnivoice": ("default",),
 }
 LEGACY_REQUEST_OPTION_KEYS = MappingProxyType(
     {
@@ -209,6 +218,7 @@ LEGACY_REQUEST_OPTION_KEYS = MappingProxyType(
             "language",
         ),
         "alltalk": ("language",),
+        "omnivoice": ("language", "num_steps", "guidance_scale"),
     }
 )
 

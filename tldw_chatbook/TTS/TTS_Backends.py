@@ -44,6 +44,7 @@ class BackendRegistry:
             "local_chatterbox_*",
             "alltalk_*",
             "local_higgs_*",
+            "local_omnivoice_*",
         }
     )
 
@@ -106,6 +107,11 @@ class BackendRegistry:
                 "local_higgs_*",
                 "tldw_chatbook.TTS.backends.higgs",
                 "HiggsAudioTTSBackend",
+            ),
+            (
+                "local_omnivoice_*",
+                "tldw_chatbook.TTS.backends.omnivoice",
+                "OmniVoiceOnnxTTSBackend",
             ),
         )
         for backend_id, module_name, class_name in builtin_imports:
@@ -327,6 +333,65 @@ class TTSBackendManager:
                 ),
             }
             config.update(higgs_defaults)
+
+        elif backend_id.startswith("local_omnivoice"):
+            # Get OmniVoice-specific configuration
+            import os
+
+            omnivoice_settings = self.app_config.get("OmniVoiceSettings", {})
+            if not isinstance(omnivoice_settings, dict):
+                omnivoice_settings = {}
+
+            def omnivoice_setting(key: str, default: Any) -> Any:
+                section_key = key.removeprefix("OMNIVOICE_").lower()
+                return self.app_config.get(
+                    key,
+                    omnivoice_settings.get(section_key, default),
+                )
+
+            omnivoice_defaults = {
+                "OMNIVOICE_MODEL_ROOT": os.getenv(
+                    "OMNIVOICE_MODEL_ROOT",
+                    omnivoice_setting("OMNIVOICE_MODEL_ROOT", ""),
+                ),
+                "OMNIVOICE_NUM_STEPS": omnivoice_setting(
+                    "OMNIVOICE_NUM_STEPS", 32
+                ),
+                "OMNIVOICE_GUIDANCE_SCALE": omnivoice_setting(
+                    "OMNIVOICE_GUIDANCE_SCALE", 2.0
+                ),
+                "OMNIVOICE_T_SHIFT": omnivoice_setting("OMNIVOICE_T_SHIFT", 0.1),
+                "OMNIVOICE_LAYER_PENALTY_FACTOR": omnivoice_setting(
+                    "OMNIVOICE_LAYER_PENALTY_FACTOR", 5.0
+                ),
+                "OMNIVOICE_POSITION_TEMPERATURE": omnivoice_setting(
+                    "OMNIVOICE_POSITION_TEMPERATURE", 5.0
+                ),
+                "OMNIVOICE_CLASS_TEMPERATURE": omnivoice_setting(
+                    "OMNIVOICE_CLASS_TEMPERATURE", 0.0
+                ),
+                "OMNIVOICE_CLASS_TOP_RATIO": omnivoice_setting(
+                    "OMNIVOICE_CLASS_TOP_RATIO", 0.1
+                ),
+                "OMNIVOICE_INTRA_OP_THREADS": omnivoice_setting(
+                    "OMNIVOICE_INTRA_OP_THREADS", 0
+                ),
+                "OMNIVOICE_MAX_REFERENCE_DURATION": omnivoice_setting(
+                    "OMNIVOICE_MAX_REFERENCE_DURATION", 30
+                ),
+                "OMNIVOICE_TIMEOUT_FACTOR": omnivoice_setting(
+                    "OMNIVOICE_TIMEOUT_FACTOR", 8.0
+                ),
+                "OMNIVOICE_SEED": omnivoice_setting("OMNIVOICE_SEED", None),
+                "OMNIVOICE_LANGUAGE": omnivoice_setting(
+                    "OMNIVOICE_LANGUAGE", "auto"
+                ),
+                "OMNIVOICE_VOICE_SAMPLES_DIR": omnivoice_setting(
+                    "OMNIVOICE_VOICE_SAMPLES_DIR",
+                    "~/.config/tldw_cli/omnivoice_voices",
+                ),
+            }
+            config.update(omnivoice_defaults)
 
         # Finally, apply backend-specific config overrides (highest priority)
         backend_specific = self.app_config.get(backend_id, {})
