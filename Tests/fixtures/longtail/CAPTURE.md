@@ -50,6 +50,20 @@ after capture; no developer-running instance was touched.
 - **ollama** (0.34.4, qwen2.5:0.5b) is clean at every closed allowlist
   level: empty inventory is the pinned, expected outcome.
 
+## Baseline replay under the current strict parser
+
+`test_longtail_fixture_characterization.py`'s replay helpers (Task 4
+flips these to acceptance assertions) produce, today:
+
+- ollama plain body: parses to a turn.
+- ollama tool-call body: protocol error — its `tool_calls` entries carry
+  an `index` member (`id`/`index`/`type`/`function`) the strict tool-call
+  shape rejects (a tool-shape finding, not a closed-level key).
+- ollama stream: protocol error — terminal event carries
+  `finish_reason: "stop"` but **no `usage` anywhere** before `[DONE]`.
+- llama-server (all three rounds): protocol error — `timings` outside the
+  closed top/event allowlists.
+
 ## Replay / re-capture
 
 Re-capture against fresh local servers (starts/stops each server itself):
