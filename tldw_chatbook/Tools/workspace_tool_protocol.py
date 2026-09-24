@@ -10,19 +10,29 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
 from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES, PATCH_MAX_FILES
+from tldw_chatbook.Tools.workspace_wire_decode import (
+    ARGUMENT_SCHEMAS,
+    MAX_COLLECTION_ITEMS,
+    MAX_PATH_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    MAX_STRING_BYTES,
+    REQUEST_FIELD_NAMES,
+    RESPONSE_FIELD_NAMES,
+    WIRE_VERSION,
+    WORKSPACE_INTENTS,
+    WORKSPACE_OPERATIONS,
+    WORKSPACE_OUTCOMES,
+    WORKSPACE_WRITE_OPERATIONS,
+)
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 
-PROTOCOL_VERSION = 1
-MAX_REQUEST_BYTES = 16 * 1024 * 1024
-# JSON may encode one control byte as six ASCII bytes (``\u00xx``). Keep the
-# frame bounded while guaranteeing that any result accepted by Git's raw byte
-# ceiling plus fixed protocol metadata can cross the response boundary.
-MAX_RESPONSE_BYTES = (GIT_MAX_OUTPUT_BYTES * 6) + (64 * 1024)
-MAX_STRING_BYTES = 15 * 1024 * 1024
-MAX_PATH_BYTES = 16 * 1024
-MAX_COLLECTION_ITEMS = 1_024
+# Shared wire constants live in ``Tools/workspace_wire_decode.py`` (stdlib
+# only, shippable in the worker bundle) so the parent's pydantic serde and
+# the worker-side decoder cannot drift structurally. The values — and this
+# module's behavior — are unchanged.
+PROTOCOL_VERSION = WIRE_VERSION
 MAX_JSON_DEPTH = 16
 
 WorkspaceOperation = Literal[
@@ -43,139 +53,15 @@ WorkspaceOperation = Literal[
 WorkspaceIntent = Literal["read", "write"]
 WorkspaceResponseOutcome = Literal["admitted", "success", "failure"]
 
-_OPERATIONS = frozenset(
-    {
-        "fs_list",
-        "fs_read",
-        "fs_write",
-        "fs_edit",
-        "fs_patch",
-        "fs_glob",
-        "fs_grep",
-        "stat_path",
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_blame",
-        "git_branches",
-    }
-)
-_INTENTS = frozenset({"read", "write"})
-_OUTCOMES = frozenset({"admitted", "success", "failure"})
-_REQUEST_KEYS = frozenset(
-    {
-        "version",
-        "operation_id",
-        "operation",
-        "intent",
-        "root_locator",
-        "root_identity",
-        "ancestor_identities",
-        "arguments",
-        "timeout_seconds",
-        "output_max_bytes",
-    }
-)
-_RESPONSE_KEYS = frozenset(
-    {
-        "version",
-        "operation_id",
-        "outcome",
-        "code",
-        "result",
-        "error",
-        "elapsed_ms",
-        "truncated",
-        "cleanup_proven",
-    }
-)
+_OPERATIONS = WORKSPACE_OPERATIONS
+_INTENTS = WORKSPACE_INTENTS
+_OUTCOMES = WORKSPACE_OUTCOMES
+_REQUEST_KEYS = frozenset(REQUEST_FIELD_NAMES)
+_RESPONSE_KEYS = frozenset(RESPONSE_FIELD_NAMES)
 
-_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
-    "fs_list": (
-        frozenset({"path", "sensitive_exclusions"}),
-        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
-    ),
-    "fs_read": (
-        frozenset({"path", "sensitive_exclusions"}),
-        {"path": "path", "offset": "positive_int", "limit": "nonnegative_int", "sensitive_exclusions": "sensitive_exclusions"},
-    ),
-    "fs_write": (
-        frozenset({"path", "content", "sensitive_exclusions"}),
-        {
-            "path": "path",
-            "content": "text",
-            "dry_run": "bool",
-            "expected_sha256": "sha256",
-            "expected_absent": "bool",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "fs_edit": (
-        frozenset({"path", "old_string", "new_string", "sensitive_exclusions"}),
-        {
-            "path": "path",
-            "old_string": "text",
-            "new_string": "text",
-            "replace_all": "bool",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "fs_patch": (
-        frozenset({"diff", "sensitive_exclusions"}),
-        {
-            "diff": "patch",
-            "dry_run": "bool",
-            "targets": "patch_targets",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "fs_glob": (
-        frozenset({"pattern", "sensitive_exclusions"}),
-        {"pattern": "glob_pattern", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
-    ),
-    "fs_grep": (
-        frozenset({"pattern", "sensitive_exclusions", "content_exclusions"}),
-        {"pattern": "text", "mode": "grep_mode", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions", "content_exclusions": "sensitive_exclusions"},
-    ),
-    "stat_path": (frozenset({"path"}), {"path": "path"}),
-    "git_status": (
-        frozenset({"sensitive_exclusions"}),
-        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
-    ),
-    "git_diff": (
-        frozenset({"sensitive_exclusions"}),
-        {
-            "staged": "bool",
-            "commit_range": "text",
-            "path": "path",
-            "stat": "bool",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "git_log": (
-        frozenset({"sensitive_exclusions"}),
-        {
-            "count": "positive_int",
-            "path": "path",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "git_blame": (
-        frozenset({"path", "sensitive_exclusions"}),
-        {
-            "path": "path",
-            "start_line": "positive_int",
-            "end_line": "positive_int",
-            "sensitive_exclusions": "sensitive_exclusions",
-        },
-    ),
-    "git_branches": (
-        frozenset({"sensitive_exclusions"}),
-        {"sensitive_exclusions": "sensitive_exclusions"},
-    ),
-}
+_ARGUMENT_SCHEMAS = ARGUMENT_SCHEMAS
 _EXPECTED_INTENTS = {
-    operation: ("write" if operation in {"fs_write", "fs_edit", "fs_patch"} else "read")
+    operation: ("write" if operation in WORKSPACE_WRITE_OPERATIONS else "read")
     for operation in _OPERATIONS
 }
 
