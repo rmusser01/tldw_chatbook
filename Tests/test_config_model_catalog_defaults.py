@@ -1,28 +1,31 @@
 from contextlib import contextmanager
+import sys
 import tomllib
 
+from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook import config as config_module
 from tldw_chatbook.config import API_MODELS_BY_PROVIDER, CONFIG_TOML_CONTENT
 
 
 @contextmanager
 def _temporary_config(tmp_path, monkeypatch, toml_text):
-    """Load settings from an isolated scratch config and restore both caches."""
+    """Load settings from an isolated scratch config and restore both caches.
+
+    The scratch config is selected through a FRESH config source
+    (``install_config_source``): the TASK-32628 config-participant admission
+    pins the shared module's participant to the session bootstrap selection,
+    so re-selecting in place raises RecoveryRequired. A fresh source pins to
+    this scratch config instead, and monkeypatch alone carries the teardown
+    (module swap + this file's ``config_module`` rebind), so the shared
+    module's caches are never touched and need no save/restore.
+    """
     config_path = tmp_path / "provider-model-defaults.toml"
     config_path.write_text(toml_text, encoding="utf-8")
-    original_config_cache = config_module._CONFIG_CACHE
-    original_config_cache_source = config_module._CONFIG_CACHE_SOURCE
-    original_settings_cache = config_module._SETTINGS_CACHE
-    original_settings_cache_source = config_module._SETTINGS_CACHE_SOURCE
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    config_module.load_cli_config_and_ensure_existence(force_reload=True)
-    try:
-        yield config_module.load_settings(force_reload=True)
-    finally:
-        config_module._CONFIG_CACHE = original_config_cache
-        config_module._CONFIG_CACHE_SOURCE = original_config_cache_source
-        config_module._SETTINGS_CACHE = original_settings_cache
-        config_module._SETTINGS_CACHE_SOURCE = original_settings_cache_source
+    fresh = install_config_source(monkeypatch)
+    monkeypatch.setattr(sys.modules[__name__], "config_module", fresh)
+    fresh.load_cli_config_and_ensure_existence(force_reload=True)
+    yield fresh.load_settings(force_reload=True)
 
 
 def test_kimi_zai_provider_and_settings_defaults_are_current():

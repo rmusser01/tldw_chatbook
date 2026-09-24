@@ -10,6 +10,7 @@ Covers two things:
    test).
 """
 
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -262,13 +263,28 @@ async def test_refresh_honors_disabled_setting_from_canonical_config(
     tmp_path,
     monkeypatch,
 ):
+    # The scratch selection is installed through a FRESH config source
+    # (``install_config_source``): the TASK-32628 config-participant
+    # admission pins the shared module's participant to the session
+    # bootstrap selection, so re-selecting in place raises
+    # RecoveryRequired. ``TldwCli._refresh_model_catalogs_owned`` resolves
+    # ``load_settings`` from the app module's globals, so that reference is
+    # rebound too -- otherwise the refresh would read the bootstrap profile
+    # and pass via the swallowed-exception/consent fallbacks instead of the
+    # disabled setting this test is about.
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook import app as app_module
+
     config_path = tmp_path / "model-catalog-disabled.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    assert config_module.save_settings_to_cli_config(
+    fresh = install_config_source(monkeypatch)
+    monkeypatch.setattr(sys.modules[__name__], "config_module", fresh)
+    monkeypatch.setattr(app_module, "load_settings", fresh.load_settings)
+    assert fresh.save_settings_to_cli_config(
         {"model_catalog": {"auto_refresh_enabled": False}}
     )
 
-    settings = config_module.load_settings(force_reload=True)
+    settings = fresh.load_settings(force_reload=True)
     assert settings["model_catalog"]["auto_refresh_enabled"] is False
 
     service = _StubCatalogService(report=RefreshReport())
