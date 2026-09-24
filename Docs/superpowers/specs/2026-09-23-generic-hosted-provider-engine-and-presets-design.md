@@ -334,10 +334,17 @@ Azure's `prompt_filter_results`, vLLM/Together extras). Rules:
   servers — including a tool-call round and a **streamed** round per
   server, replayed through both the non-streaming and streaming parsers —
   must pass before the family moves. This is a documented weakening,
-  scoped only to user-registered endpoints, recorded in ADR-179.
+  scoped only to user-registered endpoints, recorded in ADR-179. Two
+  fixture-proven tolerant exceptions (2026-09-24, from the captured
+  ollama 0.34.4 rounds), scoped to the tolerant profile only: tool-call
+  objects may carry **extra keys** (ollama emits `index`) — required
+  tool-call fields (`id`/`type`/`function`) stay mandatory and the extras
+  are ignored — and a stream terminal event **without usage** yields a
+  usage-None turn rather than failing (usage, when present, is still
+  shape-checked).
 - Allowances and the tolerant profile never bypass required-shape
-  validation (choices present, tool-call shape, usage shape), output
-  bounds, or redaction.
+  validation (choices present, tool-call shape, usage shape when present),
+  output bounds, or redaction.
 
 ## Credentials and security (ADR-012 boundary intact)
 
