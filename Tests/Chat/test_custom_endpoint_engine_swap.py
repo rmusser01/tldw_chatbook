@@ -479,3 +479,256 @@ def test_custom_hosted_continuation_round_trip() -> None:
     )
     assert parsed is not None
     assert parsed.provider == "custom-hosted"
+
+
+# --- Stage 3: gateway identity-site swap + kill switch ---
+
+
+def _entry_config(
+    *, console: dict[str, object] | None = None
+) -> dict[str, object]:
+    config: dict[str, object] = {
+        "custom_endpoints": {
+            "paid": {
+                "display_name": "Paid",
+                "family": "openai_compatible",
+                "base_url": "https://api.example.com/v1",
+            }
+        }
+    }
+    if console is not None:
+        config["console"] = console
+    return config
+
+
+def _llama_entry_config(
+    *, console: dict[str, object] | None = None
+) -> dict[str, object]:
+    config: dict[str, object] = {
+        "custom_endpoints": {
+            "local": {
+                "display_name": "Local",
+                "family": "llama_cpp",
+                "base_url": "https://llama.example",
+            }
+        }
+    }
+    if console is not None:
+        config["console"] = console
+    return config
+
+
+async def _resolve(
+    config: dict[str, object], *, provider: str = "custom-ep:paid"
+) -> object:
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+    return await gateway._resolve_for_send_unclassified(
+        ConsoleProviderSelection(provider=provider, explicit_model="m")
+    )
+
+
+def test_family_execution_key_is_unchanged() -> None:
+    from tldw_chatbook.Chat.custom_endpoint_registry import family_execution_key
+
+    assert family_execution_key("openai_compatible") == "custom"
+    assert family_execution_key("llama_cpp") == "llama_cpp"
+    assert family_execution_key("ollama") == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_swap_on_by_default_routes_to_the_engine_key() -> None:
+    resolved = await _resolve(_entry_config())
+    assert resolved.ready is True
+    assert resolved.execution_key == "custom-hosted"
+    assert resolved.readiness_key == "custom"
+    assert resolved.selected_provider == "custom-ep:paid"
+    assert "api.example.com/v1" in resolved.base_url
+
+
+@pytest.mark.asyncio
+async def test_swap_explicitly_on_routes_to_the_engine_key() -> None:
+    resolved = await _resolve(
+        _entry_config(console={"custom_endpoints_use_engine": True})
+    )
+    assert resolved.execution_key == "custom-hosted"
+
+
+@pytest.mark.asyncio
+async def test_swap_off_keeps_the_legacy_execution_key() -> None:
+    resolved = await _resolve(
+        _entry_config(console={"custom_endpoints_use_engine": False})
+    )
+    assert resolved.ready is True
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_malformed_switch_value_fails_open_to_the_default() -> None:
+    resolved = await _resolve(
+        _entry_config(console={"custom_endpoints_use_engine": "false"})
+    )
+    assert resolved.execution_key == "custom-hosted"
+
+
+@pytest.mark.asyncio
+async def test_non_openai_compatible_family_never_swaps() -> None:
+    resolved = await _resolve(
+        _llama_entry_config(console={"custom_endpoints_use_engine": True}),
+        provider="custom-ep:local",
+    )
+    assert resolved.execution_key == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_saved_session_identity_byte_identical_both_directions() -> None:
+    # The persisted/session-facing identity of a custom-ep provider must
+    # not change with the swap: same readiness key, same selected provider
+    # (the saved-session spelling), same endpoint/model/credential fields
+    # and same canonical connection identity -- only the execution key
+    # differs.
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    swapped = await _resolve(_entry_config())
+    legacy = await _resolve(
+        _entry_config(console={"custom_endpoints_use_engine": False})
+    )
+    assert swapped.execution_key != legacy.execution_key
+    for field in (
+        "provider",
+        "readiness_key",
+        "selected_provider",
+        "base_url",
+        "model",
+        "api_key",
+        "api_key_source",
+        "visible_copy",
+    ):
+        assert getattr(swapped, field) == getattr(legacy, field), field
+    assert canonical_connection_identity(
+        swapped.readiness_key, swapped.base_url
+    ) == canonical_connection_identity(legacy.readiness_key, legacy.base_url)
+
+
+def test_finish_policy_resolver_returns_the_engine_policy() -> None:
+    from tldw_chatbook.Chat.console_provider_gateway import resolve_finish_policy
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedPresetFinishPolicy,
+    )
+
+    policy = resolve_finish_policy("custom-hosted")
+    assert isinstance(policy, HostedPresetFinishPolicy)
+
+
+# --- Stage 3: canned transport (keyless + keyed, non-streaming only) ---
+
+
+_SUCCESS_BODY = {
+    "choices": [
+        {
+            "index": 0,
+            "message": {"role": "assistant", "content": "ok"},
+            "finish_reason": "stop",
+        }
+    ]
+}
+
+
+def _canned_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> "_RecordingSession":
+    import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
+    from Tests.LLM_Calls.test_qwencloud import (
+        _RecordingSession,
+        _TransportResponse,
+    )
+
+    session = _RecordingSession(_TransportResponse(dict(_SUCCESS_BODY)))
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
+    return session
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_keyed_custom_hosted_send_uses_forwarded_url_and_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    session = _canned_session(monkeypatch)
+    response = chat_api_call(
+        api_endpoint="custom-hosted",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key="stored-entry-key",
+        api_key_resolved=True,
+        api_base_url="https://api.example.com/v1",
+        model="m",
+        streaming=False,
+    )
+    assert response["choices"][0]["message"]["content"] == "ok"
+    post = session.posts[0]
+    assert post["url"].startswith("https://api.example.com/v1/")
+    assert post["url"].endswith("/chat/completions")
+    assert post["headers"]["Authorization"] == "Bearer stored-entry-key"
+    payload = post["json"]
+    assert payload["model"] == "m"
+    assert payload["stream"] is False
+    assert payload["max_tokens"] == 4096  # legacy default flows through
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_keyless_custom_hosted_send_sends_no_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    session = _canned_session(monkeypatch)
+    response = chat_api_call(
+        api_endpoint="custom-hosted",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key_resolved=True,
+        api_base_url="https://keyless.example/v1",
+        model="m",
+        streaming=False,
+    )
+    assert response["choices"][0]["message"]["content"] == "ok"
+    post = session.posts[0]
+    assert post["url"].startswith("https://keyless.example/v1/")
+    assert post["headers"].get("Authorization") is None
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_custom_hosted_send_composes_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    session = _canned_session(monkeypatch)
+    chat_api_call(
+        api_endpoint="custom-hosted",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key="stored-entry-key",
+        api_key_resolved=True,
+        api_base_url="https://api.example.com/v1",
+        model="m",
+        streaming=False,
+        reasoning_effort="high",
+        thinking_budget_tokens=2048,
+        minp=0.05,
+        topk=40,
+    )
+    payload = session.posts[0]["json"]
+    # ADR-066 custom row: effort verbatim; budget dropped; samplers flow.
+    assert payload["reasoning_effort"] == "high"
+    assert "reasoning_budget_tokens" not in payload
+    assert "chat_template_kwargs" not in payload
+    assert payload["min_p"] == 0.05
+    assert payload["top_k"] == 40

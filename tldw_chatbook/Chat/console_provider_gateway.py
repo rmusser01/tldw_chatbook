@@ -132,6 +132,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.console_provider_support import (
     CUSTOM_OPENAI_EXECUTION_KEYS,
+    ConsoleProviderIdentity,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
@@ -281,6 +282,46 @@ def resolve_finish_policy(key: str) -> _FinishPolicy | None:
         policy = HostedPresetFinishPolicy(record)
     _RESOLVED_FINISH_POLICIES[key] = policy
     return policy
+
+
+def _custom_endpoints_use_engine(app_config: Mapping[str, Any]) -> bool:
+    """Read the custom-endpoint engine kill switch (ADR-179 Phase 2 Task 6).
+
+    ``[console] custom_endpoints_use_engine`` (default ``True``) decides
+    whether ``openai_compatible`` custom-ep entries execute through the
+    strict hosted engine (``custom-hosted``). A missing or non-boolean
+    value resolves to the documented default -- the switch is an operator
+    rollback control, not a security boundary, and a malformed value must
+    not brick every custom-endpoint send.
+    """
+    console = app_config.get("console", {})
+    if not isinstance(console, Mapping):
+        return True
+    value = console.get("custom_endpoints_use_engine", True)
+    return value if type(value) is bool else True
+
+
+def _apply_custom_endpoint_engine_swap(
+    identity: ConsoleProviderIdentity,
+    entry: CustomEndpointEntry,
+    app_config: Mapping[str, Any],
+) -> ConsoleProviderIdentity:
+    """Swap an openai_compatible custom-ep identity onto the engine key.
+
+    The swap is the single gateway seam of ADR-179 Phase 2 Task 6: with
+    the kill switch on, an ``openai_compatible`` entry's execution key
+    becomes ``custom-hosted`` (the strict engine preset) while
+    ``readiness_key``/``display_key`` keep the legacy ``custom``
+    spellings -- identity, readiness, saved sessions, and the persisted
+    endpoint contract are byte-identical on both paths. Other families
+    (llama_cpp/ollama/...) and a switched-off config keep
+    ``family_execution_key``'s untouched result.
+    """
+    if entry.family == "openai_compatible" and _custom_endpoints_use_engine(
+        app_config
+    ):
+        return replace(identity, execution_key="custom-hosted")
+    return identity
 
 
 _AdapterResult = TypeVar("_AdapterResult")
@@ -3967,8 +4008,12 @@ class ConsoleProviderGateway:
         # ``resolve_console_provider_identity``.
         custom_entry = entry_for(app_config, selection.provider)
         if custom_entry is not None:
-            identity = resolve_console_provider_identity(
-                family_execution_key(custom_entry.family)
+            identity = _apply_custom_endpoint_engine_swap(
+                resolve_console_provider_identity(
+                    family_execution_key(custom_entry.family)
+                ),
+                custom_entry,
+                app_config,
             )
         else:
             identity = resolve_console_provider_identity(selection.provider)

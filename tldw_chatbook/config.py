@@ -3620,6 +3620,12 @@ shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+# Custom endpoints (ADR-146): execute the openai_compatible family through
+# the strict hosted engine (custom-hosted execution key) instead of the
+# legacy custom handlers. Set false to roll back to the legacy path
+# (ADR-179 Phase 2 kill switch); identity, readiness, saved sessions, and
+# the [api_settings.custom] fallbacks are identical either way.
+custom_endpoints_use_engine = true
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 # Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
