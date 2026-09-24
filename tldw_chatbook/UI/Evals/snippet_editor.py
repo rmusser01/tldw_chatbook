@@ -51,6 +51,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -464,6 +465,46 @@ _IMPORT_PARSERS = {
     ".json": parse_json_snippets,
 }
 
+#: Ceiling for a user-picked snippet import, matching
+#: `UI/Chunking_Lab_Modules/sample_region.SAMPLE_BYTES` -- the repo's existing
+#: bound for "a text file a user chose from a picker, read on the UI thread".
+_IMPORT_MAX_BYTES = 2 * 1024 * 1024
+
+
+class _ImportTooLarge(ValueError):
+    """The picked file is over ``_IMPORT_MAX_BYTES``; carries the user copy."""
+
+
+def read_bounded_import_text(file_path: Path) -> str:
+    """Read at most ``_IMPORT_MAX_BYTES`` of ``file_path`` as UTF-8 text.
+
+    Module-level, and the only blocking part of the import: it is what
+    ``SnippetEditor._read_import_file`` runs on a worker THREAD. A picker
+    path can be on a slow or network-backed volume, and CLAUDE.md's rule is
+    "workers for operations >100ms" -- 2 MiB off a stalled mount is well
+    past that, and this used to run inside a ``push_screen`` callback, i.e.
+    on the UI thread, freezing rendering and input behind it.
+
+    Args:
+        file_path: An already-validated path (see ``validate_path_simple``).
+
+    Returns:
+        The decoded file contents.
+
+    Raises:
+        _ImportTooLarge: The file exceeds the cap; the message is user copy.
+        OSError: The file could not be opened or read.
+        UnicodeDecodeError: The bytes are not valid UTF-8.
+    """
+    with file_path.open("rb") as stream:
+        payload = stream.read(_IMPORT_MAX_BYTES + 1)
+    if len(payload) > _IMPORT_MAX_BYTES:
+        raise _ImportTooLarge(
+            f"{file_path.name} is larger than 2 MiB. Split it, or "
+            f"import a smaller snippet file."
+        )
+    return payload.decode("utf-8")
+
 
 class SnippetEditor(NotifyMixin, Vertical):
     """Detail-pane content for a selected dataset: a read-only snippet
@@ -474,6 +515,9 @@ class SnippetEditor(NotifyMixin, Vertical):
         super().__init__(**kwargs)
         self._view_model = view_model
         self._dataset_id = dataset_id
+        #: The in-flight import read worker, or None. Exposed so tests can
+        #: await the thread half instead of guessing at `pilot.pause()` counts.
+        self._import_worker: Any = None
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -630,8 +674,31 @@ class SnippetEditor(NotifyMixin, Vertical):
         except ValueError as exc:
             self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
             return
+
+        # The read is bounded (tier-2 review S22) but still blocking, and
+        # this method IS the UI thread -- a `push_screen` callback. The cap
+        # bounds memory, not latency: 2 MiB off a slow or network-backed
+        # volume holds the event loop for as long as the device takes. So
+        # the read goes to a thread worker and only the (cheap) parse, DB
+        # write and notifications come back to the UI thread. Tests await
+        # `_import_worker`.
+        self._import_worker = self.run_worker(
+            partial(self._read_import_file, file_path),
+            group="evals-snippet-import",
+            thread=True,
+            # A screen closed mid-import makes call_from_thread raise; with
+            # Textual's default that uncaught worker error exits the app.
+            exit_on_error=False,
+        )
+
+    def _read_import_file(self, file_path: Path) -> None:
+        """Worker-thread half of the import: the blocking read, and nothing
+        else. Every outcome is marshalled back to the UI thread."""
         try:
-            content = file_path.read_text(encoding="utf-8")
+            content = read_bounded_import_text(file_path)
+        except _ImportTooLarge as exc:
+            self.app.call_from_thread(self._notify, str(exc), severity="error")
+            return
         except (OSError, UnicodeDecodeError) as exc:
             # UnicodeDecodeError is a ValueError, not an OSError -- a file
             # that can be opened but isn't valid UTF-8 (e.g. a CSV Excel
@@ -640,9 +707,16 @@ class SnippetEditor(NotifyMixin, Vertical):
             # push_screen callback and crash the app instead of producing
             # the same "could not read" notification an unreadable path
             # already gets.
-            self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
+            self.app.call_from_thread(
+                self._notify,
+                f"Could not read {file_path.name}: {exc}",
+                severity="error",
+            )
             return
+        self.app.call_from_thread(self._apply_import_content, file_path, content)
 
+    def _apply_import_content(self, file_path: Path, content: str) -> None:
+        """UI-thread half: parse, write, report. Runs after the read."""
         parser = _IMPORT_PARSERS.get(file_path.suffix.lower(), parse_plain_text_snippets)
         try:
             new_snippets, skipped_count = parser(content)

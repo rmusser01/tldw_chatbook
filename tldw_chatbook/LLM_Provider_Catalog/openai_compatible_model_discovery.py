@@ -136,8 +136,11 @@ MODEL_DISCOVERY_RESPONSE_MAX_BYTES = MODEL_PROBE_RESPONSE_MAX_BYTES
 # models for an ordinary account, so live first-run discovery errored with
 # "The models endpoint returned too many models" for every OpenAI user with a
 # valid key. The fail-closed semantics are kept; only the calibration changes.
-# MODEL_DISCOVERY_RESPONSE_MAX_BYTES (1 MiB) remains the real memory bound.
-DISCOVERED_MODEL_MAX_COUNT = 512
+# MODEL_DISCOVERY_RESPONSE_MAX_BYTES (8 MiB) remains the real memory bound.
+# TASK-32925: 512 sat just above OpenRouter's 456 live models (2026-09-23), and
+# crossing it would list NOTHING for every OpenRouter user. Keep ~8x headroom;
+# the disk and in-memory caches are pinned to hold a full-count list.
+DISCOVERED_MODEL_MAX_COUNT = 4096
 DISCOVERED_MODEL_ID_MAX_CHARS = MODEL_ID_MAX_CHARS
 MODEL_METADATA_MAX_DEPTH = 8
 MODEL_METADATA_MAX_ITEMS = 256
@@ -150,7 +153,13 @@ MODEL_METADATA_MAX_KEY_CHARS = 128
 # `limit` is a per-request page size; the total stays bounded by
 # DISCOVERED_MODEL_MAX_COUNT across _ANTHROPIC_MAX_MODEL_PAGES pages.
 _ANTHROPIC_MODELS_PAGE_LIMIT = 100
-_ANTHROPIC_MAX_MODEL_PAGES = 10
+# Enough full pages to reach DISCOVERED_MODEL_MAX_COUNT (Qodo review on #2821:
+# a fixed 10 silently truncated 1,001-4,096 model catalogs to 1,000). A last
+# permitted page that still reports has_more fails closed; all pages together
+# share one MODEL_DISCOVERY_RESPONSE_MAX_BYTES budget.
+_ANTHROPIC_MAX_MODEL_PAGES = -(
+    -DISCOVERED_MODEL_MAX_COUNT // _ANTHROPIC_MODELS_PAGE_LIMIT
+)
 
 
 def build_discovery_auth_headers(
@@ -682,6 +691,7 @@ async def discover_openai_compatible_models(
         active_client: httpx.AsyncClient,
     ) -> tuple[list[Mapping[str, Any]] | None, ModelDiscoveryResult | None]:
         payloads: list[Mapping[str, Any]] = []
+        bytes_read = 0
         params: dict[str, Any] | None = (
             {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT} if paginate else None
         )
@@ -698,7 +708,9 @@ async def discover_openai_compatible_models(
                     response=True,
                 ) as response:
                     response.raise_for_status()
-                    body = await read_bounded_model_response(response)
+                    body = await read_bounded_model_response(
+                        response, MODEL_DISCOVERY_RESPONSE_MAX_BYTES - bytes_read
+                    )
             except UnsupportedModelResponseEncoding:
                 return None, ModelDiscoveryResult(
                     provider=provider,
@@ -771,6 +783,7 @@ async def discover_openai_compatible_models(
                         "Use an endpoint with a bounded models response.",
                     ),
                 )
+            bytes_read += len(body)
             try:
                 payload = await asyncio.to_thread(json.loads, body)
             except (RecursionError, UnicodeDecodeError, ValueError):
@@ -831,6 +844,20 @@ async def discover_openai_compatible_models(
                 params = {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT, "after_id": last_id}
                 continue
             break
+        else:
+            # Every permitted page was used and the last still had more:
+            # fail closed rather than cache a partial catalog.
+            return None, ModelDiscoveryResult(
+                provider=provider,
+                provider_list_key=provider_list_key,
+                endpoint_fingerprint=endpoint_fingerprint,
+                status="error",
+                error=_discovery_error(
+                    "invalid_response",
+                    "The paginated models response exceeded the model limit.",
+                    "Use a narrower provider-side model filter.",
+                ),
+            )
         return payloads, None
 
     try:

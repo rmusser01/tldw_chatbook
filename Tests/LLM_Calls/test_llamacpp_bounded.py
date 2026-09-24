@@ -435,14 +435,15 @@ async def test_poisoned_proxy_environment_is_ignored(monkeypatch):
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize("extra", [0, 1])
-async def test_raw_body_limit_at_one_mib_before_json_parsing(chunked, extra):
+async def test_raw_body_limit_at_eight_mib_before_json_parsing(chunked, extra):
     from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
         BoundedLlamaError,
         complete_llama_bounded,
     )
 
     body = _answer()
-    body += b" " * (1024 * 1024 + extra - len(body))
+    # TASK-32925: the shared model-response bound is 8 MiB (was 1 MiB).
+    body += b" " * (8 * 1024 * 1024 + extra - len(body))
     if chunked:
         response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
         for start in range(0, len(body), 65536):

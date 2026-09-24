@@ -15,6 +15,7 @@
 # Import necessary libraries
 import os
 import tempfile
+import warnings
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, TYPE_CHECKING
 from pathlib import Path
@@ -111,6 +112,40 @@ def get_image_config():
 #######################################################################################################################
 # Function Definitions
 #
+
+
+def reject_image_decompression_bomb(image_path: Union[str, Path]) -> None:
+    """Refuse an image whose header declares more pixels than Pillow's ceiling.
+
+    The ingest path had no pixel guard at all: a flat ~96-megapixel PNG is a
+    few MB on disk and decodes to ~288 MB, and Pillow only *warns* above
+    ``Image.MAX_IMAGE_PIXELS`` before decoding it anyway. Reading the header
+    is cheap -- ``open()`` parses metadata without decoding pixels.
+
+    Args:
+        image_path: Path to the candidate image.
+
+    Raises:
+        ValueError: The image declares more pixels than the ceiling. This is a
+            policy rejection, not a processing failure, so callers must not
+            swallow it into an original-bytes fallback.
+    """
+    if not PIL_AVAILABLE:
+        return
+    try:
+        with warnings.catch_warnings():
+            # PIL warns above the ceiling and raises above twice it; both
+            # arms have to mean the same thing here or the guard goes inert.
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(image_path):
+                pass
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ValueError(
+            "Image has too many pixels to decode safely "
+            f"(limit {Image.MAX_IMAGE_PIXELS} pixels)."
+        ) from exc
+    except Exception:
+        return  # unreadable here; the caller fails informatively
 
 
 def preprocess_image_for_ocr(image_path: Union[str, Path]) -> Optional[Path]:
@@ -287,6 +322,7 @@ def extract_text_from_image(
     Returns:
         OCRResult or None if extraction fails
     """
+    reject_image_decompression_bomb(image_path)
     try:
         from .OCR_Backends import ocr_manager
 
@@ -384,6 +420,15 @@ def process_image(
     if file_ext not in SUPPORTED_IMAGE_FORMATS:
         result["status"] = "Error"
         result["error"] = f"Unsupported image format: {file_ext}"
+        return result
+
+    # Decompression-bomb guard, beside the format check because it is the
+    # same kind of thing: a policy rejection before anything decodes.
+    try:
+        reject_image_decompression_bomb(file_path)
+    except ValueError as exc:
+        result["status"] = "Error"
+        result["error"] = str(exc)
         return result
 
     try:
