@@ -33,6 +33,11 @@ except ImportError:
 # OmniVoice Voice Manager
 #
 
+
+class _InvalidProfileName(ValueError):
+    """A profile name that cannot safely become a directory name."""
+
+
 _DEFAULT_VOICES_DIR = Path("~/.config/tldw_cli/omnivoice_voices")
 _EXPORT_PREFIX = "omnivoice_voice_"
 # Profile names become directory names; keep them to a safe, flat charset.
@@ -105,8 +110,8 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                 logger.debug(
                     "OmniVoice profiles do not store tags/metadata; ignoring"
                 )
-            valid, error = self._validate_profile_name(profile_name)
-            if not valid:
+            profile_dir, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
                 return False, error
 
             try:
@@ -118,7 +123,6 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                     f"{MAX_REFERENCE_TEXT_CHARACTERS} characters"
                 )
 
-            profile_dir = self._profile_dir(profile_name)
             if profile_dir.exists():
                 return False, f"Profile '{profile_name}' already exists"
 
@@ -211,8 +215,13 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
         return result
 
     def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        """Get a specific OmniVoice voice profile (or None if not found)."""
-        profile_dir = self._profile_dir(profile_name)
+        """Get a specific OmniVoice voice profile (or None if not found).
+
+        Unsafe profile names never resolve and return None.
+        """
+        profile_dir, error = self._profile_dir_or_error(profile_name)
+        if error is not None or profile_dir is None:
+            return None
         if not profile_dir.is_dir():
             return None
         return self._read_profile(profile_dir)
@@ -237,6 +246,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                 logger.debug(
                     "OmniVoice profiles do not store tags/metadata; ignoring"
                 )
+            _, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
             profile = self.get_profile(profile_name)
             if profile is None:
                 return False, f"Profile '{profile_name}' not found"
@@ -259,7 +271,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
     def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
         """Delete an OmniVoice voice profile and its reference audio."""
         try:
-            profile_dir = self._profile_dir(profile_name)
+            profile_dir, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
             if not profile_dir.is_dir():
                 return False, f"Profile '{profile_name}' not found"
 
@@ -284,6 +298,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             (success, message) tuple
         """
         try:
+            _, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
             profile = self.get_profile(profile_name)
             if profile is None:
                 return False, f"Profile '{profile_name}' not found"
@@ -376,11 +393,10 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                 )
 
             name = profile_name or self._name_from_package(package_dir)
-            valid, error = self._validate_profile_name(name)
-            if not valid:
+            profile_dir, error = self._profile_dir_or_error(name)
+            if error is not None:
                 return False, error
 
-            profile_dir = self._profile_dir(name)
             if profile_dir.exists() and not overwrite:
                 return (
                     False,
@@ -446,7 +462,25 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
         return ["basic_profiles", "import_export", "zero_shot_cloning"]
 
     def _profile_dir(self, profile_name: str) -> Path:
+        """Return the profile's directory.
+
+        Single choke point for every name-taking path: unsafe names raise
+        ``_InvalidProfileName`` instead of resolving, so no method (least of
+        all the destructive ``delete_profile``) can escape the voices dir.
+        """
+        valid, error = self._validate_profile_name(profile_name)
+        if not valid:
+            raise _InvalidProfileName(error)
         return self.voice_samples_dir / profile_name
+
+    def _profile_dir_or_error(
+        self, profile_name: str
+    ) -> Tuple[Optional[Path], Optional[str]]:
+        """Resolve a profile directory, or a refusal message for unsafe names."""
+        try:
+            return self._profile_dir(profile_name), None
+        except _InvalidProfileName as e:
+            return None, str(e)
 
     @staticmethod
     def _validate_profile_name(profile_name: str) -> Tuple[bool, str]:

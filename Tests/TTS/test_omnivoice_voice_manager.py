@@ -249,3 +249,49 @@ def test_import_requires_reference_text(tmp_path: Path) -> None:
     ok, msg = mgr2.import_profile(str(package))
     assert not ok and "reference_text" in msg
     assert mgr2.get_profile("x") is None
+
+
+def test_traversal_names_refused_on_every_path(tmp_path: Path) -> None:
+    """Traversal-style names never resolve outside the voices dir.
+
+    The name becomes a directory name on every entry point — including
+    the destructive delete — so each must refuse unsafe names and leave
+    anything outside the voices dir untouched.
+    """
+    _write_wav(tmp_path / "ref.wav")
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+    ok, _ = mgr.create_profile("x", str(tmp_path / "ref.wav"), reference_text="hi")
+    assert ok
+
+    outside = tmp_path / "outside"
+    (outside / "nested").mkdir(parents=True)
+    (outside / "sentinel.txt").write_text("do not delete")
+    victim = outside / "nested" / "profile.json"
+    victim.write_text('{"name": "victim"}')
+
+    for name in ("../outside", "../outside/nested", "x/../../outside", "..", "/etc"):
+        ok, msg = mgr.delete_profile(name)
+        assert not ok and "profile name" in msg.lower(), (name, msg)
+        ok, msg = mgr.update_profile(name, description="nope")
+        assert not ok and "profile name" in msg.lower(), (name, msg)
+        ok, msg = mgr.export_profile(name, str(tmp_path / "export"))
+        assert not ok and "profile name" in msg.lower(), (name, msg)
+        ok, msg = mgr.create_profile(
+            name, str(tmp_path / "ref.wav"), reference_text="hi"
+        )
+        assert not ok and "profile name" in msg.lower(), (name, msg)
+        assert mgr.get_profile(name) is None
+        assert mgr.get_reference_audio_path(name) is None
+
+    # Import with an explicit traversal name is refused too
+    ok, _ = mgr.export_profile("x", str(tmp_path / "export"))
+    assert ok
+    package = tmp_path / "export" / "omnivoice_voice_x"
+    ok, msg = mgr.import_profile(str(package), profile_name="../evil")
+    assert not ok and "profile name" in msg.lower()
+
+    # Nothing outside the voices dir was touched
+    assert (outside / "sentinel.txt").read_text() == "do not delete"
+    assert json.loads(victim.read_text())["name"] == "victim"
+    # and the legitimate profile is intact
+    assert mgr.get_profile("x") is not None
