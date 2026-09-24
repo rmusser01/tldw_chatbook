@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
+from tldw_chatbook.provider_registry import CLOUD_PROVIDER_CONFIG_KEYS
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -4132,6 +4133,7 @@ Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 QwenCloud = ["qwen3.8-max"]
 ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
+Databricks = [] # Empty: model availability is workspace-dependent; fills via discovery or manual seeding
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4331,6 +4333,17 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 5
+    streaming = true
+
+    [api_settings.databricks] # Matches key in [providers]; values mirror provider_registry.DATABRICKS.settings_defaults (ADR-179)
+    # Databricks Model Serving / AI Gateway. The workspace host is
+    # per-account, so NO api_base_url ships here: the user configures their
+    # workspace URL (the engine appends the /openai/v1 suffix).
+    api_key_env_var = "DATABRICKS_TOKEN"
+    model = "" # No universal default: served models are workspace-configured
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
     streaming = true
 
     # --- Local Providers ---
@@ -9849,20 +9862,10 @@ API_MODELS_BY_PROVIDER: Dict[str, List[str]] = {}
 LOCAL_PROVIDERS: Dict[str, List[str]] = {}
 
 _config_providers = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML.get("providers", {}))
-_cloud_provider_keys = [
-    "OpenAI",
-    "Anthropic",
-    "Cohere",
-    "DeepSeek",
-    "Groq",
-    "Google",
-    "HuggingFace",
-    "MistralAI",
-    "Moonshot",
-    "OpenRouter",
-    "QwenCloud",
-    "ZAI",
-]  # Example list
+# ADR-179: cloud classification is derived from the provider registry
+# (single source of truth) instead of a hand-typed list here, so a newly
+# registered cloud provider is classified without touching this module.
+_cloud_provider_keys = CLOUD_PROVIDER_CONFIG_KEYS
 
 for provider_name, models_list in _config_providers.items():
     if isinstance(models_list, list):

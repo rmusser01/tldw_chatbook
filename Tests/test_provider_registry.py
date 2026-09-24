@@ -30,12 +30,11 @@ def test_audited_set_matches_handlers():
 
 
 def test_cloud_classification_matches_config():
-    # On dev, _cloud_provider_keys is a module-level LIST (config.py ~L9843),
-    # not a callable. Same exclusion as the audited-set test until Task 9
-    # flips the derivation.
+    # Since Task 9, config.py's _cloud_provider_keys is derived from the
+    # registry (ADR-179), so full equality holds with no exclusions.
     from tldw_chatbook.config import _cloud_provider_keys
     assert tuple(sorted(_cloud_provider_keys)) == tuple(
-        sorted(set(CLOUD_PROVIDER_CONFIG_KEYS) - {"Databricks"})
+        sorted(CLOUD_PROVIDER_CONFIG_KEYS)
     )
 
 
