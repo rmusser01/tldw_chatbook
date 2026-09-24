@@ -138,9 +138,11 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         records: Iterator[SSERecord],
         *,
         finish_policy: HostedChatFinishPolicy,
+        allowed_extra_keys: frozenset[str] = frozenset(),
     ) -> None:
         self._records = records
         self._finish_policy = finish_policy
+        self._allowed_extra_keys = allowed_extra_keys
         self._text_segments: list[str] = []
         self._reasoning_segments: list[str] = []
         self._tools: dict[int, _StreamToolState] = {}
@@ -231,7 +233,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             "system_fingerprint",
             "choices",
             "usage",
-        }:
+        } - self._allowed_extra_keys:
             raise HostedChatProtocolError("Hosted Chat stream event is malformed.")
         fingerprint = event.get("system_fingerprint")
         if fingerprint is not None:
@@ -403,6 +405,7 @@ def normalize_hosted_chat_response(
     response: object,
     *,
     finish_policy: HostedChatFinishPolicy,
+    allowed_extra_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
     """Normalize one non-streaming OpenAI-shaped Chat response."""
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
@@ -415,7 +418,7 @@ def normalize_hosted_chat_response(
         "system_fingerprint",
         "choices",
         "usage",
-    }:
+    } - allowed_extra_keys:
         raise HostedChatProtocolError("Hosted Chat response is malformed.")
     choices = response.get("choices")
     if (
@@ -478,6 +481,7 @@ def hosted_chat_request(
     payload: Mapping[str, Any],
     streaming: bool,
     finish_policy: HostedChatFinishPolicy,
+    allowed_extra_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn | HostedChatStream:
     """Run one hosted Chat-Completions request through the shared boundary."""
     response = owned_json_post(
@@ -490,8 +494,13 @@ def hosted_chat_request(
         return HostedChatStream(
             cast(Iterator[SSERecord], response),
             finish_policy=finish_policy,
+            allowed_extra_keys=allowed_extra_keys,
         )
-    return normalize_hosted_chat_response(response, finish_policy=finish_policy)
+    return normalize_hosted_chat_response(
+        response,
+        finish_policy=finish_policy,
+        allowed_extra_keys=allowed_extra_keys,
+    )
 
 
 @_provider_recovery.unqualified
