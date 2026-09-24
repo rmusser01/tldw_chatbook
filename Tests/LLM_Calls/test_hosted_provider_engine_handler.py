@@ -404,3 +404,13 @@ def test_resolve_hosted_engine_request_alias_forwards_to_resolver() -> None:
     assert resolution.model == "databricks-gpt-4o"
     assert resolution.base_url == "https://dbc-1.cloud.databricks.com/openai/v1"
     assert resolution.api_key == "secret"
+
+
+def test_resolve_hosted_engine_request_alias_matches_private_signature():
+    """PIN (green on arrival): public alias forwards the full private surface."""
+    import inspect
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine as engine
+
+    assert list(inspect.signature(engine.resolve_hosted_engine_request).parameters) == (
+        list(inspect.signature(engine.resolve_hosted_request).parameters)
+    )

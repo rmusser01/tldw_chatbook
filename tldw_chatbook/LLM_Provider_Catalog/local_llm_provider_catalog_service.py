@@ -82,7 +82,9 @@ SettingsLoader = Callable[[], Mapping[str, Any]]
 # engine-driven member (ADR-179): its record preset resolves the workspace
 # host (appending the /openai/v1 suffix) and the DATABRICKS-token credential
 # exactly the chat path's engine handler does.
-_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai", "databricks"})
+_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"}) | {
+    key for key, record in RECORDS_BY_KEY.items() if record.engine_driven
+}
 
 
 class LocalLLMProviderCatalogService:
