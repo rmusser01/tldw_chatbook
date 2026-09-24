@@ -25,6 +25,7 @@ from ..Chatbooks.database_paths import (
     get_private_chatbooks_dir,
     secure_chatbook_directory,
 )
+from ..Utils.Utils import truncate
 from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
@@ -89,8 +90,19 @@ class ChatbookCard(Container):
         yield Static(
             self.chatbook_data.get("name", "Untitled"), classes="chatbook-card-title"
         )
+        # `truncate` (TASK-32808.3's one shared truncator), not
+        # `x[:100] + "..."`: the re-roll appended the ellipsis
+        # UNCONDITIONALLY, so a chatbook whose manifest carries an empty
+        # description rendered as literally "..." and a zip with no manifest
+        # at all (the key is only set inside `_scan_chatbooks`'s manifest
+        # branch) rendered "No description...". Four sibling sites in
+        # `STTS_Window.py` already get this right.
         yield Static(
-            self.chatbook_data.get("description", "No description")[:100] + "...",
+            truncate(
+                self.chatbook_data.get("description") or "No description",
+                100,
+                marker="...",
+            ),
             classes="chatbook-card-description",
         )
 
@@ -558,10 +570,14 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
                 list_view = ListView(classes="chatbooks-list")
                 container.mount(list_view)
                 for cb_data in filtered:
+                    # Same unconditional-ellipsis bug as the grid card above.
+                    description = truncate(
+                        cb_data.get("description") or "No description",
+                        50,
+                        marker="...",
+                    )
                     item = ListItem(
-                        Static(
-                            f"📚 {cb_data['name']} - {cb_data.get('description', 'No description')[:50]}..."
-                        )
+                        Static(f"📚 {cb_data['name']} - {description}")
                     )
                     list_view.mount(item)
 

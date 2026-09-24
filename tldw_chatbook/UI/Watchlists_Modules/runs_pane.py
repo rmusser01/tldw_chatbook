@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
@@ -17,7 +18,7 @@ from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.watchlist_failure import project_watchlist_failure
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
-from .table_selection import highlight_is_user_driven
+from .table_selection import highlight_is_user_driven, row_with_id
 
 
 class RunSelected(Message):
@@ -408,12 +409,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
 
     def select_run_by_id(self, run_id: str) -> None:
         """Select the run with the given id and notify listeners."""
-        run = None
-        for candidate in self.runs:
-            if str(candidate.get("id") or "") == run_id:
-                run = candidate
-                break
-        self.selected_run = run
+        self.selected_run = row_with_id(self.runs, run_id)
 
     def watch_selected_run(self, run: dict[str, Any] | None) -> None:
         if self.is_mounted:
@@ -456,7 +452,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             for item in items:
                 table.add_row(*self._run_item_row_cells(item))
         except Exception:
-            pass
+            # The table is now half-populated and the note beside it still
+            # describes the full row set, so this has to leave a trace
+            # somewhere -- unlike the not-composed-yet guard above, which is
+            # a no-op by design (tier-2 review S21 P3).
+            logger.opt(exception=True).debug(
+                "Failed to repopulate the watchlist run items table."
+            )
 
     def watch_run_items_note(self, note: str) -> None:
         """Repaint the Items empty/truncation note in place (review wave, I1).

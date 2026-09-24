@@ -484,7 +484,10 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 notifications = query(
                     limit=100, include_dismissed=False, category=None
                 )
-        except Exception:
+        except Exception as e:
+            # Report "0 unread" but say why: without this, a failing inbox DB
+            # is indistinguishable from an empty inbox on Home (tier-2 S17 P3).
+            logger.debug(f"Failed to read the local notification inbox for Home: {e}")
             return 0
         return sum(
             1 for notification in notifications if _notification_is_unread(notification)

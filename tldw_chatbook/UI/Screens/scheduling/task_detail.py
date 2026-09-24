@@ -1466,7 +1466,6 @@ class TaskDetail(Vertical):
         self._runs_on_options = runs_on_options
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
-        self.query_one("#schedules-follow-in-console", Button)
         empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
 
         if task is None:
@@ -1747,16 +1746,13 @@ class TaskDetail(Vertical):
             enable_btn.tooltip = "Enable this scheduled task."
             disable_btn.tooltip = "Disable this scheduled task."
 
+        # This Static has exactly one other writer -- `set_task`, which only
+        # ever clears it -- so the read-modify-write that used to live here
+        # filtered `why`'s own output back out and always rebuilt from an
+        # empty list. The retired `set_transfer_reasons` was the second
+        # writer it was preserving lines for (tier-2 review S19 P3).
         why = self.query_one("#scheduling-transfer-why", Static)
-        line = f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else ""
-        existing = [
-            text
-            for text in str(why.renderable).split("\n")
-            if text and not text.startswith("Edit/Duplicate/Enable/Disable/Delete:")
-        ]
-        if line:
-            existing.append(line)
-        why.update("\n".join(existing))
+        why.update(f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else "")
 
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""

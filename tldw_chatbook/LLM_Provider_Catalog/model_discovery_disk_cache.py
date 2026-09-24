@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +10,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_bytes
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 
@@ -18,7 +18,10 @@ CACHE_VERSION = 1
 MODEL_CATALOG_DISK_MAX_BYTES = 2 * 1024 * 1024
 MODEL_CATALOG_DISK_MAX_ENTRIES = 128
 MODEL_CATALOG_DISK_MAX_RAW_ENTRIES = 4096
-MODEL_CATALOG_DISK_MAX_MODELS_PER_ENTRY = 100
+# TASK-32925: was 100, so any larger catalog (OpenRouter: 456) was refused
+# here and never persisted. Must hold what discovery accepts
+# (DISCOVERED_MODEL_MAX_COUNT; pinned by test_openrouter_scale_catalog.py).
+MODEL_CATALOG_DISK_MAX_MODELS_PER_ENTRY = 4096
 _PROVIDER_KEY_MAX_CHARS = 128
 _ENDPOINT_FINGERPRINT_MAX_CHARS = 512
 _MODEL_ID_MAX_CHARS = 120
@@ -372,24 +375,13 @@ class ModelCatalogDiskStore:
             )
 
     def save(self) -> None:
-        """Atomically write the store (pid-scoped temp file + rename).
+        """Atomically and durably write the store.
 
         Raises:
-            OSError: if the write or rename fails (a leftover .tmp file may remain).
+            OSError: if the write or rename fails (the temp file is removed).
             ValueError: if internal state exceeds the serialized byte bound.
         """
         encoded = _encode_cache_state(self._model_ids, self._fetched_at)
         if len(encoded) > MODEL_CATALOG_DISK_MAX_BYTES:
             raise ValueError("model catalog cache exceeds disk bounds")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        # TASK-32901: write_bytes + os.replace published the rename without
-        # ever reaching the platter, so a crash could leave a truncated
-        # catalog that `load_into` silently rejects -- the user loses their
-        # discovered models with no error. The pid-scoped temp name is a
-        # separate, pinned contract (one writer per process).
-        with open(tmp_path, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, self.path)
+        atomic_write_bytes(self.path, encoded)

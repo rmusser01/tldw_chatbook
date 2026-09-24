@@ -12,6 +12,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
 
+from ..Utils.file_durability import flush_file, fsync_parent_directory
+
 
 @dataclass(frozen=True)
 class PetdexReviewedArchive:
@@ -183,10 +185,18 @@ def write_native_export(
             temporary = Path(output.name)
             output.write(data)
             output.flush()
-            os.fsync(output.fileno())
+            # flush_file, not os.fsync: on Darwin a plain fsync returns before
+            # the drive's own write cache is flushed, so the export could be
+            # reported successful and still lose its contents. The parent
+            # barrier below persists the NAME; this persists the BYTES.
+            flush_file(output.fileno())
         if not authority_guard() or export_target_identity(target) != expected_identity:
             raise ValueError("Export destination changed.")
         os.replace(temporary, target)
+        # task-32896: not Utils.atomic_file_ops -- the identity/authority
+        # recheck has to sit between the write and the rename, which the
+        # helper's single-call shape cannot express.
+        fsync_parent_directory(target.parent)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

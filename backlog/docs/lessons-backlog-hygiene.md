@@ -1104,3 +1104,33 @@ separately from PR metadata. Compare the candidate with that fetched commit.
 After merging, inspect the actual merge parents/tree and qualify any concurrent
 changes against the approved behavior. Do not treat a PR's `baseRefOid` alone
 as proof of the live target tip.
+
+## `refs/stash` is repo-global — `git stash` is NOT worktree-isolated (2026-09-22)
+
+**The incident.** During the tier-2 burn-down, ten agents worked in ten separate git worktrees of the same
+repository. Two of them used `git stash` to swap to a baseline for a before/after comparison. Because
+`refs/stash` lives in the **shared** `.git` directory rather than per-worktree, `git stash pop` in one
+worktree popped **another agent's stash** into it. It happened twice within an hour, in both directions.
+
+Nothing was lost — both agents noticed, re-stashed the foreign entry with a labelled message, and recovered
+their own by sha (`git stash apply <sha>`; a stash commit stays reachable even after a bad pop). But one of
+them dropped conflict markers into six files and poisoned a nine-minute test run before the cause was clear.
+
+A third, related trap from the same day: **`git stash push <path>` when that path has no uncommitted change
+creates no stash entry and exits 0.** The paired `git stash pop` then pops whatever was on top of the
+stack — someone else's work.
+
+**What to do instead.** For a baseline swap, never stash. Use:
+
+```sh
+git checkout <sha> -- <paths>      # swap to baseline
+git checkout HEAD -- <paths>       # swap back
+```
+
+Note `git checkout HEAD -- <path>` cannot remove a file that HEAD does not track, so a swap that recreates
+deleted files leaves them as untracked debris — check `git status --porcelain` after restoring. Better still
+for a full-tree baseline: `git worktree add --detach /tmp/baseline <sha>`, measure there, remove it.
+
+**The general rule.** In a repo with concurrent worktrees, treat anything under `.git/` that is not
+per-worktree as shared mutable state: `refs/stash`, `refs/heads`, `rr-cache`, `config`. A command that
+writes to one of them affects every worktree, including other people's.
