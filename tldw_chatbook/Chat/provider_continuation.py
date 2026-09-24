@@ -27,7 +27,7 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 
-ContinuationProvider = Literal["moonshot", "zai", "deepseek"]
+ContinuationProvider = Literal["moonshot", "zai", "deepseek", "databricks"]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
 ContinuationCallState = Literal["pending", "executing", "completed", "failed"]
@@ -71,6 +71,10 @@ _PAIRINGS = frozenset(
         ("zai", "chat_completions"),
         ("deepseek", "chat_completions"),
         ("deepseek", "responses"),
+        # ADR-179 Task 7: the first engine-driven preset joins the canonical
+        # format (chat-completions continuation only; the engine's candidate
+        # builder skips records whose continuation_protocol is None).
+        ("databricks", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})

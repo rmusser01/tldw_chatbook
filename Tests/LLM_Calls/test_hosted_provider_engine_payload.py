@@ -189,20 +189,19 @@ def _tool() -> dict[str, object]:
 
 
 def test_continuation_restores_reasoning_onto_owner():
-    # The canonical checkpoint format only parses provider keys the
-    # continuation module's _PAIRINGS admit (moonshot/zai/deepseek today;
-    # Task 7 derives pairings from the registry). The happy-path wiring is
-    # therefore pinned through a zai-keyed synthetic preset record -- the
-    # exact flow any engine preset with continuation support takes.
-    record = replace(DATABRICKS, key="zai", display_name="Z.ai")
+    # The canonical checkpoint format parses provider keys the continuation
+    # module's _PAIRINGS admit (moonshot/zai/deepseek, plus databricks from
+    # Task 7's registration), so the happy path runs on the registry preset
+    # itself -- the exact flow any engine preset with continuation support
+    # takes.
     checkpoint = parse_provider_continuation_json(
         {
             "schema_version": 1,
             "checkpoint_revision": 1,
-            "provider": "zai",
+            "provider": "databricks",
             "protocol": "chat_completions",
-            "model": "glm-5.2",
-            "api_base_url": "https://api.z.ai/api/paas/v4",
+            "model": "gpt-4o",
+            "api_base_url": "https://dbc-1.cloud.databricks.com/openai/v1",
             "state": "complete",
             "rounds": [
                 {
@@ -222,8 +221,8 @@ def test_continuation_restores_reasoning_onto_owner():
         }
     )
     resolution = HostedProviderResolution(
-        provider="zai", model="glm-5.2", api_key="k",
-        base_url="https://api.z.ai/api/paas/v4",
+        provider="databricks", model="gpt-4o", api_key="k",
+        base_url="https://dbc-1.cloud.databricks.com/openai/v1",
         timeout=90.0, retries=3, retry_delay=5.0, streaming=True,
     )
     history = [
@@ -245,7 +244,7 @@ def test_continuation_restores_reasoning_onto_owner():
         {"role": "tool", "tool_call_id": "call_1", "content": "4"},
     ]
     payload = build_hosted_chat_payload(
-        record, resolution=resolution,
+        DATABRICKS, resolution=resolution,
         messages_payload=history,
         tools=[_tool()], tool_choice="auto",
         provider_continuations=[checkpoint],
@@ -256,13 +255,22 @@ def test_continuation_restores_reasoning_onto_owner():
 
 
 def test_continuation_for_unpaired_provider_fails_closed():
-    # Databricks is not yet in the continuation format's provider pairings
-    # (Task 7 derives those from the registry), so a databricks checkpoint
-    # must fail closed with display-name copy rather than restore silently.
+    # Providers outside the continuation format's provider pairings
+    # (moonshot/zai/deepseek/databricks) must fail closed with display-name
+    # copy rather than restore silently. The pairing set is still literal
+    # data in ``Chat/provider_continuation.py`` (registry-derived pairings
+    # are a later phase), so a groq-keyed synthetic preset stands in for any
+    # not-yet-admitted engine provider.
+    record = replace(DATABRICKS, key="groq", display_name="Groq")
+    resolution = HostedProviderResolution(
+        provider="groq", model="gpt-4o", api_key="k",
+        base_url="https://dbc-1.cloud.databricks.com/openai/v1",
+        timeout=90.0, retries=3, retry_delay=5.0, streaming=True,
+    )
     checkpoint = ProviderContinuationCheckpoint(
         schema_version=1,
         checkpoint_revision=1,
-        provider="databricks",
+        provider="groq",
         protocol="chat_completions",
         model="gpt-4o",
         api_base_url="https://dbc-1.cloud.databricks.com/openai/v1",
@@ -285,9 +293,9 @@ def test_continuation_for_unpaired_provider_fails_closed():
     )
     with pytest.raises(ChatBadRequestError) as exc_info:
         build_hosted_chat_payload(
-            DATABRICKS,
-            resolution=_resolution(),
+            record,
+            resolution=resolution,
             messages_payload=[{"role": "user", "content": "hi"}],
             provider_continuations=[checkpoint],
         )
-    assert "Databricks" in str(exc_info.value)
+    assert "Groq" in str(exc_info.value)

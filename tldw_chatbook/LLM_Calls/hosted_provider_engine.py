@@ -61,10 +61,28 @@ hosted provider engine and presets design, "Data flow" step 4):
 - ``record.response_allowances`` feed the shared hosted boundary's tolerated
   extra top-level response/stream keys (Task 3 seam).
 - The stream wrapper's continuation candidate is built against the record's
-  key/protocol; the canonical-format parse round-trip still admits only the
-  continuation ``_PAIRINGS`` providers (moonshot/zai/deepseek) -- widening
-  pairings to registry data is Task 7's scope, same as the payload layer's
-  restore path.
+  key/protocol; the canonical-format parse round-trip admits the
+  continuation ``_PAIRINGS`` providers, which Task 7 widened with
+  ``("databricks", "chat_completions")`` (the registry's engine preset).
+
+Handler layer (Task 7) notes:
+
+- ``build_hosted_chat_handler(record)`` closes over the Task 4-6 layers to
+  produce one provider's ``chat_with_*`` callable: the ``chat_with_zai``
+  signature minus the provider-invented ``do_sample``/``request_id``
+  parameters (the engine emits exactly the OpenAI body the record
+  describes). The continuation candidate is skipped entirely for records
+  whose ``continuation_protocol`` is None.
+- The response message keeps ``reasoning_content`` only when the record's
+  disposition is ``"displayable"`` (zai pops it unconditionally; its
+  disposition is proprietary).
+- The per-provider metric counters live inside the factory closure -- the
+  exact ``log_counter``/``log_histogram`` call shapes of the
+  ``chat_with_zai``/``chat_with_moonshot`` compatibility wrappers in
+  ``LLM_API_Calls.py``, with ``record.key`` as the provider identity --
+  once, for every engine provider, with no wrapper module.
+- ``resolve_hosted_engine_request`` is the thin public alias of
+  ``resolve_hosted_request`` consumed by the catalog service (Task 12).
 """
 
 from __future__ import annotations
@@ -72,7 +90,8 @@ from __future__ import annotations
 import json
 import math
 import os
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -92,12 +111,15 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
     HostedChatTurn,
+    HostedHTTPTransportConfig,
     ProviderPayloadValidators,
     ReasoningDisposition,
     TOOL_FUNCTION_NAME,
     normalize_hosted_chat_base_url,
     normalize_hosted_chat_response,
+    owned_json_post,
 )
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import (
     ProviderSettingsError,
     get_runtime_config_snapshot,
@@ -982,11 +1004,13 @@ def _hosted_continuation_candidate(
     """Build the next canonical continuation checkpoint for one turn.
 
     Ports ``_zai_continuation_candidate`` with Z.ai's identity strings
-    replaced by the record's key and continuation protocol. The final
-    canonical parse round-trip admits only the continuation ``_PAIRINGS``
-    providers today (moonshot/zai/deepseek); registry-derived pairings are
-    Task 7's scope, same as the payload layer's restore path.
+    replaced by the record's key and continuation protocol. A record that
+    ships no continuation protocol gets no candidate at all (skip, not an
+    error). The final canonical parse round-trip admits the continuation
+    ``_PAIRINGS`` providers (moonshot/zai/deepseek/databricks).
     """
+    if record.continuation_protocol is None:
+        return None
     active = tuple(
         checkpoint
         for checkpoint in provider_continuations
@@ -1039,4 +1063,284 @@ def _hosted_continuation_candidate(
         return None
     return parse_provider_continuation_json(
         dump_provider_continuation_json(candidate)
+    )
+
+
+# --- handler layer (Task 7; ports zai.py's chat_with_zai joining flow) ---
+
+
+def resolve_hosted_engine_request(
+    record: ProviderRecord,
+    *,
+    explicit_api_key: object = None,
+    explicit_base_url: object = None,
+    explicit_model: object = None,
+    explicit_timeout: object = None,
+    explicit_retries: object = None,
+    explicit_retry_delay: object = None,
+    app_config: Mapping[str, Any] | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> HostedProviderResolution:
+    """Resolve one engine request through the public engine seam.
+
+    Thin public alias of :func:`resolve_hosted_request` for service callers
+    (the model-catalog service, Task 12): they resolve one engine-driven
+    provider's endpoint and credential exactly the chat path does, without
+    depending on the private resolution symbol.
+
+    Args:
+        record: Registry preset driving every default, env candidate, and
+            error message.
+        explicit_api_key: Caller-supplied credential; wins over settings/env.
+        explicit_base_url: Caller-supplied base URL; wins over settings.
+        explicit_model: Caller-supplied model; wins over settings.
+        explicit_timeout: Caller-supplied timeout override.
+        explicit_retries: Caller-supplied retry override.
+        explicit_retry_delay: Caller-supplied retry-delay override.
+        app_config: Canonical config mapping; defaults to the runtime
+            snapshot. Never mutated.
+        environ: Environment mapping; defaults to ``os.environ``.
+
+    Returns:
+        The immutable resolved request identity and transport policy.
+
+    Raises:
+        ChatConfigurationError: On any missing or malformed credential,
+            base URL, model, or transport setting.
+    """
+    return resolve_hosted_request(
+        record,
+        explicit_api_key=explicit_api_key,
+        explicit_base_url=explicit_base_url,
+        explicit_model=explicit_model,
+        explicit_timeout=explicit_timeout,
+        explicit_retries=explicit_retries,
+        explicit_retry_delay=explicit_retry_delay,
+        app_config=app_config,
+        environ=environ,
+    )
+
+
+def build_hosted_chat_handler(
+    record: ProviderRecord,
+) -> Callable[..., dict[str, Any] | HostedProviderStream]:
+    """Build one provider's ``chat_with_*`` handler from its preset record.
+
+    The returned callable mirrors ``chat_with_zai``'s signature minus the
+    provider-invented ``do_sample`` and ``request_id`` parameters, joins the
+    Task 4-6 layers (resolve -> payload -> owned transport -> response
+    normalization), and emits the per-provider metric counters of the
+    ``LLM_API_Calls`` compatibility wrappers with ``record.key`` identity.
+
+    Args:
+        record: Registry preset driving every layer of the request.
+
+    Returns:
+        The chat handler Task 8 registers in dispatch for this provider.
+    """
+
+    def chat_with_hosted_provider(
+        input_data: list[dict[str, Any]],
+        model: str | None = None,
+        api_key: str | None = None,
+        system_message: str | None = None,
+        temp: float | None = None,
+        maxp: float | None = None,
+        streaming: bool | None = False,
+        max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        custom_prompt_arg: str | None = None,
+        api_base_url: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        stop: str | list[str] | None = None,
+        response_format: dict[str, Any] | None = None,
+        user: str | None = None,
+        reasoning_effort: str | None = None,
+        provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
+        request_timeout: float | None = None,
+        request_retries: int | None = None,
+        request_retry_delay: float | None = None,
+    ) -> dict[str, Any] | HostedProviderStream:
+        del custom_prompt_arg
+        started_at = time.time()
+        labels = {"model": model or "configured", "streaming": str(bool(streaming))}
+        log_counter(f"{record.key}_api_request", labels=labels)
+        try:
+            result = _send_hosted_chat_request(
+                record,
+                input_data=input_data,
+                model=model,
+                api_key=api_key,
+                system_message=system_message,
+                temp=temp,
+                maxp=maxp,
+                streaming=streaming,
+                max_tokens=max_tokens,
+                tools=tools,
+                api_base_url=api_base_url,
+                tool_choice=tool_choice,
+                stop=stop,
+                response_format=response_format,
+                user=user,
+                reasoning_effort=reasoning_effort,
+                provider_continuations=provider_continuations,
+                request_timeout=request_timeout,
+                request_retries=request_retries,
+                request_retry_delay=request_retry_delay,
+            )
+        except Exception as exc:
+            log_counter(
+                f"{record.key}_api_error",
+                labels={**labels, "error_type": type(exc).__name__},
+            )
+            log_histogram(
+                f"{record.key}_api_error_response_time",
+                time.time() - started_at,
+                labels=labels,
+            )
+            raise
+        log_counter(f"{record.key}_api_success", labels=labels)
+        log_histogram(
+            f"{record.key}_api_response_time",
+            time.time() - started_at,
+            labels=labels,
+        )
+        return result
+
+    return chat_with_hosted_provider
+
+
+def _send_hosted_chat_request(
+    record: ProviderRecord,
+    *,
+    input_data: list[dict[str, Any]],
+    model: str | None,
+    api_key: str | None,
+    system_message: str | None,
+    temp: float | None,
+    maxp: float | None,
+    streaming: bool | None,
+    max_tokens: int | None,
+    tools: list[dict[str, Any]] | None,
+    api_base_url: str | None,
+    tool_choice: str | dict[str, Any] | None,
+    stop: str | list[str] | None,
+    response_format: dict[str, Any] | None,
+    user: str | None,
+    reasoning_effort: str | None,
+    provider_continuations: Sequence[ProviderContinuationCheckpoint],
+    request_timeout: float | None,
+    request_retries: int | None,
+    request_retry_delay: float | None,
+) -> dict[str, Any] | HostedProviderStream:
+    """Run one engine request end to end (the ``chat_with_zai`` body)."""
+    resolution = resolve_hosted_request(
+        record,
+        explicit_api_key=api_key,
+        explicit_base_url=api_base_url,
+        explicit_model=model,
+        explicit_timeout=request_timeout,
+        explicit_retries=request_retries,
+        explicit_retry_delay=request_retry_delay,
+    )
+    payload = build_hosted_chat_payload(
+        record,
+        resolution=resolution,
+        messages_payload=input_data,
+        system_message=system_message,
+        streaming=streaming,
+        tools=tools,
+        tool_choice=tool_choice,
+        reasoning_effort=reasoning_effort,
+        provider_continuations=provider_continuations,
+        temperature=temp,
+        top_p=maxp,
+        max_tokens=max_tokens,
+        stop=stop,
+        response_format=response_format,
+        user=user,
+    )
+    try:
+        raw = owned_json_post(
+            config=HostedHTTPTransportConfig(
+                provider=record.key,
+                base_url=resolution.base_url,
+                api_key=resolution.api_key,
+                timeout=resolution.timeout,
+                retries=resolution.retries,
+                retry_delay=resolution.retry_delay,
+            ),
+            route="chat/completions",
+            payload=payload,
+            streaming=cast(bool, payload["stream"]),
+        )
+        if payload["stream"]:
+            return HostedProviderStream(
+                HostedChatStream(
+                    cast(Iterator[Any], raw),
+                    finish_policy=HostedPresetFinishPolicy(record),
+                    allowed_extra_keys=record.response_allowances,
+                ),
+                record=record,
+                resolution=resolution,
+                provider_continuations=provider_continuations,
+            )
+        turn = normalize_hosted_provider_response(record, raw)
+    except ChatProviderError:
+        raise
+    except HostedChatProtocolError:
+        raise ChatProviderError(
+            provider=record.key,
+            message=(
+                f"{record.display_name} returned a malformed successful "
+                "response."
+            ),
+            status_code=502,
+        ) from None
+    return _turn_response(
+        turn,
+        record=record,
+        resolution=resolution,
+        provider_continuations=provider_continuations,
+    )
+
+
+def _turn_response(
+    turn: HostedChatTurn,
+    *,
+    record: ProviderRecord,
+    resolution: HostedProviderResolution,
+    provider_continuations: Sequence[ProviderContinuationCheckpoint],
+) -> HostedProviderResponse:
+    message = deepcopy(turn.assistant_message)
+    if message is None:
+        raise HostedChatProtocolError(
+            f"{record.display_name} response message is incomplete."
+        )
+    if record.reasoning_disposition != "displayable":
+        # zai pops unconditionally (its disposition is proprietary); the
+        # engine keeps reasoning in the public response message only where
+        # the record declares it displayable. "ignored" turns carry none at
+        # all (the finish policy dropped them), so the pop is a no-op there.
+        message.pop("reasoning_content", None)
+    response: dict[str, Any] = {
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": turn.finish_reason,
+            }
+        ]
+    }
+    if turn.usage is not None:
+        response["usage"] = deepcopy(turn.usage)
+    return HostedProviderResponse(
+        response,
+        terminal_turn=turn,
+        provider_continuation=_hosted_continuation_candidate(
+            turn,
+            record=record,
+            resolution=resolution,
+            provider_continuations=provider_continuations,
+        ),
     )
