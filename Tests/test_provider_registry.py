@@ -1,0 +1,74 @@
+# Tests/test_provider_registry.py
+"""Registry parity tests: registry data must equal today's literal tables."""
+from tldw_chatbook.provider_registry import (
+    ALL_RECORDS,
+    AUDITED_ENDPOINT_KEYS,
+    AUTO_REFRESH_KEYS,
+    CLOUD_PROVIDER_CONFIG_KEYS,
+    DATABRICKS,
+    ENGINE_RECORDS,
+    NATIVE_TOOLS_KEYS,
+    RECORDS_BY_KEY,
+)
+from tldw_chatbook.Chat.Chat_Functions import (
+    API_CALL_HANDLERS,
+    SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS,
+)
+
+
+def test_records_unique_and_complete():
+    keys = [record.key for record in ALL_RECORDS]
+    assert len(keys) == len(set(keys))
+    # every dispatch key is a registry key or an alias of one
+    assert set(API_CALL_HANDLERS) - set(RECORDS_BY_KEY) <= set()
+
+
+def test_audited_set_matches_handlers():
+    # Until Task 8 flips the derivation, the literal set lacks "databricks"
+    # (the registry already includes it). Compare excluding it.
+    assert SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS == AUDITED_ENDPOINT_KEYS - {"databricks"}
+
+
+def test_cloud_classification_matches_config():
+    # On dev, _cloud_provider_keys is a module-level LIST (config.py ~L9843),
+    # not a callable. Same exclusion as the audited-set test until Task 9
+    # flips the derivation.
+    from tldw_chatbook.config import _cloud_provider_keys
+    assert tuple(sorted(_cloud_provider_keys)) == tuple(
+        sorted(set(CLOUD_PROVIDER_CONFIG_KEYS) - {"Databricks"})
+    )
+
+
+def test_auto_refresh_flags_match_catalog_settings():
+    # Same style as the cloud-classification parity: the literal list is in
+    # [providers]-key form, so compare it against the config keys of the
+    # records flagged auto_refresh. Until Task 11 adds "Databricks" to the
+    # literal list, compare excluding databricks.
+    from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+        AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    )
+    auto_refresh_config_keys = {
+        RECORDS_BY_KEY[key].config_key
+        for key in AUTO_REFRESH_KEYS - {"databricks"}
+    }
+    assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == auto_refresh_config_keys
+
+
+def test_native_tools_flags_match_native_tools_module():
+    # NATIVE_TOOLS_PROVIDERS is keyed by dispatch (record) keys. Until
+    # Task 12 adds "databricks" to the literal set, compare excluding it.
+    from tldw_chatbook.Agents.native_tools import NATIVE_TOOLS_PROVIDERS
+    assert NATIVE_TOOLS_PROVIDERS == NATIVE_TOOLS_KEYS - {"databricks"}
+
+
+def test_databricks_preset_shape():
+    record = DATABRICKS
+    assert record.key == "databricks"
+    assert record.classification == "cloud"
+    assert record.engine_driven is True
+    assert record.auth_scheme == "bearer"
+    assert record.api_key_env_candidates == ("DATABRICKS_TOKEN",)
+    assert record.base_url_suffix == "/openai/v1"
+    assert record.default_base_url is None  # workspace host is per-account
+    assert record.reasoning_disposition == "ignored"
+    assert "databricks" in {r.key for r in ENGINE_RECORDS}
