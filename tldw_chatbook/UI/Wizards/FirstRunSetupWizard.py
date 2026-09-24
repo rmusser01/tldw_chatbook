@@ -7140,10 +7140,26 @@ class ProtectKeysStep(SetupStep):
             self._apply_password_worker(password),
             exclusive=True,
             group="setup-protect-encrypt",
+            # TASK-32892: a raise in this worker must not exit the app.
+            exit_on_error=False,
         )
 
     async def _apply_password_worker(self, password: str) -> None:
         ok = await self.apply_password(password)
+        # TASK-32892: the wizard can be dismissed or advanced while the
+        # await above is in flight, and a post-await `query_one` raising
+        # out of a worker whose `exit_on_error` defaults to True exits the
+        # whole app mid-setup. Recheck, and the launch sites pass
+        # exit_on_error=False for everything this recheck cannot see.
+        #
+        # Qodo review of PR #2799: `is_attached`, NOT `is_mounted`.
+        # Textual 8.2.8 sets `_is_mounted = True` once and never clears it
+        # (message_pump.py:612 is its only assignment after __init__), so a
+        # removed widget still reports `is_mounted is True` -- the check this
+        # comment describes was inert. `is_attached` walks `_parent` to the
+        # DOM root and goes False the moment the node is removed.
+        if not self.is_attached:
+            return
         status = self.query_one("#setup-protect-status", Static)
         if ok:
             status.update("✓ Encryption enabled.")
@@ -7288,7 +7304,11 @@ class SummaryStep(SetupStep):
         if self._render_worker is not None and self._render_worker.is_running:
             return
         self._render_worker = self.run_worker(
-            self._render_rows(), exclusive=True, group="setup-summary-load"
+            self._render_rows(),
+            exclusive=True,
+            group="setup-summary-load",
+            # TASK-32892: a raise in this worker must not exit the app.
+            exit_on_error=False,
         )
 
     async def _render_rows(self) -> None:
@@ -7356,6 +7376,15 @@ class SummaryStep(SetupStep):
         speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_runtime_check
         )
+        # TASK-32892: the wizard can be dismissed or advanced while the
+        # await above is in flight, and a post-await `query_one` raising
+        # out of a worker whose `exit_on_error` defaults to True exits the
+        # whole app mid-setup. Recheck, and the launch sites pass
+        # exit_on_error=False for everything this recheck cannot see.
+        # Qodo review of PR #2799: `is_attached`, not `is_mounted` -- see
+        # `ProtectKeysStep._apply_password_worker` for why the latter is inert.
+        if not self.is_attached:
+            return
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
         # TASK-21146 (UAT H-1): offer the model-list consent only while no

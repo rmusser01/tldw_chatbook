@@ -1099,8 +1099,12 @@ class SchedulesWorkbench(BaseAppScreen):
             while True:
                 service = self._service()
                 if service is not None:
+                    # TASK-32892 P0-2: the SYNC scope, not the view toggle.
+                    # `_pull_results` mirrors the server's results under the
+                    # owner it is given, and a non-`"server:"` owner is what
+                    # the local queue treats as its own to execute.
                     await service.sync_engine._run_phase(
-                        service.owner_id,
+                        service.sync_target_owner_id(),
                         "Automation results pull (notification)",
                         service.sync_engine._pull_results,
                     )
@@ -5390,16 +5394,30 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             return
         self._sync_running = True
-        self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
+        self.run_worker(
+            self._run_sync,
+            exclusive=True,
+            group="schedules-sync-now",
+            # TASK-32892: a raise in this worker must not exit the app. The
+            # `finally:` guard below covers the teardown race it was written
+            # for, but not an unforeseen one -- and this is the same worker
+            # whose own comment describes that default taking the app down.
+            exit_on_error=False,
+        )
 
     async def _run_sync(self) -> None:
         service = self._service()
         if service is None:
             self._sync_running = False
             return
-        for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
-            self.query_one(btn_id, Button).disabled = True
         try:
+            # Inside the `try`, not above it: the worker's first slice can
+            # run after the user has already navigated away, and a
+            # `NoMatches` here skipped the `finally:` entirely -- leaving
+            # `_sync_running` set and the Sync action refused for the rest
+            # of the session, the exact wedge this block exists to prevent.
+            for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
+                self.query_one(btn_id, Button).disabled = True
             owner_id = service.owner_id
             # task-23105 review F3: the engine swallows server errors into
             # persisted sync-error state, so its returned SyncOutcome is
@@ -5427,7 +5445,35 @@ class SchedulesWorkbench(BaseAppScreen):
             logger.exception("Sync failed")
             self.post_message(SyncFailed(service.owner_id, str(exc)))
         finally:
-            for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
-                self.query_one(btn_id, Button).disabled = False
-            self._refresh_owner_select()
+            # TASK-32892: a `finally:` body is NOT covered by its own
+            # statement's `except`. A sync can outlive the screen (the user
+            # navigates away mid-await), and then every lookup below raises
+            # `NoMatches` straight out of the worker -- whose `exit_on_error`
+            # defaults to True -- while `_sync_running` is left set, wedging
+            # the Sync action for the rest of the session. State first, DOM
+            # behind a mount check.
             self._sync_running = False
+            # Qodo review of PR #2799: `is_attached`, NOT `is_mounted`.
+            # Textual 8.2.8 sets `_is_mounted = True` once and never clears
+            # it (message_pump.py:612 is its only assignment after __init__),
+            # so a popped screen still reports `is_mounted is True` -- this
+            # branch was entered on the very teardown it guards, raised
+            # `NoMatches`, and was swallowed by the `except` below. Measured
+            # on a mounted app: pop the screen mid-sync and the `finally:`
+            # still runs (a worker cancellation propagates THROUGH it),
+            # `is_mounted` is True, `is_attached` is False. The `except`
+            # stays too: it covers races this predicate cannot see.
+            if self.is_attached:
+                try:
+                    for btn_id in (
+                        "#scheduling-owner-local",
+                        "#scheduling-owner-server",
+                    ):
+                        self.query_one(btn_id, Button).disabled = False
+                    self._refresh_owner_select()
+                except Exception:  # noqa: BLE001 -- teardown races only
+                    # loguru ignores stdlib's `exc_info=`; `opt(exception=True)`
+                    # is this file's own idiom for attaching the traceback.
+                    logger.opt(exception=True).debug(
+                        "Sync teardown skipped: the workbench is gone"
+                    )

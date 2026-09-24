@@ -1146,3 +1146,45 @@ stored IDs. Preserve those values through form snapshots and recomposition;
 calling `str(Select.value)` erases that distinction and breaks control dispatch.
 Real-service regressions
 and four native cells verified exact saved IDs, labels and memory confirmation.
+
+## `is_mounted` never goes False, and `push_screen_wait` needs a worker (Qodo review of PR #2799, 2026-09-23)
+
+Two Textual facts that turned three "crash guard" fixes into no-ops. Both were
+found only by mounting a real app; both were invisible to the `__new__`-plus-fake
+unit tests that shipped with the fixes.
+
+- **`widget.is_mounted` is sticky True.** In Textual 8.2.8 `_is_mounted` is
+  assigned `False` once in `MessagePump.__init__` and `True` in exactly one
+  other place (`message_pump.py:612`); nothing ever clears it. A removed widget
+  and a popped screen both still report `is_mounted is True`. Measured:
+  after `await widget.remove()`, `is_mounted=True`, `is_attached=False`,
+  `is_running=False`. **`is_attached` is the liveness predicate** — it walks
+  `_parent` to the DOM root. `SchedulesWorkbench._run_sync`'s `finally:` guard
+  was entered on the very teardown it was written to skip, raised `NoMatches`,
+  and was swallowed by the `except` under it. (There are ~40 more
+  `is_mounted`-as-liveness reads in `FirstRunSetupWizard.py` alone; they were
+  left alone as out of that PR's scope, but they are the same class.)
+- **Removing a node cancels that node's workers** (`Widget._on_unmount` →
+  `WorkerManager.cancel_node`), and the cancellation lands ON the await — so a
+  worker's post-await DOM code never runs on the dismiss path at all. The
+  corollary matters for testing: you *cannot* reproduce "dismiss the wizard
+  mid-await and watch the app exit" by removing the widget. A screen's OWN
+  worker is different — cancellation propagates through `finally:`, so a
+  `finally:` body still runs against a detached DOM. That is the case worth a
+  test.
+- **`App.push_screen_wait` raises `NoActiveWorker` outside a Textual worker.**
+  `VoiceCloningWindow._delete_profile` is reached from `on_button_pressed` (the
+  message pump) and from `action_delete_profile` (a bare `asyncio.create_task`)
+  — neither is a worker. The fix that replaced a compose-time `AttributeError`
+  with `push_screen_wait` therefore still showed no dialog and deleted nothing;
+  a unit test whose fake app defined `push_screen_wait` asserted the dialog's
+  `message` and hid it. Use the `push_screen(dialog, callback)` form unless you
+  are already inside `@work`.
+
+**The method lesson:** a fake that lets you *set* the state under test
+(`step._is_mounted = False`, `app.push_screen_wait = ...`) is asserting about a
+state production may never reach. For a guard whose whole subject is the Textual
+lifecycle, mount it. Mutation-check the new test too: two of the four mounted
+journeys added here stayed green when `exit_on_error=False` was deleted, because
+the cancellation above makes that path unreachable — the AST pin is what actually
+holds that kwarg.
