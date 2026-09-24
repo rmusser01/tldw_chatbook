@@ -70,7 +70,13 @@ class ProviderRecord:
     extra_body_fields: Mapping[str, object] = field(default_factory=dict)
     response_allowances: frozenset[str] = frozenset()
     reasoning_disposition: str = "ignored"
-    auth_scheme: str = "bearer"  # Phase 1: bearer only; see spec §3
+    # Auth contract of the engine's credential resolution and transport:
+    # "bearer" hard-requires a key (a missing key is an actionable
+    # configuration error); "bearer_optional" (Phase 2) lets keyless
+    # endpoints (ADR-146 custom endpoints) execute with no Authorization
+    # header while still using a resolved key when one exists;
+    # "api_key_header" is the Phase 3 scheme. See ADR-179 spec §3.
+    auth_scheme: str = "bearer"
     continuation_protocol: str | None = "chat_completions"
     discovery_route: str = "models"
 

@@ -28,6 +28,11 @@ engine and presets design, "Data flow" step 2):
   payload layer; a user-supplied blank model still fails closed here.
 - Credentials and endpoint are resolved before the model so missing-key and
   missing-URL errors surface with their actionable copy first.
+- ``record.auth_scheme`` gates credential strictness (Phase 2, Task 3):
+  ``"bearer"`` (the default) keeps the hard key requirement, while
+  ``"bearer_optional"`` lets keyless endpoints (ADR-146 custom endpoints)
+  execute -- an unresolved chain yields ``api_key == ""`` and the transport
+  sends no Authorization header at all. ``"api_key_header"`` is Phase 3.
 
 Payload-layer (Task 5) divergences from the zai template:
 
@@ -296,14 +301,27 @@ def _resolve_api_key(
     settings: Mapping[str, object],
     environ: Mapping[str, str],
 ) -> str:
+    """Resolve the request credential under the record's auth scheme.
+
+    ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
+    stored value, or an unresolved env chain, is an actionable configuration
+    error. ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute:
+    an explicit blank string is "no key" (not an invalid one) and falls
+    through to the settings/env chain, and an unresolved chain resolves to
+    ``""`` -- the transport then sends no Authorization header at all.
+    """
     validators = _validators_for(record)
+    optional = record.auth_scheme == "bearer_optional"
     if explicit is not None:
         resolved = resolve_provider_api_key(explicit)
-        if resolved is None:
+        if resolved is not None:
+            return resolved
+        if not (optional and isinstance(explicit, str)):
             raise validators.configuration_error(
                 f"{record.display_name} explicit API key is invalid."
             )
-        return resolved
+        # bearer_optional: an explicit blank ("no key configured") defers to
+        # the settings/env chain instead of winning with an unusable value.
     if "api_key" in settings:
         resolved = resolve_provider_api_key(settings.get("api_key"))
         if resolved is None:
@@ -312,17 +330,24 @@ def _resolve_api_key(
             )
         return resolved
     env_name = settings.get("api_key_env_var", record.api_key_env_var)
-    if not isinstance(env_name, str) or not env_name.strip():
+    names: tuple[str, ...] = ()
+    if isinstance(env_name, str):
+        if env_name.strip():
+            names = (env_name.strip(),)
+        # A blank name is "no name set", not an invalid one: a keyless
+        # preset ships neither a name nor candidates, so the name-validity
+        # check is skipped and the record's shipped candidates still run.
+    elif env_name is not None:
         raise validators.configuration_error(
             f"{record.display_name} api_settings.{record.key}.api_key_env_var "
             "is invalid."
         )
-    for candidate in dict.fromkeys(
-        (env_name.strip(), *record.api_key_env_candidates)
-    ):
+    for candidate in dict.fromkeys((*names, *record.api_key_env_candidates)):
         resolved = resolve_provider_api_key(environ.get(candidate))
         if resolved is not None:
             return resolved
+    if optional:
+        return ""
     raise validators.configuration_error(
         f"{record.display_name} API key is required."
     )
@@ -1269,6 +1294,7 @@ def _send_hosted_chat_request(
                 timeout=resolution.timeout,
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
+                auth_scheme=record.auth_scheme,
             ),
             route="chat/completions",
             payload=payload,

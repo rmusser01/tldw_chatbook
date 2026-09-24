@@ -46,6 +46,13 @@ _MAX_METADATA_CHARS = 4 * 1024
 _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# Auth schemes the shared transport accepts (ADR-179 engine). ``"bearer"``
+# hard-requires a non-empty key; ``"bearer_optional"`` (Phase 2) admits an
+# empty key and then sends no Authorization header at all. ``"api_key_header"``
+# is the Phase 3 engine scheme and is deliberately absent until it has a
+# header contract, so an unknown scheme fails closed as invalid transport
+# configuration.
+_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional"})
 # Upper bound on a provider-named Retry-After sleep (seconds). The engine's
 # workers run on threads Stop cannot interrupt, and every hosted provider's
 # api_base_url is user-configurable -- a hostile endpoint naming
@@ -109,6 +116,13 @@ class HostedHTTPTransportConfig:
     # engine's Authorization/Content-Type pair is not overridable; any other
     # header a provider's wire contract requires rides through here.
     extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
+    # Auth contract (engine, ADR-179 Phase 2): ``"bearer"`` requires a
+    # non-empty key; ``"bearer_optional"`` admits an empty key (keyless
+    # endpoint, ADR-146) and then sends no Authorization header at all.
+    # ``"api_key_header"`` is the Phase 3 engine scheme and is rejected by
+    # validation until it has a header contract. Legacy adapters construct
+    # without the field and keep the byte-identical ``"bearer"`` default.
+    auth_scheme: str = "bearer"
 
 
 @dataclass(frozen=True)
@@ -544,7 +558,8 @@ def owned_json_post(
         not isinstance(config.provider, str)
         or not config.provider
         or not isinstance(config.api_key, str)
-        or not config.api_key
+        or config.auth_scheme not in _SUPPORTED_AUTH_SCHEMES
+        or (config.auth_scheme == "bearer" and not config.api_key)
         or isinstance(config.timeout, bool)
         or not isinstance(config.timeout, (int, float))
         or not math.isfinite(float(config.timeout))
@@ -570,11 +585,20 @@ def owned_json_post(
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    headers = {
-        "Authorization": f"Bearer {config.api_key}",
-        "Content-Type": "application/json",
-        **config.extra_headers,
-    }
+    if config.api_key:
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
+    else:
+        # bearer_optional with no resolved key: no Authorization header at
+        # all -- an empty "Bearer " challenge must never hit the wire under
+        # any scheme.
+        headers = {
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
     session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
