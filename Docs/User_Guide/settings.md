@@ -349,6 +349,38 @@ duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
 **Advanced Config**. Test the draft again before saving.
 
+#### Databricks (AI Gateway)
+
+**Databricks** serves the external models configured on your workspace's AI
+Gateway through the OpenAI-compatible Chat Completions surface, with your
+Databricks token as the credential. There is no API mode selector.
+
+| Credential | Workspace base URL | Default model |
+|---|---|---|
+| `DATABRICKS_TOKEN` (or a Settings-saved key) | your workspace host, e.g. `https://adb-1234567890123456.7.azuredatabricks.com` | none shipped |
+
+Databricks is per-account, so Settings ships no endpoint or model. Set
+`api_base_url` to your workspace host; the `/openai/v1` path is appended
+automatically when you paste the bare host, and a full
+`https://<workspace-host>/openai/v1` URL is kept exactly as entered. A pasted
+terminal `/chat/completions` URL is rejected with guidance. Readiness reports
+the provider blocked until both the token and the workspace URL exist; the
+blocked-send copy names the exact setting, section, and an example host.
+
+The provider model list starts empty because gateway model availability is
+workspace-dependent. Fill it with **Discover models** (authenticated
+`GET {base}/models` reusing the chat credential) or by seeding
+`[providers].Databricks` manually. Function tools are exposed for the
+gateway models that support them. Model-specific pricing is usually
+workspace-configured; unpriced models show **pricing unknown**, which means
+no verified rate, not a free call.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.databricks]` table, set the token and an absolute HTTP(S)
+workspace URL without credentials in the URL, then correct
+timeout/retry/streaming types under **Advanced Config**. Test the draft again
+before saving.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any

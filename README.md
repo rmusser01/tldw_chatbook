@@ -516,7 +516,8 @@ maintained guides over copied configuration blocks.
 API keys can be entered in the wizard or Settings, or supplied with the
 provider’s supported environment variable. Common examples include
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
-`MOONSHOT_API_KEY`, and `ZAI_API_KEY`.
+`MOONSHOT_API_KEY`, `ZAI_API_KEY`, and `DATABRICKS_TOKEN` (Databricks
+AI Gateway — see the Settings guide for the workspace-host base URL).
 
 Do not commit keys to the repository. Config encryption and keyring-backed
 storage are available for supported paths; the wizard’s **Protect keys** step

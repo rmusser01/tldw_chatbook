@@ -539,6 +539,36 @@ Use `TLDW_LIVE_MOONSHOT_MODEL` / `TLDW_LIVE_MOONSHOT_API_BASE_URL` or
 `TLDW_LIVE_ZAI_MODEL` / `TLDW_LIVE_ZAI_API_BASE_URL` only when your account
 requires an override. The default test suite makes no paid request.
 
+#### Databricks (AI Gateway) in Console
+
+**Databricks** uses its stable provider identity and the ordinary streaming
+Console path. It is per-account: set `DATABRICKS_TOKEN` (or a Settings-saved
+key) and `api_base_url` to your workspace host — the `/openai/v1` path is
+appended automatically; there is no shipped default model. Readiness blocks
+sends with actionable copy until both exist.
+
+- Chatbook function tools use the standard approval, cancellation,
+  execution, budget, and durable recovery loop for the gateway models that
+  support them.
+- Model discovery reuses the chat endpoint and credential (authenticated
+  `GET {base}/models`); the provider list starts empty because gateway
+  availability is workspace-dependent, and a failed refresh keeps configured
+  or cached models without blocking generation.
+- Terminal usage reaches Console when returned. Unpriced models show
+  **pricing unknown**, which never means free.
+
+Optional live verification is paid and skipped by default. It requires a
+nonblank `DATABRICKS_TOKEN` and `DATABRICKS_HOST` (for example
+`https://adb-1234567890123456.7.azuredatabricks.com`); override the model
+with `DATABRICKS_TEST_MODEL` when your account requires it:
+
+```bash
+DATABRICKS_TOKEN=… DATABRICKS_HOST=… .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_databricks_api.py
+```
+
+The default test suite makes no paid request.
+
 ### Leaving Console during a run
 
 Accepted runs, queues, and pending decisions continue when you navigate to another
