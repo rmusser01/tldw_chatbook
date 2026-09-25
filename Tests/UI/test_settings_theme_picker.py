@@ -3,14 +3,24 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import ComposeResult
+from textual.theme import Theme
 from textual.widgets import Button, OptionList
 
 from Tests.private_profile import private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.css.Themes import theme_catalog as tc
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.Widgets.settings_theme_editor import THEMES_UNAVAILABLE_LABEL
 from tldw_chatbook.Widgets.settings_theme_picker import ThemePicker
 from tldw_chatbook.Widgets.theme_preview import ThemePreview
+
+_FILE_ACTION_BUTTON_IDS = (
+    "#settings-theme-picker-edit",
+    "#settings-theme-picker-rename",
+    "#settings-theme-picker-delete",
+    "#settings-theme-picker-export",
+)
 
 
 def _app(*widgets):
@@ -54,8 +64,8 @@ def config_writes(monkeypatch, tmp_path):
     return calls
 
 
-async def _picker_app(size=(160, 45)):
-    picker = ThemePicker(id="settings-theme-picker")
+async def _picker_app(size=(160, 45), list_user_names=None):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=list_user_names)
     app = _app(picker)
     for theme in ALL_THEMES:
         app.register_theme(theme)
@@ -203,10 +213,25 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
     def __init__(self, compose):
         super().__init__(compose)
         self.edits: list[tuple[str, str]] = []
+        self.renames: list[str] = []
+        self.deletes: list[str] = []
+        self.exports: list[str] = []
 
     @on(ThemePicker.EditRequested)
     def _capture(self, message: ThemePicker.EditRequested) -> None:
         self.edits.append((message.mode, message.theme_id))
+
+    @on(ThemePicker.RenameRequested)
+    def _capture_rename(self, message: ThemePicker.RenameRequested) -> None:
+        self.renames.append(message.theme_id)
+
+    @on(ThemePicker.DeleteRequested)
+    def _capture_delete(self, message: ThemePicker.DeleteRequested) -> None:
+        self.deletes.append(message.theme_id)
+
+    @on(ThemePicker.ExportRequested)
+    def _capture_export(self, message: ThemePicker.ExportRequested) -> None:
+        self.exports.append(message.theme_id)
 
 
 @pytest.mark.asyncio
@@ -303,3 +328,95 @@ async def test_pending_revert_survives_a_new_picker_instance(request, config_wri
         revert.press()
         await pilot.pause()
         assert app.theme == original and not revert.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_yours_actions_only_show_for_your_themes(request, config_writes):
+    app, picker = await _picker_app(list_user_names=lambda: {"mine"})
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause()
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            assert picker.query_one(button_id, Button).display, button_id
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            assert not picker.query_one(button_id, Button).display, button_id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_delete_export_edit_post_requests(request, config_writes):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause()
+        await pilot.press("r", "delete", "e")
+        await pilot.pause()
+        picker.query_one("#settings-theme-picker-export", Button).press()
+        await pilot.pause()
+        assert app.renames == ["mine"]
+        assert app.deletes == ["mine"]
+        assert app.edits == [("edit", "mine")]
+        assert app.exports == ["mine"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_keys_ignored_for_catalog_themes(request, config_writes):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        await pilot.press("r", "delete", "e")
+        await pilot.pause()
+        assert app.renames == [] and app.deletes == [] and app.edits == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pause_row_disables_file_actions(request, config_writes):
+    def raiser():
+        raise RecoveryRequired("x")
+
+    app, picker = await _picker_app(list_user_names=raiser)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert picker.files_available is False
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_UNAVAILABLE_LABEL in labels
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            button = picker.query_one(button_id, Button)
+            assert button.disabled, button_id
+            assert button.tooltip == THEMES_UNAVAILABLE_LABEL, button_id
+        before = app.theme
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.theme == "nord" and app.theme != before
