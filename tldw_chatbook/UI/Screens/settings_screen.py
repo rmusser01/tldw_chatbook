@@ -23972,6 +23972,13 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    def _theme_editor_shown(self) -> bool:
+        try:
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return False
+        return pane.current == "settings-theme-editor-view"
+
     @on(Button.Pressed, "#settings-theme-back")
     def handle_theme_back(self, event: Button.Pressed) -> None:
         """Editor -> picker; unsaved edits get the Save/Discard/Stay prompt (TASK-32948)."""
@@ -24472,7 +24479,10 @@ class SettingsScreen(BaseAppScreen):
         old = event.theme_id
         self.app.push_screen(
             RagProfileNameModal(
-                title=f"Rename theme '{old}'", initial=old, confirm_label="Rename"
+                # R27 (7): [theme].name is hand-editable; x[/] must not crash.
+                title=f"Rename theme '{escape_markup(old)}'",
+                initial=old,
+                confirm_label="Rename",
             ),
             lambda new: self._handle_theme_rename_result(old, new),
         )
@@ -32318,6 +32328,13 @@ class SettingsScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
+        if event.key == "escape" and focused is None and self._theme_editor_shown():
+            # R26 / spec §6: with field focus already released (task-1560
+            # above), Esc leaves the editor exactly like "Back to themes".
+            self.query_one("#settings-theme-back", Button).press()
+            event.stop()
+            event.prevent_default()
+            return
         if event.key == "tab":
             if focused is None or getattr(focused, "has_class", lambda *_: False)(
                 "nav-button"

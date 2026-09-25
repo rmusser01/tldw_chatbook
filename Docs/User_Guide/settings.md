@@ -500,7 +500,9 @@ match '\<text\>'" and Enter does nothing.
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
 Try/Use, so one Revert always lands back where you started); it disappears
-once pressed. When a persisted Use captures a moment where the active theme
+once pressed. Renaming a theme the pending Revert would return to makes it
+return to the new name instead, and deleting that theme drops the Revert
+button, so it never targets a theme that no longer exists. When a persisted Use captures a moment where the active theme
 and the launch default already disagreed (e.g. an earlier Try left the
 active theme unsaved), the label also names the launch default: "Revert to
 \<theme\> (launch: \<launch theme\>)". Toasts name what happened: Try says
@@ -523,7 +525,9 @@ group shows a disabled "(none yet)" row instead. **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
 ("Rename theme '\<old\>'"); a name already in use answers "Name taken:
-'\<new\>'" and changes nothing. **Delete** confirms ("Delete the saved theme
+'\<new\>'" and changes nothing. Renaming your launch default updates the
+saved launch default to the new name without changing the theme you are
+running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
 '\<name\>'? This removes the theme file and cannot be undone."); if the
 deleted theme was the launch default, the launch default and the running
 theme both reset to Textual Dark and the toast says so, if it was merely
@@ -562,8 +566,9 @@ through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base
 colour or the dark flag they are dropped and derived from your colours
 instead. A `[variables]` entry that is not a colour (or `auto NN%`, or a text
-style) is skipped with a warning when the theme loads. **Back** returns to
-the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
+style) is skipped with a warning when the theme loads. **Back** — or **Esc**
+twice (the first releases the field you're typing in, the second acts as
+Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different
 Settings category while the editor is open, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.

@@ -444,8 +444,13 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Invalid theme name: {exc}", severity="error")
             return
 
-        theme_path = self.custom_themes_path / f"{theme_name}.toml"
-        if theme_path.exists():
+        # R12: resolve by [theme].name, so a.toml holding name "b" loads as b.
+        try:
+            theme_path = self._user_theme_files().get(theme_name)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return
+        if theme_path is not None:
             try:
                 with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
                     with raw._file(operation, theme_path, "r") as f:
@@ -714,7 +719,16 @@ class SettingsThemeEditor(Vertical):
             return
 
         theme_data = self._theme_file_data(theme_name)
-        theme_path = self.custom_themes_path / f"{theme_name}.toml"
+        # R12: a saved theme named ``theme_name`` may live in another file
+        # (a.toml holding name "b"); write back to it, never a second file
+        # claiming the same name.
+        try:
+            theme_path = self._user_theme_files().get(theme_name)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return
+        if theme_path is None:
+            theme_path = self.custom_themes_path / f"{theme_name}.toml"
 
         # TASK-31258: writing over another saved theme is one keypress from
         # destroying it; re-saving the theme loaded from that very file is an
@@ -1029,6 +1043,9 @@ class SettingsThemeEditor(Vertical):
                 raw._unlink(operation, theme_path)
 
             self._release_registration(theme_name)
+            from ..css.Themes.theme_catalog import retarget_pending_revert
+
+            retarget_pending_revert(self.app, theme_name, None)
             self._fall_back_after_delete(theme_name)
             # The editor must not keep offering the deleted file as loaded;
             # a delete of some other theme (from the picker) keeps its edits.
@@ -1090,7 +1107,12 @@ class SettingsThemeEditor(Vertical):
         """Rename the saved theme ``old`` to ``new``: file, registration,
         running theme and launch default. False (with a notice) if nothing
         changed."""
-        from ..css.Themes.theme_catalog import current_launch_default, use_theme
+        from ..css.Themes.theme_catalog import (
+            current_launch_default,
+            persist_launch_default,
+            retarget_pending_revert,
+            use_theme,
+        )
 
         try:
             validate_filename(new)
@@ -1182,8 +1204,10 @@ class SettingsThemeEditor(Vertical):
         if str(self.app.theme) in (old, f"custom_{old}"):
             use_theme(self.app, new, persist=False)
         self._release_registration(old)
+        retarget_pending_revert(self.app, old, new)
         if current_launch_default() == old:
-            if use_theme(self.app, new, persist=True).persisted:
+            # Spec §7 step 4: config only; the running theme was handled above.
+            if persist_launch_default(self.app, new)[0]:
                 self.post_message(self.LaunchDefaultChanged(new))
             else:
                 self.app.notify(
