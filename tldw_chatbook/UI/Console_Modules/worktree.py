@@ -49,7 +49,12 @@ async def open_recovery(
             conversation_id = page.conversation_id
 
             async def recover():
-                result = await helper.start(session_id, run_id, action)
+                try:
+                    result = await helper.start(session_id, run_id, action)
+                except Exception:  # noqa: BLE001 - the retained helper owns failure cleanup
+                    message = "Recovery failed; inspect recorded work before retrying."
+                else:
+                    message = result.message
                 if (
                     runtime.view is screen
                     and controller.store.active_session_id == session_id
@@ -61,7 +66,7 @@ async def open_recovery(
                     is not None
                     and current.persisted_conversation_id == conversation_id
                 ):
-                    screen.notify(result.message)
+                    screen.notify(message)
 
             screen.run_worker(recover())
 
