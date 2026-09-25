@@ -538,3 +538,68 @@ async def test_lister_oserror_reads_as_no_user_themes(request, config_writes):
         assert picker.files_available is True
         assert not [e for e in picker.entries if e.origin == "yours"]
         assert picker.entries  # the catalog still lists
+
+
+# -- PR 3 Task 1: an unreadable file is listed, and only Delete works -----------
+
+_UNREADABLE_DISABLED_IDS = (
+    "#settings-theme-use",
+    "#settings-theme-try",
+    "#settings-theme-picker-clone",
+    "#settings-theme-picker-edit",
+    "#settings-theme-picker-rename",
+    "#settings-theme-picker-export",
+)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_file_is_listed_and_only_delete_works(request, config_writes):
+    error = "missing [colors].primary [b]not markup[/b]"
+    picker = ThemePicker(
+        id="settings-theme-picker",
+        list_user_names=set,
+        list_unreadable=lambda: {"a": error},
+    )
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        before = app.theme
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("a")
+        await pilot.pause()
+        assert "(unreadable)" in str(lst.get_option_at_index(lst.highlighted).prompt)
+        title = picker.query_one("#settings-theme-card-title")
+        assert str(title.render()) == "A (unreadable)"
+        card_error = picker.query_one("#settings-theme-card-error")
+        assert card_error.display and str(card_error.render()) == error
+        for button_id in _UNREADABLE_DISABLED_IDS:
+            button = picker.query_one(button_id, Button)
+            assert button.disabled, button_id
+            assert button.tooltip == f"This theme file can't be read: {error}", button_id
+        delete = picker.query_one("#settings-theme-picker-delete", Button)
+        assert delete.display and not delete.disabled
+
+        await pilot.press("enter", "t", "c", "e", "r")
+        await pilot.pause()
+        assert app.theme == before
+        assert app.edits == [] and app.renames == []
+        assert config_writes == []
+
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.deletes == ["a"]
+
+        # A readable theme hides the error line and re-enables the actions.
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        assert not card_error.display
+        assert not picker.query_one("#settings-theme-use", Button).disabled
+        assert picker.query_one("#settings-theme-use", Button).tooltip is None

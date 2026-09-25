@@ -446,3 +446,59 @@ async def test_file_errors_do_not_leak_paths_into_notices(
             message = app.notify.call_args.args[0]
             assert str(tmp_path) not in message, message
             assert "mine" in message
+
+
+# -- PR 3 Task 1: unreadable files are listed, not hidden --------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_path):
+    (tmp_path / "a.toml").write_text("garbage [[ not toml", encoding="utf-8")
+    _write(tmp_path, "b", colors={"background": "#000000"})
+    _write(tmp_path, "c", colors={**MINE, "bogus": "#FFFFFF"})
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {
+            "a": "not valid TOML",
+            "b": "missing [colors].primary",
+            "c": "unknown colour 'bogus'",
+        }
+        for error in unreadable.values():
+            assert str(tmp_path) not in error
+        # Every existing caller still sees only the readable map.
+        assert editor.list_user_theme_names() == {"mine"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_raises_through_on_pause(request, tmp_path, monkeypatch):
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+
+        def paused(*_a, **_k):
+            raise RecoveryRequired("x")
+
+        monkeypatch.setattr(raw_participants, "_file", paused)
+        with pytest.raises(RecoveryRequired):
+            editor.user_theme_listing()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_removes_an_unreadable_file(request, tmp_path, config_writes):
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        await _confirm_delete(pilot, app, editor, "a")
+        assert not (tmp_path / "a.toml").exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -355,6 +356,44 @@ class SettingsThemeEditor(Vertical):
         """Notify parent screen when modified state changes."""
         self.post_message(SettingsThemeEditor.ThemeModifiedStatus(is_modified))
 
+    def _scan_theme_files(self) -> tuple[dict[str, Path], dict[str, tuple[Path, str]]]:
+        """One pass over the themes directory: readable and unreadable files.
+
+        Returns ``(name -> path, stem -> (path, short error))``. A file is
+        unreadable when it is not TOML or ``theme_from_file_data`` rejects it
+        -- the same test the startup loader applies (``load_user_themes``).
+
+        Raises:
+            RecoveryRequired: backup/recovery holds the theme files, including
+                a pause that starts mid-scan (R15: never a partial map).
+        """
+        files: dict[str, Path] = {}
+        unreadable: dict[str, tuple[Path, str]] = {}
+        with raw._scope(self, "theme_directory") as operation:
+            for theme_file in sorted(raw._check(operation).observed_files):
+                theme_data: Any = None
+                try:
+                    with raw._file(operation, theme_file, "r") as f:
+                        theme_data = toml.load(f)
+                    theme_from_file_data(theme_data, theme_file.stem, theme_file.name)
+                    files[theme_data.get("theme", {}).get("name", theme_file.stem)] = theme_file
+                except RecoveryRequired:
+                    raise
+                except Exception as e:
+                    # File name only: the themes directory is a user path.
+                    logger.error(f"Failed to load user theme {theme_file.name}: {e}")
+                    unreadable[theme_file.stem] = (theme_file, self._theme_file_error(e, theme_data))
+        return files, unreadable
+
+    def user_theme_listing(self) -> tuple[dict[str, Path], dict[str, str]]:
+        """``(readable name -> path, unreadable stem -> short error)``.
+
+        Raises:
+            RecoveryRequired: see ``_scan_theme_files``.
+        """
+        files, unreadable = self._scan_theme_files()
+        return files, {stem: error for stem, (_path, error) in unreadable.items()}
+
     def _user_theme_files(self) -> dict[str, Path]:
         """Each readable saved theme's ``[theme].name`` (else stem) -> its file.
 
@@ -363,22 +402,26 @@ class SettingsThemeEditor(Vertical):
         exported as ``b``.
 
         Raises:
-            RecoveryRequired: backup/recovery holds the theme files, including
-                a pause that starts mid-scan (R15: never a partial map).
+            RecoveryRequired: see ``_scan_theme_files``.
         """
-        files: dict[str, Path] = {}
-        with raw._scope(self, "theme_directory") as operation:
-            for theme_file in sorted(raw._check(operation).observed_files):
-                try:
-                    with raw._file(operation, theme_file, "r") as f:
-                        theme_data = toml.load(f)
-                    files[theme_data.get("theme", {}).get("name", theme_file.stem)] = theme_file
-                except RecoveryRequired:
-                    raise
-                except Exception as e:
-                    # File name only: the themes directory is a user path.
-                    logger.error(f"Failed to load user theme {theme_file.name}: {e}")
-        return files
+        return self._scan_theme_files()[0]
+
+    @classmethod
+    def _theme_file_error(cls, exc: Exception, data: Any) -> str:
+        """A short, path-free reason a theme file can't be read."""
+        if data is None and isinstance(exc, (toml.TomlDecodeError, UnicodeDecodeError)):
+            return "not valid TOML"
+        message = str(exc)
+        if isinstance(exc, TypeError):
+            if "'primary'" in message and "missing" in message:
+                colors = data.get("colors") if isinstance(data, dict) else None
+                if isinstance(colors, dict) and "primary" in colors:
+                    return "invalid colour 'primary'"
+                return "missing [colors].primary"
+            unknown = re.search(r"unexpected keyword argument '([^']+)'", message)
+            if unknown:
+                return f"unknown colour '{unknown.group(1)}'"
+        return cls._failure_reason(exc)
 
     def list_user_theme_names(self) -> set[str]:
         """The ``[theme].name`` (else the stem) of each readable saved theme.
@@ -986,10 +1029,12 @@ class SettingsThemeEditor(Vertical):
         built_in_names = set(BUILTIN_THEMES)
         shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
         try:
-            theme_path = self._user_theme_files().get(name)
+            files, unreadable = self._scan_theme_files()
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return
+        # PR 3: an unreadable file is listed (and deletable) by its stem.
+        theme_path = files.get(name) or unreadable.get(name, (None, ""))[0]
 
         # File existence decides: anything saved in the user themes directory
         # is a user theme and deletable, even when its name shadows a shipped
@@ -1144,11 +1189,17 @@ class SettingsThemeEditor(Vertical):
         if new == old:
             return True
         try:
-            files = self._user_theme_files()
+            files, unreadable = self._scan_theme_files()
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return False
         old_path = files.get(old)
+        if old_path is None and old in unreadable:
+            self.app.notify(
+                f"Can't rename '{old}': this theme file can't be read: {unreadable[old][1]}",
+                severity="error",
+            )
+            return False
         if old_path is None:
             self.app.notify(f"No saved custom theme named '{old}'", severity="warning")
             return False

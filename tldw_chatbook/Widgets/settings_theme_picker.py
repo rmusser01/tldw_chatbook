@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, ClassVar, Literal
 
 from loguru import logger
@@ -135,7 +135,12 @@ class ThemePicker(Vertical):
             self.theme_id = theme_id
             super().__init__()
 
-    def __init__(self, list_user_names: Callable[[], set[str]] | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        list_user_names: Callable[[], set[str]] | None = None,
+        list_unreadable: Callable[[], Mapping[str, str]] | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.entries: list[ThemeEntry] = []
         self.highlighted_id: str | None = None
@@ -143,7 +148,10 @@ class ThemePicker(Vertical):
         # R27 (5): while paused, your themes keep their origin from the last
         # good listing instead of being relabelled "shipped".
         self._last_user_names: set[str] = set()
+        self._last_unreadable: Mapping[str, str] = {}
         self._list_user_names = list_user_names or (lambda: user_theme_names(get_user_themes_dir()))
+        # Unreadable saved files (stem -> short error), listed so they can be deleted.
+        self._list_unreadable = list_unreadable or dict
 
     # The pending Revert lives on the app, not this widget: the pane is
     # recomposed on every category switch, and spec §5 keeps Revert for the
@@ -178,6 +186,7 @@ class ThemePicker(Vertical):
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
             with Vertical(id="settings-theme-card-column"):
                 yield Static("", id="settings-theme-card-title", classes="destination-section", markup=False)
+                yield Static("", id="settings-theme-card-error", classes="settings-help-copy", markup=False)
                 yield ThemePreview("settings-theme-picker-preview", id="settings-theme-picker-preview")
                 with Horizontal(classes="settings-action-row"):
                     yield Button("Use this theme", id="settings-theme-use", variant="primary", classes="theme-editor-action")
@@ -201,21 +210,23 @@ class ThemePicker(Vertical):
     def refresh_catalog(self, highlight: str | None = None) -> None:
         try:
             user_names = self._list_user_names()
+            unreadable = self._list_unreadable()
             self.files_available = True
-            self._last_user_names = user_names
+            self._last_user_names, self._last_unreadable = user_names, unreadable
         except RecoveryRequired:
-            user_names = self._last_user_names
+            user_names, unreadable = self._last_user_names, self._last_unreadable
             self.files_available = False
         except OSError as exc:
             # R27 (6): an unreadable themes dir reads as "no user themes".
             logger.warning(f"Could not list saved themes: {exc.strerror or type(exc).__name__}")
-            user_names = set()
+            user_names, unreadable = set(), {}
             self.files_available = True
         self.entries = build_catalog(
             self.app.available_themes,
             user_names,
             str(self.app.theme),
             current_launch_default(),
+            unreadable=unreadable,
         )
         self._sync_revert_chip()  # a rename/delete may have retargeted it
         self._render_list(highlight or self.highlighted_id)
@@ -253,10 +264,14 @@ class ThemePicker(Vertical):
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
-        entry = next((e for e in self.entries if e.id == theme_id), None)
+        entry = self._highlighted_entry()
+        error = entry.error if entry is not None else None
+        unreadable_tip = f"This theme file can't be read: {error}" if error else None
         title = self.query_one("#settings-theme-card-title", Static)
         for button_id in ("#settings-theme-use", "#settings-theme-try", "#settings-theme-picker-clone"):
-            self.query_one(button_id, Button).disabled = entry is None
+            button = self.query_one(button_id, Button)
+            button.disabled = entry is None or error is not None
+            button.tooltip = unreadable_tip
         is_yours = entry is not None and entry.origin == "yours"
         tooltip = None if self.files_available else THEMES_UNAVAILABLE_LABEL
         for button_id in (
@@ -269,12 +284,30 @@ class ThemePicker(Vertical):
             button.display = is_yours
             button.disabled = not self.files_available
             button.tooltip = tooltip
+            # Delete stays available: removing a broken file is the fix.
+            if error is not None and button_id != "#settings-theme-picker-delete":
+                button.disabled = True
+                button.tooltip = unreadable_tip
+        card_error = self.query_one("#settings-theme-card-error", Static)
+        card_error.display = error is not None
+        card_error.update(error or "")
         if entry is None:
             title.update("")
             return
-        tone = "dark" if entry.dark else "light"
-        title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
+        if error is not None:
+            title.update(entry.display_name)
+        else:
+            tone = "dark" if entry.dark else "light"
+            title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
         self.query_one(ThemePreview).paint(dict(entry.colours))
+
+    def _highlighted_entry(self) -> ThemeEntry | None:
+        return next((e for e in self.entries if e.id == self.highlighted_id), None)
+
+    def _highlighted_readable(self) -> bool:
+        """False for an unreadable file: only Delete (and New) act on it."""
+        entry = self._highlighted_entry()
+        return entry is None or entry.error is None
 
     def focus_list(self) -> None:
         lst = self.query_one("#settings-theme-list", OptionList)
@@ -369,12 +402,14 @@ class ThemePicker(Vertical):
     def request_edit(self, mode: Literal["clone", "new", "edit"]) -> None:
         if self.highlighted_id is None:
             return
+        if mode != "new" and not self._highlighted_readable():
+            return
         if mode == "edit" and not self._can_manage_files():
             return
         self.post_message(self.EditRequested(self.highlighted_id, mode))
 
     def request_rename(self) -> None:
-        if self._can_manage_files():
+        if self._can_manage_files() and self._highlighted_readable():
             self.post_message(self.RenameRequested(self.highlighted_id))
 
     def request_delete(self) -> None:
@@ -382,19 +417,19 @@ class ThemePicker(Vertical):
             self.post_message(self.DeleteRequested(self.highlighted_id))
 
     def request_export(self) -> None:
-        if self._can_manage_files():
+        if self._can_manage_files() and self._highlighted_readable():
             self.post_message(self.ExportRequested(self.highlighted_id))
 
     def _can_manage_files(self) -> bool:
         # Rename/Delete/Export/Edit all touch the theme file on disk: gated
         # on the highlighted entry being one of yours AND on files being
         # reachable (backup/recovery may be holding them, spec pause row).
-        entry = next((e for e in self.entries if e.id == self.highlighted_id), None)
+        entry = self._highlighted_entry()
         return entry is not None and entry.origin == "yours" and self.files_available
 
     def _switch(self, *, persist: bool) -> None:
         theme_id = self.highlighted_id
-        if theme_id is None:
+        if theme_id is None or not self._highlighted_readable():
             return
         try:
             change = use_theme(self.app, theme_id, persist=persist)
@@ -430,7 +465,11 @@ class ThemePane(ContentSwitcher):
             with Horizontal(classes="settings-action-row"):
                 yield Button("Back to themes", id="settings-theme-back", classes="theme-editor-action")
             yield SettingsThemeEditor(id="settings-theme-editor")
-        yield ThemePicker(list_user_names=self._editor_names, id="settings-theme-picker")
+        yield ThemePicker(
+            list_user_names=self._editor_names,
+            list_unreadable=lambda: self._editor().user_theme_listing()[1],
+            id="settings-theme-picker",
+        )
 
     def _editor(self) -> SettingsThemeEditor:
         return self.query_one(SettingsThemeEditor)
