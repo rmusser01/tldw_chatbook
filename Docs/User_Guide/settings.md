@@ -441,7 +441,9 @@ Speech & TTS resolves this draft: save or discard first" (task-2708).
 editing and deeper visual preview." **Global visual defaults** leads with a
 read-only **Theme** row — "\<Launch theme\> (launch default) · active: \<Active
 theme\>" (or "launch default missing: \<id\> · active: …" if that theme is no
-longer registered) — and an **Open Theme** button that jumps straight to the
+longer registered — the Theme picker shows the same case above its list, as
+"Launch default missing: \<id\> — Use any theme to fix it") — and an **Open
+Theme** button that jumps straight to the
 Theme picker, highlighting the launch default (not whatever's merely active,
 if the two differ); Appearance itself no longer sets or saves a theme. Below that:
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
@@ -537,7 +539,10 @@ and the toast says "launch default reset to Textual Dark"; if it was merely
 active (not the launch default) it switches to your launch default instead;
 and either way, deleting a saved theme that reuses a shipped or built-in
 name (say `nord`) brings the original back. **Export** writes the saved
-file to your Downloads folder and asks before replacing an earlier export.
+file to your Downloads folder and asks before replacing an earlier export;
+on success the card shows "Exported to \<full path\>" with a **Copy path**
+button (copies the path to the clipboard and confirms "Path copied") — the
+row clears the next time you highlight a different theme.
 
 **Clone**, **New** or **Edit** swap in the full editor below, behind a **Back
 to themes** button; the editor no longer has its own theme list — the header
@@ -1208,3 +1213,11 @@ Downloads path. The real `~/.config/tldw_cli/config.toml` mtime and the
 real `~/.config/tldw_cli/themes/` directory were checked before and after
 both passes and never changed; both Export toasts pointed at the scratch
 HOME's Downloads, confirmed on disk, never the real `~/Downloads`.*
+
+*Verified against `feat/theme-picker-pr3` @ fa8b892c97 — 2026-09-25
+(TASK-32948 PR 3, Task 3): the picker now shows its own "Launch default
+missing: \<id\> — Use any theme to fix it" notice above the list, matching
+Appearance's read-only row; Export's card shows "Exported to \<full path\>"
+with a Copy path button (copies to the clipboard, "Path copied"), clearing
+on the next highlight. Pinned by pilot tests at 80x24 and 190x55, not
+driven live.*
