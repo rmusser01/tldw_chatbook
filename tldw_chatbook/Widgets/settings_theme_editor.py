@@ -28,6 +28,7 @@ from ..css.Themes.themes import (
     create_theme_from_dict,
     pinned_text_hues,
     sanitize_theme_variables,
+    theme_from_file_data,
 )
 from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
@@ -98,6 +99,9 @@ class SettingsThemeEditor(Vertical):
         def __init__(self, theme_name: str) -> None:
             self.theme_name = theme_name
             super().__init__()
+
+    class ThemesChanged(Message):
+        """The saved theme files changed (delete, rename, save); rebuild lists."""
 
     current_theme_name = reactive("textual-dark")
     current_theme_data: reactive[dict[str, str]] = reactive(dict, layout=False)
@@ -322,22 +326,34 @@ class SettingsThemeEditor(Vertical):
         """Notify parent screen when modified state changes."""
         self.post_message(SettingsThemeEditor.ThemeModifiedStatus(is_modified))
 
+    def list_user_theme_names(self) -> set[str]:
+        """The ``[theme].name`` (else the stem) of each readable saved theme.
+
+        Raises:
+            RecoveryRequired: backup/recovery holds the theme files; the
+                caller decides how to show that.
+        """
+        names: set[str] = set()
+        with raw._scope(self, "theme_directory") as operation:
+            for theme_file in raw._check(operation).observed_files:
+                try:
+                    with raw._file(operation, theme_file, "r") as f:
+                        theme_data = toml.load(f)
+                    names.add(theme_data.get("theme", {}).get("name", theme_file.stem))
+                except Exception as e:
+                    logger.error(f"Failed to load user theme {theme_file}: {e}")
+        return names
+
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
         try:
-            with raw._scope(self, "theme_directory") as operation:
-                for theme_file in raw._check(operation).observed_files:
-                    try:
-                        with raw._file(operation, theme_file, "r") as f:
-                            theme_data = toml.load(f)
-                        theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
-                        parent_node.add_leaf(theme_name, data="user")
-                    except Exception as e:
-                        logger.error(f"Failed to load user theme {theme_file}: {e}")
+            names = self.list_user_theme_names()
         except RecoveryRequired:
             # TASK-32942: data=None, so selecting the row loads nothing.
             parent_node.add_leaf(THEMES_UNAVAILABLE_LABEL)
             return
+        for theme_name in sorted(names):
+            parent_node.add_leaf(theme_name, data="user")
         if not parent_node.children:
             # task-32945: no data, so on_theme_selected ignores it.
             parent_node.add_leaf("(none yet)")
@@ -701,6 +717,7 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
+            self.post_message(self.ThemesChanged())
 
             tree = self.query_one("#settings-theme-tree", Tree)
             user_node = None
@@ -901,39 +918,47 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-delete")
     def on_delete_theme(self) -> None:
         """Delete the current user theme."""
+        if self._require_theme_name() is None:
+            return
+        self.request_delete(self.current_theme_name)
+
+    def request_delete(self, name: str) -> None:
+        """Confirm, then delete the saved theme ``name`` (see ``_delete_user_theme``)."""
         built_in_names = set(BUILTIN_THEMES)
         shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
-
-        if self._require_theme_name() is None:
+        try:
+            validate_filename(name)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
             return
 
         # File existence decides: anything saved in the user themes directory
         # is a user theme and deletable, even when its name shadows a shipped
         # catalog theme. The built-in/shipped guard only applies when no user
         # file exists for the name.
-        theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
+        theme_path = self.custom_themes_path / f"{name}.toml"
         if not theme_path.exists():
-            if self.current_theme_name in built_in_names:
+            if name in built_in_names:
                 self.app.notify(
-                    f"'{self.current_theme_name}' is a built-in theme and cannot be deleted",
+                    f"'{name}' is a built-in theme and cannot be deleted",
                     severity="warning",
                 )
-            elif self.current_theme_name in shipped_names:
+            elif name in shipped_names:
                 self.app.notify(
-                    f"'{self.current_theme_name}' is a shipped theme and cannot be deleted",
+                    f"'{name}' is a shipped theme and cannot be deleted",
                     severity="warning",
                 )
             else:
                 self.app.notify(
-                    f"No saved custom theme named '{self.current_theme_name}'",
+                    f"No saved custom theme named '{name}'",
                     severity="warning",
                 )
             return
 
         # task-1367: unlinking a user theme file is irreversible -- confirm
-        # first, capturing the name so a theme switch while the dialog is up
-        # cannot delete the wrong file.
-        theme_name = self.current_theme_name
+        # first; ``name`` is bound here, so a theme switch while the dialog is
+        # up cannot delete the wrong file.
+        theme_name = name
 
         async def _confirmed_delete() -> None:
             self._delete_user_theme(theme_path, theme_name)
@@ -958,7 +983,6 @@ class SettingsThemeEditor(Vertical):
                 self, "theme_file", writing=True, selected_read=theme_path
             ) as operation:
                 raw._unlink(operation, theme_path)
-            self.app.notify(f"Deleted theme '{theme_name}'", severity="success")
 
             tree = self.query_one("#settings-theme-tree", Tree)
             for node in tree.root.children:
@@ -970,32 +994,145 @@ class SettingsThemeEditor(Vertical):
                     self._sync_user_placeholder(node)
                     break
 
-            # PR #2375 review #9: drop the runtime registration so Appearance
-            # and the palette stop offering the deleted theme; a user file that
-            # shadowed a shipped theme hands the shipped registration back.
-            # Review #4: a file may shadow a Textual built-in too (nord).
-            shipped = next(
-                (t for t in ALL_THEMES if getattr(t, "name", None) == theme_name), None
-            ) or BUILTIN_THEMES.get(theme_name)
-            if shipped is not None:
-                self.app.register_theme(shipped)
-            else:
-                self.app.unregister_theme(theme_name)
-
-            from ..config import get_cli_setting
-
-            if (
-                str(get_cli_setting("general", "default_theme", "textual-dark"))
-                == theme_name
-            ):
-                self._save_launch_default(
-                    "textual-dark", "Launch default reset to textual-dark"
-                )
-
-            self.load_theme("textual-dark")
+            self._release_registration(theme_name)
+            self._fall_back_after_delete(theme_name)
+            # The editor must not keep offering the deleted file as loaded;
+            # a delete of some other theme (from the picker) keeps its edits.
+            if self.current_theme_name == theme_name:
+                self.load_theme("textual-dark")
         except Exception as e:
             logger.error(f"Failed to delete theme '{theme_name}': {e}")
             self.app.notify(f"Failed to delete theme: {e}", severity="error")
+
+    def _release_registration(self, name: str) -> None:
+        """Drop ``name``'s user registration once its file is gone.
+
+        PR #2375 review #9: Appearance and the palette stop offering it; a
+        user file that shadowed a shipped theme hands the shipped
+        registration back. Review #4: a file may shadow a Textual built-in
+        too (nord).
+        """
+        shipped = next(
+            (t for t in ALL_THEMES if getattr(t, "name", None) == name), None
+        ) or BUILTIN_THEMES.get(name)
+        if shipped is not None:
+            self.app.register_theme(shipped)
+        else:
+            self.app.unregister_theme(name)
+
+    def _fall_back_after_delete(self, name: str) -> None:
+        """Move the running theme / launch default off a deleted theme."""
+        from ..css.Themes.theme_catalog import current_launch_default, use_theme
+
+        launch = current_launch_default()
+        was_active = str(self.app.theme) in (name, f"custom_{name}")
+        if launch == name:
+            change = use_theme(self.app, "textual-dark", persist=True)
+            if change.persisted:
+                self.post_message(self.LaunchDefaultChanged("textual-dark"))
+                self.app.notify(
+                    f"Deleted '{name}'; launch default and theme reset to Textual Dark",
+                    severity="success",
+                )
+            else:
+                self.app.notify(
+                    f"Deleted '{name}', but could not save the launch default; check the config file",
+                    severity="error",
+                )
+        elif was_active:
+            use_theme(
+                self.app,
+                launch if launch in self.app.available_themes else "textual-dark",
+                persist=False,
+            )
+            self.app.notify(
+                f"Deleted '{name}'; switched to your launch default", severity="success"
+            )
+        else:
+            self.app.notify(f"Deleted theme '{name}'", severity="success")
+        self.post_message(self.ThemesChanged())
+
+    def rename_user_theme(self, old: str, new: str) -> bool:
+        """Rename the saved theme ``old`` to ``new``: file, registration,
+        running theme and launch default. False (with a notice) if nothing
+        changed."""
+        from ..css.Themes.theme_catalog import current_launch_default, use_theme
+
+        try:
+            validate_filename(old)
+            validate_filename(new)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="error")
+            return False
+        if new == old:
+            return True
+        shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
+        new_path = self.custom_themes_path / f"{new}.toml"
+        if (
+            new in BUILTIN_THEMES
+            or new in shipped_names
+            or new_path.exists()
+            or new in self.app.available_themes
+        ):
+            self.app.notify(f"Name taken: '{new}'", severity="warning")
+            return False
+
+        old_path = self.custom_themes_path / f"{old}.toml"
+        try:
+            with (
+                raw._scope(self, "theme_file", selected_read=old_path) as operation,
+                raw._file(operation, old_path, "r") as f,
+            ):
+                data = toml.load(f)
+            data.setdefault("theme", {})["name"] = new
+            with raw._scope(
+                self, "theme_file", writing=True, selected_read=new_path
+            ) as operation:
+                temporary = new_path.with_suffix(new_path.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        toml.dump(data, f)
+                    raw._replace(operation, temporary, new_path)
+                finally:
+                    raw._remove_temporary(operation, temporary)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return False
+        except (OSError, toml.TomlDecodeError) as exc:
+            logger.error(f"Failed to rename theme '{old}': {exc}")
+            self.app.notify(f"Failed to rename theme: {exc}", severity="error")
+            return False
+
+        # The new file exists; only now may the old one go.
+        self.app.register_theme(theme_from_file_data(data, new, new_path.name))
+        try:
+            with raw._scope(
+                self, "theme_file", writing=True, selected_read=old_path
+            ) as operation:
+                raw._unlink(operation, old_path)
+        except (RecoveryRequired, OSError) as exc:
+            logger.error(f"Renamed theme '{old}' but could not remove its old file: {exc}")
+            self.app.notify(
+                f"Saved '{new}', but could not remove '{old}'; both files now exist",
+                severity="warning",
+            )
+            self.post_message(self.ThemesChanged())
+            return True
+
+        if str(self.app.theme) in (old, f"custom_{old}"):
+            use_theme(self.app, new, persist=False)
+        self._release_registration(old)
+        if current_launch_default() == old:
+            if use_theme(self.app, new, persist=True).persisted:
+                self.post_message(self.LaunchDefaultChanged(new))
+            else:
+                self.app.notify(
+                    "Could not save the launch default; check the config file",
+                    severity="error",
+                )
+        self.post_message(self.ThemesChanged())
+        self.app.notify(f"Renamed '{old}' to '{new}'", severity="success")
+        return True
 
     @on(Button.Pressed, "#settings-theme-export")
     def on_export_theme(self) -> None:
@@ -1003,10 +1140,31 @@ class SettingsThemeEditor(Vertical):
         name = self._require_theme_name()
         if name is None:
             return
+        # The editor's working palette, unsaved edits included.
+        self._export(name, self._theme_file_data(name))
 
+    def export_theme(self, name: str) -> None:
+        """Export the saved theme file ``name`` (not the editor's palette)."""
+        theme_path = self.custom_themes_path / f"{name}.toml"
+        try:
+            validate_filename(name)
+            with (
+                raw._scope(self, "theme_file", selected_read=theme_path) as operation,
+                raw._file(operation, theme_path, "r") as f,
+            ):
+                theme_data = toml.load(f)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return
+        except (ValueError, OSError) as exc:  # TomlDecodeError is a ValueError
+            logger.error(f"Failed to read theme '{name}' for export: {exc}")
+            self.app.notify(f"Failed to export theme: {exc}", severity="error")
+            return
+        self._export(name, theme_data)
+
+    def _export(self, name: str, theme_data: dict[str, Any]) -> None:
+        """Write ``theme_data`` to ~/Downloads, confirming an overwrite."""
         export_path = Path.home() / "Downloads" / f"{name}_theme.toml"
-
-        theme_data = self._theme_file_data(self.current_theme_name)
 
         if export_path.exists():
             # TASK-31258: never silently replace an earlier export.
