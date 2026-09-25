@@ -569,6 +569,18 @@ DATABRICKS_TOKEN=… DATABRICKS_HOST=… .venv/bin/python -m pytest -q \
 
 The default test suite makes no paid request.
 
+#### Inference clouds (Together, Fireworks, Cerebras) in Console
+
+**Together**, **Fireworks**, and **Cerebras** run on the ordinary streaming
+Console path — set the provider's API key (`TOGETHER_API_KEY`,
+`FIREWORKS_API_KEY`, or `CEREBRAS_API_KEY`) in Settings and pick a model.
+Chatbook function tools use the standard approval and execution loop for the
+models that support them, and **Discover models** reuses the chat credential
+(authenticated `GET {base}/models`) to fill the provider's empty model list.
+Fireworks keeps R1-family reasoning private — reasoning never appears in the
+transcript, which is provider behavior, not dropped output. Setup details
+live in [Settings — Inference clouds](settings.md#inference-clouds-together-fireworks-cerebras).
+
 ### Leaving Console during a run
 
 Accepted runs, queues, and pending decisions continue when you navigate to another

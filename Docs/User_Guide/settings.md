@@ -381,6 +381,40 @@ workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
 before saving.
 
+#### Inference clouds (Together, Fireworks, Cerebras)
+
+**Together**, **Fireworks**, and **Cerebras** are engine presets: each one is
+a provider registry record served through the shared strict hosted-provider
+engine (the same path Databricks uses), not a per-provider adapter. There is
+no API mode selector for any of them.
+
+| Provider | Default base URL | Credential env var |
+|---|---|---|
+| **Together** | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
+| **Fireworks** | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| **Cerebras** | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+
+All three are **discovery-first**: no models ship in the config because each
+account serves a different catalog. The provider model list starts empty —
+fill it with **Discover models** (an authenticated `GET {base}/models` that
+reuses the chat credential) or by seeding `[providers].Together` /
+`[providers].Fireworks` / `[providers].Cerebras` manually. Until a model is
+set, readiness blocks sends with the model named as the missing piece.
+
+Function tools are exposed for the models that support them. Reasoning
+differs by provider: Together and Cerebras have no reasoning-effort control,
+while **Fireworks keeps R1-family model reasoning private** — the server
+reasons behind its own API surface and does not stream it with the reply, so
+reasoning does not appear in transcripts (any `reasoning_content` the server
+does return gets Z.ai's private treatment: kept off the live stream). That is
+provider behavior, not the app dropping output.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.together]` / `[api_settings.fireworks]` /
+`[api_settings.cerebras]` table, set the API key (or its env var), and leave
+the shipped `api_base_url` unless your account documents a different one.
+Test the draft again before saving.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any
@@ -392,7 +426,7 @@ behaves exactly like that built-in provider pointed at another origin:
 | Family | Behavior |
 |---|---|
 | **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. |
-| **OpenAI-compatible** | The generic OpenAI-compatible path the built-in `custom` slot uses. |
+| **OpenAI-compatible** | The strict hosted-provider engine (see below) pointed at your URL — the same engine Databricks and the inference clouds use. |
 | **Ollama** | The Ollama path, including its model-discovery fallback. |
 
 Entries show in the Console provider list under their display name (their
@@ -401,6 +435,45 @@ Sampling and generation settings are never copied from a template — they
 stay governed by the per-provider defaults chain. Credentials follow the
 usual precedence — `api_key_env` (a variable name; the safer form) wins over
 a stored `api_key` — and endpoint displays never show the key.
+
+**The strict engine behind OpenAI-compatible.** OpenAI-compatible entries
+(and the built-in `custom`/`custom_2` slots) execute through the shared
+strict hosted-provider engine rather than the old per-provider handler. The
+base URL, credential, saved sessions, and reasoning behavior are unchanged —
+what changed is response validation and request strictness:
+
+- **Tolerant parsing, only where long-tail servers proved it.** Unknown
+  shape-safe extra fields at the top level of a response or stream event are
+  ignored; unknown extra keys on a choice or message are ignored when their
+  value is `null`; and exactly two non-null choice extras are allowlisted
+  (`logprobs` as an object or null, `stop_reason` as a scalar). Anything
+  else that deviates from the OpenAI shape — a malformed `choices` list, a
+  message that is not an object, a broken tool call — still fails closed
+  with a clear error instead of returning a half-parsed reply.
+- **Keyless servers keep working.** An entry with no credential sends no
+  `Authorization` header at all (the engine's keyless mode); an entry with
+  a resolved key sends it as a bearer token, exactly as before.
+- **Your `[api_settings.custom]` fallbacks still apply**, including the
+  defaults when the section is silent: `streaming = false` and
+  `max_tokens = 4096` (plus timeout/retry values). Sampler and generation
+  keys (`temperature`, `top_p`, `top_k`, `min_p`, `max_tokens`, `seed`,
+  `stop`, `response_format`, and the legacy `temp`/`maxp`/`topk`/`minp`
+  spellings) are read from the section, and explicit per-send values win.
+- **Stricter request handling than the legacy path.** Sampler values are
+  validated to the `[0, 1]` range — an out-of-range `temperature` is
+  rejected with an error instead of forwarded. `top_logprobs` without
+  `logprobs = true` is an error (the legacy path silently dropped it).
+  String spellings like `streaming = "true"` are no longer coerced — use a
+  real boolean. And the section-level `tools`, `tool_choice`, `logit_bias`,
+  `presence_penalty`, `frequency_penalty`, `n`, and `user` keys are no
+  longer read from the config section on this path (per-send values still
+  work); move any pinned section values into the chat defaults chain.
+- **Rollback switch.** If a long-tail server misbehaves under the engine,
+  set `custom_endpoints_use_engine = false` under `[console]` in
+  `config.toml` to return every OpenAI-compatible entry (and the built-in
+  slots) to the legacy handler. It defaults to `true`; flip it only to
+  isolate a suspected engine regression, and please report the server's
+  response shape so the tolerant profile can be widened with evidence.
 
 **Creating one.** In the Console settings modal, the **New endpoint…**
 button sits with **Base URL** (it appears for providers that take a base
