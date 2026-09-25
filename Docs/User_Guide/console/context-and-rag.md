@@ -348,6 +348,84 @@ The Tree uses native disclosure and scrolling:
   when the query is cleared, restoring the disclosure state from before the
   search.
 
+### SSH workspace folders (remote bindings)
+
+A named Workspace can bind folders that live on a remote Linux or macOS
+server, over SSH, alongside its local folders. Chatbook stays on your
+machine; only file-tool operations cross the connection. An SSH binding
+behaves like a local folder binding for authority purposes — same ro/rw
+toggle, same per-binding exclusions, same picker — but its files are
+reached only through the `fs_*` file tools.
+
+**Prerequisites.** On your machine: an OpenSSH client (`ssh`) on `PATH` —
+without it the feature surfaces as disabled with "OpenSSH client (ssh)
+not found — SSH workspace bindings unavailable" at the two entry points
+(the Settings add form and the Console folder picker) instead of failing
+mid-send. On the server: an `sshd` that allows running commands, and
+`python3` ≥ 3.10 (a per-binding interpreter override covers
+non-default names such as `python3.11`). Authentication is entirely your
+ssh setup — key or ssh-agent, and `~/.ssh/config` aliases work as the
+target. Connections run in BatchMode: Chatbook never supplies or stores
+a password, and never prompts for one; if your key needs a passphrase,
+load it into ssh-agent first.
+
+**Nothing is installed on the server.** Each tool call streams a tiny
+stdlib-only worker over the SSH session's own stdin, the worker performs
+the pinned, confined operation server-side, and it vanishes when the
+call ends. A shared ControlMaster connection (sockets on your machine,
+never the server) keeps consecutive calls warm; the
+`[console_ssh]` config section tunes it (`control_persist`,
+`enable_multiplexing`, `connect_timeout_s`, `max_concurrent_calls`).
+
+**Adding a binding.** Press **F9 → Workspaces**, select the workspace,
+and use the **SSH folders** editor: a target (`user@host[:port]` or an
+ssh-config alias), an absolute remote path (starting with `/`), the
+**Access** toggle (read-only by default, read-write on request — a
+read-only binding never advertises the mutating `fs_*` tools), and an
+optional interpreter name. The save is immediate; an advisory reachability
+probe then runs in the background and updates the row's status chip. Rows
+offer the same ro/rw toggle and remove as local folders. (The per-binding
+exclusion editor currently lists local folders only; remote roots are
+enforced worker-side but have no Settings exclusion UI in v1.)
+
+**Status chips** — `ready`, `unreachable (reason)`, `missing on host`,
+`identity stale` — appear on Settings rows, on SSH options in the Console
+working-folder picker, and as one worst-per-workspace chip in the Alt+W
+switcher. `missing on host` means the bound folder no longer exists on
+the server; `identity stale` means the folder was replaced (recreated)
+since it was last admitted and the binding re-captures it on the next
+successful call. Status lives in memory and is learned from real call
+outcomes — a never-probed binding shows the optimistic `ready`.
+
+**A remote being down never takes the workspace down.** If a binding is
+unreachable, auth-failing, or its root is missing, it is excluded from
+the run's admitted roots — the same as a missing local folder — and the
+context note says so; the workspace's local bindings and your private
+scratch keep working, and sends still compose. If the connection drops
+mid-run, that one tool call returns a typed transport error and the run
+continues on the local roots; the failed operation is not silently
+retried. Recovery is automatic: a debounced background probe flips the
+binding back to `ready` once the host returns.
+
+**AGENTS.md from the remote.** An SSH binding can be the Console working
+folder, so `AGENTS.md` / `AGENTS.override.md` load from the server under
+every existing [Project instructions](#project-instructions) rule — byte
+caps, untrusted-content handling, the activation ledger, and first-use
+consent; automatic instruction text never gains tool permission. If the
+remote is unreachable at load time, you get a content-free warning and
+the send proceeds.
+
+**v1 limits.** Remote roots are reachable via `fs_*` tools only
+(`fs_list` / `fs_read` / `fs_glob` / `fs_grep`, plus `fs_write` /
+`fs_edit` / `fs_patch` on read-write bindings). The `git_*` tools are
+not supported on SSH bindings yet (a call gets a typed error saying so;
+local aliases on the same run keep theirs). Change Review does not
+capture remote file changes in v1. The direct-path file tools
+(`read_file`, `write_file`, `list_directory`, `edit_file`) stay
+local-only. Give the model the root alias plus a relative path — a bare
+`ssh://…` URI passed as a path argument is rejected with a message that
+teaches the correct form.
+
 ### Character image containment
 
 The optional **Character** section uses up to a 35-row complete body so the image,
@@ -888,6 +966,10 @@ exports, and snapshots can retain bytes. Full details are in
 - `config.toml` `[console] exchange_capture` — the Conversation Inspector's
   capture kill-switch (default `true`); set `false` to stop recording
   per-call request/response detail for the Exchange tab.
+- `config.toml` `[console_ssh]` — SSH workspace bindings' ControlMaster
+  lifecycle: `control_persist`, `enable_multiplexing` (set `false` for
+  per-call direct connections, e.g. where `ssh.exe` lacks ControlMaster),
+  `connect_timeout_s`, and `max_concurrent_calls`.
 - [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
   manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
@@ -929,6 +1011,12 @@ exports, and snapshots can retain bytes. Full details are in
   spend one LLM provider call per candidate result (up to the profile's
   **Rerank results** count) — see
   [Settings ▸ RAG](../settings/rag.md#the-editing-card).
+- **An SSH workspace folder that cannot be reached is skipped, not fatal.**
+  Unreachable, auth-failing, and missing-on-host bindings are excluded
+  from the run and the workspace's local folders and scratch keep working;
+  a mid-run drop is one typed tool error. If the SSH add form or folder
+  picker refuses with "OpenSSH client (ssh) not found", install an
+  OpenSSH client — the feature needs `ssh` on `PATH`.
 
 —
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
@@ -1089,3 +1177,13 @@ modal keeps `●`/`○`, and the Library legend now carves radio groups out
 explicitly instead of counting them as the `☑`/`☐` selection pair. The
 glyphs come from the same shared constants as the RAG modal's toggles, so a
 future legend change cannot pass this surface by.)*
+
+*Added — 2026-09-24 (task-32926 Task 21, SSH remote workspace bindings,
+ADR-181): the "SSH workspace folders (remote bindings)" section, its
+`[console_ssh]` settings bullet, and the unreachable-remote quirks entry
+were written against the shipped feature code and its suites (Settings
+editor + picker chips in `Tests/UI/test_settings_ssh_bindings.py`,
+availability refusals in `Tests/test_ssh_feature_availability.py`,
+degradation/status vocabulary in `Tools/remote_binding_status.py` and the
+wire/transport/executor suites) — a code-level pass; live walkthrough
+against a real server is recorded separately on the task.*

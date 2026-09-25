@@ -167,6 +167,7 @@ Key sections:
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
 - Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access. Workspace folder bindings may carry per-binding exclusions (exact user-marked paths, fully invisible to agent tools — see ADR-174).
+- SSH workspace bindings reuse the Console file authority model: `ssh-filesystem` roots are `fs_*`-only (family B read_file/write_file/list_directory/edit_file stays local-only), status/availability per binding comes from the in-memory cache, and each call runs a transient stdlib worker over ssh (nothing installed on the server) — see ADR-181.
 
 ### Console Run Hooks
 - User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-148).
