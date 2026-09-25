@@ -469,10 +469,11 @@ class RemoteWorkspaceToolExecutor:
                 entries. The model-facing spec handlers call
                 ``execute(op, {path, ...})`` verbatim, so the executor
                 injects these into the wire args for every operation whose
-                schema carries ``sensitive_exclusions`` — caller-supplied
-                values always win, and a source that RAISES refuses the
-                call (fail closed: indeterminate exclusions never degrade
-                to an empty list).
+                schema carries ``sensitive_exclusions`` (plus
+                ``content_exclusions`` for fs_grep), OVERRIDING any
+                model-supplied values, and a source that RAISES refuses
+                the call (fail closed: indeterminate exclusions never
+                degrade to an empty list).
         """
         self._root = Path(root)
         self._root_locator = root_locator
@@ -700,7 +701,19 @@ class RemoteWorkspaceToolExecutor:
     def _inject_sensitive_exclusions(
         self, tool: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Add the binding's serialized exclusions to one op's wire args.
+        """Inject the binding's serialized exclusions into one op's wire
+        args, OVERRIDING any caller-supplied values.
+
+        Review fix (Critical): model tool args reach this executor
+        verbatim (the provider's arg cleaning drops no undeclared fields
+        — ``expected_sha256`` already proved declared fields ride the
+        wire), so an honor-the-caller branch here let
+        ``{"sensitive_exclusions": []}`` un-exclude everything. Like the
+        sibling remote-mode ``WorkspaceToolExecutor._build_remote_request``,
+        the executor ALWAYS writes the binding's set over both exclusion
+        fields (``sensitive_exclusions`` everywhere the schema carries
+        it; ``content_exclusions`` for fs_grep, whose schema REQUIRES it
+        — bare model grep args used to build an invalid request).
 
         Fail-closed (Task 17): an exclusions source that raises means the
         binding's exclusion state is INDETERMINATE — the call is refused
@@ -709,22 +722,22 @@ class RemoteWorkspaceToolExecutor:
         """
         if tool not in _EXCLUSION_CARRYING_OPERATIONS:
             return args
-        if "sensitive_exclusions" in args:
-            return args  # caller-supplied set wins (e.g. the CAS probe's)
         if self._sensitive_exclusions is None:
-            return {**args, "sensitive_exclusions": []}
-        try:
-            entries = tuple(self._sensitive_exclusions())
-        except Exception:  # noqa: BLE001 - indeterminate exclusions refuse
-            raise RemoteWorkspaceExecutionError(
-                "invalid_request", admitted=False
-            ) from None
-        return {
-            **args,
-            "sensitive_exclusions": [
+            injected: list[dict[str, str]] = []
+        else:
+            try:
+                entries = tuple(self._sensitive_exclusions())
+            except Exception:  # noqa: BLE001 - indeterminate exclusions refuse
+                raise RemoteWorkspaceExecutionError(
+                    "invalid_request", admitted=False
+                ) from None
+            injected = [
                 {"kind": entry.kind, "value": entry.value} for entry in entries
-            ],
-        }
+            ]
+        normalized = {**args, "sensitive_exclusions": injected}
+        if tool == "fs_grep":
+            normalized["content_exclusions"] = list(injected)
+        return normalized
 
     def _build_request(
         self,
@@ -741,13 +754,14 @@ class RemoteWorkspaceToolExecutor:
         from; ssh mode passes the remaining budget so the server-side
         clock starts only after connect and transfer.
 
-        Task 17 exclusion injection: the wire schema REQUIRES
-        ``sensitive_exclusions`` on every file/git operation, while the
-        model-facing spec handlers pass bare tool args (``{path}``) —
-        the executor injects the binding's serialized exclusions for
-        exactly the ops whose schema carries the field. Caller-supplied
-        values win (the CAS probe's explicit set is never widened), and
-        a source that raises refuses the call fail-closed.
+        Task 17 exclusion injection (review-hardened): the wire schema
+        REQUIRES ``sensitive_exclusions`` on every file/git operation,
+        while the model-facing spec handlers pass bare tool args
+        (``{path}``) — the executor injects the binding's serialized
+        exclusions for exactly the ops whose schema carries the field,
+        OVERRIDING any model-supplied values (see
+        :meth:`_inject_sensitive_exclusions`), and a source that raises
+        refuses the call fail-closed.
         """
         try:
             args = self._inject_sensitive_exclusions(tool, args)

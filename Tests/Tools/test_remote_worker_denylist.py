@@ -16,8 +16,9 @@ bundle, exercised through the loopback harness):
 
 from __future__ import annotations
 
+import os
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -204,6 +205,102 @@ def test_denylist_does_not_reach_roots_outside_the_worker_home(
 
     assert result["outcome"] == "success", result
     assert "Host *" in (result["result"] or "")
+
+
+# ---------------------------------------------------------------------------
+# Review fix (Important 1): the home mapping must hold for roots at/above
+# the home directory too. The pre-review ``root.relative_to(home)`` mapping
+# RAISED for such roots and silently voided the whole denylist (``ssh://
+# host/`` is a legal binding). The general mapping is relpath(home/entry,
+# root); a pinned root INSIDE a denylisted entry refuses outright.
+# ---------------------------------------------------------------------------
+
+
+def _home_standin(tmp_path: Path) -> Path:
+    """A controlled HOME stand-in with the denylist fixtures inside it."""
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_rsa").write_text("PRIVATE\n", encoding="utf-8")
+    return home
+
+
+def test_denylist_root_at_filesystem_root_still_denies_home_ssh(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A binding pinned at ``ssh://host/`` (root ``/``) must not void the
+    denylist: ``~/.ssh`` maps to a subtree refusal under the root."""
+    home = _home_standin(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    root = Path("/")
+    chain = _ping_chain(root)
+    rel_id_rsa = PurePosixPath(
+        os.path.relpath(home / ".ssh" / "id_rsa", root)
+    ).as_posix()
+
+    result = _loopback(
+        root,
+        chain,
+        "fs_read",
+        {"path": rel_id_rsa, "sensitive_exclusions": []},
+    )
+
+    assert result["outcome"] == "failure"
+    assert "PRIVATE" not in (result["result"] or "")
+    assert "PRIVATE" not in (result["error"] or "")
+
+
+def test_denylist_root_inside_a_denylisted_entry_refuses_outright(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A binding pinned INSIDE ``~/.ssh`` (root ``~/.ssh``) is itself a
+    denylisted subtree: every operation refuses — nothing under it is
+    reachable, not even an innocuous file the binding itself placed."""
+    home = _home_standin(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    root = home / ".ssh"
+    (root / "harmless.txt").write_text("nothing to see\n", encoding="utf-8")
+    chain = _ping_chain(root)
+
+    read = _loopback(
+        root,
+        chain,
+        "fs_read",
+        {"path": "harmless.txt", "sensitive_exclusions": []},
+    )
+    stat = _loopback(root, chain, "stat_path", {"path": "."})
+
+    assert read["outcome"] == "failure"
+    assert stat["outcome"] == "failure"
+
+
+def test_denylist_root_inside_home_but_outside_entries_is_unaffected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A root under the home but outside every denylisted entry works
+    normally (no catch-all, no void) — including its OWN ``.ssh`` fixture
+    folder, which is not the home credential store."""
+    home = _home_standin(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    root = home / "projects"
+    (root / ".ssh").mkdir(parents=True)
+    (root / ".ssh" / "config").write_text("Host *\n", encoding="utf-8")
+    (root / "ok.txt").write_text("public body\n", encoding="utf-8")
+    chain = _ping_chain(root)
+
+    ok = _loopback(
+        root, chain, "fs_read", {"path": "ok.txt", "sensitive_exclusions": []}
+    )
+    fixture = _loopback(
+        root,
+        chain,
+        "fs_read",
+        {"path": ".ssh/config", "sensitive_exclusions": []},
+    )
+
+    assert ok["outcome"] == "success", ok
+    assert "public body" in (ok["result"] or "")
+    assert fixture["outcome"] == "success", fixture
+    assert "Host *" in (fixture["result"] or "")
 
 
 def test_denylist_grep_skips_home_ssh_content(
@@ -403,17 +500,86 @@ def test_transport_executor_injection_is_fail_closed(tmp_path: Path) -> None:
     assert raised.value.code == "invalid_request"
 
 
-def test_transport_executor_keeps_caller_supplied_exclusions(tmp_path: Path) -> None:
-    """An explicit ``sensitive_exclusions`` argument (e.g. the CAS probe's)
-    wins over injection -- the executor never widens a caller's set."""
+# ---------------------------------------------------------------------------
+# Review fix (Critical): model-reachable exclusion override + fs_grep gap.
+# The model's tool args reach this executor verbatim (the provider's arg
+# cleaning does not drop undeclared fields), so a caller-supplied
+# ``sensitive_exclusions`` must NEVER win: the executor OVERRIDES both
+# exclusion fields with the binding's serialized set, exactly like the
+# sibling remote-mode ``WorkspaceToolExecutor._build_remote_request``.
+# (Inverts the pre-review pin ``test_transport_executor_keeps_caller_
+# supplied_exclusions``, which asserted caller-supplied values win.)
+# ---------------------------------------------------------------------------
+
+
+def test_transport_executor_overrides_model_supplied_exclusions(
+    tmp_path: Path,
+) -> None:
+    """`fs_read {"path": "secrets/kv.txt", "sensitive_exclusions": []}` from
+    the MODEL must still refuse: the binding's set overrides the model's
+    empty list (declared fields reach the wire -- expected_sha256 already
+    proved it -- so an undropped value here un-excluded everything)."""
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceExecutionError,
+    )
+
     root = _workspace(tmp_path)
     executor = _loopback_executor(root, exclusions=_sensitive_exclusions_source())
 
-    result = executor.execute(
+    ok = executor.execute(
         "fs_read",
         {"path": "ok.txt", "sensitive_exclusions": []},
         intent="read",
     )
+    assert ok["outcome"] == "success"
 
-    assert result["outcome"] == "success"
+    with pytest.raises(RemoteWorkspaceExecutionError):
+        executor.execute(
+            "fs_read",
+            {"path": "secrets/kv.txt", "sensitive_exclusions": []},
+            intent="read",
+        )
+
+
+def test_transport_executor_overrides_model_supplied_grep_exclusions(
+    tmp_path: Path,
+) -> None:
+    """fs_grep's SECOND exclusion field is overridden too: the model's
+    empty ``content_exclusions`` cannot re-enable content scanning of an
+    excluded subtree."""
+    root = _workspace(tmp_path)
+    executor = _loopback_executor(root, exclusions=_sensitive_exclusions_source())
+
+    result = executor.execute(
+        "fs_grep",
+        {
+            "pattern": "token",
+            "sensitive_exclusions": [],
+            "content_exclusions": [],
+        },
+        intent="read",
+    )
+
+    assert result["outcome"] == "success", result
+    assert "token=hidden" not in (result["result"] or "")
+    assert result["result"] == "(no matches for 'token')"
+
+
+def test_transport_executor_injects_content_exclusions_for_bare_grep(
+    tmp_path: Path,
+) -> None:
+    """fs_grep's wire schema REQUIRES both exclusion fields; bare model
+    args (``{"pattern": ...}``) used to build an invalid request. Both
+    are injected (and enforced) now."""
+    root = _workspace(tmp_path)
+    executor = _loopback_executor(root, exclusions=_sensitive_exclusions_source())
+
+    result = executor.execute("fs_grep", {"pattern": "public"}, intent="read")
+
+    assert result["outcome"] == "success", result
+    assert "public body" in (result["result"] or "")
+
+    excluded = executor.execute("fs_grep", {"pattern": "token"}, intent="read")
+    assert excluded["outcome"] == "success"
+    assert excluded["result"] == "(no matches for 'token')"
 

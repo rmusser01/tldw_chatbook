@@ -4320,7 +4320,7 @@ arrive already decoded/validated; dispatch consumes the attribute surface
 both satisfy it).
 """
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 class WorkspaceToolDispatchError(RuntimeError):
@@ -4334,6 +4334,7 @@ class _PinnedOperationRequest(Protocol):
     """The attribute surface dispatch consumes from one admitted request."""
     operation: str
     arguments: dict[str, Any]
+_DENYLISTED_ROOT_CATCH_ALL = (SensitiveExclusion('subtree', ''),)
 
 def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     """Map the worker-side remote-home denylist into root-relative space.
@@ -4347,15 +4348,27 @@ def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     resolves it to ``()`` through ``globals().get`` — byte-identical
     local behavior — while the bundle picks the tuple up at call time.
 
-    Mapping rule (Task 17, ADR-174 floor): each home-relative entry is
-    joined onto the resolved home directory, then re-expressed relative
-    to the pinned root (``Path('.')`` after the root pin's chdir). An
-    entry outside the pinned root maps to nothing — the worker is root-
-    confined, so it is unreachable — and a root ABOVE (or at) the remote
-    home maps every entry into a 'subtree' refusal the existing matcher
-    enforces for reads, writes, and enumeration. An unresolvable home
-    degrades to ``()``: the request-carried exclusions still enforce, and
-    a missing ``HOME`` must not crash unrelated operations.
+    Mapping rule (review fix, Important 1 — the general form): each
+    entry is joined onto the resolved home directory, then re-expressed
+    relative to the pinned root (``Path('.')`` after the root pin's
+    chdir) via ``relative_to`` — which is exactly ``relpath(home/entry,
+    root)`` and holds for EVERY root relationship:
+
+    - root BELOW home (the common case, e.g. ``~/projects``): entries
+      map to plain subtrees under the root when they are under it, and
+      to nothing when they are not (the worker is root-confined, so an
+      entry outside the root is unreachable);
+    - root AT or ABOVE home (e.g. ``ssh://host/`` pinning ``/``): every
+      entry lies under the root and maps to a deep subtree refusal —
+      the pre-review mapping RAISED here (``root.relative_to(home)`` is
+      inverted for these roots) and silently voided the entire denylist;
+    - root INSIDE a denylisted entry (e.g. a binding pinned at
+      ``~/.ssh`` itself): the whole root is denylisted — every operation
+      refuses via :data:`_DENYLISTED_ROOT_CATCH_ALL`.
+
+    An unresolvable home degrades to ``()``: the request-carried
+    exclusions still enforce, and a missing ``HOME`` must not crash
+    unrelated operations.
     """
     entries = globals().get('REMOTE_SENSITIVE_PATHS', ())
     if not entries:
@@ -4363,10 +4376,27 @@ def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     try:
         home = Path.home().resolve()
         root = Path('.').resolve()
-        relative_root = root.relative_to(home)
-    except (RuntimeError, OSError, ValueError):
+    except (RuntimeError, OSError):
         return ()
-    return tuple((SensitiveExclusion('subtree', (relative_root / entry).as_posix()) for entry in entries))
+    root_under_home: PurePosixPath | None = None
+    try:
+        root_under_home = PurePosixPath(root.relative_to(home).as_posix())
+    except ValueError:
+        root_under_home = None
+    if root_under_home is not None:
+        for entry in entries:
+            entry_parts = PurePosixPath(entry).parts
+            if root_under_home.parts[:len(entry_parts)] == entry_parts:
+                return _DENYLISTED_ROOT_CATCH_ALL
+    mapped: list[SensitiveExclusion] = []
+    for entry in entries:
+        try:
+            target = (home / entry).resolve()
+            relative = target.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        mapped.append(SensitiveExclusion('subtree', relative.as_posix()))
+    return tuple(mapped)
 
 def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) -> str:
     """Execute one supported request relative to ``root`` or refuse it."""
@@ -4751,4 +4781,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("609ef17a10ce56f1f1dd8098097679f4cdc9e32467b7e55546de5e87c36e3445")
+BUNDLE_SHA256 = _enter_worker_exchange("b1b7abc167a08a93da795458efdf31456744803943446c3ad08be9fce901ac5b")

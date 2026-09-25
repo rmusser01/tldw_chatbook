@@ -11,7 +11,7 @@ both satisfy it).
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from tldw_chatbook.Tools.git_tool_impls import (
@@ -65,6 +65,14 @@ class _PinnedOperationRequest(Protocol):
     arguments: dict[str, Any]
 
 
+#: Catch-all exclusion for a pinned root that ITSELF sits inside a
+#: denylisted entry: an empty 'subtree' prefix matches every relative
+#: path in the exclusion matcher (``parts[:0] == ()`` is vacuously
+#: true), so every operation on the binding refuses — the whole root is
+#: a denylisted subtree (review fix, Important 1).
+_DENYLISTED_ROOT_CATCH_ALL = (SensitiveExclusion("subtree", ""),)
+
+
 def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     """Map the worker-side remote-home denylist into root-relative space.
 
@@ -77,15 +85,27 @@ def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     resolves it to ``()`` through ``globals().get`` — byte-identical
     local behavior — while the bundle picks the tuple up at call time.
 
-    Mapping rule (Task 17, ADR-174 floor): each home-relative entry is
-    joined onto the resolved home directory, then re-expressed relative
-    to the pinned root (``Path('.')`` after the root pin's chdir). An
-    entry outside the pinned root maps to nothing — the worker is root-
-    confined, so it is unreachable — and a root ABOVE (or at) the remote
-    home maps every entry into a 'subtree' refusal the existing matcher
-    enforces for reads, writes, and enumeration. An unresolvable home
-    degrades to ``()``: the request-carried exclusions still enforce, and
-    a missing ``HOME`` must not crash unrelated operations.
+    Mapping rule (review fix, Important 1 — the general form): each
+    entry is joined onto the resolved home directory, then re-expressed
+    relative to the pinned root (``Path('.')`` after the root pin's
+    chdir) via ``relative_to`` — which is exactly ``relpath(home/entry,
+    root)`` and holds for EVERY root relationship:
+
+    - root BELOW home (the common case, e.g. ``~/projects``): entries
+      map to plain subtrees under the root when they are under it, and
+      to nothing when they are not (the worker is root-confined, so an
+      entry outside the root is unreachable);
+    - root AT or ABOVE home (e.g. ``ssh://host/`` pinning ``/``): every
+      entry lies under the root and maps to a deep subtree refusal —
+      the pre-review mapping RAISED here (``root.relative_to(home)`` is
+      inverted for these roots) and silently voided the entire denylist;
+    - root INSIDE a denylisted entry (e.g. a binding pinned at
+      ``~/.ssh`` itself): the whole root is denylisted — every operation
+      refuses via :data:`_DENYLISTED_ROOT_CATCH_ALL`.
+
+    An unresolvable home degrades to ``()``: the request-carried
+    exclusions still enforce, and a missing ``HOME`` must not crash
+    unrelated operations.
     """
     entries = globals().get("REMOTE_SENSITIVE_PATHS", ())
     if not entries:
@@ -93,13 +113,27 @@ def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
     try:
         home = Path.home().resolve()
         root = Path(".").resolve()
-        relative_root = root.relative_to(home)
-    except (RuntimeError, OSError, ValueError):
+    except (RuntimeError, OSError):
         return ()
-    return tuple(
-        SensitiveExclusion("subtree", (relative_root / entry).as_posix())
-        for entry in entries
-    )
+    root_under_home: PurePosixPath | None = None
+    try:
+        root_under_home = PurePosixPath(root.relative_to(home).as_posix())
+    except ValueError:
+        root_under_home = None  # root at/above home (or disjoint)
+    if root_under_home is not None:
+        for entry in entries:
+            entry_parts = PurePosixPath(entry).parts
+            if root_under_home.parts[: len(entry_parts)] == entry_parts:
+                return _DENYLISTED_ROOT_CATCH_ALL
+    mapped: list[SensitiveExclusion] = []
+    for entry in entries:
+        try:
+            target = (home / entry).resolve()
+            relative = target.relative_to(root)
+        except (OSError, ValueError):
+            continue  # entry outside the pinned root: unreachable
+        mapped.append(SensitiveExclusion("subtree", relative.as_posix()))
+    return tuple(mapped)
 
 
 def execute_pinned_operation(

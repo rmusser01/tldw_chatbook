@@ -471,6 +471,7 @@ from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
@@ -1631,20 +1632,33 @@ def _same_project_instruction_authority(
 ) -> bool:
     identity_holds: bool
     if is_remote(expected.root):
-        # Remote (Task 17): identity freshness is the cache chain vs the
-        # admitted chain (the laptop lstat walk is structurally
-        # impossible); the WORKER's root pin stays the per-call guard.
-        identity_holds = not expected.degraded and bool(expected.root_identity)
+        # Remote (review fix, Important 2): the client-side guard checks
+        # registry + fingerprint + STATUS only and NEVER fails on a
+        # missing identity chain — the controller's call sites pass no
+        # cache yet (Task 18 wires it), so cold admissions carry an
+        # EMPTY chain, and treating that as not-current refused every
+        # tool call with ROOT_CHANGED (remote working folders were
+        # dead-on-arrival). The WORKER's root pin is the per-call guard
+        # (the spec's split-authority rule); identity tuples are
+        # compared only when the admitted side HAS one (a present-but-
+        # different chain is still a retarget and revokes). LOCAL roots
+        # keep the opposite: their guard re-captures the laptop chain
+        # per call, so an empty identity chain always fails.
+        identity_holds = not expected.degraded
     else:
         identity_holds = _project_root_identity_matches(
             expected.root, expected.root_identity
         )
+    identity_matches = (
+        not expected.root_identity
+        or current.root_identity == expected.root_identity
+    )
     return (
         str(current.binding.binding_id) == str(expected.binding.binding_id)
         and current.root == expected.root
         and current.locator_fingerprint == expected.locator_fingerprint
         and current.allow_write == expected.allow_write
-        and current.root_identity == expected.root_identity
+        and identity_matches
         and identity_holds
     )
 
@@ -1694,7 +1708,11 @@ def _workspace_binding_authority_is_current(
     except Exception:  # noqa: BLE001 - guard must never raise
         return False
     if not chain:
-        return False
+        # Review fix (Important 2): a missing identity on EITHER side is
+        # not a mismatch — cold admissions carry an empty chain and the
+        # worker's root pin is the per-call guard. The client guard
+        # checks registry + fingerprint + status only.
+        return True
     try:
         current_identity = tuple(
             (str(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
@@ -1702,6 +1720,9 @@ def _workspace_binding_authority_is_current(
         )
     except (IndexError, TypeError, ValueError):
         return False
+    if not expected_selection.root_identity:
+        # Identity captured after a cold admission: adopt it silently.
+        return True
     return current_identity == expected_selection.root_identity
 
 
@@ -1756,37 +1777,58 @@ def _exclusion_paths_provider(
     binding_id: str,
     root: "Path | RemoteRoot",
     snapshot_rels: tuple[str, ...],
-) -> Callable[[], tuple[Path, ...]]:
-    """Effective exclusion paths: admission snapshot union a high-water mark.
+) -> Callable[[], "tuple[Path | SensitiveExclusion, ...]"]:
+    """Effective exclusions: admission snapshot union a high-water mark.
 
     Reads the binding's live exclusions on every call so a mid-run addition
     refuses the NEXT tool call (fail-closed shrink); the high-water mark
     keeps removals enforced for the rest of the run so run authority never
     expands mid-run (spec 2026-09-20, ADR-102 discipline).
 
-    REMOTE roots (Task 17): entries stay RAW RELATIVE paths — the
-    serialized exclusion set the executor injects into every request and
-    the worker matches. NEVER ``(root / rel).resolve()`` against the
-    laptop (the macOS ``/var`` -> ``/private/var`` symlink drop would
-    break matching against the remote's own path space).
+    LOCAL roots resolve each entry against the laptop root (absolute
+    resolved ``Path``s, byte-identical to pre-Phase-3c). REMOTE roots
+    (review fix, Important 3) yield properly typed
+    :class:`~tldw_chatbook.Utils.sensitive_paths.SensitiveExclusion`
+    entries carrying the RAW relative string — the exact shape BOTH
+    executor seams consume (``RemoteWorkspaceToolExecutor`'s injection
+    source and ``WorkspaceToolExecutor._remote_exclusion_entries`` read
+    ``entry.kind``/``entry.value``; raw ``Path``s raised AttributeError
+    there and fail-closed-refused every operation). Kinds map from the
+    stored binding entry ("file" -> 'file'; directories, snapshot-only
+    rels, and unknown kinds -> 'subtree', the fail-closed superset).
+    NEVER ``(root / rel).resolve()`` against the laptop (the macOS
+    ``/var`` -> ``/private/var`` symlink drop would break matching
+    against the remote's own path space).
     """
     holder: dict[str, frozenset[str]] = {"effective": frozenset(snapshot_rels)}
     remote = is_remote(root)
 
-    def read() -> tuple[Path, ...]:
+    def read() -> "tuple[Path | SensitiveExclusion, ...]":
+        kind_by_path: dict[str, str] = {}
         try:
             binding = registry.get_runtime_binding(binding_id)
             from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
-            live = frozenset(entry.path for entry in binding_exclusion_entries(binding))
+            live_entries = binding_exclusion_entries(binding)
+            live = frozenset(entry.path for entry in live_entries)
+            kind_by_path = {
+                entry.path: entry.kind for entry in live_entries
+            }
         except Exception:  # noqa: BLE001 -- degrade to last-known, never wider
             live = frozenset()
         holder["effective"] = holder["effective"] | live
-        resolved: list[Path] = []
+        resolved: list[Path | SensitiveExclusion] = []
         for rel in sorted(holder["effective"]):
             try:
                 if remote:
-                    resolved.append(Path(rel))
+                    resolved.append(
+                        SensitiveExclusion(
+                            "file"
+                            if kind_by_path.get(rel) == "file"
+                            else "subtree",
+                            rel,
+                        )
+                    )
                 else:
                     resolved.append((Path(root) / rel).resolve(strict=False))
             except Exception:  # noqa: BLE001 - per-entry isolation: skip the
@@ -1866,6 +1908,10 @@ def capture_run_admitted_workspace_roots(
             entry.path
             for entry in binding_exclusion_entries(selection.binding)
         )
+        # Local selections yield resolved laptop Paths (``user_exclusion_paths``
+        # classification); remote selections yield typed SensitiveExclusion
+        # entries — the shape BOTH executor seams consume (Task 18's
+        # composition attaches the remote flavor to the transport executor).
         exclusions_provider = _exclusion_paths_provider(
             registry, binding_id, selection.root, snapshot_rels
         )

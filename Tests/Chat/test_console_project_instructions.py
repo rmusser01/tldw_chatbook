@@ -620,49 +620,11 @@ def test_remote_binding_authority_guard_compares_cached_identity() -> None:
     )
 
 
-def test_remote_exclusion_paths_provider_returns_raw_relative_strings(
-    monkeypatch,
-) -> None:
-    """macOS symlink hazard: a RemoteRoot binding's exclusions ride as RAW
-    relative strings -- never ``(root / rel).resolve()`` on the laptop
-    (where ``/var/...`` would normalize to ``/private/var/...`` and stop
-    matching the remote's own path space)."""
-    from pathlib import Path as _Path
-
-    from tldw_chatbook.Chat import console_chat_controller as controller
-    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
-
-    def blow_up(self, *_args, **_kwargs):
-        raise AssertionError("remote exclusions must never resolve on the laptop")
-
-    monkeypatch.setattr(_Path, "resolve", blow_up)
-
-    class _Registry:
-        def get_runtime_binding(self, binding_id):
-            return _ssh_binding()
-
-    provider = controller._exclusion_paths_provider(
-        _Registry(),
-        "ssh-b1",
-        RemoteRoot(
-            alias="ssh-b1",
-            canonical_locator="ssh://devbox/srv/www",
-            root="/srv/www",
-            binding_id="ssh-b1",
-        ),
-        ("secrets", "build/out"),
-    )
-
-    assert provider() == (_Path("build/out"), _Path("secrets"))
-
-
 def test_remote_exclusion_paths_provider_fails_closed_on_shrink() -> None:
     """Live-read union keeps the high-water mark: a provider exception or
     registry loss can never NARROW the effective exclusion set mid-run."""
-    from pathlib import Path as _Path
-
     from tldw_chatbook.Chat import console_chat_controller as controller
-    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
     class _Registry:
         def get_runtime_binding(self, binding_id):
@@ -671,18 +633,13 @@ def test_remote_exclusion_paths_provider_fails_closed_on_shrink() -> None:
     provider = controller._exclusion_paths_provider(
         _Registry(),
         "ssh-b1",
-        RemoteRoot(
-            alias="ssh-b1",
-            canonical_locator="ssh://devbox/srv/www",
-            root="/srv/www",
-            binding_id="ssh-b1",
-        ),
+        _remote_root_descriptor(),
         ("secrets",),
     )
     # First read fails but keeps the snapshot; second read stays at the
     # high-water mark.
     provider()
-    assert provider() == (_Path("secrets"),)
+    assert provider() == (SensitiveExclusion("subtree", "secrets"),)
 
 
 def test_remote_project_instruction_excluded_dirs_are_relative_and_unresolved(
@@ -710,4 +667,260 @@ def test_remote_project_instruction_excluded_dirs_are_relative_and_unresolved(
     excluded = controller._project_instruction_excluded_dirs(selection)
 
     assert excluded == frozenset({_Path("secrets"), _Path("build/out")})
+
+
+# ---------------------------------------------------------------------------
+# Review fix (Important 2): cold-admission vs authority-guard consistency.
+# The controller's call sites pass no cache yet (Task 18 wires it), so a
+# cold admission carries an EMPTY identity chain -- the client-side guard
+# must treat that as CURRENT (registry + fingerprint + status only; the
+# WORKER's root pin is the per-call guard per the spec's split-authority
+# rule). Local roots keep the exact opposite: an empty identity chain
+# FAILS the local guard.
+# ---------------------------------------------------------------------------
+
+
+def test_remote_cold_authority_guard_passes_without_cache_or_identity() -> None:
+    from tldw_chatbook.Chat import console_chat_controller as controller
+
+    class _Registry:
+        def get_runtime_binding(self, binding_id):
+            return _ssh_binding()
+
+    cold = controller._validate_project_instruction_binding(
+        _session_for_remote(), _ssh_binding()
+    )
+    assert cold is not None
+    assert cold.root_identity == ()  # cold: no cache, no captured chain
+
+    assert (
+        controller._workspace_binding_authority_is_current(
+            workspace_id="w1",
+            registry=_Registry(),
+            expected_selection=cold,
+            write=True,
+        )
+        is True
+    )
+
+
+def test_remote_guard_never_fails_on_identity_captured_after_admission() -> None:
+    """Identity captured AFTER a cold admission (first worker call) must
+    not trip the guard: missing identity on either side is not a
+    mismatch; only two PRESENT-but-different chains revoke."""
+    from tldw_chatbook.Chat import console_chat_controller as controller
+    from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
+
+    cold = controller._validate_project_instruction_binding(
+        _session_for_remote(), _ssh_binding()
+    )
+    assert cold is not None and cold.root_identity == ()
+
+    cache = RemoteBindingStatusCache()  # identity appears later
+    cache.record_success("ssh-b1", [["/srv/www", 99, 7, 16877]])
+
+    class _Registry:
+        def get_runtime_binding(self, binding_id):
+            return _ssh_binding()
+
+    assert (
+        controller._workspace_binding_authority_is_current(
+            workspace_id="w1",
+            registry=_Registry(),
+            expected_selection=cold,
+            write=True,
+            status_cache=cache,
+        )
+        is True
+    )
+
+
+def test_local_guard_still_fails_on_empty_identity(tmp_path) -> None:
+    """Local roots are unchanged: the client guard re-captures the laptop
+    identity chain per call, and an empty expected chain can never match
+    a real capture -- it stays a failure."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat import console_chat_controller as controller
+
+    project = tmp_path / "project"
+    project.mkdir()
+    binding = SimpleNamespace(
+        workspace_id="w1",
+        binding_id="local-b1",
+        binding_kind="local-filesystem",
+        label="local-b1",
+        locator=str(project),
+        status="ready",
+        metadata={"access": "rw"},
+    )
+    broken = SimpleNamespace(
+        binding=binding,
+        root=project.resolve(),
+        locator_fingerprint="fingerprint-local",
+        allow_write=True,
+        root_identity=(),  # empty for a LOCAL root: must fail the guard
+    )
+
+    class _Registry:
+        def get_runtime_binding(self, binding_id):
+            return binding
+
+    assert (
+        controller._workspace_binding_authority_is_current(
+            workspace_id="w1",
+            registry=_Registry(),
+            expected_selection=broken,
+            write=True,
+        )
+        is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review fix (Important 3): the remote exclusion provider must yield
+# properly typed SensitiveExclusion entries -- both executor seams read
+# ``entry.kind``/``entry.value`` (raw Paths raised AttributeError and
+# fail-closed-refused every op). Pinned by consuming the provider's
+# output through BOTH seams directly.
+# ---------------------------------------------------------------------------
+
+
+def _remote_root_descriptor():
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    return RemoteRoot(
+        alias="ssh-b1",
+        canonical_locator="ssh://devbox/srv/www",
+        root="/srv/www",
+        binding_id="ssh-b1",
+    )
+
+
+def _ssh_registry(exclusions=("secrets", "build/out")):
+    class _Registry:
+        def get_runtime_binding(self, binding_id):
+            return _ssh_binding(exclusions=exclusions)
+
+    return _Registry()
+
+
+def test_remote_exclusion_provider_yields_typed_entries(monkeypatch) -> None:
+    from pathlib import Path as _Path
+
+    from tldw_chatbook.Chat import console_chat_controller as controller
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    def blow_up(self, *_args, **_kwargs):
+        raise AssertionError("remote exclusions must never resolve on the laptop")
+
+    monkeypatch.setattr(_Path, "resolve", blow_up)
+
+    provider = controller._exclusion_paths_provider(
+        _ssh_registry(),
+        "ssh-b1",
+        _remote_root_descriptor(),
+        ("secrets", "build/out"),
+    )
+
+    assert provider() == (
+        SensitiveExclusion("subtree", "build/out"),
+        SensitiveExclusion("subtree", "secrets"),
+    )
+
+
+def test_remote_exclusion_provider_maps_stored_file_kind() -> None:
+    """A binding exclusion stored with kind "file" serializes as the
+    narrower 'file' exclusion; unknown/snapshot entries stay 'subtree'
+    (the fail-closed superset)."""
+    from tldw_chatbook.Chat import console_chat_controller as controller
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    row = _ssh_binding(exclusions=("secrets", "env.lock"))
+    row.metadata["exclusions"] = [
+        {"path": "secrets", "kind": "directory", "added_at": ""},
+        {"path": "env.lock", "kind": "file", "added_at": ""},
+    ]
+
+    class _RegistryWithRow:
+        def get_runtime_binding(self, binding_id):
+            return row
+
+    provider = controller._exclusion_paths_provider(
+        _RegistryWithRow(),
+        "ssh-b1",
+        _remote_root_descriptor(),
+        ("secrets", "env.lock"),
+    )
+
+    # sorted by rel: env.lock < secrets
+    assert provider() == (
+        SensitiveExclusion("file", "env.lock"),
+        SensitiveExclusion("subtree", "secrets"),
+    )
+
+
+def test_remote_exclusion_provider_output_consumable_by_both_executor_seams(
+    tmp_path,
+) -> None:
+    """The provider's entries feed BOTH exclusion consumers unchanged:
+    the remote-mode ``WorkspaceToolExecutor`` request builder and the
+    ssh/loopback transport executor's injection seam."""
+    from tldw_chatbook.Chat import console_chat_controller as controller
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceExecutionError,
+        RemoteWorkspaceToolExecutor,
+    )
+    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+
+    provider = controller._exclusion_paths_provider(
+        _ssh_registry(exclusions=("secrets",)),
+        "ssh-b1",
+        _remote_root_descriptor(),
+        ("secrets",),
+    )
+
+    # Seam 1: remote-mode WorkspaceToolExecutor request builder.
+    builder = WorkspaceToolExecutor(
+        _remote_root_descriptor(),
+        remote_identity_source=lambda: [["/srv/www", 99, 7, 16877]],
+        remote_sensitive_exclusions=provider,
+    )
+    request = builder._build_request("fs_read", {"path": "ok.txt"}, intent="read")
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"}
+    ]
+    excluded_request = builder._build_request(
+        "fs_read", {"path": "secrets/kv"}, intent="read"
+    )
+    # The builder serializes the set onto EVERY request (enforcement is
+    # worker-side; seam 2 proves the refusal end-to-end).
+    assert excluded_request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"}
+    ]
+
+    # Seam 2: the ssh/loopback transport executor's injection.
+    standin = tmp_path / "remote-fs"
+    standin.mkdir()
+    (standin / "ok.txt").write_text("public\n", encoding="utf-8")
+    (standin / "secrets").mkdir()
+    (standin / "secrets" / "kv.txt").write_text("hidden\n", encoding="utf-8")
+    prober = RemoteWorkspaceToolExecutor(
+        standin, root_locator=str(standin), identity_chain_source=lambda: None
+    )
+    payload = prober.ping()
+    chain = {
+        "identity_chain": payload["identity_chain"],
+        "canonical_path": payload["canonical_path"],
+    }
+    executor = RemoteWorkspaceToolExecutor(
+        standin,
+        root_locator=str(standin),
+        identity_chain_source=lambda: chain,
+        sensitive_exclusions=provider,
+    )
+    ok = executor.execute("fs_read", {"path": "ok.txt"}, intent="read")
+    assert ok["outcome"] == "success"
+    with pytest.raises(RemoteWorkspaceExecutionError):
+        executor.execute("fs_read", {"path": "secrets/kv.txt"}, intent="read")
 
