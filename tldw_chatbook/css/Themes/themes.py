@@ -203,6 +203,30 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     return safe
 
 
+def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> Theme:
+    """Build a Theme from one saved theme file's parsed TOML.
+
+    Args:
+        data: The parsed file (``[theme] name/dark``, ``[colors]``, optional
+            ``[variables]``).
+        fallback_name: The name used when ``[theme].name`` is missing (the
+            file stem).
+        file_label: The file name, for the variable sanitiser's log line.
+
+    Returns:
+        The theme, as the startup loader registers it.
+    """
+    meta = data.get("theme", {}) or {}
+    name = str(meta.get("name") or fallback_name).strip() or fallback_name
+    colors = dict(data.get("colors", {}) or {})
+    colors["dark"] = bool(meta.get("dark", True))
+    # TASK-32940: extra colour variables the editor carried over.
+    variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)
+    if variables:
+        colors["variables"] = variables
+    return create_theme_from_dict(name, colors)
+
+
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
 
@@ -230,16 +254,7 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
         return themes
     for path in sorted(root.glob("*.toml")):
         try:
-            data = toml.load(path)
-            meta = data.get("theme", {}) or {}
-            name = str(meta.get("name") or path.stem).strip() or path.stem
-            colors = dict(data.get("colors", {}) or {})
-            colors["dark"] = bool(meta.get("dark", True))
-            # TASK-32940: extra colour variables the editor carried over.
-            variables = sanitize_theme_variables(data.get("variables", {}) or {}, path.name)
-            if variables:
-                colors["variables"] = variables
-            themes.append(create_theme_from_dict(name, colors))
+            themes.append(theme_from_file_data(toml.load(path), path.stem, path.name))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this
             # warning reaches the persistent log (path-privacy policy).
