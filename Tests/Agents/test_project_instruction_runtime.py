@@ -1097,6 +1097,61 @@ def _remote_snapshot(root: Path, reader) -> InstructionSnapshot:
     )
 
 
+def _remote_tool_registry(
+    tmp_path, monkeypatch, root: Path, reader, exclusions_provider=None
+):
+    """A production LocalToolProvider over one REMOTE admitted root.
+
+    The provider is the REAL one (path_targets included) — this machine's
+    config bootstrap is environmentally broken for its construction-time
+    catalog gates, so the two gate reads route at their defaults (the
+    composition suite's established pattern).
+    """
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolProvider,
+        RunAdmittedWorkspaceRoot,
+    )
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    import tldw_chatbook.Agents.local_tool_provider as provider_module
+
+    monkeypatch.setattr(
+        provider_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    descriptor = RemoteRoot(
+        alias="binding",
+        canonical_locator=f"ssh://loopbox{root}",
+        root=root,
+        binding_id="binding",
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: EffectiveToolState(
+            state="allow", origin="tool_override"
+        ),
+        admitted_roots=(
+            RunAdmittedWorkspaceRoot(
+                workspace_id="ws",
+                binding_id="binding",
+                alias="binding",
+                root=descriptor,
+                locator_fingerprint="fingerprint",
+                root_identity=(),
+                allow_write=True,
+                guard=lambda write: True,
+                exclusions_provider=exclusions_provider,
+                workspace_executor=reader.executor,
+            ),
+        ),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    return provider, registry, descriptor
+
+
 def test_ledger_resolves_remote_nested_sources_through_reader(tmp_path) -> None:
     from tldw_chatbook.Agents.project_instruction_resolver import (
         RemoteInstructionIO,
@@ -1132,6 +1187,96 @@ def test_ledger_resolves_remote_nested_sources_through_reader(tmp_path) -> None:
         args.get("path") for tool, args in executor.ops if tool == "fs_read"
     ]
     assert "nested/AGENTS.md" in read_paths
+
+
+def test_production_provider_maps_remote_targets_lexically(tmp_path, monkeypatch) -> None:
+    """Review Important 1: the REAL provider's path_targets maps a remote
+    fs op to lexical remote scopes -- zero laptop disk, ledger-shaped."""
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    executor = _RecordingLoopbackExecutor(root)
+    reader = RemoteInstructionIO(executor)
+    provider, _registry, descriptor = _remote_tool_registry(
+        tmp_path, monkeypatch, root, reader
+    )
+    remote_base = root  # descriptor spelling == canonical on loopback
+
+    targets = provider.path_targets(
+        "local:fs_read", {"path": "subdir/x.txt"}
+    )
+    assert [target.kind for target in targets] == ["exact"]
+    assert targets[0].path == remote_base / "subdir" / "x.txt"
+
+    assert provider.path_targets("local:fs_list", {"path": "subdir"}) == (
+        ToolPathTarget(remote_base / "subdir", "directory"),
+    )
+
+    # git_* on a remote alias activates no scopes (call-time typed refusal).
+    assert provider.path_targets("local:git_status", {"path": "."}) == ()
+
+    # Lexical confinement: traversal and absolute forms refuse like the
+    # local preflight; the ledger's boundary catches the raise.
+    for bad in ("../escape.txt", "/etc/passwd"):
+        with pytest.raises((ValueError, LocalToolError)):
+            provider.path_targets("local:fs_read", {"path": bad})
+
+    # Excluded targets are refused BEFORE any approval card could render.
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    excluded_provider, _excluded_registry, _d = _remote_tool_registry(
+        tmp_path,
+        monkeypatch,
+        root,
+        reader,
+        exclusions_provider=lambda: (SensitiveExclusion("subtree", "secrets"),),
+    )
+    with pytest.raises(LocalToolError, match="protected path"):
+        excluded_provider.path_targets("local:fs_read", {"path": "secrets/key.pem"})
+
+
+def test_remote_fs_op_activates_nested_agents_md_end_to_end(
+    tmp_path, monkeypatch
+) -> None:
+    """Review Important 1, end-to-end: a remote fs op targeting
+    ``subdir/x`` flows provider.path_targets -> ledger.prepare ->
+    resolve_targets -> executor fs_read, and ``subdir/AGENTS.md`` activates
+    (its content reaches the model context rows)."""
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    subdir = root / "subdir"
+    subdir.mkdir()
+    (subdir / "AGENTS.md").write_text("remote-nested-guidance")
+    (subdir / "x.txt").write_text("payload")
+    executor = _RecordingLoopbackExecutor(root)
+    reader = RemoteInstructionIO(executor)
+    snapshot = _remote_snapshot(root, reader)
+    ledger = InstructionActivationLedger(snapshot, nested_max_bytes=4096)
+    _provider, registry, _descriptor = _remote_tool_registry(
+        tmp_path, monkeypatch, root, reader
+    )
+    payload, _count = _payload()
+
+    preparation = ledger.prepare(
+        [ToolCall("fs_read", {"path": "subdir/x.txt"}, "call-1")],
+        "primary",
+        registry,
+        payload,
+    )
+
+    assert preparation.status == "retry_with_context"
+    assert any(
+        "remote-nested-guidance" in str(row.get("content", ""))
+        for row in preparation.rows
+    )
+    read_paths = [
+        args.get("path") for tool, args in executor.ops if tool == "fs_read"
+    ]
+    assert "subdir/AGENTS.md" in read_paths
 
 
 def test_remote_ledger_refuses_promotion_fail_closed(tmp_path) -> None:

@@ -486,12 +486,19 @@ class ProjectInstructionResolver:
 
         directories: set[Path] = set()
         outcomes: list[InstructionOutcome] = []
+        remote = self._remote_io is not None and isinstance(binding_root, RemoteRoot)
         for target in targets:
             lexical = _safe_absolute(target)
+            if remote and lexical is not None:
+                # The provider's lexical mapping joins targets onto the
+                # descriptor's root spelling; translate into the pinned
+                # canonical space (a server-side-symlinked locator is the
+                # one case they differ).
+                lexical = self._remote_io.remap_target(root, lexical)
             if lexical is None or not lexical.is_relative_to(root):
                 outcomes.append(InstructionOutcome(".", ".", "resolution_failed"))
                 continue
-            if self._remote_io is not None and isinstance(binding_root, RemoteRoot):
+            if remote:
                 # Remote walk: worker stats replace per-component laptop
                 # lstat (see RemoteInstructionIO.walk_component_chain for
                 # the documented weaker-granularity analogue).
@@ -545,11 +552,7 @@ class ProjectInstructionResolver:
                 pinned_by_canonical_path=pinned_by_canonical_path,
                 expected_binding_ancestors=expected_root,
                 excluded_dirs=excluded_dirs,
-                remote_io=(
-                    self._remote_io
-                    if isinstance(binding_root, RemoteRoot)
-                    else None
-                ),
+                remote_io=self._remote_io if remote else None,
             )
             if result.source is not None:
                 found.append((result.source, was_pinned))
@@ -1386,7 +1389,14 @@ class RemoteInstructionIO:
     proceeds. NOTHING in this class raises past the resolver.
     """
 
-    __slots__ = ("_ancestors", "_binding_id", "_executor", "_payload", "_root")
+    __slots__ = (
+        "_ancestors",
+        "_binding_id",
+        "_descriptor_root",
+        "_executor",
+        "_payload",
+        "_root",
+    )
 
     def __init__(self, executor: Any, *, binding_id: str = "") -> None:
         """Bind one workspace executor.
@@ -1401,6 +1411,7 @@ class RemoteInstructionIO:
         self._executor = executor
         self._binding_id = str(binding_id)
         self._root: Path | None = None
+        self._descriptor_root: Path | None = None
         self._ancestors: tuple[tuple[int, int, int], ...] | None = None
         self._payload: Mapping[str, Any] | None = None
 
@@ -1437,12 +1448,39 @@ class RemoteInstructionIO:
                 )
                 canonical = Path(str(chain[0][0]))
             except Exception:  # noqa: BLE001 - any ping failure is closed
-                return Path(str(descriptor.root)), None
+                self._descriptor_root = Path(str(descriptor.root))
+                return self._descriptor_root, None
             self._root = canonical
             self._ancestors = ancestors
+            # The descriptor's own spelling (e.g. a server-side symlinked
+            # locator the ping resolved past): targets produced by the
+            # provider's lexical path mapping live in THIS space, and the
+            # worker resolves every arg against the pinned root anyway,
+            # so both spellings map to the same root-relative suffix.
+            self._descriptor_root = Path(str(descriptor.root))
         return self._root, self._ancestors
 
     # -- relative-path helpers ----------------------------------------------
+
+    def remap_target(self, canonical: Path, lexical: Path) -> Path | None:
+        """Translate one target path into the canonical root's space.
+
+        The provider's lexical path mapping joins targets onto the
+        DESCRIPTOR's spelling; the worker's ping may have resolved past
+        a server-side symlink to a different canonical root. Both
+        spellings share the same root-relative suffix (the worker
+        resolves every arg against the pinned root), so a target under
+        the descriptor maps to ``canonical / suffix``. Anything else is
+        foreign: ``None`` (fail closed).
+        """
+        if lexical.is_relative_to(canonical):
+            return lexical
+        if self._descriptor_root is not None:
+            try:
+                return canonical / lexical.relative_to(self._descriptor_root)
+            except ValueError:
+                return None
+        return None
 
     def _relative(self, directory: Path) -> str:
         """Root-relative POSIX form of one opaque directory path."""

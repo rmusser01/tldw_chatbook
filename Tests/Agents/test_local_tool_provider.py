@@ -4789,17 +4789,31 @@ def test_remote_agent_authority_admission_fails_loud_without_executor(
         provider.admit_run_workspace_root("run-remote", _remote_authority(executor=None))
 
 
-def test_path_targets_preflight_refuses_remote_root_loudly(
+def test_path_targets_maps_remote_targets_lexically_no_laptop_disk(
     tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
 ):
+    """Task 19 (review Important 1): the Phase 3a fail-loudly boundary is
+    GONE — path_targets maps a RemoteRoot authority's targets LEXICALLY
+    (the executor request builder's normalizer, zero laptop disk), so
+    the instruction ledger receives real remote scopes and nested
+    AGENTS.md files activate before remote ops run."""
+    from pathlib import Path
+
     provider = make_provider(
         root=tmp_path, admitted_roots=(_remote_authority(),)
     )
 
-    with pytest.raises((TypeError, NotImplementedError)) as caught:
-        provider.path_targets("local:fs_read", {"path": "notes.txt"})
+    targets = provider.path_targets("local:fs_read", {"path": "notes.txt"})
 
-    assert "remote root reached laptop-disk path" in str(caught.value)
+    assert [target.kind for target in targets] == ["exact"]
+    assert targets[0].path == Path("/srv/www/notes.txt")
+
+    with pytest.raises(ValueError):
+        provider.path_targets("local:fs_read", {"path": "../escape.txt"})
+    with pytest.raises(ValueError):
+        provider.path_targets(
+            "local:fs_write", {"path": ".git/config", "content": "x"}
+        )
 
 
 def test_remote_root_dispatch_completes_with_lexical_redaction(

@@ -998,3 +998,117 @@ def test_remote_instruction_io_for_selection_builds_reader_or_degrades() -> None
         )
         is None
     )
+
+
+def test_dispatch_path_unreachable_remote_warns_content_free_and_proceeds(
+    monkeypatch,
+) -> None:
+    """Review Important 2: the dispatch-path guard (send path and preview
+    share ``_resolve_remote_project_instruction_startup``) never lets an
+    unreachable remote break the send — content-free warning, ``None``
+    candidate, no exception text escapes."""
+    import asyncio
+
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        ProjectInstructionResolver,
+        RemoteInstructionIO,
+    )
+    from tldw_chatbook.Chat import console_chat_controller as controller
+
+    selection = controller._validate_project_instruction_binding(
+        _session_for_remote(),
+        _ssh_binding(),
+        status_cache=_ready_cache_with_identity(),
+    )
+    assert selection is not None
+    guard = object.__new__(controller.ConsoleChatController)
+
+    events: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: events.append(message), level="WARNING"
+    )
+    try:
+        # (a) Reader construction raises (unreachable remote): the guard
+        # catches, warns content-free, returns None.
+        def _raising_reader(*_args, **_kwargs):
+            raise RuntimeError("secret detail ssh://devbox/srv/www key")
+
+        result = asyncio.run(
+            guard._resolve_remote_project_instruction_startup(
+                selection,
+                registry=None,
+                startup_max_bytes=32768,
+                reader_for=_raising_reader,
+            )
+        )
+        assert result is None
+
+        # (c) Reader that yields a source-closed candidate (typed remote
+        # failures): the send PROCEEDS with the content-free candidate.
+        result = asyncio.run(
+            guard._resolve_remote_project_instruction_startup(
+                selection,
+                registry=None,
+                startup_max_bytes=32768,
+                reader_for=lambda *args, **kwargs: RemoteInstructionIO(
+                    _StubRefusingExecutor()
+                ),
+            )
+        )
+        assert result is not None
+        assert result.source is None
+        assert [
+            (item.relative_path, item.code) for item in result.outcomes
+        ] == [(".", "resolution_failed")]
+
+        # (b) Reader built, resolution itself raises: same posture, and
+        # the warning carries NO exception text.
+        class _ExplodingResolver:
+            def __init__(self, remote_io=None):
+                pass
+
+            def resolve_startup(self, **_kwargs):
+                raise RuntimeError("secret body /srv/www/AGENTS.md")
+
+        monkeypatch.setattr(
+            controller, "ProjectInstructionResolver", _ExplodingResolver
+        )
+        result = asyncio.run(
+            guard._resolve_remote_project_instruction_startup(
+                selection,
+                registry=None,
+                startup_max_bytes=32768,
+                reader_for=lambda *args, **kwargs: RemoteInstructionIO(
+                    _StubRefusingExecutor()
+                ),
+            )
+        )
+        assert result is None
+    finally:
+        loguru_logger.remove(sink_id)
+
+    warnings_text = "\n".join(events)
+    assert "secret detail" not in warnings_text
+    assert "secret body" not in warnings_text
+    assert "srv/www/AGENTS.md" not in warnings_text
+    assert "could not be read" in warnings_text or "unavailable" in warnings_text
+
+
+class _StubRefusingExecutor:
+    """Unreachable remote: typed errors on every executor call."""
+
+    def ping(self):
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceExecutionError,
+        )
+
+        raise RemoteWorkspaceExecutionError("transport_failure", admitted=False)
+
+    def execute(self, tool, args, *, intent):
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceExecutionError,
+        )
+
+        raise RemoteWorkspaceExecutionError("transport_failure", admitted=False)

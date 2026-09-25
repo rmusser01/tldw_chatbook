@@ -21681,6 +21681,67 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 - personalization never blocks preview
             return _empty_profile_context_snapshot()
 
+    async def _resolve_remote_project_instruction_startup(
+        self,
+        project_selection: ProjectInstructionBindingSelection,
+        *,
+        registry: Any,
+        startup_max_bytes: int,
+        reader_for: Callable[..., Any] | None = None,
+    ) -> "StartupInstructionCandidate | None":
+        """Resolve remote startup instructions through the executor reader.
+
+        Task 19 dispatch-path guard (send path AND Next-Send preview).
+        ADR-069 prep-failure posture: EVERY failure mode below is
+        content-free and returns ``None`` — no exception text reaches the
+        warning (remote failures carry no paths or bodies), and the send
+        itself never breaks: the caller proceeds without startup
+        instructions.
+
+        Args:
+            project_selection: The selected REMOTE binding (root is a
+                ``RemoteRoot``).
+            registry: Workspace registry for the exclusions provider.
+            startup_max_bytes: Coerced startup byte budget.
+            reader_for: Injectable reader factory (test seam); the real
+                one builds the ssh-transport executor-backed reader.
+        """
+        resolve_reader = reader_for or _remote_instruction_io_for_selection
+        try:
+            remote_io = resolve_reader(
+                project_selection,
+                registry=registry,
+                status_cache=_app_remote_binding_status_cache(),
+            )
+            if remote_io is None:
+                logger.warning(
+                    "Remote working-folder instructions unavailable "
+                    "this dispatch; proceeding without them (binding_id={})",
+                    project_selection.binding.binding_id,
+                )
+                return None
+            return await asyncio.to_thread(
+                ProjectInstructionResolver(remote_io=remote_io).resolve_startup,
+                binding_id=project_selection.binding.binding_id,
+                binding_root=project_selection.root,
+                locator_fingerprint=project_selection.locator_fingerprint,
+                max_bytes=startup_max_bytes,
+                dispatch_started_wall_ns=time.time_ns(),
+                excluded_dirs=_project_instruction_excluded_dirs(
+                    project_selection
+                ),
+            )
+        except Exception:  # noqa: BLE001 - prep failure proceeds
+            # Content-free by design: no exception text is attached (a
+            # raising reader/executor is exactly the unreachable-remote
+            # case whose details must not reach the log surface).
+            logger.warning(
+                "Remote working-folder instructions could not be read; "
+                "proceeding without them (binding_id={})",
+                project_selection.binding.binding_id,
+            )
+            return None
+
     async def _build_project_instruction_preview_for_session(
         self,
         session_id: str,
@@ -21739,37 +21800,43 @@ class ConsoleChatController:
                 return None
             if is_remote(selection.root):
                 # Task 19: the preview rereads remote guidance through the
-                # same executor-routed reader the dispatch will use; any
-                # failure stays content-free and preview-less (the outer
-                # except below) per ADR-069's prep-failure posture.
-                remote_io = _remote_instruction_io_for_selection(
+                # same executor-routed reader (and the same content-free
+                # prep-failure guard) the live dispatch will use.
+                candidate = await self._resolve_remote_project_instruction_startup(
                     selection,
                     registry=registry,
-                    status_cache=_app_remote_binding_status_cache(),
-                )
-                if remote_io is None:
-                    return None
-                resolver = ProjectInstructionResolver(remote_io=remote_io)
-            else:
-                resolver = ProjectInstructionResolver()
-            candidate = await asyncio.to_thread(
-                resolver.resolve_startup,
-                binding_id=selection.binding.binding_id,
-                binding_root=selection.root,
-                locator_fingerprint=selection.locator_fingerprint,
-                max_bytes=coerce_int_setting(
-                    get_cli_setting(
-                        "console",
-                        "project_instructions_startup_max_bytes",
+                    startup_max_bytes=coerce_int_setting(
+                        get_cli_setting(
+                            "console",
+                            "project_instructions_startup_max_bytes",
+                            DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        ),
                         DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                     ),
-                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                ),
-                dispatch_started_wall_ns=time.time_ns(),
-                excluded_dirs=_project_instruction_excluded_dirs(selection),
-            )
+                )
+                if candidate is None:
+                    return None
+            else:
+                candidate = await asyncio.to_thread(
+                    ProjectInstructionResolver().resolve_startup,
+                    binding_id=selection.binding.binding_id,
+                    binding_root=selection.root,
+                    locator_fingerprint=selection.locator_fingerprint,
+                    max_bytes=coerce_int_setting(
+                        get_cli_setting(
+                            "console",
+                            "project_instructions_startup_max_bytes",
+                            DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        ),
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    dispatch_started_wall_ns=time.time_ns(),
+                    excluded_dirs=_project_instruction_excluded_dirs(selection),
+                )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
         bridge = self._agent_bridge
@@ -27735,52 +27802,21 @@ class ConsoleChatController:
                     # executor (reader strategy). ADR-069 prep-failure
                     # posture: any reader failure warns content-free and
                     # the dispatch proceeds without startup instructions.
-                    remote_io = _remote_instruction_io_for_selection(
-                        project_selection,
-                        registry=registry,
-                        status_cache=_app_remote_binding_status_cache(),
-                    )
-                    if remote_io is None:
-                        logger.warning(
-                            "Remote working-folder instructions unavailable "
-                            "this dispatch; proceeding without them "
-                            "(binding_id={})",
-                            project_selection.binding.binding_id,
-                        )
-                        startup_candidate = None
-                    else:
-                        try:
-                            startup_candidate = await asyncio.to_thread(
-                                ProjectInstructionResolver(
-                                    remote_io=remote_io
-                                ).resolve_startup,
-                                binding_id=project_selection.binding.binding_id,
-                                binding_root=project_selection.root,
-                                locator_fingerprint=(
-                                    project_selection.locator_fingerprint
-                                ),
-                                max_bytes=coerce_int_setting(
-                                    turn_context.tool_configuration.get(
-                                        "project_instructions_startup_max_bytes",
-                                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                                    ),
+                    startup_candidate = (
+                        await self._resolve_remote_project_instruction_startup(
+                            project_selection,
+                            registry=registry,
+                            startup_max_bytes=coerce_int_setting(
+                                turn_context.tool_configuration.get(
+                                    "project_instructions_startup_max_bytes",
                                     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                                 ),
-                                dispatch_started_wall_ns=time.time_ns(),
-                                excluded_dirs=_project_instruction_excluded_dirs(
-                                    project_selection
-                                ),
-                            )
-                        except Exception:  # noqa: BLE001 - prep failure proceeds
-                            logger.warning(
-                                "Remote working-folder instructions could not "
-                                "be read; proceeding without them "
-                                "(binding_id={})",
-                                project_selection.binding.binding_id,
-                            )
-                            startup_candidate = None
+                                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                            ),
+                        )
+                    )
                 else:
                     startup_candidate = ProjectInstructionResolver().resolve_startup(
                         binding_id=project_selection.binding.binding_id,

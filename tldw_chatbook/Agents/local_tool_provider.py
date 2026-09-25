@@ -1280,14 +1280,20 @@ class LocalToolProvider:
             if authority is not None
             else self._authority_scope
         )
-        # Phase 3a type boundary: the preflight below resolves targets on
-        # the LAPTOP (Path.resolve + resolve_workspace_path). A RemoteRoot
-        # must fail loudly here -- Task 17 migrates target resolution over
-        # the remote executor. Plain paths pass through by identity.
-        root = local_root_path(
-            authority.root if authority is not None else self._root,
-            site="path-target preflight resolution",
-        )
+        authority_root = authority.root if authority is not None else self._root
+        if isinstance(authority_root, RemoteRoot):
+            # Task 19 (review Important 1): a RemoteRoot authority maps
+            # its targets LEXICALLY (no laptop disk) so the instruction
+            # ledger's prepare() receives real remote scopes and nested
+            # AGENTS.md files activate BEFORE the remote op runs. The
+            # scratch-authority lock below guards laptop resolution only.
+            return self._remote_path_targets(
+                tool_id, clean_args, authority_root, authority=authority
+            )
+        # Phase 3a boundary (local roots only now): the preflight below
+        # resolves targets on the LAPTOP (Path.resolve +
+        # resolve_workspace_path). Plain paths pass through by identity.
+        root = local_root_path(authority_root, site="path-target preflight resolution")
         if scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
             with scope():
                 return self._path_targets_without_authority(
@@ -1296,6 +1302,135 @@ class LocalToolProvider:
         return self._path_targets_without_authority(
             tool_id, clean_args, root=root, authority=authority
         )
+
+    def _remote_path_targets(
+        self,
+        tool_id: str,
+        args: Mapping[str, Any],
+        root: RemoteRoot,
+        *,
+        authority: "RunAdmittedWorkspaceRoot | None" = None,
+    ) -> tuple[ToolPathTarget, ...]:
+        """Map one REMOTE tool call's path targets, zero laptop disk.
+
+        Target paths are the remote root joined with the SAME lexical
+        normalizer the executor's remote request builder and the CAS
+        ledger keys use (imported from its single definition site), so
+        ledger scopes can never drift from worker-admitted paths.
+        Excluded/sensitive targets are refused here exactly like the
+        local preflight -- an excluded target must never render an
+        approval card -- and the worker's own denylist re-enforces at
+        execution time (Task 17's split enforcement).
+
+        Raises like the local preflight (bad paths, excluded targets):
+        the ledger's provider boundary catches and warns; the op itself
+        still refuses worker-side.
+        """
+        name = tool_id.split(":", 1)[-1]
+        if name not in self._specs or name not in _PATH_AUTHORITY_LOCAL_NAMES:
+            return ()
+        if name.startswith("git_"):
+            # Parity matrix (Task 18): git_* on a remote alias refuses at
+            # CALL time with the typed unsupported error -- a call that
+            # cannot run activates no scopes.
+            return ()
+        from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+        from tldw_chatbook.Tools.patch_tool_impls import (
+            FilesystemPatchError,
+            parse_patch_targets,
+        )
+        from tldw_chatbook.Tools.workspace_tool_executor import (
+            _normalize_remote_relative_path,
+        )
+
+        base = Path(str(root.root))
+        exclusions: tuple[Any, ...] = ()
+        if authority is not None and authority.exclusions_provider is not None:
+            try:
+                exclusions = tuple(authority.exclusions_provider())
+            except Exception:  # noqa: BLE001 - preflight degrades to the
+                # last-known set; the WORKER still enforces the live set
+                # on every call (fail closed where it matters).
+                exclusions = ()
+
+        def refused(relative: str, *, is_directory: bool) -> bool:
+            """Lexical SensitiveExclusion match, mirroring the worker's."""
+            parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
+            if not parts:
+                return False
+            for entry in exclusions:
+                kind = getattr(entry, "kind", None)
+                value_parts = tuple(
+                    part.casefold()
+                    for part in PurePosixPath(str(getattr(entry, "value", ""))).parts
+                )
+                if kind == "subtree" and parts[: len(value_parts)] == value_parts:
+                    return True
+                if kind == "file" and parts == value_parts:
+                    return True
+                if (
+                    kind == "direct_children"
+                    and not is_directory
+                    and parts[:-1] == value_parts
+                ):
+                    return True
+                if (
+                    kind == "name"
+                    and not is_directory
+                    and len(value_parts) == 1
+                    and parts[-1] == value_parts[0]
+                ):
+                    return True
+            return False
+
+        def refuse(relative: str) -> LocalToolError:
+            return LocalToolError(
+                f"Refused: '{relative}' is a protected path and cannot be targeted"
+            )
+
+        def exact(relative: str) -> tuple[ToolPathTarget, ...]:
+            if refused(relative, is_directory=False):
+                raise refuse(relative)
+            return (ToolPathTarget(path=base / relative, kind="exact"),)
+
+        raw_args = args if type(args) is dict else {}
+        if name == "fs_read":
+            raw_path = raw_args.get("path")
+            if type(raw_path) is not str:
+                raise ValueError("invalid read path")
+            return exact(_normalize_remote_relative_path(raw_path))
+        if name in {"fs_write", "fs_edit"}:
+            raw_path = raw_args.get("path")
+            if type(raw_path) is not str:
+                raise ValueError("invalid mutation path")
+            return exact(_normalize_remote_relative_path(raw_path, intent="write"))
+        if name == "fs_list":
+            raw_path = raw_args.get("path")
+            if type(raw_path) is not str:
+                raise ValueError("invalid list path")
+            relative = _normalize_remote_relative_path(raw_path)
+            if refused(relative, is_directory=True):
+                raise refuse(relative)
+            return (ToolPathTarget(path=base / relative, kind="directory"),)
+        if name in {"fs_glob", "fs_grep"}:
+            # Lexical scope only: pattern matching happens worker-side.
+            return (ToolPathTarget(path=base, kind="directory"),)
+        raw_diff = raw_args.get("diff")
+        if type(raw_diff) is not str:
+            raise ValueError("invalid patch")
+        targets: list[ToolPathTarget] = []
+        try:
+            patch_files = parse_patch_targets(raw_diff)
+        except FilesystemPatchError as exc:
+            raise LocalToolError(f"fs_patch failed [{exc.reason_code}]") from exc
+        for patch_file in patch_files:
+            relative = _normalize_remote_relative_path(
+                patch_file.new_path or "", intent="write"
+            )
+            if refused(relative, is_directory=False):
+                raise refuse(relative)
+            targets.append(ToolPathTarget(path=base / relative, kind="exact"))
+        return tuple(targets)
 
     def _path_targets_without_authority(
         self,
