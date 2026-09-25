@@ -28,6 +28,7 @@ from ..css.Themes.theme_catalog import (
     display_name,
     revert_theme,
     use_theme,
+    use_theme_toast,
     user_theme_names,
 )
 from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
@@ -395,10 +396,9 @@ class ThemePicker(Vertical):
         self._sync_revert_chip()
         if not persist:
             self.app.notify(f"Trying {display_name(theme_id)} for this session", severity="information")
-        elif change.persisted:
-            self.app.notify(f"{display_name(theme_id)} is now your theme (was: {display_name(change.previous_active)})", severity="information")
         else:
-            self.app.notify(f"{display_name(theme_id)} applied; the launch default was not saved", severity="warning")
+            message, severity = use_theme_toast(theme_id, change)
+            self.app.notify(message, severity=severity)
         self.refresh_catalog(highlight=theme_id)
 
 
