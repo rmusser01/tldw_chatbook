@@ -31,3 +31,54 @@ def test_load_user_themes_reads_good_files_and_skips_bad_ones(tmp_path):
 
 def test_load_user_themes_missing_dir_returns_empty(tmp_path):
     assert load_user_themes(tmp_path / "nope") == []
+
+
+_MALFORMED_VARIABLES_THEME = """[theme]
+name = "hostile"
+dark = true
+[colors]
+primary = "#9966FF"
+[variables]
+text-muted = "red; } Screen { display: none"
+footer-key-foreground = 12
+"Bad_Name" = "#FFFFFF"
+input-selection-background = "#81A1C1 35%"
+scrollbar-color = "auto 50%"
+block-cursor-text-style = "bold underline"
+footer-background = "#101010"
+"""
+
+
+def test_load_user_themes_drops_malformed_variables(tmp_path):
+    """Review finding #1: [variables] reach Textual's CSS tokenizer verbatim,
+    so a non-colour value must be dropped at load, keeping the good ones."""
+    _write(tmp_path, "hostile", _MALFORMED_VARIABLES_THEME)
+
+    [theme] = load_user_themes(tmp_path)
+
+    assert "footer-key-foreground" not in theme.variables
+    assert "Bad_Name" not in theme.variables
+    assert theme.variables.get("text-muted") != "red; } Screen { display: none"
+    assert theme.variables["input-selection-background"] == "#81A1C1 35%"
+    assert theme.variables["scrollbar-color"] == "auto 50%"
+    assert theme.variables["block-cursor-text-style"] == "bold underline"
+    assert theme.variables["footer-background"] == "#101010"
+
+
+async def test_malformed_user_theme_survives_css_refresh(tmp_path):
+    """Selecting the loaded theme must not kill the app on the next refresh
+    (the tokenizer error fires after ``app.theme = ...`` returns)."""
+    from textual.app import App
+
+    _write(tmp_path, "hostile", _MALFORMED_VARIABLES_THEME)
+    [theme] = load_user_themes(tmp_path)
+
+    app = App()
+    async with app.run_test() as pilot:
+        app.register_theme(theme)
+        app.theme = "hostile"
+        await pilot.pause()
+        app.refresh_css()
+        await pilot.pause()
+        assert app.theme == "hostile"
+    assert app.return_code in (None, 0)

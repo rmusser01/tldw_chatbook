@@ -43,4 +43,8 @@ Appearance: a registered theme gets "(saved)" only when `<themes dir>/<name>.tom
 Tests: `test_settings_appearance_theme_options_include_registered_user_themes` (gate-free; monkeypatches `_theme_save_target`), `test_settings_theme_editor_tree_lists_every_textual_builtin`, `test_settings_theme_editor_empty_your_themes_says_none_yet`.
 
 Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/Widgets/settings_theme_editor.py`, both test files, `Docs/User_Guide/settings.md`.
+
+Review follow-ups (2026-09-24, fix/theme-ux-wave):
+4. MEDIUM -- deleting a user file that shadowed a Textual built-in (load nord -> edit -> Save -> Delete) unregistered Textual's nord until restart. `_delete_user_theme` now re-registers `ALL_THEMES` match or `BUILTIN_THEMES.get(name)`. Save's shadowing rule is unchanged (pinned decision). Test: `test_settings_theme_editor_delete_user_file_shadowing_builtin_restores_it`.
+5. LOW -- "(none yet)"/"unavailable" leaves stayed after the first save, and deleting the last theme left the node empty. `_sync_user_placeholder()` runs after save and delete. Test: `test_settings_theme_editor_your_themes_placeholder_tracks_save_and_delete`.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

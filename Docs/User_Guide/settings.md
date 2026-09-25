@@ -494,7 +494,11 @@ saved theme after confirmation; **Export** writes it to your Downloads folder
 and asks before replacing an earlier export. A theme cloned from a shipped one
 keeps that theme's extra readability colours (muted text, footer keys, input
 selection) through Apply, Save and Export — they are stored in a `[variables]`
-table in the TOML. Leaving Theme with unsaved edits asks **Stay**, **Discard**,
+table in the TOML. They are tuned for that palette, so once you change any base
+colour or the dark flag they are dropped and derived from your colours instead.
+A `[variables]` entry that is not a colour (or `auto NN%`, or a text style) is
+skipped with a warning when the theme loads. Deleting a saved theme that
+reuses a shipped or built-in name (say `nord`) brings the original back. Leaving Theme with unsaved edits asks **Stay**, **Discard**,
 or **Save** (Escape stays); Save that needs an overwrite confirmation or a
 valid name keeps you on Theme. While a backup or recovery holds the theme
 files, **Your themes** reads "Theme files unavailable while backup/recovery is
