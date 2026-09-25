@@ -66,11 +66,12 @@
 
 **Interfaces:**
 - Produces:
-  - `ThemeEntry` (frozen dataclass): `id: str`, `display_name: str`, `origin: Literal["yours","shipped","textual"]`, `dark: bool`, `strip: tuple[str, ...]` (7 uppercase `#RRGGBB`), `is_active: bool`, `is_launch_default: bool`, `overrides: Literal["shipped","textual"] | None`.
+  - `ThemeEntry` (frozen dataclass): `id: str`, `display_name: str`, `origin: Literal["yours","shipped","textual"]`, `dark: bool`, `colours: tuple[tuple[str, str], ...]` (the 10 `BASE_KEYS` resolved to uppercase `#RRGGBB`, as pairs so the dataclass stays hashable), `is_active: bool`, `is_launch_default: bool`, `overrides: Literal["shipped","textual"] | None`. Property `strip -> tuple[str, ...]` (the 7 `STRIP_KEYS` colours, in order).
   - `build_catalog(available: Mapping[str, Theme], user_names: Collection[str], active: str, launch_default: str) -> list[ThemeEntry]`. Ordered yours → shipped → textual; within each group, by `display_name.casefold()`.
   - `display_name(theme_id: str) -> str`.
   - `is_catalog_theme(name: str) -> bool`.
   - `STRIP_KEYS = ("background", "surface", "primary", "secondary", "accent", "success", "error")`.
+  - `BASE_KEYS`: the editor's 10 base colours (`primary`, `secondary`, `accent`, `background`, `surface`, `panel`, `foreground`, `success`, `warning`, `error`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -122,6 +123,15 @@ def test_markers():
     assert by_id["nord"].is_active and not by_id["nord"].is_launch_default
     assert by_id["apricot"].is_launch_default and not by_id["apricot"].is_active
     assert sum(e.is_active for e in entries) == 1
+
+
+def test_custom_prefixed_active_marks_its_base_theme():
+    mine = Theme(name="warm_paper", primary="#BD6B32", dark=False)
+    scratch = Theme(name="custom_warm_paper", primary="#123456", dark=False)
+    entries = build_catalog(
+        _available(warm_paper=mine, custom_warm_paper=scratch), {"warm_paper"}, "custom_warm_paper", "x"
+    )
+    assert [e.id for e in entries if e.is_active] == ["warm_paper"]
 
 
 def test_launch_default_not_registered_marks_nothing():
@@ -191,6 +201,10 @@ from .themes import ALL_THEMES
 
 Origin = Literal["yours", "shipped", "textual"]
 STRIP_KEYS = ("background", "surface", "primary", "secondary", "accent", "success", "error")
+BASE_KEYS = (
+    "primary", "secondary", "accent", "background", "surface",
+    "panel", "foreground", "success", "warning", "error",
+)
 _ORIGIN_ORDER: dict[str, int] = {"yours": 0, "shipped": 1, "textual": 2}
 _SHIPPED_NAMES = frozenset(t.name for t in ALL_THEMES if getattr(t, "name", None))
 
@@ -201,10 +215,15 @@ class ThemeEntry:
     display_name: str
     origin: Origin
     dark: bool
-    strip: tuple[str, ...]
+    colours: tuple[tuple[str, str], ...]
     is_active: bool
     is_launch_default: bool
     overrides: Literal["shipped", "textual"] | None = None
+
+    @property
+    def strip(self) -> tuple[str, ...]:
+        palette = dict(self.colours)
+        return tuple(palette[key] for key in STRIP_KEYS)
 
 
 def display_name(theme_id: str) -> str:
@@ -216,21 +235,21 @@ def is_catalog_theme(name: str) -> bool:
     return name in _SHIPPED_NAMES or name in BUILTIN_THEMES
 
 
-def _strip(theme: Theme) -> tuple[str, ...]:
+def _colours(theme: Theme) -> tuple[tuple[str, str], ...]:
     # Same resolution as the editor (TASK-31255): explicit colours byte-exact,
     # unset ones from the generated colour system.
     try:
         generated = theme.to_color_system().generate()
     except Exception:  # noqa: BLE001 - a malformed theme must not break the list
         generated = {}
-    colours: list[str] = []
-    for key in STRIP_KEYS:
+    pairs: list[tuple[str, str]] = []
+    for key in BASE_KEYS:
         raw = getattr(theme, key, None) or generated.get(key)
         try:
-            colours.append(Color.parse(str(raw)).hex.upper() if raw else "#808080")
+            pairs.append((key, Color.parse(str(raw)).hex.upper() if raw else "#808080"))
         except Exception:  # noqa: BLE001
-            colours.append("#808080")
-    return tuple(colours)
+            pairs.append((key, "#808080"))
+    return tuple(pairs)
 
 
 def _origin(name: str, user_names: Collection[str]) -> tuple[Origin, Literal["shipped", "textual"] | None]:
@@ -267,8 +286,9 @@ def build_catalog(
             ),
             origin=origin,
             dark=bool(getattr(theme, "dark", True)),
-            strip=_strip(theme),
-            is_active=name == active,
+            colours=_colours(theme),
+            # Editor Apply runs `custom_<name>`; that is still <name> in use.
+            is_active=active in (name, f"custom_{name}"),
             is_launch_default=name == launch_default,
             overrides=overrides,
         )
@@ -305,17 +325,17 @@ git commit -m "feat(theme): catalog of registered themes with origins and marker
 - Produces:
   - `ThemeChange` (frozen dataclass): `previous_active: str`, `previous_launch_default: str`, `persisted: bool`. Method `merge(later: ThemeChange) -> ThemeChange` keeps self's previous values and ORs `persisted`.
   - `current_launch_default() -> str`.
-  - `use_theme(app, name: str, *, persist: bool) -> ThemeChange`. It raises `InvalidThemeError` (from `textual.theme`) for an unknown name *before* writing anything.
+  - `use_theme(app, name: str, *, persist: bool) -> ThemeChange`. It raises `InvalidThemeError` for an unknown name *before* writing anything. In Textual 8.2.8 that class is `textual.app.InvalidThemeError`; `textual.theme` has no such name (verified).
   - `revert_theme(app, change: ThemeChange) -> None`.
   - `user_theme_names(directory: Path) -> set[str]`.
 
-- [ ] **Step 1: Write the failing tests** (append to `Tests/Utils/test_theme_catalog.py`)
+- [ ] **Step 1: Write the failing tests.** Append them to `Tests/Utils/test_theme_catalog.py`, with the new imports moved to the top of the file.
 
 ```python
 import pytest
 from types import SimpleNamespace
 
-from textual.theme import InvalidThemeError
+from textual.app import InvalidThemeError
 
 from tldw_chatbook.css.Themes import theme_catalog as tc
 
@@ -459,7 +479,7 @@ def _persist_launch_default(app: Any, name: str) -> bool:
 def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
     """Switch the app theme; with ``persist`` also make it the launch default.
 
-    Raises textual.theme.InvalidThemeError (before any write) for an
+    Raises textual.app.InvalidThemeError (before any write) for an
     unregistered name.
     """
     previous_active = str(app.theme)
@@ -672,7 +692,7 @@ Also add `from .theme_preview import ThemePreview` to the editor's imports.
     - Buttons: `#settings-theme-use`, `#settings-theme-try`, `#settings-theme-clone`, `#settings-theme-new`, and `#settings-theme-revert` (hidden until there is something to revert)
     - `#settings-theme-empty` (a `Static`, shown when the filter matches nothing)
 
-- [ ] **Step 1: Write the failing tests** (append to `Tests/UI/test_settings_theme_picker.py`)
+- [ ] **Step 1: Write the failing tests.** Append the tests to `Tests/UI/test_settings_theme_picker.py`, and move the new import lines to the top of the file, next to Task 3's imports (ruff E402).
 
 ```python
 from types import SimpleNamespace
@@ -699,6 +719,10 @@ def config_writes(monkeypatch, tmp_path):
     monkeypatch.setattr(tc, "current_launch_default", lambda: state["launch"])
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.settings_theme_picker.get_user_themes_dir", lambda: tmp_path
+    )
+    # The picker imported the name, so patch its copy too.
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.settings_theme_picker.current_launch_default", lambda: state["launch"]
     )
     return calls
 
@@ -887,7 +911,6 @@ from textual.widgets.option_list import Option
 
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
-    STRIP_KEYS,
     ThemeChange,
     ThemeEntry,
     build_catalog,
@@ -1034,11 +1057,7 @@ class ThemePicker(Vertical):
             return
         tone = "dark" if entry.dark else "light"
         title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
-        self.query_one(ThemePreview).paint(dict(zip(STRIP_KEYS, entry.strip)) | {
-            "panel": entry.strip[1],
-            "foreground": "#FFFFFF" if entry.dark else "#1F1F1F",
-            "warning": entry.strip[5],
-        })
+        self.query_one(ThemePreview).paint(dict(entry.colours))
 
     def focus_list(self) -> None:
         lst = self.query_one("#settings-theme-list", OptionList)
@@ -1137,11 +1156,12 @@ class ThemePicker(Vertical):
 
 Notes for the implementer:
 - `Option(prompt, id=None, disabled=True)` is the Textual 8 signature. Group headers have no id, so `OptionHighlighted` never fires for them (they are disabled).
-- The `foreground` value in `_show` is an approximation, because a `ThemeEntry` does not carry it. If `test_highlight_repaints_preview_not_app` or the contrast test (Task 7) shows unreadable preview text, add `foreground` to `STRIP_KEYS` as an 8th colour. Update `strip`'s length and the Task 1 test (`== 8`) to match, and drop the approximation. Record the change in the Implementation Notes.
 - `query_ancestor` exists on `DOMNode` in Textual 8.2.8 (verified).
 - `theme_changed_signal.subscribe(self, …)` is released automatically when the widget unmounts; Textual signals hold weak references to their subscribers.
 
-- [ ] **Step 4: Run** `Tests/UI/test_settings_theme_picker.py`. Expected: all pass.
+- [ ] **Step 4: Run** `Tests/UI/test_settings_theme_picker.py`. Expected: all pass. Then run `Tests/Architecture/test_no_blocking_io_on_message_pump.py`. That guard walks the call graph from message handlers and flags calls such as `.glob(`.
+  - The picker's `on_mount` → `refresh_catalog` → `user_theme_names` path globs the themes directory. The glob lives in `css/Themes/`, outside the guard's scanned `UI`/`Widgets` directories, so it is expected to pass.
+  - If the guard flags it anyway, do **not** add a baseline entry blindly. Read the file's header on scope. Measure the glob on a directory of 50 files (expect well under 1 ms, the "small local filesystem operation" class the header exempts). Follow the file's documented procedure for that class, and cite the measurement in the Notes.
 
 - [ ] **Step 5: Commit** with the message `feat(theme): ThemePicker — filter, colour strips, preview card, Use/Try/Revert, live markers (TASK-32948)`.
 
@@ -1384,6 +1404,9 @@ async def test_appearance_shows_read_only_theme_row_and_opens_picker(request):
         assert not host.screen.query("#settings-appearance-theme")
         summary = str(host.screen.query_one("#settings-appearance-theme-summary").render())
         assert "launch default" in summary and "active" in summary
+        host.theme = "nord"  # e.g. from the palette, while Appearance is open
+        await pilot.pause(0.2)
+        assert "active: Nord" in str(host.screen.query_one("#settings-appearance-theme-summary").render())
         await pilot.click("#settings-appearance-open-theme")
         await pilot.pause(0.3)
         assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
@@ -1450,6 +1473,7 @@ Then add these methods:
 
 Wire it so the summary refreshes on theme changes:
 - In `_sync_appearance_widgets`, replace the Select sync block with `self._set_static_text("#settings-appearance-theme-summary", self._appearance_theme_summary())`. `_set_static_text` already exists; confirm with grep.
+- In `SettingsScreen.on_mount`, subscribe once: `self.app.theme_changed_signal.subscribe(self, lambda _theme: self._set_static_text("#settings-appearance-theme-summary", self._appearance_theme_summary()))`. `_set_static_text` must tolerate a missing widget; confirm it swallows `QueryError`, or wrap the call. This keeps the row live when the palette changes the theme while Appearance is open.
 - In `handle_theme_launch_default_changed`, keep only `event.stop()` and `self._refresh_category_button_label(SettingsCategoryId.APPEARANCE)`. `use_theme` now owns the in-memory config update; the palette and the picker both go through it.
 
 - [ ] **Step 4: Remove `default_theme` from the Appearance draft paths.**
@@ -1572,7 +1596,7 @@ At compact width the preview should shrink to its two rows. `ThemePreview(compac
 
 Use the CSS approach, and remove the `compact` parameter from `ThemePreview` and its Task 3 test (YAGNI). Note the removal in the Implementation Notes.
 
-- [ ] **Step 4: Rebuild and run.** `./build_css.sh`, then the geometry test. Expected: PASS at both sizes and in both themes. If 80×24 still gives fewer than 5 list rows, first check the page with `pilot.app.save_screenshot()` and look for a leftover banner or header. Then reduce the list's `min-height` or the chip row, **not** the assertion.
+- [ ] **Step 4: Rebuild and run.** `./build_css.sh`, then the geometry test, then `Tests/UI/test_css_build_integrity.py`. That test pins the theme module's selectors (`#settings-theme-tree`, `.settings-theme-preview`); both survive PR 1. If it pins a selector list, add the new picker selectors there too. Expected: PASS at both sizes and in both themes. If 80×24 still gives fewer than 5 list rows, first check the page with `pilot.app.save_screenshot()` and look for a leftover banner or header. Then reduce the list's `min-height` or the chip row, **not** the assertion.
 
 - [ ] **Step 5: Extend the contrast test.** In `Tests/UI/test_settings_theme_card_contrast.py`, `_open_theme_card` must now return the picker. Add a case that measures `#settings-theme-use` (filled chip: label ≥ 4.5:1 against the card) and the bracket edges of `#settings-theme-try` (≥ 3:1 against the card), using the file's existing `_label_colors`/`_edges` helpers, for all 4 themes. The picker's buttons reuse the `theme-editor-action` class, so the TASK-32947 chip rules should already apply. If a case fails, fix the CSS, not the threshold.
 
