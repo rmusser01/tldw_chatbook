@@ -190,7 +190,7 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-model-profile-streaming",
     )
     appearance_field_ids = (
-        "settings-appearance-theme",
+        "settings-appearance-open-theme",
         "settings-appearance-palette-theme-limit",
         "settings-appearance-font-size",
         "settings-appearance-density",

@@ -4018,6 +4018,14 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_timer = self.set_interval(
             0.25, self._poll_subscription_readiness
         )
+        # TASK-32948: keep Appearance's read-only Theme row live when the
+        # palette or picker switches theme. Signal.subscribe APPENDS, so drop
+        # this screen's earlier subscription first (it is the only one this
+        # node holds) -- a repeat on_mount must not double-fire.
+        self.app.theme_changed_signal.unsubscribe(self)
+        self.app.theme_changed_signal.subscribe(
+            self, self._refresh_appearance_theme_summary
+        )
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         # task-15475: claim this visit's sync-rows refresh -- but only if one
@@ -5524,7 +5532,6 @@ class SettingsScreen(BaseAppScreen):
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.APPEARANCE,
                 owns_config_sections=(
-                    "general.default_theme",
                     "general.palette_theme_limit",
                     "web_server.font_size",
                     "appearance.density",
@@ -5541,7 +5548,7 @@ class SettingsScreen(BaseAppScreen):
                     "theme editing and deeper visual preview."
                 ),
                 recovery_copy=(
-                    "Preview applies runtime-safe values for this session only; Save persists "
+                    "Preview checks the draft without applying it; Save persists "
                     "defaults, Revert restores loaded values."
                 ),
             ),
@@ -9557,8 +9564,6 @@ class SettingsScreen(BaseAppScreen):
         if validation.valid:
             return None
         message = validation.message
-        if message.startswith("Theme"):
-            return "default_theme"
         if message.startswith("Palette theme limit"):
             return "palette_theme_limit"
         if message.startswith("Font size"):
@@ -9600,7 +9605,6 @@ class SettingsScreen(BaseAppScreen):
 
     def _appearance_field_selector(self, key: str) -> str | None:
         selectors = {
-            "default_theme": "#settings-appearance-theme",
             "palette_theme_limit": "#settings-appearance-palette-theme-limit",
             "font_size": "#settings-appearance-font-size",
             "density": "#settings-appearance-density",
@@ -9630,7 +9634,6 @@ class SettingsScreen(BaseAppScreen):
     def _update_appearance_validation_classes(self) -> None:
         invalid_key = self._appearance_invalid_field_key()
         for key in (
-            "default_theme",
             "palette_theme_limit",
             "font_size",
             "density",
@@ -9684,52 +9687,24 @@ class SettingsScreen(BaseAppScreen):
         self._update_appearance_validation_classes()
         self._update_draft_status_widgets(category)
 
-    def _appearance_theme_options(self) -> list[tuple[str, str]]:
-        options: list[tuple[str, str]] = [
-            ("Textual Dark", "textual-dark"),
-            ("Textual Light", "textual-light"),
-        ]
-        seen = {value for _label, value in options}
-        try:
-            from tldw_chatbook.css.Themes.themes import ALL_THEMES
-        except (ImportError, ModuleNotFoundError):
-            ALL_THEMES = ()
-        for theme in ALL_THEMES:
-            theme_name = str(getattr(theme, "name", "") or "").strip()
-            if not theme_name or theme_name in seen:
-                continue
-            seen.add(theme_name)
-            options.append(
-                (theme_name.replace("_", " ").replace("-", " ").title(), theme_name)
-            )
-        # TASK-31250: the user's saved themes are registered with the app at
-        # startup and after Save; offer them like the shipped catalog.
-        # task-32945: the registry also holds Textual's own themes, so
-        # "(saved)" is claimed only when a user theme file backs the name.
-        from textual.theme import BUILTIN_THEMES
+    def _appearance_theme_summary(self) -> str:
+        """Read-only Theme row: the launch default and the active theme."""
+        from ...css.Themes.theme_catalog import current_launch_default, display_name
 
-        themes_dir = _theme_save_target()
-        labels = {label for label, _value in options}
-        registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
-        for theme_name in registered:
-            # custom_<name> is Apply's process-only registration of an unsaved
-            # palette; it would not exist at the next launch (PR #2375 #8).
-            if theme_name in seen or theme_name.startswith("custom_"):
-                continue
-            seen.add(theme_name)
-            label = theme_name.replace("_", " ").replace("-", " ").title()
-            if (themes_dir / f"{theme_name}.toml").is_file():
-                label += " (saved)"
-            elif theme_name in BUILTIN_THEMES:
-                label += " (Textual)"
-            if label in labels:
-                label = f"{label} · {theme_name}"
-            labels.add(label)
-            options.append((label, theme_name))
-        current_theme = str(self._appearance_setting_values()["default_theme"])
-        if current_theme and current_theme not in seen:
-            options.append((f"Current: {current_theme}", current_theme))
-        return options
+        # The running app (as the picker's use_theme does), not app_instance:
+        # the two differ in harnesses, and the palette switches self.app.
+        launch = current_launch_default()
+        active = str(getattr(self.app, "theme", launch))
+        registered = getattr(self.app, "available_themes", {}) or {}
+        if launch not in registered:
+            return f"launch default missing: {launch} · active: {display_name(active)}"
+        return f"{display_name(launch)} (launch default) · active: {display_name(active)}"
+
+    def _refresh_appearance_theme_summary(self, _theme: object = None) -> None:
+        # No-op when Appearance is not mounted (_set_static_text swallows QueryError).
+        self._set_static_text(
+            "#settings-appearance-theme-summary", self._appearance_theme_summary()
+        )
 
     def _appearance_bool_label(self, key: str) -> str:
         """Label for a boolean Appearance toggle button, from staged state.
@@ -11633,18 +11608,6 @@ class SettingsScreen(BaseAppScreen):
             "#settings-privacy-skill-trust",
             f"Skill trust: {skill_trust_display(status)}",
         )
-
-    def _appearance_theme_summary(self) -> str:
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
-        if not isinstance(app_config, Mapping):
-            return "Theme: default"
-        for section_name in ("appearance", "ui", "theme"):
-            section = app_config.get(section_name, {})
-            if isinstance(section, Mapping):
-                theme = section.get("theme") or section.get("name")
-                if theme:
-                    return f"Theme: {theme} from [{section_name}]"
-        return "Theme: default"
 
     def _set_static_text(self, selector: str, text: str) -> None:
         try:
@@ -15974,12 +15937,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _appearance_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
         field_id = self._active_settings_field_id
-        if field_id == "settings-appearance-theme":
+        if field_id == "settings-appearance-open-theme":
             return (
                 ("Focused setting", "Theme"),
-                ("Purpose", "Sets the launch/default app theme."),
-                ("Saved as", "general.default_theme"),
-                ("Validation", "choose a known theme or keep the loaded custom theme"),
+                ("Purpose", "Opens Settings ▸ Theme, where themes are chosen."),
+                ("Saved as", "general.default_theme (set by Use in Theme)"),
+                ("Changes", "take effect from the picker, not from Appearance Save"),
             )
         if field_id == "settings-appearance-palette-theme-limit":
             return (
@@ -21355,15 +21318,18 @@ class SettingsScreen(BaseAppScreen):
                     "Open the Theme category for full theme editing and deeper visual preview.",
                     classes="settings-detail-row",
                 )
-                with Horizontal(classes="settings-input-row settings-select-row"):
+                with Horizontal(classes="settings-input-row"):
                     yield Static("Theme", classes="settings-input-label")
-                    yield Select(
-                        self._appearance_theme_options(),
-                        value=str(values["default_theme"]),
-                        id="settings-appearance-theme",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
+                    yield Static(
+                        self._appearance_theme_summary(),
+                        id="settings-appearance-theme-summary",
+                        classes="settings-detail-row",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Open Theme",
+                        id="settings-appearance-open-theme",
+                        classes="theme-editor-action",
                     )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
@@ -21562,7 +21528,7 @@ class SettingsScreen(BaseAppScreen):
                     "Current summary", self._appearance_summary_text()
                 )
                 yield self._detail_row(
-                    "Runtime preview", "applies safe values for this session only"
+                    "Preview", "checks the draft; try themes in Settings ▸ Theme"
                 )
                 yield self._detail_row(
                     "Open Theme",
@@ -21577,7 +21543,7 @@ class SettingsScreen(BaseAppScreen):
                     yield Button(
                         "Preview",
                         id="settings-preview-appearance",
-                        tooltip="Apply runtime-safe Appearance values for this session only.",
+                        tooltip="Check the Appearance draft; nothing is applied or saved.",
                     )
                 yield Static(
                     self._appearance_result,
@@ -24484,18 +24450,17 @@ class SettingsScreen(BaseAppScreen):
     def handle_theme_launch_default_changed(
         self, event: SettingsThemeEditor.LaunchDefaultChanged
     ) -> None:
-        """Rebase Appearance on an instant launch-theme save without losing edits."""
+        """Mirror the editor's launch-default save into the in-memory config.
+
+        The editor's Save-as-launch-default writes the file directly (not
+        through ``use_theme``), so the in-memory copy is updated here.
+        Appearance no longer drafts ``default_theme`` (TASK-32948).
+        """
         event.stop()
         app_config = self._app_config_update_target()
         general = dict(app_config.get("general", {}))
         general["default_theme"] = event.theme_name
         app_config["general"] = general
-        draft = self._appearance_draft()
-        if draft is not None and "default_theme" in draft.values:
-            was_dirty = "default_theme" in draft.dirty_keys
-            draft.originals["default_theme"] = event.theme_name
-            if not was_dirty:
-                draft.values["default_theme"] = event.theme_name
         self._refresh_category_button_label(SettingsCategoryId.APPEARANCE)
 
     @on(SettingsThemeEditor.ThemeModifiedStatus)
@@ -24612,15 +24577,10 @@ class SettingsScreen(BaseAppScreen):
         else:
             row.update(f"Customized prompts: {self._internal_prompts_customized_count}")
 
-    @on(Select.Changed, "#settings-appearance-theme")
-    def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
+    @on(Button.Pressed, "#settings-appearance-open-theme")
+    def handle_appearance_open_theme(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._syncing_appearance_defaults:
-            return
-        self._stage_appearance_value(
-            "default_theme", str(event.value or "textual-dark")
-        )
-        self._mark_appearance_settings_staged()
+        self._select_category(SettingsCategoryId.THEME.value, restore_focus=True)
 
     @on(Input.Changed, "#settings-appearance-palette-theme-limit")
     def handle_appearance_palette_theme_limit_changed(
@@ -31032,22 +30992,16 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
                 self.app.notify(validation.message, severity="error")
                 return
-            values = self._appearance_current_defaults()
-            preview_applied = False
-            try:
-                setattr(self.app_instance, "theme", str(values.default_theme))
-                preview_applied = True
-            except Exception:
-                preview_applied = False
+            # TASK-32948: the theme was the only runtime-applied value; it is
+            # now tried in Settings > Theme, so this is a validity check only.
             self._appearance_result = (
-                "Appearance preview applied for this session only."
-                if preview_applied
-                else "Appearance preview unavailable in this runtime; Save persists defaults."
+                "Appearance defaults are valid; Save persists them. "
+                "Try themes in Settings ▸ Theme."
             )
             self._set_static_text(
                 "#settings-appearance-save-result", self._appearance_result
             )
-            self.app.notify("Appearance preview complete.", severity="information")
+            self.app.notify("Appearance check complete.", severity="information")
             return
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 8: 't test category' previously fell all the
@@ -32118,12 +32072,7 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_character_expression_motion_help()
         self._syncing_appearance_defaults = True
         try:
-            try:
-                self.query_one("#settings-appearance-theme", Select).value = str(
-                    values["default_theme"]
-                )
-            except QueryError:
-                pass
+            self._refresh_appearance_theme_summary()
             try:
                 self.query_one(
                     "#settings-appearance-palette-theme-limit", Input
