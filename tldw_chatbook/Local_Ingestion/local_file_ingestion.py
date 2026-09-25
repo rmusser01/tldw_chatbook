@@ -186,6 +186,7 @@ from ..RAG_Search.ingestion_indexing import suppress_ingestion_indexing  # noqa:
 
 # Import metrics
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from ..Utils.path_validation import validate_path_simple  # noqa: E402
 
 
 class FileIngestionError(Exception):
@@ -600,8 +601,16 @@ def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
     Raises:
         FileIngestionError: The file is larger than the configured cap. Message
             shape matches the audio/video limit errors verbatim.
+        ValueError: The path fails central validation.
     """
-    path = Path(file_path)
+    # Every text-shaped read lands here -- plaintext, HTML, and the MOBI
+    # fallback in Book_Ingestion_Lib -- so the one central check belongs in
+    # this function rather than repeated in its three callers. Rootless mode
+    # is the correct one and matches ``_validate_epub_archive`` beside it: an
+    # ingest source is any file on the user's own disk, so there is no
+    # permitted root to confine it to -- only NUL bytes, traversal shapes and
+    # shell metacharacters to refuse. Only the returned path is used below.
+    path = validate_path_simple(file_path, reject_shell_metacharacters=False)
     max_bytes = max_text_file_bytes()
     with path.open("rb") as handle:
         size = os.fstat(handle.fileno()).st_size

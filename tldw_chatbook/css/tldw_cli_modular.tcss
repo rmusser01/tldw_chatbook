@@ -18455,11 +18455,15 @@ InstalledView .model-disabled-reason {
     color: $warning;
 }
 
+
 CuratedView Button:focus,
 CuratedView CollapsibleTitle:focus,
 InstalledView Button:focus,
 InstalledView CollapsibleTitle:focus {
-    outline: heavy $accent;
+    outline: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 

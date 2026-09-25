@@ -2367,6 +2367,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 10,
+      "diagnostic_digest": "d8dec742879be58afcbb",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/TTS/backends/omnivoice.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 19,
       "diagnostic_digest": "8d5858339f9c182e87be",
       "owner": "TASK-494",
@@ -2413,6 +2420,13 @@
       "diagnostic_digest": "89f989fd9ebd956da889",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/legacy_bridge.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 16,
+      "diagnostic_digest": "f107e42803d7399e2359",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/TTS/omnivoice_voice_manager.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3256,8 +3270,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "535e6d31e3eb9ab4527a",
+      "call_count": 9,
+      "diagnostic_digest": "fc1475d0b9b4f535254a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Speech/speech_catalog_mixin.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3270,8 +3284,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 24,
-      "diagnostic_digest": "b64ffd9a8d460cb3f72e",
+      "call_count": 25,
+      "diagnostic_digest": "2e743f0394a7c226f6be",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Speech/speech_settings_mixin.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9178,6 +9192,44 @@
     {
       "candidates": [
         {
+          "call_digest": "582d1e0c8eacd6d4",
+          "method": "info",
+          "path_expressions": [
+            "reference_source is not None"
+          ],
+          "scope": "OmniVoiceOnnxTTSBackend.generate_speech_stream",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "f1b413006baa420b",
+          "method": "info",
+          "path_expressions": [
+            "duration",
+            "duration / elapsed if elapsed > 0 else 0"
+          ],
+          "scope": "OmniVoiceOnnxTTSBackend.generate_speech_stream",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/TTS/backends/omnivoice.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "01515437fbb90407",
+          "method": "info",
+          "path_expressions": [
+            "name"
+          ],
+          "scope": "OmniVoiceVoiceManager.import_profile",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/TTS/omnivoice_voice_manager.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "b864aac62306f280",
           "method": "warning",
           "path_expressions": [
@@ -11237,11 +11289,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 594,
-    "path_privacy_candidate_calls": 685,
+    "owner_files": 596,
+    "path_privacy_candidate_calls": 688,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
     "task_492_calls": 1360,
-    "task_494_calls": 7506
+    "task_494_calls": 7534
   }
 }

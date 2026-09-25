@@ -74,6 +74,7 @@ EXPECTED_ROUTES = {
     "local_higgs_v2": "higgs",
     "alltalk_default": "alltalk",
     "alltalk_alltalk": "alltalk",
+    "local_omnivoice_default": "omnivoice",
 }
 
 
@@ -127,6 +128,7 @@ REPRESENTATIVE_ROUTES = {
     "chatterbox": "local_chatterbox_default",
     "higgs": "local_higgs_v2",
     "alltalk": "alltalk_default",
+    "omnivoice": "local_omnivoice_default",
 }
 EXPECTED_MODELS = {
     "openai": ("tts-1", "tts-1-hd"),
@@ -143,6 +145,7 @@ EXPECTED_MODELS = {
     "chatterbox": ("chatterbox",),
     "higgs": ("higgs-audio-v2",),
     "alltalk": ("alltalk",),
+    "omnivoice": ("omnivoice-int8hq",),
 }
 EXPECTED_VOICES = {
     "openai": (
@@ -228,6 +231,7 @@ EXPECTED_VOICES = {
     "chatterbox": ("default",),
     "higgs": ("default",),
     "alltalk": ("alloy", "echo", "fable", "nova", "onyx", "shimmer"),
+    "omnivoice": ("default",),
 }
 EXPECTED_OPTIONS = {
     "openai": (),
@@ -252,6 +256,12 @@ EXPECTED_OPTIONS = {
         "language",
     ),
     "alltalk": ("language",),
+    "omnivoice": (
+        "language",
+        "num_steps",
+        "guidance_scale",
+        "max_reference_duration",
+    ),
 }
 EXPECTED_DISPLAY_NAMES = {
     "openai": "OpenAI",
@@ -260,6 +270,7 @@ EXPECTED_DISPLAY_NAMES = {
     "chatterbox": "Chatterbox (Local)",
     "higgs": "Higgs Audio (Local)",
     "alltalk": "AllTalk (Local)",
+    "omnivoice": "OmniVoice (Local)",
 }
 ALL_VISIBLE_FORMATS = ("mp3", "opus", "aac", "flac", "wav", "pcm")
 
@@ -601,8 +612,8 @@ def test_each_provider_spec_owns_a_deep_config_snapshot() -> None:
     specs = legacy_provider_specs(source_config)
     snapshots = [spec.initial_config["app_config"] for spec in specs]
 
-    assert len({id(snapshot) for snapshot in snapshots}) == 6
-    assert len({id(snapshot["app_tts"]) for snapshot in snapshots}) == 6
+    assert len({id(snapshot) for snapshot in snapshots}) == 7
+    assert len({id(snapshot["app_tts"]) for snapshot in snapshots}) == 7
 
     snapshots[0]["global_tts_settings"]["shared"]["format"] = "mp3"
 
@@ -1113,7 +1124,7 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
         spec.descriptor.provider_id: spec.factory(spec.initial_config) for spec in specs
     }
 
-    assert len({id(adapter.host) for adapter in adapters.values()}) == 6
+    assert len({id(adapter.host) for adapter in adapters.values()}) == 7
     for provider_id, adapter in adapters.items():
         response = await adapter.synthesize(
             adapter_request(provider_id, REPRESENTATIVE_ROUTES[provider_id])
@@ -1121,8 +1132,8 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
         assert await collect(response.byte_stream) == b"audio"
 
     assert set(managers) == set(LEGACY_PROVIDER_IDS)
-    assert len({id(manager) for manager in managers.values()}) == 6
-    assert len({id(manager.config) for manager in managers.values()}) == 6
+    assert len({id(manager) for manager in managers.values()}) == 7
+    assert len({id(manager.config) for manager in managers.values()}) == 7
     assert {
         provider_id: manager.config for provider_id, manager in managers.items()
     } == expected_configs

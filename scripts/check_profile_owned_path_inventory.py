@@ -508,6 +508,14 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "reusable Chatterbox voice artifact directory",
     ),
     ExceptionRule(
+        "tldw_chatbook/TTS/legacy_catalogs.py",
+        "module:OMNIVOICE_DEFAULT_VOICES_DIR",
+        "literal:~/.config/tldw_cli/omnivoice_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "reusable OmniVoice voice-profile directory; the single shared default every OmniVoice consumer imports",
+    ),
+    ExceptionRule(
         "tldw_chatbook/TTS/backends/higgs.py",
         "function:__init__",
         "literal:~/.config/tldw_cli/higgs_voices",
