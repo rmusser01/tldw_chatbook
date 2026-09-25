@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shlex
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -97,10 +98,53 @@ async def _open_workspaces_ssh_pane(tmp_path, workspace_id: str):
     return app, registry, fake_ssh, host
 
 
-def _add_ssh_via_pane(screen, registry, fake_ssh: Path, target: str, path: str):
-    """Fill the add form and press Add (registry spied to use the fake ssh)."""
-    screen.query_one("#settings-workspace-ssh-target", Input).value = target
-    screen.query_one("#settings-workspace-ssh-path", Input).value = path
+async def _wait_for_widget(
+    pilot, screen, selector: str, timeout: float = 5.0, *, contains: str | None = None,
+    expect_type: type | None = None,
+):
+    """Poll for ``selector`` instead of trusting a fixed pause.
+
+    Every SSH-pane mutation (add/toggle/remove, and the advisory probe
+    landing) re-renders the rows through the async category-swap worker, so
+    a post-action ``query_one`` can run while the widget is being replaced
+    and hit ``NoMatches`` on slow runs. Wait for the widget -- and, when
+    asked, its content/type -- to (re)appear; on timeout fall through to
+    ``query_one`` so ``NoMatches`` keeps its original context.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        matches = screen.query(selector)
+        if matches:
+            widget = matches.first()
+            if (expect_type is None or isinstance(widget, expect_type)) and (
+                contains is None
+                or contains in str(getattr(widget, "renderable", ""))
+            ):
+                return widget
+        await pilot.pause(0.1)
+    return (
+        screen.query_one(selector, expect_type)
+        if expect_type is not None
+        else screen.query_one(selector)
+    )
+
+
+async def _add_ssh_via_pane(
+    screen, pilot, registry, fake_ssh: Path, target: str, path: str
+):
+    """Fill the add form and press Add (registry spied to use the fake ssh).
+
+    The form only exists once the workspace-selection pane swap finishes,
+    so wait for each control instead of trusting the caller's fixed pause.
+    """
+    target_input = await _wait_for_widget(
+        pilot, screen, "#settings-workspace-ssh-target", expect_type=Input
+    )
+    target_input.value = target
+    path_input = await _wait_for_widget(
+        pilot, screen, "#settings-workspace-ssh-path", expect_type=Input
+    )
+    path_input.value = path
     original = registry.add_ssh_binding
 
     def spied(workspace_id, raw_locator, **kwargs):
@@ -108,7 +152,11 @@ def _add_ssh_via_pane(screen, registry, fake_ssh: Path, target: str, path: str):
 
     registry.add_ssh_binding = spied
     try:
-        screen.query_one("#settings-workspace-ssh-add", Button).press()
+        add_button = await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-add", expect_type=Button
+        )
+        add_button.press()
+        await pilot.pause()  # let the add handler run before returning
     finally:
         registry.add_ssh_binding = original
 
@@ -255,15 +303,24 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one("#settings-workspace-row-ws-ssh-add", Button).press()
-        await pilot.pause(0.3)
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-add", expect_type=Button
+        )).press()
 
         # The form renders: target, absolute remote path, ro/rw choice,
         # interpreter override, submit.
-        assert screen.query_one("#settings-workspace-ssh-target", Input)
-        assert screen.query_one("#settings-workspace-ssh-path", Input)
-        assert screen.query_one("#settings-workspace-ssh-python", Input)
-        access_button = screen.query_one("#settings-workspace-ssh-access", Button)
+        assert await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-target", expect_type=Input
+        )
+        assert await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-path", expect_type=Input
+        )
+        assert await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-python", expect_type=Input
+        )
+        access_button = await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-access", expect_type=Button
+        )
         assert str(access_button.label) == "Access: read-only"
 
         calls: list[tuple[str, dict]] = []
@@ -308,8 +365,8 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
         assert "Probe: ready." in _visible_text(screen)
         # The row renders locator + access + live status (noop probe left
         # the cold-cache optimistic ready).
-        row = screen.query_one(
-            f"#settings-workspace-ssh-{binding.binding_id}", object
+        row = await _wait_for_widget(
+            pilot, screen, f"#settings-workspace-ssh-{binding.binding_id}"
         )
         assert "me@devbox:2222/srv/app" in str(row.renderable)
         assert "[rw] ready" in str(row.renderable)
@@ -338,16 +395,21 @@ async def test_advisory_probe_failure_still_saves_with_reason(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one("#settings-workspace-row-ws-ssh-probe", Button).press()
-        await pilot.pause(0.3)
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-probe", expect_type=Button
+        )).press()
 
-        _add_ssh_via_pane(screen, registry, fake_ssh, "devbox", "/srv/app")
-        await pilot.pause(0.4)
+        await _add_ssh_via_pane(screen, pilot, registry, fake_ssh, "devbox", "/srv/app")
 
         # Save ALWAYS allowed: the binding persisted despite the probe
         # failure, and the row's live status went degraded from the cache.
         (binding,) = registry.list_ssh_bindings("ws-ssh-probe")
-        row = screen.query_one(f"#settings-workspace-ssh-{binding.binding_id}", object)
+        row = await _wait_for_widget(
+            pilot,
+            screen,
+            f"#settings-workspace-ssh-{binding.binding_id}",
+            contains="[ro] unreachable (host lacks python3)",
+        )
         assert "[ro] unreachable (host lacks python3)" in str(row.renderable)
         # The advisory outcome is surfaced next to the add form.
         assert "host lacks python3" in _visible_text(screen)
@@ -380,34 +442,37 @@ async def test_probe_dispatched_to_worker_never_blocks_ui(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one("#settings-workspace-row-ws-ssh-block", Button).press()
-        await pilot.pause(0.3)
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-block", expect_type=Button
+        )).press()
 
-        _add_ssh_via_pane(screen, registry, fake_ssh, "devbox", "/srv/app")
-        await pilot.pause(0.2)
+        await _add_ssh_via_pane(screen, pilot, registry, fake_ssh, "devbox", "/srv/app")
 
         # The handler returned while the probe body was still parked: the
         # save landed (its receipt visible), and the pane stayed
         # interactive (toggle still works with the probe in flight) --
         # the UI thread never ran the probe.
+        for _ in range(40):
+            if started.is_set():
+                break
+            await pilot.pause(0.05)
         assert started.is_set(), "probe worker should have been scheduled"
         assert not release.is_set()
         assert len(registry.list_ssh_bindings("ws-ssh-block")) == 1
         assert "SSH folder added (read-only). Probing host…" in _visible_text(screen)
         (binding,) = registry.list_ssh_bindings("ws-ssh-block")
         toggle = f"#settings-workspace-ssh-toggle-{binding.binding_id}"
-        screen.query_one(toggle, Button).press()
+        (await _wait_for_widget(pilot, screen, toggle, expect_type=Button)).press()
         await pilot.pause(0.3)
         assert registry.list_ssh_bindings("ws-ssh-block")[0].metadata["access"] == "rw"
 
         release.set()
-        for _ in range(100):
-            await pilot.pause(0.05)
-            row = screen.query_one(
-                f"#settings-workspace-ssh-{binding.binding_id}", object
-            )
-            if "unreachable" in str(row.renderable):
-                break
+        row = await _wait_for_widget(
+            pilot,
+            screen,
+            f"#settings-workspace-ssh-{binding.binding_id}",
+            contains="unreachable",
+        )
         assert (
             "[rw] unreachable (unreachable or auth failed)"
             in str(row.renderable)
@@ -434,11 +499,11 @@ async def test_ssh_toggle_and_remove_call_through(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one("#settings-workspace-row-ws-ssh-edit", Button).press()
-        await pilot.pause(0.3)
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-edit", expect_type=Button
+        )).press()
 
-        _add_ssh_via_pane(screen, registry, fake_ssh, "devbox", "/srv/app")
-        await pilot.pause(0.3)
+        await _add_ssh_via_pane(screen, pilot, registry, fake_ssh, "devbox", "/srv/app")
         (binding,) = registry.list_ssh_bindings("ws-ssh-edit")
         toggle = f"#settings-workspace-ssh-toggle-{binding.binding_id}"
         remove = f"#settings-workspace-ssh-remove-{binding.binding_id}"
@@ -450,12 +515,12 @@ async def test_ssh_toggle_and_remove_call_through(
                 raise WorkspaceRegistryServiceError("Access change refused. Retry.")
 
             patch.setattr(registry, "set_ssh_binding_access", refuse)
-            screen.query_one(toggle, Button).press()
+            (await _wait_for_widget(pilot, screen, toggle, expect_type=Button)).press()
             await pilot.pause(0.3)
             assert "Access change refused" in _visible_text(screen)
         assert registry.list_ssh_bindings("ws-ssh-edit")[0].metadata["access"] == "ro"
 
-        screen.query_one(toggle, Button).press()
+        (await _wait_for_widget(pilot, screen, toggle, expect_type=Button)).press()
         await pilot.pause(0.3)
         assert "SSH folder access: read-write." in _visible_text(screen)
         assert registry.list_ssh_bindings("ws-ssh-edit")[0].metadata["access"] == "rw"
@@ -467,12 +532,12 @@ async def test_ssh_toggle_and_remove_call_through(
                 raise WorkspaceRegistryServiceError("Removal refused. Retry.")
 
             patch.setattr(registry, "remove_runtime_binding", refuse)
-            screen.query_one(remove, Button).press()
+            (await _wait_for_widget(pilot, screen, remove, expect_type=Button)).press()
             await pilot.pause(0.3)
             assert "Removal refused" in _visible_text(screen)
         assert len(registry.list_ssh_bindings("ws-ssh-edit")) == 1
 
-        screen.query_one(remove, Button).press()
+        (await _wait_for_widget(pilot, screen, remove, expect_type=Button)).press()
         await pilot.pause(0.3)
         assert registry.list_ssh_bindings("ws-ssh-edit") == ()
         assert "SSH folder removed." in _visible_text(screen)
@@ -491,16 +556,25 @@ async def test_ssh_add_validation_keeps_drafts(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one("#settings-workspace-row-ws-ssh-valid", Button).press()
-        await pilot.pause(0.3)
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-valid", expect_type=Button
+        )).press()
 
-        screen.query_one("#settings-workspace-ssh-target", Input).value = "devbox"
-        screen.query_one("#settings-workspace-ssh-path", Input).value = "srv/app"
-        screen.query_one("#settings-workspace-ssh-add", Button).press()
+        target_input = await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-target", expect_type=Input
+        )
+        target_input.value = "devbox"
+        path_input = await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-path", expect_type=Input
+        )
+        path_input.value = "srv/app"
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-add", expect_type=Button
+        )).press()
         await pilot.pause(0.3)
         assert "absolute" in _visible_text(screen)
         assert registry.list_ssh_bindings("ws-ssh-valid") == ()
-        # Drafts survive the rejection.
+        # Drafts survive the rejection (the refused add recomposes nothing).
         assert (
             screen.query_one("#settings-workspace-ssh-path", Input).value == "srv/app"
         )
