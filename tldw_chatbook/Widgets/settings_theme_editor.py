@@ -31,6 +31,7 @@ from ..css.Themes.themes import (
     sanitize_theme_variables,
     theme_from_file_data,
 )
+from ..Utils.input_validation import escape_markup
 from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
 from .theme_preview import ThemePreview
@@ -1196,7 +1197,9 @@ class SettingsThemeEditor(Vertical):
         old_path = files.get(old)
         if old_path is None and old in unreadable:
             self.app.notify(
-                f"Can't rename '{old}': this theme file can't be read: {unreadable[old][1]}",
+                # notify parses markup; name and error are untrusted file text.
+                f"Can't rename '{escape_markup(old)}': this theme file can't be read: "
+                f"{escape_markup(unreadable[old][1])}",
                 severity="error",
             )
             return False
