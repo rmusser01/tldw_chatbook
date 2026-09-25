@@ -203,4 +203,14 @@ above under "Retired or rewritten tests", `Tests/Architecture/test_no_blocking_i
 `Tests/UI/test_settings_save_commit_models.py`, `Tests/UI/test_css_build_integrity.py`,
 and `Docs/User_Guide/settings.md` (Theme/Appearance sections rewritten for PR 1;
 final rewrite deferred to PR 3 per AC #12).
+### Final-review fixes
+
+- **Click only highlights (spec D2).** `ThemeOptionList._on_click` sets the highlight and calls `prevent_default()` so Textual's `OptionList._on_click` (highlight + `action_select` = Use) never runs. A click on the row that is already highlighted does not Use either; Enter and the Use button are the only ways to Use.
+- **Search never lands in the hidden editor.** `_land_search_focus_on_field` redirects a target inside `ThemePane` that is not the visible switcher child to `#settings-theme-list`. This is deliberately not a generic `display` check, because a collapsed Collapsible's contents are `display:none` too and TASK-23109 expands those.
+- **Appearance can never write `default_theme` (spec §8).** `build_appearance_save_sections` drops `general.default_theme`. The config writer sets keys one at a time (`config._apply_literal_mutation_unlocked`), so the file's value survives. `_apply_appearance_save_result` merges each section into the in-memory config instead of replacing it, so memory keeps its launch default. There is a test for the `LaunchDefaultChanged`, then Appearance Save, path.
+- **Theme help copy.** Theme gets its badge ("Applies immediately") and scope line back. The category description, runtime owner, and both "Open Theme picker" buttons/tooltips now describe the picker. The User Guide badge table is updated.
+- **Revert lasts the whole session (R9).** The pending `ThemeChange` lives on `app.theme_revert_change`, so a recomposed picker brings back the "Revert to X" chip.
+- **`revert_theme` returns bool.** It returns False when restoring the launch default fails. The picker then warns "Reverted the theme; the launch default was not restored".
+- Tests cover Back ▸ Discard, Save and refused Save, plus the items above.
+
 <!-- Full task-by-task detail lives in .superpowers/sdd/2026-09-24-theme-picker-pr1/progress.md and task-1..7-report.md (gitignored, worktree-local). -->
