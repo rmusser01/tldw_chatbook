@@ -317,6 +317,7 @@ PICKER_CONTROLS = (
     "#settings-theme-try",
     "#settings-theme-picker-clone",
     "#settings-theme-picker-new",
+    "#settings-theme-picker-import",
 )
 
 # TASK-32948 PR 2 Task 6: the four yours-only file-action buttons, visible
@@ -987,3 +988,36 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
         await pilot.pause(0.3)
         assert not path.exists()
         assert "broken" not in _picker_ids(host)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_path_factory):
+    """TASK-32948 PR 3 Task 2: `i` -> path prompt -> file lands in the
+    profile's themes dir, registered and highlighted."""
+    from textual.widgets import Input
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    source = tmp_path_factory.mktemp("import-src") / "drop.toml"
+    source.write_text(
+        '[theme]\nname = "dropped"\ndark = true\n[colors]\nprimary = "#22AA88"\n',
+        encoding="utf-8",
+    )
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("i")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        host.screen.query_one("#settings-rag-profile-name-input", Input).value = f"'{source}'"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        themes = config._get_effective_config_path().parent / "themes"
+        assert (themes / "dropped.toml").exists()
+        assert "dropped" in host.available_themes
+        picker = host.screen.query_one("#settings-theme-picker")
+        assert picker.highlighted_id == "dropped"
+        assert "dropped" in _picker_ids(host)

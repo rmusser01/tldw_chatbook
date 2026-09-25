@@ -24493,6 +24493,25 @@ class SettingsScreen(BaseAppScreen):
         if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
             self.query_one(ThemePicker).refresh_catalog(highlight=new)
 
+    @on(ThemePicker.ImportRequested)
+    def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:
+        """Prompt for a theme file path, then import it through the editor."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(title="Import theme from file", initial="", confirm_label="Import"),
+            self._handle_theme_import_result,
+        )
+
+    def _handle_theme_import_result(self, source: str | None) -> None:
+        if not source:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        if name := editor.import_theme(source):
+            self.query_one(ThemePicker).refresh_catalog(highlight=name)
+
     @on(SettingsThemeEditor.SaveAsRequested)
     def handle_theme_save_as_requested(
         self, event: SettingsThemeEditor.SaveAsRequested
