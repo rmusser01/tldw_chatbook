@@ -132,7 +132,6 @@ class SettingsThemeEditor(Vertical):
         "Dark": ["#1A1A1A", "#2D2D2D", "#404040", "#525252", "#656565"],
     }
 
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         from ..config import get_user_themes_dir
