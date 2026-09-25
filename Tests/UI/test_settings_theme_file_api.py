@@ -13,6 +13,7 @@ import pytest
 import toml
 from textual import on
 from textual.app import App, ComposeResult
+from textual.widgets import Input
 
 from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
@@ -614,3 +615,76 @@ async def test_unreadable_files_log_at_warning_not_error(request, tmp_path):
         logger.remove(sink)
     about = [r for r in records if "a.toml" in r["message"]]
     assert about and {r["level"].name for r in about} == {"WARNING"}
+
+
+# -- Fix round 2 (R41) --------------------------------------------------------
+
+_OSC_VALUE = "\x1b]52;c;eA==\x1b\\"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_non_hex_colour_file_is_unreadable_and_edit_places_no_control_char(
+    request, tmp_path, config_writes
+):
+    """R41 item 1: an ESC in a non-primary colour used to be listed readable
+    and written verbatim into a colour Input by Edit."""
+    _write(tmp_path, "osc", colors={**MINE, "secondary": _OSC_VALUE})
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {"osc": "invalid colour 'secondary'"}
+        editor.load_user_theme("osc")
+        await pilot.pause()
+        for input_widget in editor.query(Input):
+            assert input_widget.value.isprintable(), repr(input_widget.value)
+        # The editor's own saved files still load.
+        editor.load_user_theme("mine")
+        await pilot.pause()
+        assert editor.color_inputs["secondary"].value == "#223344"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_deleting_unreadable_file_leaves_a_theme_named_like_it_registered(
+    request, tmp_path, config_writes, monkeypatch
+):
+    """R41 item 2: broken b.toml is announced as 'b.toml'; a readable theme
+    literally named 'b.toml' must not be unregistered or fallen back from."""
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    (tmp_path / "b.toml").write_text("garbage [[", encoding="utf-8")
+    data = {"theme": {"name": "b.toml", "dark": True}, "colors": dict(MINE)}
+    (tmp_path / "other.toml").write_text(toml.dumps(data), encoding="utf-8")
+    _launch_default(monkeypatch, "b.toml")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        app.register_theme(theme_from_file_data(data, "other", "other.toml"))
+        app.theme = "b.toml"
+        await pilot.pause()
+        await _confirm_delete(pilot, app, editor, "unreadable:b")
+        assert not (tmp_path / "b.toml").exists()
+        assert "b.toml" in app.available_themes
+        assert app.theme == "b.toml"
+        assert config_writes == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_stale_unreadable_id_notice_is_printable(request, tmp_path, config_writes):
+    """R41 item 3: a stale ``unreadable:<stem>`` echoes the stem verbatim."""
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.request_delete(f"unreadable:x{_OSC_VALUE}")
+        await pilot.pause()
+        text = _terminal_text(app.notify.call_args.args[0])
+        assert text.startswith("No saved custom theme named")
+        assert text.isprintable(), repr(text)

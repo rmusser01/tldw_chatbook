@@ -135,3 +135,58 @@ def test_theme_name_with_control_characters_is_refused_and_skipped(tmp_path):
     _write(tmp_path, "t", body)
     assert load_user_themes(tmp_path) == []
     assert printable("a\x1b]52;c;eA==\x07b\u00e9 ") == "a?]52;c;eA==?b\u00e9 "
+
+
+_OSC_SECONDARY = (
+    '[theme]\nname = "osc"\n[colors]\nprimary = "#112233"\n'
+    'secondary = "\\u001b]52;c;eA==\\u001b\\\\"\n'
+)
+
+
+def test_non_hex_colour_value_is_refused_and_skipped(tmp_path):
+    """R41: a non-primary colour Textual can't parse used to be silently
+    dropped, so an ESC-laden value was accepted and later echoed into Edit."""
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    for value in ("\x1b]52;c;eA==\x1b\\", "red", "#12345", "#11223344", "rgb(1,2,3)", 7):
+        data = {"colors": {"primary": "#112233", "secondary": value}}
+        with pytest.raises(ValueError, match=r"^invalid colour 'secondary'$"):
+            theme_from_file_data(data, "x", "x.toml")
+    for value in ("#abc", "#ABCDEF", "#a1B2c3"):
+        theme_from_file_data({"colors": {"primary": value}}, "x", "x.toml")
+
+    _write(tmp_path, "osc", _OSC_SECONDARY)
+    records = []
+    sink = logger.add(lambda m: records.append(m.record), level="DEBUG")
+    try:
+        assert load_user_themes(tmp_path) == []
+    finally:
+        logger.remove(sink)
+    skipped = [r for r in records if "osc.toml" in r["message"]]
+    assert skipped and skipped[0]["level"].name == "WARNING"
+    assert "invalid colour 'secondary'" in skipped[0]["message"]
+
+
+def test_create_theme_from_dict_does_not_print_unparseable_colours(capsys):
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    create_theme_from_dict("x", {"primary": "#112233", "secondary": "not-a-colour"})
+    assert capsys.readouterr().out == ""
+
+
+def test_variable_warning_file_label_is_printable():
+    """R41 item 4: the dropped-variable warning names the file; a file name
+    with control characters must not carry them into the log."""
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import sanitize_theme_variables
+
+    messages = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="DEBUG")
+    try:
+        assert sanitize_theme_variables({"bad": "red; }"}, "x\x1b]52;c;eA==\x07.toml") == {}
+    finally:
+        logger.remove(sink)
+    assert messages and all(m.isprintable() for m in messages), [repr(m) for m in messages]
