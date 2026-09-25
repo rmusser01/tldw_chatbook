@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 
@@ -924,3 +925,76 @@ def test_remote_exclusion_provider_output_consumable_by_both_executor_seams(
     with pytest.raises(RemoteWorkspaceExecutionError):
         executor.execute("fs_read", {"path": "secrets/kv.txt"}, intent="read")
 
+
+
+def test_remote_instruction_io_for_selection_builds_reader_or_degrades() -> None:
+    """Task 19 dispatch wiring: a remote selection yields the executor-
+    backed instruction reader; construction failure degrades to ``None``
+    (ADR-069 posture: content-free warning, proceed)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+    from tldw_chatbook.Chat import console_chat_controller as controller
+
+    selection = controller._validate_project_instruction_binding(
+        _session_for_remote(),
+        _ssh_binding(),
+        status_cache=_ready_cache_with_identity(),
+    )
+    assert selection is not None
+
+    calls: list[tuple] = []
+
+    class _StubExecutor:
+        def ping(self):
+            return {}
+
+        def execute(self, tool, args, *, intent):
+            return ""
+
+    def _recording_factory(selection_arg, binding_id, **kwargs):
+        calls.append((selection_arg, binding_id, kwargs))
+        return _StubExecutor()
+
+    reader = controller._remote_instruction_io_for_selection(
+        selection,
+        registry=None,
+        status_cache=_ready_cache_with_identity(),
+        executor_factory=_recording_factory,
+    )
+    # The reader wraps the factory's executor, built from the selection
+    # under its binding id with the status cache and the typed
+    # exclusions provider. (The REAL ssh factory is exercised at
+    # integration level; constructing it here trips the test HOME's
+    # config-recovery bootstrap, unrelated to this seam.)
+    assert isinstance(reader, RemoteInstructionIO)
+    assert len(calls) == 1
+    assert calls[0][0] is selection
+    assert calls[0][1] == "ssh-b1"
+    assert set(calls[0][2]) == {"status_cache", "sensitive_exclusions"}
+    exclusions_provider = calls[0][2]["sensitive_exclusions"]
+    assert callable(exclusions_provider)
+    entries = exclusions_provider()
+    assert all(hasattr(entry, "kind") and hasattr(entry, "value") for entry in entries)
+    assert {entry.value for entry in entries} == {"secrets", "build/out"}
+
+    def _refuses_factory(*_args, **_kwargs):
+        raise RuntimeError("binding unbuildable")
+
+    assert (
+        controller._remote_instruction_io_for_selection(
+            selection,
+            registry=None,
+            status_cache=_ready_cache_with_identity(),
+            executor_factory=_refuses_factory,
+        )
+        is None
+    )
+
+    local_root = SimpleNamespace(root=Path("/tmp/never"))
+    assert (
+        controller._remote_instruction_io_for_selection(
+            local_root, registry=None, status_cache=None
+        )
+        is None
+    )

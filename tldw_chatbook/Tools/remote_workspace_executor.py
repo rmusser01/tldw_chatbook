@@ -199,6 +199,28 @@ def parse_fs_read_stamps(result: str) -> tuple[str, int] | None:
     return match.group(1), int(match.group(2))
 
 
+def split_fs_read_result(result: str) -> tuple[str, str, int] | None:
+    """Split one fs_read result into its rendered body and CAS stamps.
+
+    Task 19's project-instruction reader consumes the SAME stamp tail the
+    CAS ledger sites read: one definition site for the tail's shape (the
+    module regex above), plus the rendered body that preceded it.
+
+    Args:
+        result: The fs_read response's result string.
+
+    Returns:
+        ``(rendered_body, sha256_hex, size_bytes)`` where the digest and
+        size are the worker-reported values over the RAW file bytes of
+        the single worker-side read, or ``None`` when the stamp tail is
+        absent (contract violation — callers fail closed).
+    """
+    match = _RESPONSE_STAMP_TAIL.search(result)
+    if match is None:
+        return None
+    return result[: match.start()], match.group(1), int(match.group(2))
+
+
 @lru_cache(maxsize=1)
 def _bundle_payload() -> tuple[bytes, bytes, str]:
     """The artifact bytes, their zlib payload, and the bootstrap source."""
@@ -1118,4 +1140,5 @@ __all__ = [
     "parse_fs_read_stamps",
     "run_bundle_loopback",
     "run_bundle_loopback_frames",
+    "split_fs_read_result",
 ]

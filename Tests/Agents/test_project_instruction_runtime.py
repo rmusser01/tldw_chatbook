@@ -1035,3 +1035,128 @@ def test_nested_resolution_rejects_binding_root_swap_before_candidate_read(
     assert nested_lstats >= 2
     assert batch.sources == ()
     assert [outcome.code for outcome in batch.outcomes] == ["resolution_failed"]
+
+
+# ---------------------------------------------------------------------------
+# Task 19 (Phase 4b): remote snapshots resolve through the executor reader
+# ---------------------------------------------------------------------------
+
+
+class _RecordingLoopbackExecutor:
+    """Loopback executor recording ops (see the resolver suite's twin)."""
+
+    def __init__(self, root: Path) -> None:
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceToolExecutor,
+        )
+
+        self.ops: list[tuple[str, dict]] = []
+        self._inner = RemoteWorkspaceToolExecutor(
+            root, root_locator=str(root), identity_chain_source=lambda: self._payload()
+        )
+        self._payload_cache: dict | None = None
+
+    def _payload(self) -> dict:
+        if self._payload_cache is None:
+            self._payload_cache = self._inner.ping()
+        return self._payload_cache
+
+    def ping(self) -> dict:
+        self.ops.append(("ping", {}))
+        return self._inner.ping()
+
+    def execute(self, tool: str, args: dict, *, intent: str):
+        self.ops.append((tool, dict(args)))
+        return self._inner.execute(tool, args, intent=intent)
+
+
+def _remote_snapshot(root: Path, reader) -> InstructionSnapshot:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        capture_binding_root_identity,
+    )
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    descriptor = RemoteRoot(
+        alias="binding",
+        canonical_locator=f"ssh://loopbox{root}",
+        root=root,
+        binding_id="binding",
+    )
+    identity = capture_binding_root_identity(descriptor, remote_io=reader)
+    assert identity.ancestor_identities is not None
+    return InstructionSnapshot(
+        binding_id="binding",
+        binding_root=descriptor,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        startup_source=None,
+        global_outcomes=(),
+        primary_delivery=InstructionChainDelivery((), ()),
+        warning_codes=(),
+        remote_io=reader,
+    )
+
+
+def test_ledger_resolves_remote_nested_sources_through_reader(tmp_path) -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        RemoteInstructionIO,
+        capture_binding_root_identity,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("remote-nested")
+    executor = _RecordingLoopbackExecutor(root)
+    reader = RemoteInstructionIO(executor)
+    snapshot = _remote_snapshot(root, reader)
+    ledger = InstructionActivationLedger(snapshot, nested_max_bytes=100)
+    payload, _count = _payload()
+    identity = capture_binding_root_identity(
+        snapshot.binding_root, remote_io=reader
+    )
+
+    preparation = ledger.prepare(
+        [ToolCall("read", {}, "call-1")],
+        "primary",
+        _registry(identity.canonical_root / "nested" / "file.py"),
+        payload,
+    )
+
+    assert preparation.status == "retry_with_context"
+    assert any(
+        "remote-nested" in str(row.get("content", "")) for row in preparation.rows
+    )
+    read_paths = [
+        args.get("path") for tool, args in executor.ops if tool == "fs_read"
+    ]
+    assert "nested/AGENTS.md" in read_paths
+
+
+def test_remote_ledger_refuses_promotion_fail_closed(tmp_path) -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        InstructionPromotionSnapshot,
+        InstructionPromotionSnapshotError,
+        RemoteInstructionIO,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    executor = _RecordingLoopbackExecutor(root)
+    reader = RemoteInstructionIO(executor)
+    snapshot = _remote_snapshot(root, reader)
+    ledger = InstructionActivationLedger(snapshot, nested_max_bytes=100)
+
+    with pytest.raises(InstructionPromotionSnapshotError) as failure:
+        ledger.snapshot_promotion_target("AGENTS.md")
+    assert failure.value.code == "ineligible_target"
+
+    prepared = InstructionPromotionSnapshot(
+        binding_id="binding",
+        binding_root=snapshot.binding_root,
+        locator_fingerprint="fingerprint",
+        root_identity_digest="0" * 64,
+        target_relative_path="AGENTS.md",
+    )
+    assert ledger.revalidate_promotion_target(prepared).eligible is False

@@ -1967,6 +1967,86 @@ def _default_remote_run_executor_factory(
     return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
 
+def _default_remote_instruction_executor(
+    selection: Any,
+    binding_id: str,
+    *,
+    status_cache: Any,
+    sensitive_exclusions: Any,
+) -> Any:
+    """Build the ssh-transport executor for instruction reads (Task 19).
+
+    Pure construction — no spawn, no network (the hot-path rule). The
+    executor is built from the SELECTION's ``RemoteRoot`` descriptor
+    (lossless for both registry-admitted and snapshot-derived selections,
+    whose binding rows may lack ``.locator``), mirroring
+    ``_default_remote_run_executor_factory``.
+    """
+    from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceToolExecutor,
+    )
+    from tldw_chatbook.Tools.remote_workspace_transport import get_master_manager
+
+    loc = parse_remote_locator(selection.root.canonical_locator)
+    metadata = getattr(selection.binding, "metadata", None) or {}
+    python = str(metadata.get("python") or "python3")
+    return RemoteWorkspaceToolExecutor.for_ssh(
+        loc,
+        binding_id,
+        cache=status_cache,
+        masters=get_master_manager(),
+        python=python,
+        sensitive_exclusions=sensitive_exclusions,
+    )
+
+
+def _remote_instruction_io_for_selection(
+    selection: Any,
+    *,
+    registry: Any,
+    status_cache: Any,
+    executor_factory: Any = None,
+) -> Any:
+    """Build the executor-backed instruction IO for one remote selection.
+
+    Returns ``None`` for local selections and for any construction
+    failure (ADR-069 prep-failure posture: the caller warns content-free
+    and proceeds without startup instructions — never a broken send).
+    """
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+
+    if not is_remote(getattr(selection, "root", None)):
+        return None
+    binding_id = str(selection.root.binding_id)
+    factory = executor_factory or _default_remote_instruction_executor
+    try:
+        from tldw_chatbook.Workspaces.registry_service import (
+            binding_exclusion_entries,
+        )
+
+        snapshot_rels = tuple(
+            entry.path for entry in binding_exclusion_entries(selection.binding)
+        )
+        exclusions_provider = _exclusion_paths_provider(
+            registry, binding_id, selection.root, snapshot_rels
+        )
+        executor = factory(
+            selection,
+            binding_id,
+            status_cache=status_cache,
+            sensitive_exclusions=exclusions_provider,
+        )
+        return RemoteInstructionIO(executor, binding_id=binding_id)
+    except Exception:  # noqa: BLE001 - unbuildable reader degrades to none
+        logger.opt(exception=True).warning(
+            "Remote project-instruction reader could not be built; "
+            "dispatching without startup instructions (binding_id={})",
+            binding_id,
+        )
+        return None
+
+
 def _app_remote_binding_status_cache() -> Any:
     """Resolve the process-wide remote binding status cache (lazy import)."""
     from tldw_chatbook.Tools.remote_binding_status import (
@@ -21658,18 +21738,22 @@ class ConsoleChatController:
             if selection is None:
                 return None
             if is_remote(selection.root):
-                # Task 17 boundary: AGENTS.md reads from remote roots land
-                # with Task 19's executor-routed resolver; until then the
-                # preview skips startup resolution for remote selections
-                # (ADR-069 prep-failure posture: content-free, proceed).
-                logger.debug(
-                    "Next-Send preview skips project-instruction startup "
-                    "resolution for remote binding (binding_id={})",
-                    selection.binding.binding_id,
+                # Task 19: the preview rereads remote guidance through the
+                # same executor-routed reader the dispatch will use; any
+                # failure stays content-free and preview-less (the outer
+                # except below) per ADR-069's prep-failure posture.
+                remote_io = _remote_instruction_io_for_selection(
+                    selection,
+                    registry=registry,
+                    status_cache=_app_remote_binding_status_cache(),
                 )
-                return None
+                if remote_io is None:
+                    return None
+                resolver = ProjectInstructionResolver(remote_io=remote_io)
+            else:
+                resolver = ProjectInstructionResolver()
             candidate = await asyncio.to_thread(
-                ProjectInstructionResolver().resolve_startup,
+                resolver.resolve_startup,
                 binding_id=selection.binding.binding_id,
                 binding_root=selection.root,
                 locator_fingerprint=selection.locator_fingerprint,
@@ -27647,19 +27731,56 @@ class ConsoleChatController:
                     )
                     self.store.set_session_project_instruction_state(session_id, state)
                 if is_remote(project_selection.root):
-                    # Task 17 boundary: AGENTS.md reads from remote roots
-                    # land with Task 19's executor-routed resolver; until
-                    # then remote selections dispatch without startup
-                    # instructions (ADR-069 prep-failure posture:
-                    # content-free warning, proceed — never a crash on the
-                    # laptop-path resolver).
-                    logger.warning(
-                        "Project instructions are not yet read from remote "
-                        "working folders; dispatching without them "
-                        "(binding_id={})",
-                        project_selection.binding.binding_id,
+                    # Task 19: AGENTS.md reads route through the remote
+                    # executor (reader strategy). ADR-069 prep-failure
+                    # posture: any reader failure warns content-free and
+                    # the dispatch proceeds without startup instructions.
+                    remote_io = _remote_instruction_io_for_selection(
+                        project_selection,
+                        registry=registry,
+                        status_cache=_app_remote_binding_status_cache(),
                     )
-                    startup_candidate = None
+                    if remote_io is None:
+                        logger.warning(
+                            "Remote working-folder instructions unavailable "
+                            "this dispatch; proceeding without them "
+                            "(binding_id={})",
+                            project_selection.binding.binding_id,
+                        )
+                        startup_candidate = None
+                    else:
+                        try:
+                            startup_candidate = await asyncio.to_thread(
+                                ProjectInstructionResolver(
+                                    remote_io=remote_io
+                                ).resolve_startup,
+                                binding_id=project_selection.binding.binding_id,
+                                binding_root=project_selection.root,
+                                locator_fingerprint=(
+                                    project_selection.locator_fingerprint
+                                ),
+                                max_bytes=coerce_int_setting(
+                                    turn_context.tool_configuration.get(
+                                        "project_instructions_startup_max_bytes",
+                                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                    ),
+                                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                                ),
+                                dispatch_started_wall_ns=time.time_ns(),
+                                excluded_dirs=_project_instruction_excluded_dirs(
+                                    project_selection
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001 - prep failure proceeds
+                            logger.warning(
+                                "Remote working-folder instructions could not "
+                                "be read; proceeding without them "
+                                "(binding_id={})",
+                                project_selection.binding.binding_id,
+                            )
+                            startup_candidate = None
                 else:
                     startup_candidate = ProjectInstructionResolver().resolve_startup(
                         binding_id=project_selection.binding.binding_id,

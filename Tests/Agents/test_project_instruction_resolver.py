@@ -6,6 +6,7 @@ import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,7 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
     admit_sources,
 )
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
 
 def test_promotion_snapshot_captures_target_state_and_effective_chain(
@@ -1106,6 +1108,452 @@ def test_absolute_path_failure_returns_content_free_resolution_outcome(
     assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
         (".", "resolution_failed")
     ]
+
+
+# ---------------------------------------------------------------------------
+# Task 19 (Phase 4b): remote reads through the workspace executor
+# ---------------------------------------------------------------------------
+
+
+class _RecordingExecutor:
+    """Loopback executor wrapper recording every dispatched operation."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.ops: list[tuple[str, dict[str, Any]]] = []
+
+    def ping(self) -> Any:
+        self.ops.append(("ping", {}))
+        return self._inner.ping()
+
+    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> Any:
+        self.ops.append((tool, dict(args)))
+        return self._inner.execute(tool, args, intent=intent)
+
+
+class _RefusingExecutor:
+    """Unreachable remote: every executor call raises the typed error."""
+
+    def ping(self) -> Any:
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceExecutionError,
+        )
+
+        raise RemoteWorkspaceExecutionError("transport_failure", admitted=False)
+
+    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> Any:
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceExecutionError,
+        )
+
+        raise RemoteWorkspaceExecutionError("transport_failure", admitted=False)
+
+
+def _loopback_remote_reader(root: Path) -> Any:
+    """One remote IO reader over the loopback executor (real bundle)."""
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceToolExecutor,
+    )
+
+    box: dict[str, Any] = {}
+    executor = RemoteWorkspaceToolExecutor(
+        root,
+        root_locator=str(root),
+        # The executor's identity source reads the reader's cached ping
+        # payload lazily -- the reader pings before its first stat/read.
+        identity_chain_source=lambda: box["reader"].ping_payload(),
+    )
+    reader = RemoteInstructionIO(_RecordingExecutor(executor))
+    box["reader"] = reader
+    return reader
+
+
+def _remote_descriptor(root: Path) -> RemoteRoot:
+    return RemoteRoot(
+        alias="binding-1",
+        canonical_locator=f"ssh://loopbox{root}",
+        root=root,
+        binding_id="binding-1",
+    )
+
+
+def _resolve_remote(
+    root: Path,
+    *,
+    max_bytes: int = 32_768,
+    dispatch_started_wall_ns: int | None = None,
+    reader: Any = None,
+    excluded_dirs: frozenset[Path] = frozenset(),
+):
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+
+    reader = reader or _loopback_remote_reader(root)
+    resolver = ProjectInstructionResolver(remote_io=reader)
+    candidate = resolver.resolve_startup(
+        binding_id="binding-1",
+        binding_root=_remote_descriptor(root),
+        locator_fingerprint="locator-sha256",
+        max_bytes=max_bytes,
+        dispatch_started_wall_ns=(
+            time.time_ns()
+            if dispatch_started_wall_ns is None
+            else dispatch_started_wall_ns
+        ),
+        excluded_dirs=excluded_dirs,
+    )
+    return candidate, reader
+
+
+def test_remote_startup_prefers_override_without_laptop_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("standard")
+    (root / "AGENTS.override.md").write_text("remote override")
+
+    def no_laptop_io(path, *args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError(f"resolver performed laptop IO on {path}")
+
+    def no_local_branch(*args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError("remote resolution reached a local-IO helper")
+
+    # The remote read may never open laptop files nor reach ANY of the
+    # local-only IO helpers (os.open is patched exactly like the local
+    # suite's unreadable-file tests; the helpers pin the branch).
+    monkeypatch.setattr(resolver_module.os, "open", no_laptop_io)
+    monkeypatch.setattr(resolver_module, "_read_candidate", no_local_branch)
+    monkeypatch.setattr(
+        resolver_module, "_capture_ancestor_identities", no_local_branch
+    )
+    monkeypatch.setattr(resolver_module, "path_is_excluded", no_local_branch)
+
+    candidate, reader = _resolve_remote(root)
+
+    assert candidate.source is not None
+    assert candidate.source.kind == "override"
+    assert candidate.source.body == "remote override"
+    assert candidate.source.relative_path == "AGENTS.override.md"
+    assert candidate.source.scope == "."
+    encoded = b"remote override"
+    assert candidate.source.byte_count == len(encoded)
+    assert candidate.source.digest == hashlib.sha256(encoded).hexdigest()
+    assert candidate.outcomes == ()
+    # Everything travelled the executor with root-RELATIVE paths.
+    assert ("ping", {}) in reader.executor.ops
+    read_ops = [
+        (tool, args)
+        for tool, args in reader.executor.ops
+        if tool == "fs_read" and args.get("path") == "AGENTS.override.md"
+    ]
+    assert read_ops
+    assert all(
+        not str(args.get("path", "")).startswith("/")
+        for _tool, args in reader.executor.ops
+        if "path" in args
+    )
+
+
+def test_remote_missing_override_falls_back_to_standard(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("standard")
+
+    candidate, _reader = _resolve_remote(root)
+
+    assert candidate.source is not None
+    assert candidate.source.kind == "standard"
+    assert candidate.source.body == "standard"
+    assert candidate.source.relative_path == "AGENTS.md"
+
+
+def test_remote_empty_override_falls_back_to_standard(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.override.md").write_text(" \n")
+    (root / "AGENTS.md").write_text("standard")
+
+    candidate, _reader = _resolve_remote(root)
+
+    assert candidate.source is not None
+    assert candidate.source.kind == "standard"
+    assert candidate.source.body == "standard"
+
+
+def test_remote_oversized_override_is_omitted_and_suppresses_fallback(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.override.md").write_bytes(b"12345")
+    (root / "AGENTS.md").write_text("must not load")
+
+    candidate, reader = _resolve_remote(root, max_bytes=4)
+
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "omitted_byte_budget")
+    ]
+    read_paths = [
+        args.get("path")
+        for tool, args in reader.executor.ops
+        if tool == "fs_read"
+    ]
+    assert "AGENTS.md" not in read_paths
+
+
+def test_remote_binary_override_is_invalid_and_suppresses_fallback(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.override.md").write_bytes(b"\x00binary\x00")
+    (root / "AGENTS.md").write_text("must not load")
+
+    candidate, _reader = _resolve_remote(root)
+
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "invalid")
+    ]
+
+
+def test_remote_source_newer_than_dispatch_is_stale(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "AGENTS.md"
+    target.write_text("fresh")
+    dispatch_started = time.time_ns()
+    os.utime(target, ns=(dispatch_started + 1_000_000_000,) * 2)
+
+    candidate, _reader = _resolve_remote(
+        root, dispatch_started_wall_ns=dispatch_started
+    )
+
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.md", "stale")
+    ]
+
+
+def test_remote_unreachable_remote_is_source_closed_not_fatal() -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
+
+    reader = RemoteInstructionIO(_RefusingExecutor())
+    candidate = ProjectInstructionResolver(remote_io=reader).resolve_startup(
+        binding_id="binding-1",
+        binding_root=_remote_descriptor(Path("/srv/workspace")),
+        locator_fingerprint="locator-sha256",
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        (".", "resolution_failed")
+    ]
+
+
+def test_remote_bom_is_stripped_from_admitted_body(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.md").write_bytes(b"\xef\xbb\xbfroot guidance")
+
+    candidate, _reader = _resolve_remote(root)
+
+    assert candidate.source is not None
+    assert candidate.source.body == "root guidance"
+    # Documented divergence: remote byte_count/digest cover the ADMITTED
+    # (line-normalized, BOM-stripped) body, not the raw file bytes.
+    encoded = b"root guidance"
+    assert candidate.source.byte_count == len(encoded)
+    assert candidate.source.digest == hashlib.sha256(encoded).hexdigest()
+
+
+def test_remote_crlf_body_is_line_normalized(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.md").write_bytes(b"line1\r\nline2\r\n")
+
+    candidate, _reader = _resolve_remote(root)
+
+    assert candidate.source is not None
+    assert candidate.source.body == "line1\nline2"
+
+
+def test_remote_excluded_candidate_is_treated_as_absent(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "AGENTS.override.md").write_text("excluded override")
+    (root / "AGENTS.md").write_text("standard")
+
+    candidate, reader = _resolve_remote(
+        root, excluded_dirs=frozenset({Path("AGENTS.override.md")})
+    )
+
+    assert candidate.source is not None
+    assert candidate.source.kind == "standard"
+    read_paths = [
+        args.get("path") for tool, args in reader.executor.ops if tool == "fs_read"
+    ]
+    assert "AGENTS.override.md" not in read_paths
+
+
+def test_remote_identity_comes_from_ping_chain_and_retarget_fails(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        BindingRootIdentity,
+        capture_binding_root_identity,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("remote-nested")
+    reader = _loopback_remote_reader(root)
+    descriptor = _remote_descriptor(root)
+
+    identity = capture_binding_root_identity(
+        descriptor, remote_io=reader
+    )
+
+    chain = reader.ping_payload()["identity_chain"]
+    assert identity.canonical_root == Path(chain[0][0])
+    assert identity.ancestor_identities == tuple(
+        (entry[1], entry[2], entry[3]) for entry in chain
+    )
+
+    resolver = ProjectInstructionResolver(remote_io=reader)
+    batch = resolver.resolve_targets(
+        descriptor,
+        [identity.canonical_root / "nested"],
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        expected_binding_identity=identity,
+    )
+
+    assert [source.relative_path for source in batch.sources] == [
+        "nested/AGENTS.md"
+    ]
+    assert batch.sources[0].body == "remote-nested"
+    assert batch.outcomes == ()
+
+    # A mismatched dispatch identity (retarget-class) refuses resolution.
+    forged = BindingRootIdentity(identity.canonical_root, ((0, 0, 0),))
+    retargeted = resolver.resolve_targets(
+        descriptor,
+        [identity.canonical_root / "nested"],
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        expected_binding_identity=forged,
+    )
+    assert retargeted.sources == ()
+    assert [item.code for item in retargeted.outcomes] == ["resolution_failed"]
+
+
+def test_remote_nested_targets_activate_and_pinned_sources_reuse(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        capture_binding_root_identity,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("remote-nested")
+    reader = _loopback_remote_reader(root)
+    descriptor = _remote_descriptor(root)
+    identity = capture_binding_root_identity(descriptor, remote_io=reader)
+    resolver = ProjectInstructionResolver(remote_io=reader)
+
+    first = resolver.resolve_targets(
+        descriptor,
+        [identity.canonical_root / "nested"],
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        expected_binding_identity=identity,
+    )
+    assert [source.relative_path for source in first.sources] == [
+        "nested/AGENTS.md"
+    ]
+
+    marker = len(reader.executor.ops)
+    second = resolver.resolve_targets(
+        descriptor,
+        [identity.canonical_root / "nested"],
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={
+            first.sources[0].canonical_path: first.sources[0]
+        },
+        expected_binding_identity=identity,
+    )
+
+    assert [source.digest for source in second.sources] == [
+        source.digest for source in first.sources
+    ]
+    delta_paths = [
+        args.get("path")
+        for tool, args in reader.executor.ops[marker:]
+        if tool == "fs_read"
+    ]
+    # The pinned source validates without re-reading its content remotely.
+    assert "nested/AGENTS.md" not in delta_paths
+
+
+def test_remote_excluded_directory_skips_nested_activation(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        capture_binding_root_identity,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("never activates")
+    reader = _loopback_remote_reader(root)
+    descriptor = _remote_descriptor(root)
+    identity = capture_binding_root_identity(descriptor, remote_io=reader)
+    resolver = ProjectInstructionResolver(remote_io=reader)
+
+    batch = resolver.resolve_targets(
+        descriptor,
+        [identity.canonical_root / "nested"],
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={},
+        expected_binding_identity=identity,
+        excluded_dirs=frozenset({Path("nested")}),
+    )
+
+    assert batch.sources == ()
+    read_paths = [
+        args.get("path") for tool, args in reader.executor.ops if tool == "fs_read"
+    ]
+    assert "nested/AGENTS.md" not in read_paths
+
+
+def test_remote_large_file_pages_through_fs_read(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    body = "\n".join(f"line-{index}" for index in range(1, 9001))
+    (root / "AGENTS.md").write_text(body)
+
+    candidate, _reader = _resolve_remote(root, max_bytes=256 * 1024)
+
+    assert candidate.source is not None
+    assert candidate.source.body == body
+    assert candidate.source.byte_count == len(body.encode("utf-8"))
 
 
 def test_public_value_objects_are_frozen_and_candidate_keeps_handoff_fields(
