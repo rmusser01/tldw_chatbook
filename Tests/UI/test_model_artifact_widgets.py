@@ -36,6 +36,7 @@ def _report(
     repository: str = "publisher/parakeet-v2",
     license_id: str = "CC-BY-4.0",
     revision: str = "immutable-revision",
+    usage_notice: str = "",
 ) -> PreflightReport:
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
     return PreflightReport(
@@ -54,6 +55,7 @@ def _report(
                 file_count=4,
                 already_installed=False,
                 provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+                usage_notice=usage_notice,
             ),
         ),
         download_bytes=1024,
@@ -146,6 +148,57 @@ async def test_plan_panel_renders_every_consent_field(tmp_path: Path) -> None:
         "before installation completes.",
     ):
         assert expected in text
+
+
+@pytest.mark.asyncio
+async def test_plan_panel_shows_the_usage_terms_at_consent(tmp_path: Path) -> None:
+    """A bare license id ("other") is not consent: the terms must be visible.
+
+    UAT (PR #2825): the OmniVoice consent step showed only "License: other";
+    the descriptor's Apache-2.0 + Boson terms never reached the user.
+    """
+    terms = "Two licenses: weights Apache-2.0; tokenizer Boson Higgs Audio 2."
+    app = _PanelApp(_report(tmp_path / "managed", license_id="other", usage_notice=terms))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in app.query(Static))
+
+    assert f"Terms: {terms}" in text
+    assert text.index("License: other") < text.index("Terms:")
+
+    # An entry without a notice renders no empty Terms line.
+    plain = _PanelApp(_report(tmp_path / "managed2"))
+    async with plain.run_test() as pilot:
+        await pilot.pause()
+        plain_text = "\n".join(str(item.renderable) for item in plain.query(Static))
+    assert "Terms:" not in plain_text
+
+
+def test_preflight_carries_the_descriptor_usage_notice() -> None:
+    from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
+        omnivoice_onnx_descriptor,
+    )
+    from tldw_chatbook.UI.Screens.model_browser_state import plan_rows
+
+    descriptor = omnivoice_onnx_descriptor()
+    entry = ArtifactPreflightEntry(
+        ref=descriptor.reference,
+        source_url=descriptor.source_url,
+        repository=descriptor.upstream_repository,
+        revision=descriptor.upstream_revision,
+        license_id=descriptor.license_id,
+        license_url=descriptor.license_url,
+        precision=descriptor.precision,
+        total_bytes=descriptor.expected_installed_bytes,
+        file_count=len(descriptor.files),
+        already_installed=False,
+        provenance=descriptor.provenance,
+        usage_notice=descriptor.usage_notice,
+    )
+    report = _report(Path("/tmp/x"))
+    report = PreflightReport(**{**report.__dict__, "entries": (entry,)})
+    (row,) = plan_rows(report)
+    assert "Boson Higgs Audio 2 Community License" in row.usage_notice
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
 )
 
 from .contracts import (
+    FFMPEG_DECODE_TIMEOUT_SECONDS,
     BufferAudioSource,
     ExecutionDevice,
     ProducedCapabilities,
@@ -32,14 +33,6 @@ from .contracts import (
     TranscriptionTimings,
     TranscriptionWarningCode,
 )
-
-#: Ceiling on one ffmpeg decode of a user-supplied media container. An hour is
-#: generous for a long recording on slow hardware and still finite, so a
-#: malformed or adversarial container parks the worker for an hour rather than
-#: forever. Deliberately NOT shared with the other ffmpeg call sites: they
-#: bound different operations, and one number for all of them would couple
-#: limits that have no reason to move together.
-_FFMPEG_DECODE_TIMEOUT_SECONDS = 3600
 
 from .persistence import (
     FailedTranscriptionAttempt,
@@ -163,7 +156,7 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
             capture_output=True,
             # A malformed or adversarial container can park ffmpeg
             # indefinitely; bound it rather than wedge the worker.
-            timeout=_FFMPEG_DECODE_TIMEOUT_SECONDS,
+            timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
         )
         yield output
     finally:

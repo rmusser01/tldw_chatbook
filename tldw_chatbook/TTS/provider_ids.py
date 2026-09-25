@@ -11,6 +11,7 @@ BUILT_IN_TTS_PROVIDER_IDS: tuple[str, ...] = (
     "chatterbox",
     "higgs",
     "alltalk",
+    "omnivoice",
 )
 """The bounded provider IDs shared by TTS domain and Speech UI contracts."""
 

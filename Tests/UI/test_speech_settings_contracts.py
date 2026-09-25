@@ -92,6 +92,11 @@ EXPECTED_CONTROL_IDS_BY_SCOPE = {
         "kokoro-performance-switch",
         "kokoro-use-onnx-switch",
         "kokoro-voice-mixing-switch",
+        "omnivoice-guidance-scale-input",
+        "omnivoice-max-ref-duration-input",
+        "omnivoice-model-root-input",
+        "omnivoice-voices-browse-btn",
+        "omnivoice-voices-dir-input",
         "openai-api-key-input",
         "openai-base-url-input",
         "openai-org-id-input",
@@ -132,6 +137,7 @@ def test_built_in_provider_ids_and_shared_defaults_are_exact() -> None:
         "chatterbox",
         "higgs",
         "alltalk",
+        "omnivoice",
     )
     assert SHARED_TTS_DEFAULTS_OWNER_ID == "defaults"
     assert SHARED_TTS_DEFAULTS_OWNER_ID not in BUILT_IN_TTS_PROVIDER_IDS
@@ -204,6 +210,7 @@ def test_every_control_retains_its_exact_provider_owner() -> None:
         ("chatterbox-", "chatterbox"),
         ("higgs-", "higgs"),
         ("alltalk-", "alltalk"),
+        ("omnivoice-", "omnivoice"),
     )
 
     for record in SPEECH_TTS_OWNERSHIP_INVENTORY:

@@ -28,7 +28,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from tldw_chatbook.TTS.legacy_catalogs import LEGACY_DEFAULT_VOICES
+from tldw_chatbook.TTS.legacy_catalogs import (
+    LEGACY_DEFAULT_VOICES,
+    OMNIVOICE_DEFAULT_VOICES_DIR,
+)
 
 PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-format-select',
                     'default-model-select',
@@ -93,7 +96,11 @@ PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-for
     'alltalk': (   'alltalk-format-select',
                    'alltalk-language-select',
                    'alltalk-url-input',
-                   'alltalk-voice-input')}
+                   'alltalk-voice-input'),
+    'omnivoice': (   'omnivoice-guidance-scale-input',
+                     'omnivoice-max-ref-duration-input',
+                     'omnivoice-model-root-input',
+                     'omnivoice-voices-dir-input')}
 
 #: What a provider cannot work without. Blank while its siblings are set is
 #: the `incomplete` state -- the one that fails at generation time with
@@ -109,6 +116,7 @@ REQUIRED_SETTINGS: dict[str, tuple[str, ...]] = {
     "kokoro": (),
     "chatterbox": (),
     "higgs": (),
+    "omnivoice": (),
     "defaults": (),
 }
 
@@ -127,6 +135,7 @@ SETTINGS_ACTIONS: tuple[str, ...] = (   'add-voice-blend-btn',
     'import-blends-btn',
     'kokoro-browse-model-btn',
     'kokoro-browse-voices-btn',
+    'omnivoice-voices-browse-btn',
     'save-settings-btn')
 
 #: Read-only readouts the pane must still mount.
@@ -232,6 +241,11 @@ ALL_SETTINGS_CONTROLS: frozenset[str] = frozenset((   'add-voice-blend-btn',
     'kokoro-use-onnx-switch',
     'kokoro-voice-blends-list',
     'kokoro-voice-mixing-switch',
+    'omnivoice-guidance-scale-input',
+    'omnivoice-max-ref-duration-input',
+    'omnivoice-model-root-input',
+    'omnivoice-voices-browse-btn',
+    'omnivoice-voices-dir-input',
     'openai-api-key-input',
     'openai-base-url-input',
     'openai-org-id-input',
@@ -406,6 +420,17 @@ SETTING_CONFIG_SOURCES: dict[str, tuple[str, str, object]] = {   'alltalk-url-in
     'higgs-voices-dir-input': (   'HiggsSettings',
                                   'voice_samples_dir',
                                   '~/.config/tldw_cli/higgs_voices'),
+    'omnivoice-model-root-input': ('OmniVoiceSettings', 'model_root', ''),
+    'omnivoice-num-steps-input': ('OmniVoiceSettings', 'num_steps', '32'),
+    'omnivoice-guidance-scale-input': (  'OmniVoiceSettings',
+                                         'guidance_scale',
+                                         '2.0'),
+    'omnivoice-max-ref-duration-input': ('OmniVoiceSettings',
+                                         'max_reference_duration',
+                                         '30'),
+    'omnivoice-voices-dir-input': (  'OmniVoiceSettings',
+                                     'voice_samples_dir',
+                                     OMNIVOICE_DEFAULT_VOICES_DIR),
     'kokoro-max-tokens-input': ('app_tts', 'KOKORO_MAX_TOKENS', '500'),
     'kokoro-performance-switch': (   'app_tts',
                                      'KOKORO_TRACK_PERFORMANCE',
