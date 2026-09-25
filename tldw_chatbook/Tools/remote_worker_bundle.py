@@ -38,8 +38,14 @@ Contract:
   line, so nothing after it could ever run). Derive the same value from
   the artifact with
   ``build_remote_worker_bundle.expected_bundle_stamp``.
-* ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
-  nothing yet.
+* Two-tier hard timeout (Task 12): ``run_workspace_worker`` arms the
+  watchdog from ``Tools/worker_watchdog`` with the request's
+  ``timeout_seconds`` right after decoding — a graceful ``Timer`` that
+  sweeps ``TEMP_REGISTRY``, writes the fixed ``tldw-worker-watchdog``
+  stderr line and ``os._exit(75)``, backed by a default-action
+  ``signal.alarm`` that kills the process even when a catastrophic
+  regex starves the GIL (and the Timer with it). Exit 75 is reserved
+  to the watchdog; every other worker failure path exits 2.
 * ``REMOTE_SENSITIVE_PATHS`` (embedded from
   ``Tools/remote_sensitive_paths.py``) are remote-home-relative paths the
   worker must never touch; enforcement wiring lands with the remote
@@ -1849,6 +1855,144 @@ def validate_glob_pattern(value: Any) -> str:
 
 
 # ===========================================================================
+# Section: tldw_chatbook.Tools.worker_watchdog (extracted from the live module by the
+# builder; regenerate rather than editing)
+# ===========================================================================
+"""Two-tier hard-timeout watchdog for the pinned workspace worker.
+
+Part of the worker's stdlib-only import closure (Phase 0c; Task 8
+flattens this module into the remote worker bundle). Shared by the
+LOCAL worker and the shipped bundle: ``run_workspace_worker`` arms both
+tiers with the request's ``timeout_seconds`` immediately after decoding
+and disarms them once the exchange's frames are out (Task 12).
+
+Why two tiers — the ``fs_grep`` catastrophic-regex case
+------------------------------------------------------
+
+``fs_grep`` runs caller-supplied patterns through ``re`` in the worker
+process. A pattern like ``(a+)+$`` against a near-miss line (60KB of
+``a`` plus one trailing ``b``) drives the C regex engine into quadratic-
+or-worse backtracking, and that engine does not release the GIL while
+it spins:
+
+* **Tier 1 — graceful ``threading.Timer``** fires at the budget,
+  sweeps every path in :data:`TEMP_REGISTRY` (best-effort ``unlink``),
+  writes the fixed stderr line, and ``os._exit(75)``. It produces a
+  clean, attributable death — but it is PYTHON code: it needs the GIL,
+  and a starving regex can hold that GIL forever, so tier 1 alone can
+  be starved.
+* **Tier 2 — OS backstop ``signal.alarm(budget + 2)`` with the DEFAULT
+  action**. No Python handler is installed (a handler would need the
+  GIL and starve exactly like the Timer); the kernel terminates the
+  process on delivery, GIL or no GIL. The two-second grace exists so
+  the graceful tier wins whenever it can.
+
+An optional RLIMIT_CPU ceiling (soft == hard == ``ceil(budget * 2)``)
+backs both for CPU-spin cases on platforms that have ``resource``:
+exceeding it raises SIGXCPU with its default action. It is guarded —
+``resource`` and its limits are not universal — and NOT restored on
+disarm: ``setrlimit`` is per-process and cannot be un-set, which is
+fine because the worker is one-shot (one exchange per process).
+
+The transport side (Task 11) buckets "admitted marker + exit 75" (tier
+1) and "admitted marker + completion-deadline kill" (tier 2, seen by
+the caller as death by signal) as the same failure kind, OP_TIMEOUT.
+
+Exit-code reservation: ``os._exit(WATCHDOG_EXIT_CODE)`` below is the
+ONLY place in the worker's closure that may hard-exit with 75; worker
+failure paths exit 2. Task 11's transport keys on it.
+"""
+import math
+import os
+import signal
+import threading
+WATCHDOG_EXIT_CODE = 75
+WATCHDOG_STDERR_MARKER = b'tldw-worker-watchdog\n'
+TEMP_REGISTRY: list[str] = []
+_armed_timer: threading.Timer | None = None
+
+def register_temp(path: str) -> None:
+    """Record one temp-file path for the watchdog's cleanup sweep."""
+    if path not in TEMP_REGISTRY:
+        TEMP_REGISTRY.append(path)
+
+def unregister_temp(path: str) -> None:
+    """Drop one temp-file path (its operation completed or cleaned up)."""
+    if path in TEMP_REGISTRY:
+        TEMP_REGISTRY.remove(path)
+
+def _watchdog_fire(temp_registry: list[str]) -> None:
+    """Tier-1 expiry: sweep temps, mark stderr, hard-exit 75.
+
+    Everything here is best-effort by construction — the process is
+    already past its budget, and ``os._exit`` skips ``finally`` blocks
+    and interpreter cleanup, so THIS callback is the one place the
+    sweep can run. It must never raise before the ``os._exit``.
+    """
+    for path in list(temp_registry):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    try:
+        os.write(2, WATCHDOG_STDERR_MARKER)
+    except OSError:
+        pass
+    os._exit(WATCHDOG_EXIT_CODE)
+
+def arm_watchdog(budget_seconds: float, temp_registry: list[str]) -> None:
+    """Arm both hard-timeout tiers for one exchange.
+
+    Args:
+        budget_seconds: The request's ``timeout_seconds`` — over ssh the
+            transport writes the REMAINING budget into that field; this
+            function just consumes it. Values ``<= 0`` arm NOTHING: the
+            wire decoder and the transport both require a positive
+            budget, so reaching here with a non-positive one is already
+            a caller bug, and skipping is the defensive choice (a 0
+            budget would otherwise fire tier 1 instantly).
+        temp_registry: The live registry tier 1 sweeps (by reference —
+            registrations after arming are still seen; the worker passes
+            ``TEMP_REGISTRY`` itself).
+    """
+    global _armed_timer
+    disarm_watchdog()
+    try:
+        budget = float(budget_seconds)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(budget) or budget <= 0:
+        return
+    timer = threading.Timer(budget, _watchdog_fire, args=(temp_registry,))
+    timer.daemon = True
+    timer.start()
+    _armed_timer = timer
+    if hasattr(signal, 'alarm'):
+        signal.alarm(max(1, int(budget) + 2))
+    try:
+        import resource
+        cpu_seconds = max(1, math.ceil(budget * 2))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+    except (ImportError, OSError, ValueError):
+        pass
+
+def disarm_watchdog() -> None:
+    """Cancel tier 1 and zero tier 2 once the exchange completed.
+
+    Called after the final response frame is emitted: a completed op
+    must not die late. The RLIMIT_CPU ceiling is per-process and cannot
+    be restored — it simply persists for the worker's remaining life,
+    which is fine (the worker is one-shot: one exchange, then exit).
+    """
+    global _armed_timer
+    if _armed_timer is not None:
+        _armed_timer.cancel()
+        _armed_timer = None
+    if hasattr(signal, 'alarm'):
+        signal.alarm(0)
+
+
+# ===========================================================================
 # Section: tldw_chatbook.Tools.local_tool_impls (extracted from the live module by the
 # builder; regenerate rather than editing)
 # ===========================================================================
@@ -2259,6 +2403,7 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
     except OSError:
         raise LocalToolError(f'write parent changed: {shown}') from None
     temp_name = f'.chatbook-write-{uuid.uuid4().hex}.tmp'
+    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
@@ -2275,6 +2420,7 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
             flags |= os.O_NOFOLLOW
         temp_fd = os.open(temp_name, flags, 438, dir_fd=parent_fd)
         temp_created = True
+        register_temp(temp_path)
         try:
             if live_mode is not None:
                 os.fchmod(temp_fd, live_mode)
@@ -2289,11 +2435,13 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
             os.link(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_created = False
+            unregister_temp(temp_path)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(parent_fd, target.name, shown, expected_sha256, target_lock)
             os.replace(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             temp_created = False
+            unregister_temp(temp_path)
         os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError('write precondition failed: target is present') from None
@@ -2307,6 +2455,7 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
                 os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
+            unregister_temp(temp_path)
         if target_lock is not None:
             _unlock_target_handle(target_lock)
             target_lock.close()
@@ -4246,6 +4395,7 @@ class _DecodedRequest:
     root_identity: DirectoryIdentity
     ancestor_identities: tuple[DirectoryIdentity, ...]
     arguments: dict[str, Any] = field(repr=False)
+    timeout_seconds: int
 
 def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO, *, bundle_sha256: str='') -> int:
     """Read, pin, dispatch, respond once, and return a process exit code.
@@ -4271,6 +4421,14 @@ def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO, *,
     except WireDecodeError:
         _emit(stdout, _failure('unknown', 'invalid_request', started))
         return 2
+    arm_watchdog(request.timeout_seconds, TEMP_REGISTRY)
+    try:
+        return _run_admitted_exchange(stdout, request, started, bundle_sha256=bundle_sha256)
+    finally:
+        disarm_watchdog()
+
+def _run_admitted_exchange(stdout: BinaryIO, request: _DecodedRequest, started: float, *, bundle_sha256: str) -> int:
+    """Pin, dispatch, and respond for one watchdog-armed request."""
     if request.operation == 'ping':
         return _run_ping(stdout, request, started, bundle_sha256=bundle_sha256)
     chain = DirectoryChain(canonical_root=request.root_locator, identities=(request.root_identity, *request.ancestor_identities[1:]))
@@ -4299,7 +4457,7 @@ def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO, *,
 def _decode_request(raw: bytes) -> _DecodedRequest:
     """Decode one admitted frame into the worker's pinned-request view."""
     payload = decode_request(raw)
-    return _DecodedRequest(operation_id=payload['operation_id'], operation=payload['operation'], root_locator=Path(payload['root_locator']), root_identity=_identity(payload['root_identity']), ancestor_identities=tuple((_identity(item) for item in payload['ancestor_identities'])), arguments=payload['arguments'])
+    return _DecodedRequest(operation_id=payload['operation_id'], operation=payload['operation'], root_locator=Path(payload['root_locator']), root_identity=_identity(payload['root_identity']), ancestor_identities=tuple((_identity(item) for item in payload['ancestor_identities'])), arguments=payload['arguments'], timeout_seconds=payload['timeout_seconds'])
 
 def _identity(payload: Mapping[str, Any]) -> DirectoryIdentity:
     return DirectoryIdentity(device=payload['device'], inode=payload['inode'], mode=payload['mode'], reparse=payload['reparse'])
@@ -4452,40 +4610,6 @@ def _enter_worker_exchange(stamp: str) -> str:
     return stamp
 
 
-# ---------------------------------------------------------------------------
-# Watchdog seam (Task 12 arms this — the bundle arms NOTHING yet)
-# ---------------------------------------------------------------------------
-
-#: Live registry of temp-file paths created by in-flight operations, for
-#: the watchdog's cleanup sweep. Data-plane only in this task.
-TEMP_REGISTRY: list[str] = []
-
-
-def register_temp(path: str) -> None:
-    """Record one temp-file path for the (Task 12) cleanup sweep."""
-    if path not in TEMP_REGISTRY:
-        TEMP_REGISTRY.append(path)
-
-
-def unregister_temp(path: str) -> None:
-    """Drop one temp-file path (its operation completed or cleaned up)."""
-    if path in TEMP_REGISTRY:
-        TEMP_REGISTRY.remove(path)
-
-
-def arm_watchdog(budget_seconds: int, temp_registry: list[str]) -> None:
-    """Arm the hard-timeout watchdog (Timer + ``signal.alarm`` default action).
-
-    NOT IMPLEMENTED YET — Task 12 wires the real arming (budget + 2s
-    alarm, process-group kill, temp-registry sweep). The seam ships now
-    so the builder, bundle and Task 9 harness agree on its shape.
-    """
-    raise NotImplementedError(
-        "arm_watchdog is implemented by the watchdog task (Task 12); the "
-        "remote worker bundle does not arm anything yet"
-    )
-
-
 
 # ---------------------------------------------------------------------------
 # Remote denylist (embedded from Tools/remote_sensitive_paths.py)
@@ -4515,4 +4639,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("e58c8eb105262e87caeb001a9d01539510ff5aa5df94346336084bd885f8d588")
+BUNDLE_SHA256 = _enter_worker_exchange("0489301db49f97cdf1d3308b836fed56efb0b5fceb0a6448b17fdb92c61c1bc3")

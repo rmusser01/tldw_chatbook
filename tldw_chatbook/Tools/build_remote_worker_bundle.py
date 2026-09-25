@@ -73,6 +73,7 @@ BUNDLE_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Utils.path_validation",
     "tldw_chatbook.Utils.sensitive_paths",
     "tldw_chatbook.Tools.workspace_wire_decode",
+    "tldw_chatbook.Tools.worker_watchdog",
     "tldw_chatbook.Tools.local_tool_impls",
     "tldw_chatbook.Tools.workspace_root_pin",
     "tldw_chatbook.Tools.git_tool_impls",
@@ -130,8 +131,14 @@ Contract:
   line, so nothing after it could ever run). Derive the same value from
   the artifact with
   ``build_remote_worker_bundle.expected_bundle_stamp``.
-* ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
-  nothing yet.
+* Two-tier hard timeout (Task 12): ``run_workspace_worker`` arms the
+  watchdog from ``Tools/worker_watchdog`` with the request's
+  ``timeout_seconds`` right after decoding — a graceful ``Timer`` that
+  sweeps ``TEMP_REGISTRY``, writes the fixed ``tldw-worker-watchdog``
+  stderr line and ``os._exit(75)``, backed by a default-action
+  ``signal.alarm`` that kills the process even when a catastrophic
+  regex starves the GIL (and the Timer with it). Exit 75 is reserved
+  to the watchdog; every other worker failure path exits 2.
 * ``REMOTE_SENSITIVE_PATHS`` (embedded from
   ``Tools/remote_sensitive_paths.py``) are remote-home-relative paths the
   worker must never touch; enforcement wiring lands with the remote
@@ -498,40 +505,6 @@ def _enter_worker_exchange(stamp: str) -> str:
     if __name__ == "__main__":
         raise SystemExit(main(sys.stdin.buffer, bundle_sha256=stamp))
     return stamp
-
-
-# ---------------------------------------------------------------------------
-# Watchdog seam (Task 12 arms this — the bundle arms NOTHING yet)
-# ---------------------------------------------------------------------------
-
-#: Live registry of temp-file paths created by in-flight operations, for
-#: the watchdog's cleanup sweep. Data-plane only in this task.
-TEMP_REGISTRY: list[str] = []
-
-
-def register_temp(path: str) -> None:
-    """Record one temp-file path for the (Task 12) cleanup sweep."""
-    if path not in TEMP_REGISTRY:
-        TEMP_REGISTRY.append(path)
-
-
-def unregister_temp(path: str) -> None:
-    """Drop one temp-file path (its operation completed or cleaned up)."""
-    if path in TEMP_REGISTRY:
-        TEMP_REGISTRY.remove(path)
-
-
-def arm_watchdog(budget_seconds: int, temp_registry: list[str]) -> None:
-    """Arm the hard-timeout watchdog (Timer + ``signal.alarm`` default action).
-
-    NOT IMPLEMENTED YET — Task 12 wires the real arming (budget + 2s
-    alarm, process-group kill, temp-registry sweep). The seam ships now
-    so the builder, bundle and Task 9 harness agree on its shape.
-    """
-    raise NotImplementedError(
-        "arm_watchdog is implemented by the watchdog task (Task 12); the "
-        "remote worker bundle does not arm anything yet"
-    )
 '''
 
 

@@ -177,7 +177,15 @@ def test_bundle_entry_surface() -> None:
     assert len(_EXPECTED_RESPONSE_MAGIC) == 16
     assert callable(bundle.main)
     assert callable(bundle.split_magic)
+    # Task 12: the watchdog seam is the real two-tier implementation
+    # (extracted from Tools/worker_watchdog.py) — pinned by shape only
+    # here; ARMING it in-process would schedule a real signal.alarm in
+    # the test runner, so every execution lives in
+    # Tests/Tools/test_remote_watchdog.py spawned harnesses.
     assert callable(bundle.arm_watchdog)
+    assert callable(bundle.disarm_watchdog)
+    assert bundle.WATCHDOG_EXIT_CODE == 75
+    assert bundle.WATCHDOG_STDERR_MARKER == b"tldw-worker-watchdog\n"
     assert callable(bundle.register_temp)
     assert callable(bundle.unregister_temp)
 
@@ -189,9 +197,6 @@ def test_bundle_entry_surface() -> None:
     had_magic, untouched = bundle.split_magic(b'{"k": 1}\n')
     assert had_magic is False
     assert untouched == b'{"k": 1}\n'
-
-    with pytest.raises(NotImplementedError):
-        bundle.arm_watchdog(30, [])
 
     bundle.register_temp("probe.tmp")
     try:

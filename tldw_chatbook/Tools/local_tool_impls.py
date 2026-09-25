@@ -59,6 +59,7 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
     is_git_metadata_write,
@@ -645,6 +646,13 @@ def _atomic_write_target(
     except OSError:
         raise LocalToolError(f"write parent changed: {shown}") from None
     temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
+    # Watchdog data plane (Task 12): while the temp exists (creation
+    # until rename/link or cleanup), its ABSOLUTE path sits in the
+    # registry the worker's tier-1 timer sweeps — a mid-write watchdog
+    # death must not leave the partial temp behind. Absolute because
+    # the sweep unlinks by path from another thread while this one
+    # holds only the parent descriptor.
+    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
@@ -669,6 +677,7 @@ def _atomic_write_target(
             flags |= os.O_NOFOLLOW
         temp_fd = os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
         temp_created = True
+        register_temp(temp_path)
         try:
             if live_mode is not None:
                 os.fchmod(temp_fd, live_mode)
@@ -689,6 +698,7 @@ def _atomic_write_target(
             )
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_created = False
+            unregister_temp(temp_path)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(
@@ -705,6 +715,7 @@ def _atomic_write_target(
                 dst_dir_fd=parent_fd,
             )
             temp_created = False
+            unregister_temp(temp_path)
         os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError("write precondition failed: target is present") from None
@@ -718,6 +729,7 @@ def _atomic_write_target(
                 os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
+            unregister_temp(temp_path)
         if target_lock is not None:
             _unlock_target_handle(target_lock)
             target_lock.close()

@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+from tldw_chatbook.Tools.worker_watchdog import (
+    TEMP_REGISTRY,
+    arm_watchdog,
+    disarm_watchdog,
+)
 from tldw_chatbook.Tools.workspace_root_pin import (
     WorkspaceRootPinError,
     pin_workspace_root,
@@ -66,6 +71,10 @@ class _DecodedRequest:
     root_identity: DirectoryIdentity
     ancestor_identities: tuple[DirectoryIdentity, ...]
     arguments: dict[str, Any] = field(repr=False)
+    #: The exchange's hard-timeout budget (Task 12): the transport sends
+    #: the REMAINING budget as this field's value; the worker arms its
+    #: two-tier watchdog with it and never recomputes anything.
+    timeout_seconds: int
 
 
 def run_workspace_worker(
@@ -99,6 +108,34 @@ def run_workspace_worker(
         _emit(stdout, _failure("unknown", "invalid_request", started))
         return 2
 
+    # Two-tier hard timeout (Task 12), armed immediately after the
+    # frame decoded — before any pinning or dispatch can run away. The
+    # wire decoder already requires a positive ``timeout_seconds``, and
+    # ``arm_watchdog`` itself skips non-positive budgets (defense in
+    # depth). ``TEMP_REGISTRY`` passes BY REFERENCE: the atomic-write
+    # temp an in-flight fs_write registers after this point is still
+    # swept if the tier-1 timer fires.
+    arm_watchdog(request.timeout_seconds, TEMP_REGISTRY)
+    try:
+        return _run_admitted_exchange(
+            stdout, request, started, bundle_sha256=bundle_sha256
+        )
+    finally:
+        # Both frames of the exchange are out by every return path here;
+        # a completed op must not die late (timer cancelled, alarm
+        # zeroed). The RLIMIT_CPU backstop persists — it is per-process
+        # and this worker is one-shot.
+        disarm_watchdog()
+
+
+def _run_admitted_exchange(
+    stdout: BinaryIO,
+    request: _DecodedRequest,
+    started: float,
+    *,
+    bundle_sha256: str,
+) -> int:
+    """Pin, dispatch, and respond for one watchdog-armed request."""
     if request.operation == "ping":
         return _run_ping(stdout, request, started, bundle_sha256=bundle_sha256)
 
@@ -172,6 +209,7 @@ def _decode_request(raw: bytes) -> _DecodedRequest:
             _identity(item) for item in payload["ancestor_identities"]
         ),
         arguments=payload["arguments"],
+        timeout_seconds=payload["timeout_seconds"],
     )
 
 
