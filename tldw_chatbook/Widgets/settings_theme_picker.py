@@ -35,14 +35,9 @@ _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTU
 def _row(entry: ThemeEntry) -> Text:
     text = Text(f"{entry.display_name}  ")
     for colour in entry.strip:
-        try:
-            style = Style(color=colour)
-        except Exception:  # noqa: BLE001 - an 8-digit alpha hex or an ANSI colour
-            # name (e.g. deep_dive_cyberspace's "#FF33AACC", ansi-dark/-light's
-            # "ansi_default") is a valid textual.color.Color but not a valid
-            # rich.color.Color; an unstyled swatch must not break the whole row.
-            style = None
-        text.append("▮", style)
+        # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
+        # resolves alpha hex and ANSI colour names before they reach here).
+        text.append("▮", Style(color=colour))
     markers = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
     if entry.overrides:
         markers.append(f"overrides {entry.overrides}")

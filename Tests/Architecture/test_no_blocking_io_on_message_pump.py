@@ -92,12 +92,15 @@ BASELINE: dict[tuple[str, str, str], str] = {
     # runs `_scan_chatbook_files` via `asyncio.to_thread`).
     #
     # The settings_theme_editor.py::on_show glob entry that used to live here
-    # (`self.custom_themes_path.glob`) went stale in TASK-32948's catalog
-    # refactor (1cc5c1d92d): `on_show -> _populate_theme_tree` now lists user
-    # themes via `theme_catalog.user_theme_names()`, which globs in
-    # `css/Themes/theme_catalog.py` -- a different module this guard's
-    # per-file call graph does not walk into, so the call site is no longer
-    # visible here at all. Removed per this test's own policy.
+    # (`self.custom_themes_path.glob`) went stale in TASK-32628
+    # (b5251e9a6e, "feat(backup): complete Python backup and selectable
+    # recovery", 2026-09-16): `_load_user_themes` no longer calls `.glob`
+    # directly, it reads through the backup-recovery gate
+    # (`raw._scope(...)` / `raw._check(operation).observed_files`, from
+    # `Backup_Recovery.raw_participants`). That call is opaque to this
+    # guard's per-file call graph, so the finding disappeared. Inherited
+    # stale from origin/dev, not introduced by this branch -- removed per
+    # this test's own policy.
 }
 
 
