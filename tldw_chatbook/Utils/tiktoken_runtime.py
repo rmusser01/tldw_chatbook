@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from functools import lru_cache
 import hashlib
+import importlib.util
 import inspect
 import os
+import sys
 from pathlib import Path
 from typing import Any, Literal, Self
 
-# No module-scope pydantic import: this module is imported (and its
-# installer executed) by the package ``__init__``, which every
-# ``tldw_chatbook`` import runs — including the pinned workspace worker,
-# whose import closure must stay stdlib-only (Phase 0c). The manifest
-# models below are therefore defined inside ``_manifest_by_url``, which
-# runs once on first manifest read; behavior is unchanged.
+# No module-scope pydantic import and no eager tiktoken import either: this
+# module is imported (and its armer registered) by the package ``__init__``,
+# which every ``tldw_chatbook`` import runs — including the pinned workspace
+# worker, whose import closure must stay stdlib-only (Phase 0c). Pydantic
+# loads on first manifest read (inside ``_manifest_by_url``); tiktoken loads
+# only when something actually imports it, at which point the registered
+# armer selects the bundled assets before first use.
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "tiktoken_cache"
 _MANIFEST_PATH = _ASSET_DIR / "manifest.json"
@@ -172,3 +175,102 @@ def install_tiktoken_runtime() -> None:
         )
     os.environ["TIKTOKEN_CACHE_DIR"] = str(_ASSET_DIR)
     tiktoken.load.read_file_cached = _read_bundled_file
+
+
+class _TiktokenRuntimeArmingLoader:
+    """Loader wrapper that arms the bundled runtime after tiktoken execs.
+
+    The import machinery has fully initialized ``tiktoken`` (or failed)
+    by the time control returns from :meth:`exec_module`, so arming there
+    is strictly before any caller's first use of the library.
+    """
+
+    def __init__(self, loader: Any, finder: "_TiktokenRuntimeArmingFinder") -> None:
+        self._loader = loader
+        self._finder = finder
+
+    def create_module(self, spec: Any) -> Any:
+        return self._loader.create_module(spec)
+
+    def exec_module(self, module: Any) -> None:
+        try:
+            self._loader.exec_module(module)
+        except BaseException:
+            self._finder.restore()
+            raise
+        try:
+            install_tiktoken_runtime()
+        finally:
+            self._finder.discard()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._loader, name)
+
+
+class _TiktokenRuntimeArmingFinder:
+    """Meta-path finder arming the bundled runtime at tiktoken's first import."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Any = None,
+        target: Any = None,
+    ) -> Any:
+        if fullname != "tiktoken" or "tiktoken" in sys.modules:
+            return None
+        try:
+            sys.meta_path.remove(self)
+            spec = importlib.util.find_spec(fullname)
+        except BaseException:
+            self.restore()
+            raise
+        if (
+            spec is None
+            or spec.loader is None
+            or not hasattr(spec.loader, "exec_module")
+        ):
+            # tiktoken absent or not wrappable: leave the machinery untouched.
+            self.restore()
+            return spec
+        spec.loader = _TiktokenRuntimeArmingLoader(spec.loader, self)
+        return spec
+
+    def restore(self) -> None:
+        if not any(finder is self for finder in sys.meta_path):
+            sys.meta_path.insert(0, self)
+
+    def discard(self) -> None:
+        try:
+            sys.meta_path.remove(self)
+        except ValueError:
+            pass
+
+
+def arm_bundled_tiktoken_runtime() -> None:
+    """Arm :func:`install_tiktoken_runtime` without importing tiktoken now.
+
+    Phase 0c: the package ``__init__`` used to call
+    ``install_tiktoken_runtime()`` eagerly, which imported ``tiktoken``
+    (third-party) into every process that touched any ``tldw_chatbook``
+    module — including the pinned workspace worker, whose import closure
+    must stay stdlib-only. Registering this armer instead keeps the
+    offline-asset guarantee identical: if tiktoken is already imported the
+    installer runs immediately (exactly the old behavior); otherwise a
+    meta-path finder arms it the moment ``tiktoken`` is first imported —
+    which is, by definition, before any caller can use it. A pre-existing
+    ``TIKTOKEN_CACHE_DIR``/``DATA_GYM_CACHE_DIR`` override still wins, and
+    the finder removes itself once the arming decision has been made.
+
+    Raises:
+        RuntimeError: If tiktoken is already imported and its cache-reader
+            signature differs from the reviewed 0.14.0 seam (deferred to
+            tiktoken's first import otherwise).
+    """
+    if "tiktoken" in sys.modules:
+        install_tiktoken_runtime()
+        return
+    if not any(
+        isinstance(finder, _TiktokenRuntimeArmingFinder)
+        for finder in sys.meta_path
+    ):
+        sys.meta_path.insert(0, _TiktokenRuntimeArmingFinder())

@@ -5,17 +5,16 @@ stdlib-only — Task 8 concatenates the closure into a remote worker bundle,
 and ``Tests/Tools/test_worker_import_closure.py`` is the gate. Frames are
 decoded by ``Tools/workspace_wire_decode.py`` (the stdlib counterpart of
 the parent's pydantic serde in ``Tools/workspace_tool_protocol.py``) and
-responses are emitted as JSON with the exact serialization the parent's
-``WorkspaceToolResponse.from_bytes`` accepts.
+responses are emitted by ``workspace_wire_decode.encode_response``, whose
+byte layout the conformance tests pin to the parent's
+``WorkspaceToolResponse.to_bytes``.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 import unicodedata
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -35,6 +34,7 @@ from tldw_chatbook.Tools.workspace_wire_decode import (
     WireDecodeError,
     decode_request,
     decode_response,
+    encode_response,
 )
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
@@ -220,20 +220,8 @@ def _elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1_000))
 
 
-def _encode_frame(payload: Mapping[str, Any]) -> bytes:
-    try:
-        return json.dumps(
-            payload,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8", errors="strict")
-    except (TypeError, ValueError, UnicodeEncodeError) as error:
-        raise WireDecodeError("protocol frame cannot be serialized") from error
-
-
-def _emit(stdout: BinaryIO, payload: Mapping[str, Any]) -> None:
-    frame = _encode_frame(payload)
+def _emit(stdout: BinaryIO, payload: dict[str, Any]) -> None:
+    frame = encode_response(payload)
     decode_response(frame)
     stdout.write(frame + b"\n")
     stdout.flush()

@@ -13,9 +13,16 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 import os
 import sys
 
-from .Utils.tiktoken_runtime import install_tiktoken_runtime as _install_tiktoken_runtime
+from .Utils.tiktoken_runtime import (
+    arm_bundled_tiktoken_runtime as _arm_bundled_tiktoken_runtime,
+)
 
-_install_tiktoken_runtime()
+# Phase 0c: register the armer instead of importing tiktoken eagerly. The
+# bundled offline assets are still selected before tiktoken's first use —
+# see ``arm_bundled_tiktoken_runtime`` — but importing this package (which
+# every ``tldw_chatbook`` import runs, the stdlib-only pinned workspace
+# worker's included) no longer pulls the third-party tiktoken modules in.
+_arm_bundled_tiktoken_runtime()
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"

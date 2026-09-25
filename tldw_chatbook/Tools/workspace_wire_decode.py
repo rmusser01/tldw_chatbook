@@ -1,4 +1,4 @@
-"""Stdlib-only wire decoder for the pinned workspace worker.
+"""Stdlib-only wire codec for the pinned workspace worker.
 
 This module is the worker-bundle counterpart of the parent's pydantic
 serde in ``Tools/workspace_tool_protocol.py``. The parent keeps pydantic;
@@ -7,14 +7,19 @@ standard library (the bundle also targets Python 3.10).
 
 Accept/reject behaviour must stay identical to
 ``WorkspaceToolRequest.from_bytes`` / ``WorkspaceToolResponse.from_bytes``
-(the Task 3 conformance corpus is the gate). The shared wire constants
-defined here are imported by the protocol module so the two sides cannot
-drift structurally.
+(the Task 3 conformance corpus is the gate), and
+:func:`encode_response` must emit bytes identical to
+``WorkspaceToolResponse.to_bytes`` (the byte-identity conformance test in
+``Tests/Tools/test_wire_conformance.py`` is that gate — the parent's
+parser is order-insensitive, so only an explicit byte-equality pin catches
+a field-order drift). The shared wire constants defined here are imported
+by the protocol module so the two sides cannot drift structurally.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -295,6 +300,41 @@ def decode_response(raw: bytes) -> dict[str, Any]:
     if outcome == "failure" and result is not None:
         raise WireDecodeError("failed response cannot contain result")
     return doc
+
+
+def encode_response(frame: Mapping[str, Any]) -> bytes:
+    """Serialize one response frame in the parent's exact byte layout.
+
+    The single encoder for worker-emitted frames: it rebuilds the payload
+    in ``RESPONSE_FIELD_NAMES`` order — the order the parent's
+    ``WorkspaceToolResponse.to_bytes`` emits — with the same JSON flags
+    (``allow_nan=False``, ``ensure_ascii=False``, ``separators=(",", ":")``),
+    so input-mapping order cannot leak into the wire bytes. A byte-identity
+    conformance test pins this against the parent encoder; the parent's own
+    parser is order-insensitive, which is exactly why the pin exists.
+
+    Args:
+        frame: The response fields; must have exactly the response keys.
+
+    Returns:
+        The serialized frame bytes.
+
+    Raises:
+        WireDecodeError: If the keys are wrong or the values cannot be
+            serialized under the frame contract.
+    """
+    if set(frame) != _RESPONSE_KEYS:
+        raise WireDecodeError("protocol frame has invalid keys")
+    payload = {name: frame[name] for name in RESPONSE_FIELD_NAMES}
+    try:
+        return json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise WireDecodeError("protocol frame cannot be serialized") from error
 
 
 def _load_object(raw: bytes, *, cap: int, frame_name: str) -> dict[str, Any]:

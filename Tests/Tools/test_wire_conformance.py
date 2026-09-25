@@ -24,6 +24,7 @@ Corpus construction rules:
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -42,12 +43,18 @@ from tldw_chatbook.Tools.workspace_wire_decode import (
     MAX_PATH_BYTES,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
+    WIRE_VERSION,
     WORKSPACE_WRITE_OPERATIONS,
     WireDecodeError,
     decode_request,
     decode_response,
+    encode_response,
 )
-from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryIdentity,
+    capture_directory_chain,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -752,3 +759,184 @@ def test_generated_valid_responses_agree(outcome: str, data: st.DataObject) -> N
 
     assert decode_response(raw) == json.loads(raw)
     assert decode_response(raw)["outcome"] == outcome
+
+
+# ---------------------------------------------------------------------------
+# Byte-identity of the worker's response encoder (Phase 0c, review fix)
+# ---------------------------------------------------------------------------
+#
+# The parent's ``from_bytes`` is order-insensitive, so a field reorder in
+# the worker's serializer would keep every acceptance test green while
+# silently changing the wire bytes. These pins hold the worker-emitted
+# frame bytes to the parent's ``WorkspaceToolResponse.to_bytes`` layout.
+
+
+def _scrambled(frame: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild a frame dict in reverse key order (order must not matter)."""
+    return {name: frame[name] for name in reversed(list(frame))}
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param(
+            {
+                "operation_id": "operation-1",
+                "outcome": "admitted",
+                "code": "root_pinned",
+                "result": None,
+                "error": None,
+                "elapsed_ms": 0,
+                "truncated": False,
+                "cleanup_proven": True,
+            },
+            id="admitted",
+        ),
+        pytest.param(
+            {
+                "operation_id": "operation-1",
+                "outcome": "success",
+                "code": "ok",
+                "result": "1\thello wörld — τext\n",
+                "error": None,
+                "elapsed_ms": 4_567,
+                "truncated": True,
+                "cleanup_proven": True,
+            },
+            id="success",
+        ),
+        pytest.param(
+            {
+                "operation_id": "unknown",
+                "outcome": "failure",
+                "code": "invalid_request",
+                "result": None,
+                "error": "workspace operation failed",
+                "elapsed_ms": 12,
+                "truncated": False,
+                "cleanup_proven": True,
+            },
+            id="failure",
+        ),
+        pytest.param(
+            {
+                "operation_id": "operation-1",
+                "outcome": "failure",
+                "code": "tool_failure",
+                "result": None,
+                "error": "file not found: missing.txt",
+                "elapsed_ms": 1,
+                "truncated": False,
+                "cleanup_proven": False,
+            },
+            id="failure-cleanup-unproven",
+        ),
+    ],
+)
+def test_encode_response_bytes_match_parent_to_bytes(values: dict[str, Any]) -> None:
+    parent_bytes = WorkspaceToolResponse(**values).to_bytes()  # type: ignore[arg-type]
+    frame = {"version": WIRE_VERSION, **values}
+
+    assert encode_response(_scrambled(frame)) == parent_bytes
+    # The emitted bytes must also survive the worker's own decode self-check.
+    assert decode_response(encode_response(frame))["code"] == values["code"]
+
+
+def _worker_frames(raw_request: bytes) -> tuple[int, list[bytes]]:
+    """Run the pinned worker once and collect its exit code and frame lines."""
+    stdin, stdout = io.BytesIO(raw_request), io.BytesIO()
+    exit_code = run_workspace_worker(stdin, stdout, io.BytesIO())
+    return exit_code, stdout.getvalue().splitlines()
+
+
+def _pinned_request(
+    workspace: Path, operation: str, arguments: dict[str, Any]
+) -> bytes:
+    chain = capture_directory_chain(workspace)
+    request = WorkspaceToolRequest(
+        operation_id="byte-identity",
+        operation=operation,  # type: ignore[arg-type]
+        intent="write" if operation in WORKSPACE_WRITE_OPERATIONS else "read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments=arguments,
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+    return request.to_bytes()
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected_codes"),
+    [
+        pytest.param(
+            "fs_read",
+            {"path": "note.txt", "sensitive_exclusions": []},
+            ["admitted", "success"],
+            id="success",
+        ),
+        pytest.param(
+            "fs_read",
+            {"path": "missing.txt", "sensitive_exclusions": []},
+            ["admitted", "failure"],
+            id="tool-failure",
+        ),
+        pytest.param(
+            "fs_read",
+            {"path": "../escape.txt", "sensitive_exclusions": []},
+            ["admitted", "failure"],
+            id="dispatch-refusal",
+        ),
+    ],
+)
+def test_worker_emitted_frames_are_byte_identical_to_parent_encoder(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+    expected_codes: list[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hello", encoding="utf-8")
+    raw = _pinned_request(workspace, operation, arguments)
+
+    exit_code, frames = _worker_frames(raw)
+
+    assert [json.loads(frame)["outcome"] for frame in frames] == expected_codes
+    assert exit_code == (0 if expected_codes[-1] == "success" else 2)
+    for frame in frames:
+        parsed = WorkspaceToolResponse.from_bytes(frame)
+        rebuilt = WorkspaceToolResponse(
+            operation_id=parsed.operation_id,
+            outcome=parsed.outcome,
+            code=parsed.code,
+            result=parsed.result,
+            error=parsed.error,
+            elapsed_ms=parsed.elapsed_ms,
+            truncated=parsed.truncated,
+            cleanup_proven=parsed.cleanup_proven,
+        ).to_bytes()
+        assert rebuilt == frame
+
+
+def test_worker_invalid_request_frame_is_byte_identical_to_parent_encoder() -> None:
+    exit_code, frames = _worker_frames(b"{not-json")
+
+    assert exit_code == 2
+    assert len(frames) == 1
+    parsed = WorkspaceToolResponse.from_bytes(frames[0])
+    assert parsed.outcome == "failure"
+    assert parsed.code == "invalid_request"
+    assert parsed.operation_id == "unknown"
+    rebuilt = WorkspaceToolResponse(
+        operation_id=parsed.operation_id,
+        outcome=parsed.outcome,
+        code=parsed.code,
+        result=parsed.result,
+        error=parsed.error,
+        elapsed_ms=parsed.elapsed_ms,
+        truncated=parsed.truncated,
+        cleanup_proven=parsed.cleanup_proven,
+    ).to_bytes()
+    assert rebuilt == frames[0]
