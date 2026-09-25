@@ -311,7 +311,12 @@ Rewritten (every file, confirmation and registration assertion kept):
   `#settings-theme-card-column` (confirmed RED first: `focus shift 1.09:1`
   against the 3.0 floor). Fixed with the same rule re-scoped to
   `#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus`
-  and a CSS bundle rebuild. The keyboard-journey Theme walk
+  and a CSS bundle rebuild. Fix round 1 found the same defect on the picker's
+  Use chip (variant primary) — R24 — via a sibling
+  `test_picker_use_chip_meets_contrast_at_rest_and_focus`, also RED first
+  (`focus shift 1.09:1`) then GREEN after adding
+  `#settings-theme-card-column .settings-action-row .theme-editor-action.-primary:focus`
+  and rebuilding the bundle again. The keyboard-journey Theme walk
   (`test_settings_interface_keyboard_journeys.py`) needed no code change —
   it discovers whatever's mounted under `#settings-theme-editor-view`
   generically (`Button, Input, Select, Checkbox, OptionList, Tree`) and was
@@ -363,6 +368,13 @@ Rewritten (every file, confirmation and registration assertion kept):
   removed only after confirming it matched nothing (the editor's own Delete
   is gone; the unscoped `.theme-editor-action.-error:enabled` rest-state
   rule still matches the picker's Delete and was kept).
+- R24 (fix round 1) — the same defect class as R19/R23, on the picker's Use
+  chip (variant primary): `#settings-theme-card-column` needs its own
+  `.theme-editor-action.-primary:focus` override too, or a focused Use chip
+  falls back to the generic neutral fill. Only `-primary` and `-error` are
+  fixed — the picker's other chips (Try/Clone/New/Revert/Edit/Rename/Export)
+  carry no variant hue at rest to preserve, so the generic focus fill is
+  correct for them and was left alone.
 
 **Files (PR 2, cumulative, Tasks 1–6):** new —
 `tldw_chatbook/Widgets/settings_theme_picker.py` (already existed from PR 1;
@@ -431,3 +443,22 @@ keyboard focus, not merely a highlighted row from a prior click — a stray
 click that leaves focus on a button (e.g. after "Use this theme") silently
 no-ops the `delete` key; clicking back onto the list row first, or using the
 Delete button directly, both work.
+
+**R25 correction (fix round 1).** The original captures for the pass above
+were saved to `/tmp/pr2_*.txt` (37 files), not under the run's scratch profile
+(`.../scratchpad/live-pr2/`) as the brief's own convention asks — a review
+found none there. Copied all 37 into
+`.../scratchpad/live-pr2/captures_original/` (still `/tmp` too, but now also
+durably in the expected location; full name list in task-6-report.md). Then
+re-ran the two most load-bearing steps in the same scratch profile (it still
+held `pr2-verify`/`pr2-verify80` from the earlier pass), capturing directly
+under `.../scratchpad/live-pr2/captures/` this time:
+`03_clone_toast.txt` (Clone), `04_save_returns_to_picker.txt` (Save — this
+one capture shows both the "Theme 'textual-dark_copy' saved" toast *and* the
+picker view it returned to, with the new theme highlighted under YOUR
+THEMES), `05_use_toast.txt` (Use), `06_delete_confirm.txt` (the confirm
+dialog), and `07_delete_fallback_toast.txt` ("Deleted 'textual-dark_copy';
+launch default and theme reset to Textual Dark" — AC #8, live, again). Real
+config mtime and the real `themes/` directory were re-checked before this
+re-run and after: unchanged. See task-6-report.md's Fix Round 1 section for
+the full path list.
