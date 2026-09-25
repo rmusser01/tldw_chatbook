@@ -29,7 +29,7 @@ from ..css.Themes.theme_catalog import (
     use_theme,
     user_theme_names,
 )
-from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL
+from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
 from .theme_preview import ThemePreview
 
 _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
@@ -389,19 +389,30 @@ class ThemePicker(Vertical):
 
 
 class ThemePane(ContentSwitcher):
-    """Picker first; the editor swaps in for Clone/New (spec §4, D3)."""
+    """Picker first; the editor swaps in for Clone/New/Edit (spec §4, D3).
+
+    The picker lists and changes saved theme files only through the editor's
+    backup-scoped file API. Rename bubbles to the screen, which owns the
+    name prompt.
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(initial="settings-theme-picker", **kwargs)
 
     def compose(self) -> ComposeResult:
-        from .settings_theme_editor import SettingsThemeEditor
-
-        yield ThemePicker(id="settings-theme-picker")
+        # The editor is composed first so the picker's first refresh_catalog
+        # (its on_mount) can reach it through _editor_names.
         with Vertical(id="settings-theme-editor-view"):
             with Horizontal(classes="settings-action-row"):
                 yield Button("Back to themes", id="settings-theme-back", classes="theme-editor-action")
             yield SettingsThemeEditor(id="settings-theme-editor")
+        yield ThemePicker(list_user_names=self._editor_names, id="settings-theme-picker")
+
+    def _editor(self) -> SettingsThemeEditor:
+        return self.query_one(SettingsThemeEditor)
+
+    def _editor_names(self) -> set[str]:
+        return self._editor().list_user_theme_names()
 
     def show_picker(self) -> None:
         self.current = "settings-theme-picker"
@@ -409,10 +420,8 @@ class ThemePane(ContentSwitcher):
         picker.refresh_catalog()
         picker.focus_list()
 
-    def open_editor(self, theme_id: str, mode: Literal["clone", "new"]) -> None:
-        from .settings_theme_editor import SettingsThemeEditor
-
-        editor = self.query_one(SettingsThemeEditor)
+    def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
+        editor = self._editor()
         picker = self.query_one(ThemePicker)
         entry = next((e for e in picker.entries if e.id == theme_id), None)
         if entry is not None and entry.origin == "yours":
@@ -421,7 +430,7 @@ class ThemePane(ContentSwitcher):
             editor.load_theme(theme_id)
         if mode == "clone":
             editor.on_clone_theme()
-        else:
+        elif mode == "new":
             editor.on_new_theme()
         self.current = "settings-theme-editor-view"
         editor.query_one("#settings-theme-name").focus()
@@ -430,3 +439,18 @@ class ThemePane(ContentSwitcher):
     def _edit_requested(self, event: ThemePicker.EditRequested) -> None:
         event.stop()
         self.open_editor(event.theme_id, event.mode)
+
+    @on(ThemePicker.DeleteRequested)
+    def _delete_requested(self, event: ThemePicker.DeleteRequested) -> None:
+        event.stop()
+        self._editor().request_delete(event.theme_id)
+
+    @on(ThemePicker.ExportRequested)
+    def _export_requested(self, event: ThemePicker.ExportRequested) -> None:
+        event.stop()
+        self._editor().export_theme(event.theme_id)
+
+    @on(SettingsThemeEditor.ThemesChanged)
+    def _themes_changed(self, event: SettingsThemeEditor.ThemesChanged) -> None:
+        event.stop()
+        self.query_one(ThemePicker).refresh_catalog()

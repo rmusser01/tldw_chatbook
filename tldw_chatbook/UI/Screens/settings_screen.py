@@ -289,7 +289,7 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
-from ...Widgets.settings_theme_picker import ThemePane
+from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -24464,6 +24464,24 @@ class SettingsScreen(BaseAppScreen):
         self.post_message(
             NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
         )
+
+    @on(ThemePicker.RenameRequested)
+    def handle_theme_rename_requested(self, event: ThemePicker.RenameRequested) -> None:
+        """Prompt for the new name, then rename through the editor's file API."""
+        event.stop()
+        old = event.theme_id
+        self.app.push_screen(
+            RagProfileNameModal(
+                title=f"Rename theme '{old}'", initial=old, confirm_label="Rename"
+            ),
+            lambda new: self._handle_theme_rename_result(old, new),
+        )
+
+    def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
+        if not new or new == old:
+            return
+        if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
+            self.query_one(ThemePicker).refresh_catalog(highlight=new)
 
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(

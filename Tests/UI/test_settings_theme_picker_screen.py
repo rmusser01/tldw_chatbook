@@ -397,3 +397,113 @@ async def test_theme_help_copy_describes_the_picker(request):
         button = screen.query_one("#settings-open-appearance", Button)
         assert "editor" not in str(button.label).lower()
         assert "editor" not in str(button.tooltip).lower()
+
+
+# TASK-32948 PR 2 Task 3: the picker's file actions route through the
+# editor's backup-scoped API; Rename prompts via RagProfileNameModal.
+def _saved_theme(host, name="mine"):
+    """Write ``name`` into the private profile's themes dir and register it
+    (the test harness does not run the app's startup theme loader)."""
+    from textual.theme import Theme
+
+    from tldw_chatbook import config
+
+    themes = config._get_effective_config_path().parent / "themes"
+    themes.mkdir(exist_ok=True)
+    path = themes / f"{name}.toml"
+    path.write_text(
+        f'[theme]\nname = "{name}"\ndark = true\n[colors]\nprimary = "#0099FF"\n',
+        encoding="utf-8",
+    )
+    host.register_theme(Theme(name=name, primary="#0099FF", dark=True))
+    return path
+
+
+async def _highlight(host, pilot, theme_id):
+    await _category(host, pilot, "Theme")
+    lst = host.screen.query_one("#settings-theme-list")
+    lst.highlighted = lst.get_option_index(theme_id)
+    lst.focus()
+    await pilot.pause(0.1)
+
+
+def _picker_ids(host):
+    return {e.id for e in host.screen.query_one("#settings-theme-picker").entries}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_from_picker_prompts_and_renames(request):
+    from textual.widgets import Input
+
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    host = _host()
+    path = _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        host.screen.query_one("#settings-rag-profile-name-input", Input).value = "ours"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        picker = host.screen.query_one("#settings-theme-picker")
+        assert picker.highlighted_id == "ours"
+        assert "ours" in _picker_ids(host) and "mine" not in _picker_ids(host)
+        assert not path.exists() and (path.parent / "ours.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_from_picker_confirms_and_rebuilds(request):
+    host = _host()
+    path = _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Delete theme"
+        await pilot.pause(0.3)
+        assert not path.exists()
+        assert "mine" not in _picker_ids(host)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edit_opens_saved_theme_in_editor(request):
+    from textual.widgets import Input
+
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
+        assert pane.current == "settings-theme-editor-view"
+        assert host.screen.query_one("#settings-theme-name", Input).value == "mine"
+        assert host.screen.query_one("#settings-theme-editor").is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_picker_lists_via_editor_scope(request, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Widgets.settings_theme_editor import (
+        THEMES_UNAVAILABLE_LABEL,
+        SettingsThemeEditor,
+    )
+
+    def paused(self):
+        raise RecoveryRequired("x")
+
+    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        picker = host.screen.query_one("#settings-theme-picker")
+        assert picker.files_available is False
+        lst = host.screen.query_one("#settings-theme-list")
+        prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_UNAVAILABLE_LABEL in prompts
