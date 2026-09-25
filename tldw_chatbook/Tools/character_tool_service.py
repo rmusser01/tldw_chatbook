@@ -31,6 +31,8 @@ _LOGGER = logging.getLogger(__name__)
 
 CHARACTER_FIELD_READ_BOUND = 8_000
 _SEARCH_DESCRIPTION_CHARS = 160
+_SEARCH_TAGS_MAX = 20
+_SEARCH_TAG_CHARS = 64
 EDITABLE_FIELDS: tuple[str, ...] = (
     "name", "description", "personality", "scenario", "first_message",
     "message_example", "system_prompt", "post_history_instructions",
@@ -48,13 +50,53 @@ class _InvalidArgument(ValueError):
 
 
 class CharacterReadGuard:
-    """Fields read in full, per Console session (spec §3.1 truncation guard)."""
+    """Fields read in full, per Console session (spec §3.1 truncation guard).
+
+    A field only "permits" a write once its reads have covered ``[0,
+    length)`` with no gaps -- reading only the last page (or any offset
+    beyond the coverage reached so far) must never unlock a write on its
+    own. ``_covered_end`` tracks the highest CONTIGUOUS end reached from 0
+    per ``(character_id, version, field)``: a page only extends it when the
+    page's own ``offset`` falls at or before that already-covered end (a
+    fix-round-1 data-loss finding: the previous implementation marked a
+    field "full" whenever a single page's end reached the field's length,
+    regardless of offset, so `offset=len-1` or any huge offset unlocked a
+    write without the model ever having read the field).
+    """
 
     def __init__(self) -> None:
         self._full: set[tuple[int, int, str]] = set()
+        self._covered_end: dict[tuple[int, int, str], int] = {}
 
     def record_full(self, character_id: int, version: int, field: str) -> None:
+        """Unconditionally mark a field as fully read (explicit override)."""
         self._full.add((character_id, version, field))
+
+    def record_page(
+        self,
+        character_id: int,
+        version: int,
+        field: str,
+        offset: int,
+        end: int,
+        total_len: int,
+    ) -> None:
+        """Record one read page; only extends coverage when contiguous.
+
+        Args:
+            offset: Start of the page just read.
+            end: End of the page just read (``min(offset + BOUND,
+                total_len)``).
+            total_len: The field's full length at this version.
+        """
+        key = (character_id, version, field)
+        covered = self._covered_end.get(key, 0)
+        if offset > covered:
+            return  # a gap -- does not extend coverage
+        new_covered = max(covered, end)
+        self._covered_end[key] = new_covered
+        if new_covered >= total_len:
+            self._full.add(key)
 
     def permits(self, character_id: int, version: int, field: str) -> bool:
         return (character_id, version, field) in self._full
@@ -72,6 +114,40 @@ def _text(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return json.dumps(list(value), ensure_ascii=False)
     return "" if value is None else str(value)
+
+
+def _bounded_tags(value: Any) -> list[str]:
+    """Bound search-result tags: at most ``_SEARCH_TAGS_MAX``, each truncated."""
+    if not isinstance(value, list):
+        return []
+    return [str(tag)[:_SEARCH_TAG_CHARS] for tag in value[:_SEARCH_TAGS_MAX]]
+
+
+def _duplicate_name_message(name: str, existing_id: int | None) -> str:
+    id_part = f" (id {existing_id})" if existing_id is not None else ""
+    return f"A character named {name} already exists{id_part}; update it or choose another name."
+
+
+def _validate_changes(changes: Mapping[str, Any], *, creating: bool) -> None:
+    """Validate before resolving the avatar (spec §4.3 order: validate -> avatar -> write).
+
+    Reuses Task 1's own request schema so an over-limit/invalid field is
+    caught before a paid image generation ever runs (fix-round-1 finding).
+    Raises pydantic ``ValidationError`` (converted to ``invalid_argument``
+    by ``_run``) on any invalid field. The later ``create_character``/
+    ``update_character`` call re-validates the full payload (including a
+    resolved avatar's ``image_base64``) and stays the authoritative
+    write-time check.
+    """
+    # Deferred import: avoid module-scope tldw_api schema import, matching
+    # LocalCharacterPersonaService's own precedent (task-285 phase 2).
+    from tldw_chatbook.tldw_api.character_persona_schemas import (
+        CharacterCreateRequest,
+        CharacterUpdateRequest,
+    )
+
+    model = CharacterCreateRequest if creating else CharacterUpdateRequest
+    model.model_validate(changes)
 
 
 def _bounded_int(args: Mapping[str, Any], key: str, default: int) -> int:
@@ -152,10 +228,13 @@ class CharacterToolService:
         return self._run(self._save, arguments)
 
     def _run(self, fn: Callable[[Mapping[str, Any]], str], arguments: object) -> str:
-        if self._runtime_source_loader() == "server":
-            return _outcome("unsupported", SERVER_REFUSAL)
         args = arguments if isinstance(arguments, Mapping) else {}
         try:
+            # runtime_source_loader() lives inside the guarded region too
+            # (fix-round-1 item 9): a caller-supplied loader that itself
+            # raises must not escape _run uncaught.
+            if self._runtime_source_loader() == "server":
+                return _outcome("unsupported", SERVER_REFUSAL)
             return fn(args)
         except _InvalidArgument as exc:
             return _outcome("invalid_argument", str(exc))
@@ -177,19 +256,32 @@ class CharacterToolService:
             raise _InvalidArgument("limit must be 1-25 and offset >= 0")
         service = self._service_loader()
         query = str(args.get("query") or "").strip()
-        rows = (service.search_characters(query, limit=limit + 1) if query
-                else service.list_characters(limit=limit + 1, offset=offset))
-        rows = list(rows or [])
+        if query:
+            # search_characters has no DB-level offset, so fetch enough rows
+            # to slice the requested page ourselves and detect more beyond
+            # it (fix-round-1 item 6: offset was silently ignored here).
+            rows = list(service.search_characters(query, limit=offset + limit + 1) or [])
+            page_rows = rows[offset:offset + limit]
+            has_more = len(rows) > offset + limit
+        else:
+            rows = list(service.list_characters(limit=limit + 1, offset=offset) or [])
+            page_rows = rows[:limit]
+            has_more = len(rows) > limit
         items = [
             {
                 "id": r["id"], "name": r.get("name"),
                 "description": _text(r.get("description"))[:_SEARCH_DESCRIPTION_CHARS],
-                "tags": r.get("tags") or [], "version": r.get("version"),
-                "has_avatar": bool(r.get("image")), "updated_at": str(r.get("last_modified") or ""),
+                "tags": _bounded_tags(r.get("tags")), "version": r.get("version"),
+                # list_characters omits the image column entirely (perf,
+                # task-15474); report unknown (null) rather than a false
+                # "no avatar" -- fix-round-1 item 5. search_characters does
+                # SELECT cc.* and always has a real value.
+                "has_avatar": (bool(r["image"]) if "image" in r else None),
+                "updated_at": str(r.get("last_modified") or ""),
             }
-            for r in rows[:limit]
+            for r in page_rows
         ]
-        extra = {"next_offset": offset + limit} if (len(rows) > limit and not query) else {}
+        extra = {"next_offset": offset + limit} if has_more else {}
         return _json({"status": "ok", "items": items, **extra})
 
     # -- get ----------------------------------------------------------------
@@ -201,13 +293,18 @@ class CharacterToolService:
 
     def _field_page(self, card: Mapping[str, Any], field: str, offset: int) -> dict[str, Any]:
         text = _text(card.get(field))
+        total_len = len(text)
+        if offset > total_len:
+            raise _InvalidArgument("offset must be <= the field's length")
         end = offset + CHARACTER_FIELD_READ_BOUND
         page: dict[str, Any] = {"text": text[offset:end]}
-        if end < len(text):
+        actual_end = min(end, total_len)
+        if end < total_len:
             page["truncated"] = True
             page["next_offset"] = end
-        else:
-            self._guard.record_full(int(card["id"]), int(card["version"]), field)
+        self._guard.record_page(
+            int(card["id"]), int(card["version"]), field, offset, actual_end, total_len
+        )
         return page
 
     def _get(self, args: Mapping[str, Any]) -> str:
@@ -229,34 +326,13 @@ class CharacterToolService:
                       "has_avatar": bool(card.get("image")), "fields": fields})
 
     # -- save ---------------------------------------------------------------
-    @staticmethod
-    def _avatar_request_with_fallback_prompt(
-        avatar_req: Mapping[str, Any], card_for_prompt: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        """Give ``generate`` a usable prompt when the card has no description.
-
-        ``resolve_avatar`` composes a prompt from the card's description when
-        no explicit ``prompt`` is given, and reports a failure when both are
-        blank (spec §4.3's "add a description" case -- correct when a real
-        card genuinely has neither). A brand-new character being created with
-        only a name still deserves a best-effort avatar rather than an
-        automatic failure, so this fills in a minimal name-based prompt only
-        when neither an explicit prompt nor a description exists.
-        """
-        if avatar_req.get("source") != "generate":
-            return avatar_req
-        if str(avatar_req.get("prompt") or "").strip():
-            return avatar_req
-        if str(card_for_prompt.get("description") or "").strip():
-            return avatar_req
-        name = str(card_for_prompt.get("name") or "the character").strip() or "the character"
-        return {**avatar_req, "prompt": f"a portrait of {name}"}
-
     def _save(self, args: Mapping[str, Any]) -> str:
         changes = {f: args[f] for f in EDITABLE_FIELDS if f in args}
         if "name" in changes and not str(changes["name"] or "").strip():
             raise _InvalidArgument("name must not be blank")
         avatar_req = args.get("avatar")
+        if avatar_req is not None and not isinstance(avatar_req, Mapping):
+            raise _InvalidArgument("'avatar' must be an object")
         service = self._service_loader()
         creating = args.get("id") is None
         character_id: int | None = None
@@ -264,11 +340,10 @@ class CharacterToolService:
         if creating:
             if not str(changes.get("name") or "").strip():
                 raise _InvalidArgument("name is required to create a character")
-            existing = service._require_db().get_character_card_by_name(str(changes["name"]).strip())
+            name = str(changes["name"]).strip()
+            existing = service._require_db().get_character_card_by_name(name)
             if existing:
-                return _outcome("duplicate_name",
-                                f"A character named {changes['name']} already exists "
-                                f"(id {existing['id']}); update it or choose another name.")
+                return _outcome("duplicate_name", _duplicate_name_message(name, existing["id"]))
             card_for_prompt: Mapping[str, Any] = changes
         else:
             character_id = _character_id(args)
@@ -288,10 +363,14 @@ class CharacterToolService:
                                     f"Read the full '{f}' field with character_get before changing it.")
             card_for_prompt = {**current, **changes}
 
+        # Validate before resolving the avatar (spec §4.3 order): a paid
+        # image generation must never be spent on a save that then fails
+        # validation (fix-round-1 item 3).
+        _validate_changes(changes, creating=creating)
+
         avatar_status, payload, clear_image = "none", dict(changes), False
         if isinstance(avatar_req, Mapping):
-            request = self._avatar_request_with_fallback_prompt(avatar_req, card_for_prompt)
-            outcome = resolve_avatar(request, card_for_prompt, generate=self._generate_avatar)
+            outcome = resolve_avatar(avatar_req, card_for_prompt, generate=self._generate_avatar)
             if outcome.kind == "image" and outcome.image:
                 payload["image_base64"] = base64.b64encode(outcome.image).decode("ascii")
                 avatar_status = "saved"
@@ -307,9 +386,10 @@ class CharacterToolService:
             try:
                 record = service.create_character(payload)
             except ConflictError:
+                name = str(changes["name"]).strip()
+                existing = service._require_db().get_character_card_by_name(name)
                 return _outcome("duplicate_name",
-                                f"A character named {changes['name']} already exists; "
-                                f"update it or choose another name.")
+                                _duplicate_name_message(name, existing["id"] if existing else None))
         else:
             try:
                 record = service.update_character(character_id, payload,
@@ -317,17 +397,28 @@ class CharacterToolService:
                                                   clear_image=clear_image)
             except ConflictError as exc:
                 if "already exists" in str(exc):
-                    return _outcome("duplicate_name",
-                                    f"A character named '{changes.get('name')}' already exists; "
-                                    f"choose another name.")
+                    name = str(changes.get("name") or "").strip()
+                    existing = service._require_db().get_character_card_by_name(name)
+                    return _outcome("duplicate_name", _duplicate_name_message(
+                        name, existing["id"] if existing else None))
                 return _outcome("stale_version",
                                 "The card changed since you read it; re-read with character_get.")
+            except ValidationError:
+                # A ValidationError IS a ValueError; special-case it ahead of
+                # the generic except below so it reaches _run and reports
+                # invalid_argument naming the field, not stale_version
+                # (fix-round-1 item 2).
+                raise
             except ValueError:
                 return _outcome("stale_version",
                                 "The card changed since you read it; re-read with character_get.")
         saved_id = int(record["id"])
         if self._on_changed is not None:
-            self._on_changed(saved_id)
+            try:
+                self._on_changed(saved_id)
+            except Exception as exc:  # noqa: BLE001 - a notification failure must not mask a committed save
+                _LOGGER.error("Character on_changed notification failed category=%s",
+                              re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64])
         return _json({"status": "saved", "retryable": False, "id": saved_id,
                       "version": record.get("version"), "changed_fields": sorted(changes),
                       "avatar": avatar_status})

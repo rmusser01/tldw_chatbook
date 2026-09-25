@@ -1,7 +1,8 @@
 """CharacterToolService: handlers, bounding, guard, approval summary.
 
-TASK-32954 Task 3. Real in-memory ``CharactersRAGDB`` + Task 1's
-``LocalCharacterPersonaService`` -- no DB mocking, per repo convention.
+TASK-32954 Task 3 (+ fix round 1). Real in-memory ``CharactersRAGDB`` +
+Task 1's ``LocalCharacterPersonaService`` -- no DB mocking, per repo
+convention.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import pytest
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Tools import character_tool_service as cts
 
 PNG = base64.b64decode(
@@ -84,13 +85,47 @@ def test_update_rename_to_duplicate_name_reports_duplicate(env):
     # A race/late-arriving DB-layer ConflictError (name UNIQUE constraint on
     # UPDATE) must map to duplicate_name, not stale_version -- the two are
     # different DB.ConflictError messages disambiguated by the "already
-    # exists" substring in CharacterToolService._save.
+    # exists" substring in CharacterToolService._save. The message must also
+    # name the existing id (fix-round-1 item 7).
     tool, *_ = env
-    j(tool.save({"name": "Aria"}))
+    first = j(tool.save({"name": "Aria"}))
     second = j(tool.save({"name": "Bianca"}))
     out = j(tool.save({"id": second["id"], "expected_version": second["version"],
                        "name": "Aria"}))
     assert out["status"] == "duplicate_name"
+    assert str(first["id"]) in out["message"]
+
+
+def test_create_race_duplicate_name_includes_id(env):
+    # Simulate a true create-time race: the pre-check lookup momentarily
+    # reports "no conflict" (as a concurrent writer's insert had not yet
+    # committed when we checked), but the DB layer's own UNIQUE constraint
+    # still raises ConflictError on the actual insert. The except-branch's
+    # re-lookup (using the real, unpatched lookup on all later calls) must
+    # still find and report the existing id (fix-round-1 item 7).
+    tool, local, db, *_ = env
+    first = j(tool.save({"name": "Aria"}))
+
+    real_lookup = db.get_character_card_by_name
+    calls = {"n": 0}
+
+    def flaky_lookup(name):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return real_lookup(name)
+
+    db.get_character_card_by_name = flaky_lookup
+
+    def flaky_create(_payload):
+        raise ConflictError("Character card with name 'Aria' already exists.",
+                            entity="character_cards", entity_id="Aria")
+
+    local.create_character = flaky_create
+
+    out = j(tool.save({"name": "Aria"}))
+    assert out["status"] == "duplicate_name"
+    assert str(first["id"]) in out["message"]
 
 
 def test_whitespace_name_rejected(env):
@@ -103,6 +138,17 @@ def test_field_over_limit(env):
     # must surface as invalid_argument naming the field, not a raw exception.
     tool, *_ = env
     out = j(tool.save({"name": "x" * 501}))
+    assert out["status"] == "invalid_argument" and "name" in out["message"]
+
+
+def test_update_field_over_limit_is_invalid_argument(env):
+    # Fix-round-1 item 2: pydantic ValidationError IS a ValueError, and the
+    # update path's ConflictError/ValueError handling used to swallow it as
+    # stale_version. Must report invalid_argument naming the field instead.
+    tool, *_ = env
+    saved = j(tool.save({"name": "Aria"}))
+    out = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                       "name": "y" * 501}))
     assert out["status"] == "invalid_argument" and "name" in out["message"]
 
 
@@ -153,6 +199,49 @@ def test_truncation_guard_blocks_until_full_read(env):
     assert ok["status"] == "saved"
 
 
+def test_truncation_guard_requires_contiguous_coverage(env):
+    # Fix-round-1 item 1 (data-loss finding): reading page 1 then jumping to
+    # the LAST page (skipping the middle one) must NOT unlock a write --
+    # the old implementation marked a field "full" whenever any single
+    # page's end reached the field's length, regardless of what was
+    # skipped. Filling the missing middle page closes the gap up to where
+    # that page ends, but the earlier out-of-order tail read was a no-op
+    # (coverage tracks a single contiguous frontier, not a bitmap of every
+    # page ever read) -- the tail must be re-read, now contiguous, to
+    # actually unlock.
+    tool, *_ = env
+    bound = cts.CHARACTER_FIELD_READ_BOUND
+    text = "x" * (bound * 2 + 17)  # exactly 3 pages: [0,8000) [8000,16000) [16000,16017)
+    saved = j(tool.save({"name": "Long3", "description": text}))
+
+    tool.get({"id": saved["id"], "field": "description", "offset": 0})       # page 1
+    tool.get({"id": saved["id"], "field": "description", "offset": bound * 2})  # page 3, skip 2
+
+    blocked = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                           "description": "rewrite"}))
+    assert blocked["status"] == "read_full_field_first"
+
+    tool.get({"id": saved["id"], "field": "description", "offset": bound})  # the missing page 2
+    still_blocked = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                                 "description": "rewrite"}))
+    assert still_blocked["status"] == "read_full_field_first"  # still short the final 17 chars
+
+    tool.get({"id": saved["id"], "field": "description", "offset": bound * 2})  # re-read the tail
+    ok = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                      "description": "rewrite"}))
+    assert ok["status"] == "saved"
+
+
+def test_get_offset_beyond_length_is_invalid_argument(env):
+    # Fix-round-1 item 1: an absurd offset (e.g. 10**9) must be rejected
+    # outright, not silently return "" and be treated as a valid read that
+    # could unlock a write.
+    tool, *_ = env
+    saved = j(tool.save({"name": "Short", "description": "hi"}))
+    out = j(tool.get({"id": saved["id"], "field": "description", "offset": 10**9}))
+    assert out["status"] == "invalid_argument"
+
+
 def test_server_mode_refuses(env):
     tool, *_, state = env
     state["source"] = "server"
@@ -161,10 +250,41 @@ def test_server_mode_refuses(env):
 
 
 def test_save_with_generated_avatar_is_one_write(env):
+    # A description is required for resolve_avatar to compose a prompt when
+    # none is given -- Task 3 no longer papers over a missing description
+    # with a synthetic prompt (fix-round-1 item 4 removed that fallback).
     tool, _local, db, *_ = env
-    out = j(tool.save({"name": "Aria", "avatar": {"source": "generate"}}))
+    out = j(tool.save({"name": "Aria", "description": "A witty starship pilot",
+                       "avatar": {"source": "generate"}}))
     card = db.get_character_card_by_id(out["id"])
     assert out["avatar"] == "saved" and card["image"] == PNG and card["version"] == out["version"]
+
+
+def test_create_generate_avatar_without_description_or_prompt_fails_but_saves_text(env):
+    # Fix-round-1 item 4: no fallback prompt. Task 2's original contract
+    # applies unmodified -- the text still saves, the avatar reports failed.
+    tool, _local, db, *_ = env
+    out = j(tool.save({"name": "Aria", "avatar": {"source": "generate"}}))
+    assert out["status"] == "saved"
+    assert out["avatar"] == "failed: add a description or give an avatar prompt"
+    assert db.get_character_card_by_id(out["id"])["image"] is None
+
+
+def test_create_over_limit_validates_before_avatar_generation(env):
+    # Fix-round-1 item 3: validate BEFORE resolving the avatar, so a paid
+    # generation is never spent on a save that then fails validation.
+    _, local, _db, changed, state = env
+    calls = []
+    tool2 = cts.CharacterToolService(
+        service_loader=lambda: local,
+        runtime_source_loader=lambda: state["source"],
+        read_guard=cts.CharacterReadGuard(),
+        on_changed=changed.append,
+        generate_avatar=lambda prompt: (calls.append(prompt), PNG)[1],
+    )
+    out = j(tool2.save({"name": "y" * 501, "avatar": {"source": "generate"}}))
+    assert out["status"] == "invalid_argument"
+    assert calls == []
 
 
 def test_create_with_remove_avatar_reports_none(env):
@@ -186,6 +306,41 @@ def test_save_reports_avatar_failure_but_keeps_text(env, tmp_path):
     assert db.get_character_card_by_id(out["id"])["description"] == "kept"
 
 
+def test_non_mapping_avatar_is_invalid_argument(env):
+    # Fix-round-1 item 8.
+    tool, *_ = env
+    out = j(tool.save({"name": "Aria", "avatar": "generate"}))
+    assert out["status"] == "invalid_argument"
+
+
+def test_on_changed_exception_does_not_fail_the_save(env):
+    # Fix-round-1 item 9: a notification failure must not turn an already-
+    # committed save into a reported failure.
+    tool, _local, db, *_ = env
+
+    def _boom(_character_id):
+        raise RuntimeError("notification boom")
+
+    tool._on_changed = _boom
+    out = j(tool.save({"name": "Aria"}))
+    assert out["status"] == "saved"
+    assert db.get_character_card_by_id(out["id"]) is not None
+
+
+def test_runtime_source_loader_exception_is_handled(env):
+    # Fix-round-1 item 9: runtime_source_loader() must live inside _run's
+    # guarded region -- an exception from it is handled like any other,
+    # not left to crash out of _run uncaught.
+    tool, *_ = env
+
+    def _boom():
+        raise RuntimeError("source lookup boom")
+
+    tool._runtime_source_loader = _boom
+    with pytest.raises(RuntimeError, match=cts._PUBLIC_EXECUTION_ERROR):
+        tool.search({})
+
+
 def test_search_lists_and_bounds(env):
     tool, *_ = env
     for n in range(3):
@@ -193,6 +348,58 @@ def test_search_lists_and_bounds(env):
     out = j(tool.search({"limit": 2}))
     assert len(out["items"]) == 2 and out["next_offset"] == 2
     assert all(len(i["description"]) <= 160 for i in out["items"])
+
+
+def test_search_no_query_reports_has_avatar_unknown(env):
+    # Fix-round-1 item 5: list_characters omits the image column, so the
+    # browse (no-query) path cannot know -- report null, never False. A
+    # fresh CharactersRAGDB seeds a "Default Assistant" card that can sort
+    # ahead of ours alphabetically, so find our row by name explicitly
+    # rather than assuming index 0.
+    tool, *_ = env
+    tool.save({"name": "NoQueryAvatar", "description": "d",
+              "avatar": {"source": "generate"}})
+    out = j(tool.search({"limit": 25}))
+    item = next(i for i in out["items"] if i["name"] == "NoQueryAvatar")
+    assert item["has_avatar"] is None
+
+
+def test_search_with_query_reports_real_has_avatar(env):
+    # search_characters does SELECT cc.* -- the real value is known.
+    tool, *_ = env
+    tool.save({"name": "QueryAvatarZzz", "description": "unique marker text zzzqqq",
+              "avatar": {"source": "generate"}})
+    out = j(tool.search({"query": "zzzqqq"}))
+    assert out["items"] and out["items"][0]["has_avatar"] is True
+
+
+def test_search_query_honors_offset_and_next_offset(env):
+    # Fix-round-1 item 6: offset was previously ignored for the query path.
+    tool, *_ = env
+    for n in range(3):
+        tool.save({"name": f"Wob{n}", "description": "wobblefish matching text"})
+    page1 = j(tool.search({"query": "wobblefish", "limit": 1, "offset": 0}))
+    page2 = j(tool.search({"query": "wobblefish", "limit": 1, "offset": 1}))
+    page3 = j(tool.search({"query": "wobblefish", "limit": 1, "offset": 2}))
+    assert page1["next_offset"] == 1 and page2["next_offset"] == 2
+    assert "next_offset" not in page3
+    ids = {page1["items"][0]["id"], page2["items"][0]["id"], page3["items"][0]["id"]}
+    assert len(ids) == 3
+
+
+def test_search_bounds_tags(env):
+    # Fix-round-1 item 10: at most 20 tags, each truncated to 64 chars. A
+    # fresh CharactersRAGDB seeds a "Default Assistant" card that can sort
+    # ahead of ours alphabetically, so find our row by name explicitly
+    # rather than assuming index 0.
+    tool, *_ = env
+    many_tags = [f"tag-{i}-{'x' * 100}" for i in range(30)]
+    tool.save({"name": "Tagged", "tags": many_tags})
+    out = j(tool.search({"limit": 25}))
+    item = next(i for i in out["items"] if i["name"] == "Tagged")
+    tags = item["tags"]
+    assert len(tags) == 20
+    assert all(len(t) <= 64 for t in tags)
 
 
 def test_approval_summary_has_no_field_text():
