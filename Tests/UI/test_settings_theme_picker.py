@@ -240,3 +240,66 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
         await pilot.press("down", "enter")
         await pilot.pause()
         assert any("launch default was not saved" in n for n in notes)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mouse_click_highlights_but_does_not_use(request, config_writes):
+    # Spec D2: highlight only repaints the preview. OptionList's own click
+    # handler highlights AND selects (= Use); the picker's must only highlight.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        before = app.theme
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        start = lst.highlighted
+        for y in range(1, 6):  # the first visible non-header, non-highlighted row
+            await pilot.click("#settings-theme-list", offset=(3, y))
+            await pilot.pause()
+            if lst.highlighted != start:
+                break
+        assert lst.highlighted != start, "no clickable row found"
+        assert app.theme == before and config_writes == []
+        assert not picker.query_one("#settings-theme-revert", Button).display
+        assert display_name_for(picker, picker.highlighted_id) in str(
+            picker.query_one("#settings-theme-card-title").render()
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_warns_when_launch_default_not_restored(request, monkeypatch, config_writes):
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append(message)
+    async with app.run_test(size=(160, 45)) as pilot:
+        original = app.theme
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted)
+        await pilot.pause()
+        monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False))
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert app.theme == original
+        assert "Reverted the theme; the launch default was not restored" in notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pending_revert_survives_a_new_picker_instance(request, config_writes):
+    # R9: the pane is recomposed on every category switch; the Revert chip
+    # must come back with the new picker (spec §5 "rest of the session").
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        original = app.theme
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use
+        await pilot.pause()
+        await picker.remove()
+        fresh = ThemePicker(id="settings-theme-picker")
+        await app.screen.mount(fresh)
+        await pilot.pause()
+        revert = fresh.query_one("#settings-theme-revert", Button)
+        assert revert.display and str(revert.label) == f"Revert to {tc.display_name(original)}"
+        revert.press()
+        await pilot.pause()
+        assert app.theme == original and not revert.display

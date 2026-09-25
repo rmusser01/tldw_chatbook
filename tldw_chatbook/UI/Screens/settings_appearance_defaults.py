@@ -422,6 +422,9 @@ def build_appearance_save_sections(
         A mapping of config section names to deep-merged section values.
     """
     general = dict(deepcopy(_mapping_child(app_config, "general")))
+    # Spec §8: Appearance never writes the launch default, not even the value
+    # it read (the writer sets keys one by one, so the file's value survives).
+    general.pop("default_theme", None)
     web_server = dict(deepcopy(_mapping_child(app_config, "web_server")))
     appearance = dict(deepcopy(_mapping_child(app_config, "appearance")))
     library = dict(deepcopy(_mapping_child(app_config, "library")))

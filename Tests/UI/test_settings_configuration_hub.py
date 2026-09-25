@@ -2036,8 +2036,8 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
 
     assert saved
-    # Passed through from the loaded config, never drafted by Appearance.
-    assert saved[-1]["general"]["default_theme"] == "textual-dark"
+    # Spec §8 (TASK-32948): Appearance never writes the launch default.
+    assert "default_theme" not in saved[-1]["general"]
     assert saved[-1]["general"]["palette_theme_limit"] == 5
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
