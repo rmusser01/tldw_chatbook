@@ -16,20 +16,21 @@ from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
 from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 
 
-try:
-    import torch  # noqa: F401
 
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(
-    not TORCH_AVAILABLE, reason="Higgs Audio backend tests require torch (higgs_tts extra)"
-)
+from tldw_chatbook.Utils.optional_deps import check_dependency
+
+_TORCH_AVAILABLE = check_dependency("torch", "higgs_tts")
 
 
 class TestHiggsValidation:
     """Comprehensive validation tests for Higgs Audio TTS backend"""
+
+    pytestmark = pytest.mark.skipif(
+        not _TORCH_AVAILABLE,
+        reason="Higgs Audio backend tests require torch (higgs_tts extra)",
+    )
+
 
     @pytest_asyncio.fixture
     async def backend(self):
