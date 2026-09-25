@@ -59,11 +59,13 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 from loguru import logger
 
+from tldw_chatbook.Tools.build_remote_worker_bundle import expected_bundle_stamp
 from tldw_chatbook.Tools.remote_binding_locator import (
     RemoteLocator,
     build_ssh_argv,
@@ -772,6 +774,46 @@ def _frame_is_admitted_marker(frame: bytes) -> bool:
     )
 
 
+#: Hex characters of the bundle stamp carried on the per-call audit log
+#: line — enough to correlate a call with the committed artifact; the
+#: full 64-char stamp rides the wire contract's echo check.
+_BUNDLE_STAMP_PREFIX_CHARS = 12
+
+
+@lru_cache(maxsize=1)
+def _bundle_stamp_prefix() -> str:
+    """The committed bundle's stamp, prefixed for the audit log line.
+
+    Single source, no recomputation: derived through the same
+    :func:`~tldw_chatbook.Tools.build_remote_worker_bundle.expected_bundle_stamp`
+    rule every verification site (the loopback harness, the executor's
+    ping echo checks) uses, from the ``lru_cache``-held artifact bytes,
+    so the audit line can never disagree with what the wire verifies.
+    Cached because the committed artifact is fixed for the process's
+    life.
+    """
+    bundle, _compressed, _bootstrap = _bundle_payload()
+    return expected_bundle_stamp(bundle)[:_BUNDLE_STAMP_PREFIX_CHARS]
+
+
+def _request_operation_label(request_bytes: bytes) -> str:
+    """Best-effort operation name from one wire request (audit label).
+
+    The transport treats ``request_bytes`` as opaque; this tolerant
+    peek exists ONLY for the per-call audit log line and never gates
+    behavior — anything malformed or shapeless labels as ``"unknown"``.
+    """
+    try:
+        payload = json.loads(request_bytes)
+    except ValueError:
+        return "unknown"
+    if isinstance(payload, dict):
+        operation = payload.get("operation")
+        if isinstance(operation, str) and operation:
+            return operation
+    return "unknown"
+
+
 def _stderr_marker_line(
     stderr: bytes, markers: tuple[bytes, ...]
 ) -> str | None:
@@ -1025,6 +1067,15 @@ class RemoteWorkspaceTransport:
                 f"python must be a bare interpreter name: {python!r}"
             )
         _bundle, compressed, bootstrap = _bundle_payload()
+        # Spec ("Transport & executor"): each call logs the bundle hash
+        # for audit — one debug line at spawn, endpoint label + stamp
+        # prefix + op name only, never request content. Placed before
+        # the spawn so an OSError from Popen is still accounted for.
+        logger.debug(
+            f"remote workspace call host_key={_host_key(loc)!r} "
+            f"bundle={_bundle_stamp_prefix()} "
+            f"op={_request_operation_label(request_bytes)}"
+        )
         argv = [
             self._manager.ssh_bin,
             *self._manager.client_options(loc),

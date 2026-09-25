@@ -468,6 +468,50 @@ def test_call_spawns_in_own_session_with_piped_std_streams(
     assert captured.get("shell") in (None, False)
 
 
+def test_call_logs_bundle_stamp_audit_line_per_call(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec audit rule: every spawn logs the bundle hash at debug level.
+
+    One line per ``call`` carrying the identity-free endpoint label
+    (the host key tuple — user/host/port; no credentials exist in a
+    locator), the committed bundle's stamp prefix derived through the
+    SAME single-source rule the wire contract verifies, and the
+    request's operation name; never request content.
+    """
+    import tldw_chatbook.Tools.remote_workspace_transport as transport_module
+    from tldw_chatbook.Tools.build_remote_worker_bundle import (
+        expected_bundle_stamp,
+    )
+
+    monkeypatch.setenv("FAKE_SSH_MODE", "success")
+    artifact, _compressed, _bootstrap = _bundle_payload()
+    stamp_prefix = expected_bundle_stamp(artifact)[:12]
+
+    records: list[Any] = []
+    sink_id = transport_module.logger.add(
+        lambda message: records.append(message.record), level="DEBUG"
+    )
+    try:
+        assert env.call().failure is None
+    finally:
+        transport_module.logger.remove(sink_id)
+
+    audit = [
+        record
+        for record in records
+        if record["message"].startswith("remote workspace call")
+    ]
+    assert len(audit) == 1, [record["message"] for record in records]
+    message = audit[0]["message"]
+    assert audit[0]["level"].name == "DEBUG"
+    assert repr(transport_module._host_key(_LOC)) in message
+    assert f"bundle={stamp_prefix}" in message
+    assert "op=ping" in message
+    # Audit label only — no request content rides the line.
+    assert "operation_id" not in message
+
+
 # ---------------------------------------------------------------------------
 # taxonomy: no admitted marker
 # ---------------------------------------------------------------------------
