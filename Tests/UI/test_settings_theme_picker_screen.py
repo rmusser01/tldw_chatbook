@@ -1032,3 +1032,67 @@ async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_pa
         assert "dropped" in _picker_ids(host)
         # R37: one refresh (ThemesChanged(highlight=)), not a second from the screen.
         assert highlights.count("dropped") == 1
+
+
+# TASK-32948 PR 3 Task 3: launch-default-missing notice, and Export's Copy path.
+@pytest.mark.asyncio
+@private_profile_test
+async def test_launch_default_missing_notice_pins_picker_and_appearance(request, monkeypatch):
+    """Spec §9: a launch default that no theme is registered under shows in
+    both the picker (above the list) and Appearance's read-only summary;
+    a Use of a real theme clears the picker's notice."""
+    writes = _stateful_launch_default(monkeypatch, "deleted_one")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        summary = str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        assert "launch default missing: deleted_one" in summary
+
+        await _category(host, pilot, "Theme")
+        notice = host.screen.query_one("#settings-theme-launch-missing")
+        assert notice.display
+        assert "Launch default missing: deleted_one" in str(notice.render())
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.pause(0.1)
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        assert writes[-1] == {"general": {"default_theme": "nord"}}
+        assert not host.screen.query_one("#settings-theme-launch-missing").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_shows_full_path_and_copy_path_copies_it(request, monkeypatch, tmp_path_factory):
+    """Spec §7: after Export, the picker card shows the full export path
+    (the §7 exception to R16's truncated paths) with a Copy path button;
+    a fresh highlight clears the row."""
+    from pathlib import Path
+
+    downloads_home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: downloads_home))
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        assert not host.screen.query_one("#settings-theme-export-result").display
+        await pilot.click("#settings-theme-picker-export")
+        await pilot.pause(0.3)
+        export_path = downloads_home / "Downloads" / "mine_theme.toml"
+        assert export_path.exists()
+        result = host.screen.query_one("#settings-theme-export-path")
+        assert str(export_path) in str(result.render())
+        assert host.screen.query_one("#settings-theme-export-result").display
+
+        copied = []
+        monkeypatch.setattr(host, "copy_to_clipboard", lambda text: copied.append(text))
+        await pilot.click("#settings-theme-copy-path")
+        await pilot.pause(0.1)
+        assert copied == [str(export_path)]
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause(0.1)
+        assert not host.screen.query_one("#settings-theme-export-result").display

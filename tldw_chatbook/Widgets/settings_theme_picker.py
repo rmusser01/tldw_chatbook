@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 from loguru import logger
@@ -160,6 +161,8 @@ class ThemePicker(Vertical):
         self._list_user_names = list_user_names or (lambda: user_theme_names(get_user_themes_dir()))
         # Unreadable saved files (stem -> short error), listed so they can be deleted.
         self._list_unreadable = list_unreadable or dict
+        # TASK-32948 Task 3: the last Export's full path, for Copy path.
+        self._export_path: Path | None = None
 
     # The pending Revert lives on the app, not this widget: the pane is
     # recomposed on every category switch, and spec §5 keeps Revert for the
@@ -190,6 +193,9 @@ class ThemePicker(Vertical):
         with Horizontal(id="settings-theme-picker-columns"):
             with Vertical(id="settings-theme-list-column"):
                 yield ThemeFilterInput(placeholder="Filter themes", id="settings-theme-filter")
+                yield Static(
+                    "", id="settings-theme-launch-missing", classes="settings-help-copy", markup=False
+                )
                 yield ThemeOptionList(id="settings-theme-list")
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
             with Vertical(id="settings-theme-card-column"):
@@ -208,6 +214,11 @@ class ThemePicker(Vertical):
                     yield Button("Rename", id="settings-theme-picker-rename", classes="theme-editor-action")
                     yield Button("Delete", id="settings-theme-picker-delete", variant="error", classes="theme-editor-action")
                     yield Button("Export", id="settings-theme-picker-export", classes="theme-editor-action")
+                with Horizontal(id="settings-theme-export-result", classes="settings-action-row"):
+                    yield Static(
+                        "", id="settings-theme-export-path", classes="settings-help-copy", markup=False
+                    )
+                    yield Button("Copy path", id="settings-theme-copy-path", classes="theme-editor-action")
 
     def on_mount(self) -> None:
         self._sync_revert_chip()
@@ -238,7 +249,17 @@ class ThemePicker(Vertical):
             unreadable=unreadable,
         )
         self._sync_revert_chip()  # a rename/delete may have retargeted it
+        self._sync_launch_missing()
         self._render_list(highlight or self.highlighted_id)
+
+    def _sync_launch_missing(self) -> None:
+        """Spec §9: the launch default may point at a theme id that is no
+        longer registered (its file was deleted or renamed elsewhere)."""
+        launch = current_launch_default()
+        notice = self.query_one("#settings-theme-launch-missing", Static)
+        missing = launch not in self.app.available_themes
+        notice.display = missing
+        notice.update(f"Launch default missing: {launch} — Use any theme to fix it" if missing else "")
 
     def _render_list(self, highlight: str | None) -> None:
         query = self.query_one("#settings-theme-filter", Input).value.strip().casefold()
@@ -273,6 +294,9 @@ class ThemePicker(Vertical):
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
+        # Task 3: an Export result is only good for the theme it was made
+        # from; a fresh highlight clears it (spec §7).
+        self.query_one("#settings-theme-export-result").display = False
         entry = self._highlighted_entry()
         error = entry.error if entry is not None else None
         # Tooltips parse markup; the error quotes untrusted file content.
@@ -398,6 +422,14 @@ class ThemePicker(Vertical):
         event.stop()
         self.request_export()
 
+    @on(Button.Pressed, "#settings-theme-copy-path")
+    def _copy_path_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._export_path is None:
+            return
+        self.app.copy_to_clipboard(str(self._export_path))
+        self.app.notify("Path copied", severity="information")
+
     @on(Button.Pressed, "#settings-theme-revert")
     def _revert_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -446,6 +478,12 @@ class ThemePicker(Vertical):
     def request_import(self) -> None:
         if self.files_available:
             self.post_message(self.ImportRequested())
+
+    def show_export_result(self, path: Path) -> None:
+        """A saved theme was just exported to ``path`` (spec §7)."""
+        self._export_path = path
+        self.query_one("#settings-theme-export-path", Static).update(f"Exported to {path}")
+        self.query_one("#settings-theme-export-result").display = True
 
     def _can_manage_files(self) -> bool:
         # Rename/Delete/Export/Edit all touch the theme file on disk: gated
@@ -562,3 +600,13 @@ class ThemePane(ContentSwitcher):
     def _themes_changed(self, event: SettingsThemeEditor.ThemesChanged) -> None:
         event.stop()
         self.query_one(ThemePicker).refresh_catalog(highlight=event.highlight)
+
+    @on(SettingsThemeEditor.Exported)
+    def _exported(self, event: SettingsThemeEditor.Exported) -> None:
+        event.stop()
+        if not self.is_attached:
+            return
+        try:
+            self.query_one(ThemePicker).show_export_result(event.path)
+        except QueryError:
+            return

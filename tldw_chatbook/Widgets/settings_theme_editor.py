@@ -115,6 +115,13 @@ class SettingsThemeEditor(Vertical):
             self.highlight = highlight
             super().__init__()
 
+    class Exported(Message):
+        """A saved theme file was exported to ``path`` (spec §7)."""
+
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            super().__init__()
+
     class Saved(Message):
         """A Save or Save as wrote ``theme_name``; the pane returns to the picker."""
 
@@ -1361,6 +1368,7 @@ class SettingsThemeEditor(Vertical):
                     raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme exported to: {export_path}", severity="success")
+            self.post_message(self.Exported(export_path))
         except Exception as e:
             logger.error(f"Failed to export theme: {e}")
             self.app.notify(f"Failed to export theme: {self._failure_reason(e)}", severity="error")
