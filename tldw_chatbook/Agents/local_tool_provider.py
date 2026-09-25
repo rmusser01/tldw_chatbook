@@ -20,7 +20,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from enum import Enum, StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -188,6 +188,106 @@ LOCAL_STALE_WRITE_REFUSAL = (
     "Stale write refused: {path} changed since you read it "
     "(was {old}, now {new}). Re-read the file and retry."
 )
+# Task 16 (Phase 3b): for a RemoteRoot authority the refusal's {new} is
+# this marker instead of a fresh digest. Ruling: the triggering worker
+# failure carries no stamps (failures never do), and fetching a "now"
+# would cost an extra worker round trip whose value is already stale by
+# the time it renders -- the worker-side CAS is the actual enforcement,
+# the display just must never embed a LAPTOP digest of a remote path.
+_REMOTE_NOW_DISPLAY = "(remote)"
+
+# Sentinel "now" for remote stale probes whose worker read could not be
+# classified (transport error, malformed response): not stale, matching
+# the local refused-path `continue` fail-open.
+_UNKNOWN_NOW = object()
+
+# Task 16: one per-target stamp line of an fs_patch result
+# (``sha256 <relpath>: <64 hex> size: <n>``). The path is greedy up to
+# the rigid digest/size tail so relpaths containing spaces parse.
+_PATCH_STAMP_LINE = re.compile(
+    r"^sha256 (.+): ([0-9a-f]{64}) size: ([0-9]+)$", re.MULTILINE
+)
+
+
+def _parse_patch_stamps(result: str) -> dict[str, tuple[str, int]]:
+    """Map each fs_patch target path to its worker-reported stamps.
+
+    Args:
+        result: The fs_patch response's result string.
+
+    Returns:
+        ``{worker-normalized relative path: (sha256_hex, size)}`` for
+        every stamp line present; empty when none are.
+    """
+    return {
+        match.group(1): (match.group(2), int(match.group(3)))
+        for match in _PATCH_STAMP_LINE.finditer(result)
+    }
+
+
+def _remote_ledger_key(root: RemoteRoot, shown: str, *, intent: str) -> "str | None":
+    """Lexically derive the read-ledger key for one REMOTE target.
+
+    The remote mirror of ``resolve_workspace_path`` +
+    ``canonical_ledger_key``: confinement is decided lexically by the
+    SAME normalizer the executor's remote request builder applies
+    (imported from its single definition site, so provider keys and
+    worker-admitted paths can never drift), and the key is the
+    remote-root-joined POSIX path. ZERO laptop filesystem access -- a
+    RemoteRoot has no laptop presence to resolve against, and hashing a
+    same-named laptop path is exactly the wrong-file hazard this closes.
+
+    Args:
+        root: The remote root descriptor.
+        shown: The tool call's path argument (root-relative text).
+        intent: ``"read"`` or ``"write"`` -- write also refuses ``.git``
+            components, mirroring the local resolve's git-metadata rule.
+
+    Returns:
+        The ledger key, or ``None`` when the path is lexically refused
+        (absolute, ``..``, NUL, or a ``.git`` write target) -- refused
+        paths record nothing, matching local semantics.
+    """
+    from tldw_chatbook.Tools.workspace_tool_executor import (
+        _normalize_remote_relative_path,
+    )
+
+    try:
+        relative = _normalize_remote_relative_path(shown, intent=intent)
+    except ValueError:
+        return None
+    return os.path.normcase(str(PurePosixPath(root.root) / relative))
+
+
+def _response_result_text(output: object) -> "str | None":
+    """Extract the result string from one executor response.
+
+    The local ``WorkspaceToolExecutor.execute`` returns the result text
+    directly; the remote transport executor returns the final wire-frame
+    dict (``{"result": ...}``). Both funnel through here so the CAS
+    sites can consume either without interpreting the seam.
+    """
+    if isinstance(output, str):
+        return output
+    if isinstance(output, dict):
+        result = output.get("result")
+        return result if isinstance(result, str) else None
+    return None
+
+
+def _cas_failure_now(resolved: "Path | None"):
+    """The {new} value for a post-dispatch CAS refusal.
+
+    Local targets keep the historical behaviour (hash the laptop file
+    NOW -- the conflicting peer's content is the informative value); a
+    remote target has no laptop file, and the triggering worker failure
+    carries no stamps, so the display falls back to the marker.
+    """
+    if resolved is None:
+        return _REMOTE_NOW_DISPLAY
+    return _hash_file(resolved)
+
+
 PROMOTION_APPROVAL_REQUIRED = "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
 PROMOTION_FOREGROUND_REQUIRED = (
     "Agent Lesson promotion requires the foreground primary; the file was not changed."
@@ -1890,18 +1990,31 @@ class LocalToolProvider:
                             provider_terminal=LocalProviderTerminal.NOT_STARTED,
                         )
                 dispatch_started = True
-                # Phase 3a type boundary: the four CAS/ledger sites below
-                # (fs_read observation, fs_write guard injection, stale
-                # target detection, post-write re-stamp) resolve and hash
-                # targets on the LAPTOP. Task 16 (Phase 3b) migrates them
-                # to worker-reported sha256/size stamps; until then a
-                # remote root fails loud HERE -- before the swallowed
-                # observation try and before any handler dispatch -- so no
-                # laptop read of a remote-named path can happen silently.
-                ledger_root = local_root_path(
-                    authority.root if authority is not None else self._root,
-                    site="read/write CAS ledger hashing",
+                # Phase 3b (Task 16): the CAS/ledger sites below dispatch
+                # on the authority's root TYPE. A local root keeps the
+                # exact pre-Phase-3b behaviour (provider-side resolve +
+                # laptop hash); a RemoteRoot NEVER reaches a laptop-disk
+                # call -- its stamps come from worker-reported sha256/size
+                # values in the fs_read/fs_write/fs_edit/fs_patch
+                # responses, so the laptop's same-named copy of a remote
+                # path can never be read, hashed, or stamped.
+                ledger_root_source = (
+                    authority.root if authority is not None else self._root
                 )
+                remote_ledger = isinstance(ledger_root_source, RemoteRoot)
+                if remote_ledger:
+                    ledger_root: "Path | RemoteRoot" = ledger_root_source
+                    # Remote roots are constructed with an executor in the
+                    # slot (Phase 3a guards), so this is never None here.
+                    ledger_executor = (
+                        authority.workspace_executor if authority is not None else None
+                    )
+                else:
+                    ledger_root = local_root_path(
+                        ledger_root_source,
+                        site="read/write CAS ledger hashing",
+                    )
+                    ledger_executor = None
                 # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
                 # fs_read branch below BEFORE the fs_write branch's
                 # would-be reassignment; assigning to `clean_args` anywhere
@@ -1912,11 +2025,15 @@ class LocalToolProvider:
                 # reads of the enclosing scope's variable.
                 dispatch_args = clean_args
                 stale_guard = None
-                if name == "fs_read":
+                if name == "fs_read" and not remote_ledger:
                     try:
                         self._record_fs_read_observation(clean_args, ledger_root)
                     except Exception:  # noqa: BLE001 - observation must never affect dispatch
                         pass
+                elif name == "fs_read":
+                    # Remote: the stamps live in the response the worker
+                    # is ABOUT to produce -- recorded post-dispatch below.
+                    pass
                 elif name == "fs_write":
                     stale_guard = self._fs_write_guard_injection(
                         clean_args,
@@ -1934,10 +2051,11 @@ class LocalToolProvider:
                         name,
                         clean_args,
                         ledger_root,
+                        executor=ledger_executor,
                     )
                     if _stale:
-                        shown, stamp, resolved = _stale[0]
-                        message = self._stale_write_refusal(shown, stamp, resolved)
+                        shown, stamp, now = _stale[0]
+                        message = self._stale_write_refusal(shown, stamp, now)
                         if len(_stale) > 1:
                             message += f" (+{len(_stale) - 1} more stale targets)"
                         provider_terminal = LocalProviderTerminal.RETURNED
@@ -1955,21 +2073,36 @@ class LocalToolProvider:
                         if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
                         else spec
                     )
+                    raw_output = selected_spec.handler(dispatch_args)
                     result = ToolResult(
                         ok=True,
                         content=self._bounded_result(
                             redact_root_locator(
-                                selected_spec.handler(dispatch_args),
+                                raw_output,
                                 redaction_root,
                             ),
                             invocation_id=name,
                         ),
                     )
+                    if name == "fs_read" and remote_ledger:
+                        # Phase 3b: record the remote observation from the
+                        # worker's OWN response -- the raw pre-redaction,
+                        # pre-bounding text (a bounded tail cannot be
+                        # parsed). Never affects dispatch.
+                        try:
+                            self._record_fs_read_observation(
+                                clean_args,
+                                ledger_root,
+                                worker_result=_response_result_text(raw_output),
+                            )
+                        except Exception:  # noqa: BLE001 - observation must never affect dispatch
+                            pass
                     if name in {"fs_write", "fs_edit", "fs_patch"}:
                         self._update_ledger_after_write(
                             name,
                             clean_args,
                             ledger_root,
+                            result_text=_response_result_text(raw_output),
                         )
                     provider_terminal = LocalProviderTerminal.RETURNED
                     return LocalToolInvocationResult(
@@ -2004,7 +2137,7 @@ class LocalToolProvider:
                                 self._stale_write_refusal(
                                     str(clean_args.get("path", "")),
                                     stale_guard[1],
-                                    stale_guard[2],
+                                    _cas_failure_now(stale_guard[2]),
                                 )
                             ),
                             final_gate=gate.verdict,
@@ -2012,6 +2145,10 @@ class LocalToolProvider:
                             reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
                             dispatch_started=True,
                             provider_terminal=provider_terminal,
+                        )
+                    if remote_ledger and name == "fs_read":
+                        self._record_remote_read_failure_safe(
+                            clean_args, ledger_root, str(exc)
                         )
                     provider_terminal = LocalProviderTerminal.RAISED
                     result = _workspace_execution_error_result(
@@ -2029,6 +2166,36 @@ class LocalToolProvider:
                         provider_terminal=provider_terminal,
                     )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
+                    if (
+                        remote_ledger
+                        and stale_guard is not None
+                        and _is_cas_precondition_failure(str(exc))
+                    ):
+                        # Phase 3b: the remote transport executor raises its
+                        # own typed error (not WorkspaceToolExecutionError)
+                        # for a worker-side CAS refusal; relabel it with
+                        # the same stale-write refusal the local path gets.
+                        # No fresh worker value exists (failures carry no
+                        # stamps) -- see `_REMOTE_NOW_DISPLAY`.
+                        provider_terminal = LocalProviderTerminal.RETURNED
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(
+                                self._stale_write_refusal(
+                                    str(clean_args.get("path", "")),
+                                    stale_guard[1],
+                                    _REMOTE_NOW_DISPLAY,
+                                )
+                            ),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                            dispatch_started=True,
+                            provider_terminal=provider_terminal,
+                        )
+                    if remote_ledger and name == "fs_read":
+                        self._record_remote_read_failure_safe(
+                            clean_args, ledger_root, str(exc)
+                        )
                     provider_terminal = LocalProviderTerminal.RAISED
                     error = redact_root_locator(
                         str(exc) or repr(exc),
@@ -2318,14 +2485,35 @@ class LocalToolProvider:
                 ) + len(fitted.encode("utf-8"))
         return fitted
 
-    def _record_fs_read_observation(self, args: dict, root: "Path") -> None:
-        """Stamp the ledger from a provider-side resolve of an fs_read target.
+    def _record_fs_read_observation(
+        self,
+        args: dict,
+        root: "Path | RemoteRoot",
+        *,
+        worker_result: "str | None" = None,
+        worker_failure: "str | None" = None,
+    ) -> None:
+        """Stamp the ledger from an fs_read target.
 
-        Never keyed off fs_read's outcome: a missing file and a confinement
-        refusal raise the same LocalToolError type, so the provider resolves
-        the path itself -- refused -> record nothing; absent -> ABSENT;
-        present -> whole-file hash. Never raises.
+        Local roots: never keyed off fs_read's outcome -- a missing file
+        and a confinement refusal raise the same LocalToolError type, so
+        the provider resolves the path itself (pre-dispatch):
+        refused -> record nothing; absent -> ABSENT; present ->
+        whole-file hash.
+
+        Remote roots (Task 16, Phase 3b): the provider has no laptop
+        filesystem to consult, so the observation is keyed off the
+        WORKER's response instead (recorded post-dispatch): a stamp tail
+        -> present with the worker-reported sha256/size; a failure
+        reading "file not found" -> ABSENT; any other failure (binary,
+        oversize, transport) -> nothing, a deliberately weaker blind
+        write rather than a false stale refusal. Never raises.
         """
+        if isinstance(root, RemoteRoot):
+            self._record_remote_fs_read_observation(
+                args, root, worker_result=worker_result, worker_failure=worker_failure
+            )
+            return
         from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
         from tldw_chatbook.Tools.local_tool_impls import (
@@ -2365,34 +2553,92 @@ class LocalToolProvider:
         digest, size = hashed
         self._read_ledger.record_present(run_id, key, digest, size)
 
-    def _stale_write_refusal(self, shown_path: str, stamp, resolved: "Path") -> str:
-        """Build the AC#2 refusal naming the conflict; never raises."""
+    def _record_remote_fs_read_observation(
+        self,
+        args: dict,
+        root: RemoteRoot,
+        *,
+        worker_result: "str | None",
+        worker_failure: "str | None",
+    ) -> None:
+        """Record one remote fs_read observation from worker-reported values."""
+        from tldw_chatbook.Agents.run_context import current_run_id
+
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return
+        key = _remote_ledger_key(root, raw, intent="read")
+        if key is None:
+            return  # lexically refused path: not an observation
+        run_id = current_run_id()
+        if not run_id:
+            return  # same empty-run_id rule as the local path (Qodo #2)
+        if worker_result is not None:
+            from tldw_chatbook.Tools.remote_workspace_executor import (
+                parse_fs_read_stamps,
+            )
+
+            stamps = parse_fs_read_stamps(worker_result)
+            if stamps is None:
+                return  # stampless result: no observation
+            self._read_ledger.record_present(run_id, key, stamps[0], stamps[1])
+            return
+        if worker_failure is not None and "file not found" in worker_failure:
+            self._read_ledger.record_absent(run_id, key)
+
+    def _record_remote_read_failure_safe(
+        self, args: dict, root: RemoteRoot, failure_text: str
+    ) -> None:
+        """Swallow-everything wrapper for the failure-path absent mapping."""
+        try:
+            self._record_fs_read_observation(
+                args, root, worker_failure=failure_text
+            )
+        except Exception:  # noqa: BLE001 - observation must never affect dispatch
+            pass
+
+    def _stale_write_refusal(self, shown_path: str, stamp, now) -> str:
+        """Build the AC#2 refusal naming the conflict; never raises.
+
+        Args:
+            shown_path: The model-facing target path.
+            stamp: The ledger stamp at read time (``sha256``/``size``).
+            now: The current stamps as ``(sha256, size)``, ``None`` for
+                "absent now", or :data:`_REMOTE_NOW_DISPLAY` for a
+                remote target (no fresh worker value exists at refusal
+                time -- see the marker's comment for the ruling).
+        """
 
         def _fmt(sha: "str | None", size: int) -> str:
             return "absent" if sha is None else f"{sha[:8]}/{size}"
 
-        now = _hash_file(resolved)
-        new_text = "absent" if now is None else _fmt(now[0], now[1])
+        if now is _REMOTE_NOW_DISPLAY:
+            new_text = _REMOTE_NOW_DISPLAY
+        elif now is None:
+            new_text = "absent"
+        else:
+            new_text = _fmt(now[0], now[1])
         return LOCAL_STALE_WRITE_REFUSAL.format(
             path=shown_path, old=_fmt(stamp.sha256, stamp.size), new=new_text
         )
 
     def _fs_write_guard_injection(
-        self, args: dict, root: "Path"
-    ) -> "tuple[dict, object, Path] | None":
+        self, args: dict, root: "Path | RemoteRoot"
+    ) -> "tuple[dict, object, Path | None] | None":
         """Return (args_with_cas, stamp, resolved) when the ledger arms fs_write.
 
         None means dispatch unchanged: no stamp, refused path, explicit
         model-supplied precondition, a promotion call, or a dry-run preview
         (nothing is written on a preview, so there is no clobber risk to
         guard against).
+
+        Local roots resolve the target on the laptop as before. Remote
+        roots (Task 16) key the ledger lexically -- the stamp itself was
+        recorded from a worker-reported value, so injection never touches
+        the laptop -- and return ``resolved=None`` (no laptop path exists
+        for a remote target; the refusal path renders the remote marker).
         """
-        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
-        from tldw_chatbook.Tools.local_tool_impls import (
-            LocalToolError,
-            resolve_workspace_path,
-        )
 
         if not current_run_id():
             return None
@@ -2405,6 +2651,25 @@ class LocalToolProvider:
         raw = args.get("path")
         if not isinstance(raw, str) or not raw:
             return None
+        if isinstance(root, RemoteRoot):
+            key = _remote_ledger_key(root, raw, intent="write")
+            if key is None:
+                return None
+            stamp = self._read_ledger.stamp_for(current_run_id(), key)
+            if stamp is None:
+                return None
+            injected = dict(args)
+            if stamp.is_absent:
+                injected["expected_absent"] = True
+            else:
+                injected["expected_sha256"] = stamp.sha256
+            return injected, stamp, None
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
         try:
             resolved = resolve_workspace_path(raw, Path(root).resolve(), intent="write")
         except (LocalToolError, OSError, ValueError):
@@ -2420,9 +2685,24 @@ class LocalToolProvider:
         return injected, stamp, resolved
 
     def _stale_targets_for(
-        self, name: str, args: dict, root: "Path"
-    ) -> "list[tuple[str, object, Path]]":
-        """Targets of an fs_edit/fs_patch whose ledger stamp mismatches disk."""
+        self,
+        name: str,
+        args: dict,
+        root: "Path | RemoteRoot",
+        *,
+        executor: Any = None,
+    ) -> "list[tuple[str, object, object]]":
+        """Targets of an fs_edit/fs_patch whose ledger stamp mismatches now.
+
+        Local roots compare each ledger stamp against the laptop file's
+        current hash. Remote roots (Task 16) fetch the "now" stamps from
+        a WORKER read through ``executor`` -- one bounded round trip per
+        armed target, the remote analogue of the local pre-hash; the
+        laptop's copy of a remote-named path is never consulted. Entries
+        are ``(shown_path, stamp, now)`` where ``now`` is the current
+        ``(sha256, size)``, ``None`` (absent now), or
+        :data:`_UNKNOWN_NOW` internally.
+        """
         from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
         from tldw_chatbook.Tools.local_tool_impls import (
@@ -2433,6 +2713,10 @@ class LocalToolProvider:
         run_id = current_run_id()
         if not run_id:
             return []
+        if isinstance(root, RemoteRoot):
+            return self._remote_stale_targets(
+                name, args, root, run_id, executor=executor
+            )
         try:
             base = Path(root).resolve()
         except OSError:
@@ -2456,7 +2740,7 @@ class LocalToolProvider:
                 if plan.new_path is not None:
                     shown_paths.append(plan.new_path)
 
-        stale: list[tuple[str, object, Path]] = []
+        stale: list[tuple[str, object, object]] = []
         for shown in shown_paths:
             try:
                 resolved = resolve_workspace_path(shown, base, intent="write")
@@ -2468,19 +2752,111 @@ class LocalToolProvider:
             now = _hash_file(resolved)
             if stamp.is_absent:
                 if now is not None:
-                    stale.append((shown, stamp, resolved))
+                    stale.append((shown, stamp, now))
             elif now is None or now[0] != stamp.sha256:
-                stale.append((shown, stamp, resolved))
+                stale.append((shown, stamp, now))
         return stale
 
-    def _update_ledger_after_write(self, name: str, args: dict, root: "Path") -> None:
+    def _remote_stale_targets(
+        self,
+        name: str,
+        args: dict,
+        root: RemoteRoot,
+        run_id: str,
+        *,
+        executor: Any,
+    ) -> "list[tuple[str, object, object]]":
+        """Remote stale detection: worker-reported "now", laptop untouched."""
+        shown_paths: list[str] = []
+        if name == "fs_edit":
+            raw = args.get("path")
+            if isinstance(raw, str) and raw:
+                shown_paths.append(raw)
+        elif name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return []  # the handler will refuse the malformed diff itself
+            for plan in plans:
+                if plan.new_path is not None:
+                    shown_paths.append(plan.new_path)
+
+        stale: list[tuple[str, object, object]] = []
+        for shown in shown_paths:
+            key = _remote_ledger_key(root, shown, intent="write")
+            if key is None:
+                continue  # handler will refuse identically
+            stamp = self._read_ledger.stamp_for(run_id, key)
+            if stamp is None:
+                continue
+            now = self._remote_now_stamp(executor, shown)
+            if now is _UNKNOWN_NOW:
+                continue  # unclassifiable probe: not stale, fail open
+            if stamp.is_absent:
+                if now is not None:
+                    stale.append((shown, stamp, now))
+            elif now is None or now[0] != stamp.sha256:
+                stale.append((shown, stamp, now))
+        return stale
+
+    def _remote_now_stamp(self, executor: Any, shown: str):
+        """The worker-reported current stamps of one remote target.
+
+        One bounded fs_read round trip through the authority's executor:
+        success -> the response's stamp tail; a "file not found" failure
+        -> ``None`` (absent); anything else -> :data:`_UNKNOWN_NOW` (the
+        caller treats the target as not stale -- the handler will
+        surface the real error). The probe's response never reaches the
+        model, so its empty exclusion set discloses nothing.
+        """
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            parse_fs_read_stamps,
+        )
+
+        if executor is None:
+            return _UNKNOWN_NOW
+        try:
+            response = executor.execute(
+                "fs_read",
+                # The remote transport executor serializes arguments
+                # verbatim, so the worker-required exclusion field rides
+                # the probe explicitly (empty: see docstring).
+                {"path": shown, "sensitive_exclusions": []},
+                intent="read",
+            )
+        except Exception as exc:  # noqa: BLE001 - unclassifiable, fail open
+            return None if "file not found" in str(exc) else _UNKNOWN_NOW
+        stamps = parse_fs_read_stamps(_response_result_text(response) or "")
+        return _UNKNOWN_NOW if stamps is None else stamps
+
+    def _update_ledger_after_write(
+        self,
+        name: str,
+        args: dict,
+        root: "Path | RemoteRoot",
+        *,
+        result_text: "str | None" = None,
+    ) -> None:
         """Re-stamp every written target so an agent's own chain never trips.
 
-        fs_write: the stamp comes straight from the CONTENT ARGUMENT, not a
-        disk re-read -- closes the microsecond window between our atomic
-        replace and a re-read where a peer's write landing in between would
-        get misrecorded as ours. fs_edit/fs_patch: post-handler re-read,
-        since the written bytes are only knowable from disk. Never raises.
+        Local roots: fs_write stamps straight from the CONTENT ARGUMENT,
+        not a disk re-read -- closes the microsecond window between our
+        atomic replace and a re-read where a peer's write landing in
+        between would get misrecorded as ours. fs_edit/fs_patch:
+        post-handler re-read, since the written bytes are only knowable
+        from disk.
+
+        Remote roots (Task 16): the re-stamp comes from the WORKER's
+        write response -- the sha256/size tail every write result now
+        carries (fs_patch emits one stamp line per target). fs_write
+        falls back to the content-argument digest (the local path's
+        exact source, zero disk) when no response text is available.
+        Never raises.
         """
         from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
@@ -2493,6 +2869,11 @@ class LocalToolProvider:
             return
         run_id = current_run_id()
         if not run_id:
+            return
+        if isinstance(root, RemoteRoot):
+            self._update_remote_ledger_after_write(
+                name, args, root, run_id, result_text=result_text
+            )
             return
         base = Path(root).resolve()
         if name == "fs_write":
@@ -2538,6 +2919,82 @@ class LocalToolProvider:
                 self._read_ledger.record_absent(run_id, key)
             else:
                 self._read_ledger.update_written(run_id, key, hashed[0], hashed[1])
+
+    def _update_remote_ledger_after_write(
+        self,
+        name: str,
+        args: dict,
+        root: RemoteRoot,
+        run_id: str,
+        *,
+        result_text: "str | None",
+    ) -> None:
+        """Remote post-write re-stamp, entirely from the worker's response."""
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            parse_fs_read_stamps,
+        )
+
+        if name == "fs_write":
+            raw = args.get("path")
+            if not isinstance(raw, str) or not raw:
+                return
+            key = _remote_ledger_key(root, raw, intent="write")
+            if key is None:
+                return
+            stamps = (
+                parse_fs_read_stamps(result_text) if result_text is not None else None
+            )
+            if stamps is None:
+                # No response tail (contract-impossible after Task 16's
+                # bundle): fall back to the local path's exact source --
+                # the content argument, in memory, never disk.
+                encoded = str(args.get("content", "")).encode("utf-8")
+                stamps = (hashlib.sha256(encoded).hexdigest(), len(encoded))
+            self._read_ledger.update_written(run_id, key, stamps[0], stamps[1])
+            return
+        if name == "fs_edit":
+            raw = args.get("path")
+            if not isinstance(raw, str) or not raw:
+                return
+            stamps = (
+                parse_fs_read_stamps(result_text) if result_text is not None else None
+            )
+            if stamps is None:
+                return  # written bytes unknowable provider-side: no re-stamp
+            key = _remote_ledger_key(root, raw, intent="write")
+            if key is None:
+                return
+            self._read_ledger.update_written(run_id, key, stamps[0], stamps[1])
+            return
+        if name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+            from tldw_chatbook.Tools.workspace_tool_executor import (
+                _normalize_remote_relative_path,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return
+            per_target = _parse_patch_stamps(result_text or "")
+            for plan in plans:
+                shown = plan.new_path
+                if shown is None:
+                    continue
+                try:
+                    relative = _normalize_remote_relative_path(shown, intent="write")
+                except ValueError:
+                    continue
+                stamps = per_target.get(relative)
+                if stamps is None:
+                    continue  # target not stamped in the response
+                key = _remote_ledger_key(root, shown, intent="write")
+                if key is None:
+                    continue
+                self._read_ledger.update_written(run_id, key, stamps[0], stamps[1])
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""
@@ -2754,8 +3211,19 @@ def _promotion_call_kind(name: str, args: object) -> str | None:
     return None
 
 
-def _hash_file(path: "Path") -> "tuple[str, int] | None":
-    """Whole-file (sha256, size) of ``path``; None when missing/unreadable."""
+def _hash_file(path: "Path | RemoteRoot") -> "tuple[str, int] | None":
+    """Whole-file (sha256, size) of a LAPTOP ``path``; None when missing.
+
+    LocalRoot-only (Task 16): a :class:`RemoteRoot` here is a
+    composition bug -- remote stamps come from worker-reported values,
+    and hashing a same-named laptop path is exactly the wrong-file
+    hazard this boundary exists to close.
+
+    Raises:
+        TypeError: ``path`` is a :class:`RemoteRoot`.
+    """
+    if isinstance(path, RemoteRoot):
+        raise TypeError("remote root reached laptop-disk path: _hash_file")
     h = hashlib.sha256()
     total = 0
     try:

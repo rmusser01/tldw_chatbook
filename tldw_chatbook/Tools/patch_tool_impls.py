@@ -41,6 +41,7 @@ Deviations from reference (deliberate fixes; reference kept otherwise):
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -445,16 +446,32 @@ def patch_validated_files(
     *,
     root: PinnedWorkspaceRoot,
     dry_run: bool = False,
+    content_stamps: bool = False,
 ) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin."""
+    """Apply parent-admitted plans through one retained workspace root pin.
+
+    Args:
+        plans: Parent-admitted patch plans, in order.
+        root: The retained workspace root pin every target resolves through.
+        dry_run: Preview only; nothing is written and no stamp lines are
+            appended.
+        content_stamps: Append one worker-reported CAS stamp line per
+            written target (``sha256 <relpath>: <64 hex> size: <n>``,
+            Task 16 write-path parity with fs_read/fs_write/fs_edit).
+            A patch may touch MANY targets, so unlike the single-path
+            tools each stamp line names its target; the digest is the
+            exact in-memory ``data`` each target's atomic write received,
+            never a post-write re-read.
+    """
     summaries: list[str] = []
+    stamp_lines: list[str] = []
     for patch_file in plans:
         rel_path = patch_file.new_path
         if rel_path is None:
             raise LocalToolError("fs_patch failed [invalid_patch_path]")
         try:
             relative = root.relative_path(rel_path)
-            _patch_relative_file(
+            written = _patch_relative_file(
                 patch_file,
                 relative,
                 workspace=Path("."),
@@ -467,7 +484,11 @@ def patch_validated_files(
                 f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             ) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
-    return "\n".join(summaries)
+        if content_stamps and not dry_run:
+            stamp_lines.append(
+                f"sha256 {relative.as_posix()}: {written[0]} size: {written[1]}"
+            )
+    return "\n".join([*summaries, *stamp_lines])
 
 
 def _patch_relative_file(
@@ -476,8 +497,13 @@ def _patch_relative_file(
     *,
     workspace: Path,
     dry_run: bool,
-) -> None:
-    """Apply one parsed patch plan using only root-relative I/O."""
+) -> "tuple[str, int] | None":
+    """Apply one parsed patch plan using only root-relative I/O.
+
+    Returns the ``(sha256_hex, size)`` of the exact bytes the patch
+    produced (the same in-memory ``data`` the atomic write receives, so
+    preview and real run stamp identically).
+    """
     rel_path = patch_file.new_path
     assert rel_path is not None
     target = workspace / relative
@@ -518,3 +544,4 @@ def _patch_relative_file(
             expected_sha256=None,
             expected_absent=patch_file.action != "modify",
         )
+    return hashlib.sha256(data).hexdigest(), len(data)

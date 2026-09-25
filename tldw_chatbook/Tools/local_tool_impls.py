@@ -486,8 +486,27 @@ def _write_relative_file(
     dry_run: bool = False,
     expected_sha256: str | None = None,
     expected_absent: bool = False,
+    content_stamps: bool = False,
 ) -> str:
-    """Preview or atomically write one admitted path with optional CAS."""
+    """Preview or atomically write one admitted path with optional CAS.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        content: Full replacement content.
+        workspace: The confinement root ``relative`` resolves against.
+        display_path: Caller-facing path for messages.
+        dry_run: Preview only; nothing is written and no stamp tail is
+            appended (the preview is a JSON object).
+        expected_sha256: Optional CAS precondition on the current bytes.
+        expected_absent: Optional CAS precondition that no file exists.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) of the bytes just written
+            (Task 16 write-path parity with ``_read_relative_file``).
+            Computed from ``data`` -- the exact in-memory bytes handed to
+            the atomic writer -- so content and stamps can never be a
+            torn pair; the plain local ``write_file`` surface does not
+            set this and stays byte-identical.
+    """
     target = workspace / relative
     shown = display_path or str(relative)
     if not target.parent.is_dir():
@@ -535,7 +554,12 @@ def _write_relative_file(
             expected_sha256=expected_sha256,
             expected_absent=expected_absent,
         )
-    return f"wrote {len(content)} characters to {shown}"
+    summary = f"wrote {len(content)} characters to {shown}"
+    if content_stamps and not dry_run:
+        summary += (
+            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+        )
+    return summary
 
 
 def _write_lock_for(key: str) -> threading.Lock:
@@ -928,8 +952,25 @@ def _edit_relative_file(
     workspace: Path,
     replace_all: bool = False,
     display_path: str | None = None,
+    content_stamps: bool = False,
 ) -> str:
-    """Edit one already-admitted path relative to an I/O root."""
+    """Edit one already-admitted path relative to an I/O root.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        old_string: Exact text to replace.
+        new_string: Replacement text.
+        workspace: The confinement root ``relative`` resolves against.
+        replace_all: Replace every occurrence instead of requiring a
+            unique match.
+        display_path: Caller-facing path for messages.
+        content_stamps: Append the worker-reported CAS tail of the bytes
+            just written (``\\nsha256: <hex>\\nsize: <n>``), computed
+            from the same in-memory ``data`` handed to the atomic writer
+            (Task 16 write-path parity with ``_read_relative_file``);
+            the plain local ``edit_file`` surface does not set this and
+            stays byte-identical.
+    """
     shown = display_path or str(relative)
     if not old_string:
         raise LocalToolError("old_string must not be empty")
@@ -973,7 +1014,12 @@ def _edit_relative_file(
         expected_absent=False,
     )
     n = count if replace_all else 1
-    return f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
+    summary = f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
+    if content_stamps:
+        summary += (
+            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+        )
+    return summary
 
 
 def glob_files(

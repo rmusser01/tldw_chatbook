@@ -573,6 +573,23 @@ _add_valid_response(
     "valid-stamp-tail-result",
     result="1\thello wörld\n2\tbody\nsha256: " + "ab" * 32 + "\nsize: 12",
 )
+# Task 16: write-path results end in the same worker-reported stamp tail
+# (fs_write/fs_edit append the digest/size of the bytes they wrote;
+# single-target tail, same shape as fs_read's). fs_patch emits one
+# per-target stamp line after its per-file summaries. Both ride the
+# opaque ``result`` string unchanged.
+_add_valid_response(
+    "valid-write-stamp-tail-result",
+    result="wrote 12 characters to a.txt\nsha256: " + "ab" * 32 + "\nsize: 12",
+)
+_add_valid_response(
+    "valid-patch-stamp-lines-result",
+    result=(
+        "patched notes.txt\npatched new.txt\n"
+        "sha256 notes.txt: " + "cd" * 32 + " size: 12\n"
+        "sha256 new.txt: " + "ef" * 32 + " size: 4"
+    ),
+)
 # Malformed stamp-tail flavour: a NUL inside the digest field is a frame
 # contract violation on BOTH decoders (the string NUL rule).
 d = _response_base()

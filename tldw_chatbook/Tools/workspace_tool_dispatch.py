@@ -81,6 +81,7 @@ def execute_pinned_operation(
             dry_run=request.arguments.get("dry_run", False),
             expected_sha256=request.arguments.get("expected_sha256"),
             expected_absent=request.arguments.get("expected_absent", False),
+            content_stamps=True,
         )
     if request.operation == "fs_edit":
         return _edit_relative_file(
@@ -90,6 +91,7 @@ def execute_pinned_operation(
             workspace=Path("."),
             replace_all=request.arguments.get("replace_all", False),
             display_path=request.arguments["path"],
+            content_stamps=True,
         )
     if request.operation == "fs_patch":
         return _patch_request(request, root)
@@ -266,6 +268,7 @@ def _patch_request(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) 
         plans,
         root=root,
         dry_run=request.arguments.get("dry_run", False),
+        content_stamps=True,
     )
 
 

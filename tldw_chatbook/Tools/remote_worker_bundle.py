@@ -2312,8 +2312,26 @@ def write_file(path: str, content: str, *, workspace_root: Path, dry_run: bool=F
     root = resolve_workspace_path(path, workspace, intent='write')
     return _write_relative_file(root.relative_to(workspace), content, workspace=workspace, display_path=path, dry_run=dry_run, expected_sha256=expected_sha256, expected_absent=expected_absent)
 
-def _write_relative_file(relative: Path, content: str, *, workspace: Path, display_path: str | None=None, dry_run: bool=False, expected_sha256: str | None=None, expected_absent: bool=False) -> str:
-    """Preview or atomically write one admitted path with optional CAS."""
+def _write_relative_file(relative: Path, content: str, *, workspace: Path, display_path: str | None=None, dry_run: bool=False, expected_sha256: str | None=None, expected_absent: bool=False, content_stamps: bool=False) -> str:
+    """Preview or atomically write one admitted path with optional CAS.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        content: Full replacement content.
+        workspace: The confinement root ``relative`` resolves against.
+        display_path: Caller-facing path for messages.
+        dry_run: Preview only; nothing is written and no stamp tail is
+            appended (the preview is a JSON object).
+        expected_sha256: Optional CAS precondition on the current bytes.
+        expected_absent: Optional CAS precondition that no file exists.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) of the bytes just written
+            (Task 16 write-path parity with ``_read_relative_file``).
+            Computed from ``data`` -- the exact in-memory bytes handed to
+            the atomic writer -- so content and stamps can never be a
+            torn pair; the plain local ``write_file`` surface does not
+            set this and stays byte-identical.
+    """
     target = workspace / relative
     shown = display_path or str(relative)
     if not target.parent.is_dir():
@@ -2340,7 +2358,10 @@ def _write_relative_file(relative: Path, content: str, *, workspace: Path, displ
         if dry_run:
             return _write_preview_json(shown=shown, current=current, current_digest=current_digest, replacement=data)
         _atomic_write_target(target, data, shown=shown, expected_sha256=expected_sha256, expected_absent=expected_absent)
-    return f'wrote {len(content)} characters to {shown}'
+    summary = f'wrote {len(content)} characters to {shown}'
+    if content_stamps and (not dry_run):
+        summary += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
+    return summary
 
 def _write_lock_for(key: str) -> threading.Lock:
     with _WRITE_LOCKS_GUARD:
@@ -2592,8 +2613,24 @@ def edit_file(path: str, old_string: str, new_string: str, *, workspace_root: Pa
     root = resolve_workspace_path(path, workspace, intent='write')
     return _edit_relative_file(root.relative_to(workspace), old_string, new_string, workspace=workspace, replace_all=replace_all, display_path=path)
 
-def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, workspace: Path, replace_all: bool=False, display_path: str | None=None) -> str:
-    """Edit one already-admitted path relative to an I/O root."""
+def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, workspace: Path, replace_all: bool=False, display_path: str | None=None, content_stamps: bool=False) -> str:
+    """Edit one already-admitted path relative to an I/O root.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        old_string: Exact text to replace.
+        new_string: Replacement text.
+        workspace: The confinement root ``relative`` resolves against.
+        replace_all: Replace every occurrence instead of requiring a
+            unique match.
+        display_path: Caller-facing path for messages.
+        content_stamps: Append the worker-reported CAS tail of the bytes
+            just written (``\\nsha256: <hex>\\nsize: <n>``), computed
+            from the same in-memory ``data`` handed to the atomic writer
+            (Task 16 write-path parity with ``_read_relative_file``);
+            the plain local ``edit_file`` surface does not set this and
+            stays byte-identical.
+    """
     shown = display_path or str(relative)
     if not old_string:
         raise LocalToolError('old_string must not be empty')
@@ -2619,7 +2656,10 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
         raise LocalToolError(f'new_string is not UTF-8 encodable (lone surrogate?): {exc}') from exc
     _atomic_write_target(target, data, shown=shown, expected_sha256=None, expected_absent=False)
     n = count if replace_all else 1
-    return f"made {n} replacement{('s' if n != 1 else '')} in {shown}"
+    summary = f"made {n} replacement{('s' if n != 1 else '')} in {shown}"
+    if content_stamps:
+        summary += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
+    return summary
 
 def glob_files(pattern: str, *, workspace_root: Path, max_results: int=MAX_GLOB_RESULTS) -> str:
     """Match ``pattern`` under the workspace, newest-mtime first, capped.
@@ -3917,6 +3957,7 @@ Deviations from reference (deliberate fixes; reference kept otherwise):
 4. A leading U+FEFF (BOM) is stripped from the diff text before parsing;
    the reference rejected BOM-prefixed diffs as ``invalid_diff``.
 """
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -4197,25 +4238,47 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
     return '\n'.join(summaries)
 
-def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspaceRoot, dry_run: bool=False) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin."""
+def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspaceRoot, dry_run: bool=False, content_stamps: bool=False) -> str:
+    """Apply parent-admitted plans through one retained workspace root pin.
+
+    Args:
+        plans: Parent-admitted patch plans, in order.
+        root: The retained workspace root pin every target resolves through.
+        dry_run: Preview only; nothing is written and no stamp lines are
+            appended.
+        content_stamps: Append one worker-reported CAS stamp line per
+            written target (``sha256 <relpath>: <64 hex> size: <n>``,
+            Task 16 write-path parity with fs_read/fs_write/fs_edit).
+            A patch may touch MANY targets, so unlike the single-path
+            tools each stamp line names its target; the digest is the
+            exact in-memory ``data`` each target's atomic write received,
+            never a post-write re-read.
+    """
     summaries: list[str] = []
+    stamp_lines: list[str] = []
     for patch_file in plans:
         rel_path = patch_file.new_path
         if rel_path is None:
             raise LocalToolError('fs_patch failed [invalid_patch_path]')
         try:
             relative = root.relative_path(rel_path)
-            _patch_relative_file(patch_file, relative, workspace=Path('.'), dry_run=dry_run)
+            written = _patch_relative_file(patch_file, relative, workspace=Path('.'), dry_run=dry_run)
         except WorkspaceRootPinError as exc:
             raise LocalToolError('fs_patch failed [invalid_patch_path]') from exc
         except FilesystemPatchError as exc:
             raise LocalToolError(f'fs_patch failed [{exc.reason_code}]: {rel_path}') from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
-    return '\n'.join(summaries)
+        if content_stamps and (not dry_run):
+            stamp_lines.append(f'sha256 {relative.as_posix()}: {written[0]} size: {written[1]}')
+    return '\n'.join([*summaries, *stamp_lines])
 
-def _patch_relative_file(patch_file: PatchFile, relative: Path, *, workspace: Path, dry_run: bool) -> None:
-    """Apply one parsed patch plan using only root-relative I/O."""
+def _patch_relative_file(patch_file: PatchFile, relative: Path, *, workspace: Path, dry_run: bool) -> 'tuple[str, int] | None':
+    """Apply one parsed patch plan using only root-relative I/O.
+
+    Returns the ``(sha256_hex, size)`` of the exact bytes the patch
+    produced (the same in-memory ``data`` the atomic write receives, so
+    preview and real run stamp identically).
+    """
     rel_path = patch_file.new_path
     assert rel_path is not None
     target = workspace / relative
@@ -4240,6 +4303,7 @@ def _patch_relative_file(patch_file: PatchFile, relative: Path, *, workspace: Pa
         raise LocalToolError(f"patched content for '{rel_path}' is not UTF-8 encodable (lone surrogate?): {exc}") from exc
     if not dry_run:
         _atomic_write_target(target, data, shown=str(rel_path), expected_sha256=None, expected_absent=patch_file.action != 'modify')
+    return (hashlib.sha256(data).hexdigest(), len(data))
 
 
 # ===========================================================================
@@ -4276,9 +4340,9 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
     if request.operation == 'stat_path':
         return _stat_relative_path(_request_relative_path(request, root))
     if request.operation == 'fs_write':
-        return _write_relative_file(_request_mutation_path(request, root), request.arguments['content'], workspace=Path('.'), display_path=request.arguments['path'], dry_run=request.arguments.get('dry_run', False), expected_sha256=request.arguments.get('expected_sha256'), expected_absent=request.arguments.get('expected_absent', False))
+        return _write_relative_file(_request_mutation_path(request, root), request.arguments['content'], workspace=Path('.'), display_path=request.arguments['path'], dry_run=request.arguments.get('dry_run', False), expected_sha256=request.arguments.get('expected_sha256'), expected_absent=request.arguments.get('expected_absent', False), content_stamps=True)
     if request.operation == 'fs_edit':
-        return _edit_relative_file(_request_mutation_path(request, root), request.arguments['old_string'], request.arguments['new_string'], workspace=Path('.'), replace_all=request.arguments.get('replace_all', False), display_path=request.arguments['path'])
+        return _edit_relative_file(_request_mutation_path(request, root), request.arguments['old_string'], request.arguments['new_string'], workspace=Path('.'), replace_all=request.arguments.get('replace_all', False), display_path=request.arguments['path'], content_stamps=True)
     if request.operation == 'fs_patch':
         return _patch_request(request, root)
     if request.operation in {'git_status', 'git_diff', 'git_log', 'git_blame', 'git_branches'}:
@@ -4350,7 +4414,7 @@ def _patch_request(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) 
     exclusions = _request_exclusions(request, 'sensitive_exclusions')
     if not all((_relative_target_is_safe(relative, Path('.'), exclusions, is_directory=False) for relative in parsed_paths)):
         raise WorkspaceToolDispatchError('invalid_request', 'workspace patch target is invalid')
-    return patch_validated_files(plans, root=root, dry_run=request.arguments.get('dry_run', False))
+    return patch_validated_files(plans, root=root, dry_run=request.arguments.get('dry_run', False), content_stamps=True)
 
 
 # ===========================================================================
@@ -4639,4 +4703,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("0489301db49f97cdf1d3308b836fed56efb0b5fceb0a6448b17fdb92c61c1bc3")
+BUNDLE_SHA256 = _enter_worker_exchange("7779efa6c1da5886a2e366c61978e50e699cce9ce5c7c006f5b2762b4db1a8b4")

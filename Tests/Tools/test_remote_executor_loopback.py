@@ -220,6 +220,162 @@ def test_parse_fs_read_stamps_rejects_malformed_tails(tail: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Task 16: write-path results carry worker-reported CAS stamps
+# ---------------------------------------------------------------------------
+
+
+def test_fs_write_result_carries_written_content_stamps(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+    body = "fresh remote bytes\n"
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_write",
+            {
+                "path": "written.txt",
+                "content": body,
+                "sensitive_exclusions": [],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "success"
+    stamps = parse_fs_read_stamps(result["result"] or "")
+    encoded = body.encode("utf-8")
+    assert stamps == (hashlib.sha256(encoded).hexdigest(), len(encoded))
+    assert "wrote " in (result["result"] or "")
+    # The digest matches the bytes actually on disk (single-pass source).
+    assert stamps[0] == hashlib.sha256((root / "written.txt").read_bytes()).hexdigest()
+
+
+def test_fs_write_dry_run_preview_stays_stampless(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_write",
+            {
+                "path": "preview.txt",
+                "content": "body\n",
+                "dry_run": True,
+                "sensitive_exclusions": [],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "success"
+    # The preview is a JSON object; a stamp tail would corrupt it.
+    assert parse_fs_read_stamps(result["result"] or "") is None
+    assert json.loads(result["result"] or "")["target_state"] == "absent"
+
+
+def test_fs_edit_result_carries_written_content_stamps(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_edit",
+            {
+                "path": "alpha.txt",
+                "old_string": "alpha",
+                "new_string": "omega",
+                "sensitive_exclusions": [],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "success"
+    stamps = parse_fs_read_stamps(result["result"] or "")
+    encoded = "omega body\n".encode("utf-8")
+    assert stamps == (hashlib.sha256(encoded).hexdigest(), len(encoded))
+    assert stamps[0] == hashlib.sha256((root / "alpha.txt").read_bytes()).hexdigest()
+
+
+def test_fs_patch_result_carries_per_target_stamps(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+    diff = (
+        "--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1 +1 @@\n-alpha body\n"
+        "+alpha patched\n"
+        "--- a/nested/gamma.md\n+++ b/nested/gamma.md\n@@ -1 +1 @@\n-gamma\n"
+        "+gamma patched\n"
+    )
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_patch",
+            {
+                "diff": diff,
+                # The loopback builder passes arguments verbatim (the
+                # local executor's builder computes this field), so the
+                # hand-built request carries the admitted target set.
+                "targets": ["alpha.txt", "nested/gamma.md"],
+                "sensitive_exclusions": [],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "success"
+    text = result["result"] or ""
+    assert "patched alpha.txt" in text
+    assert "patched nested/gamma.md" in text
+    expected = {
+        "alpha.txt": b"alpha patched\n",
+        "nested/gamma.md": b"gamma patched\nbody\n",
+    }
+    for relative, payload in expected.items():
+        line = f"sha256 {relative}: {hashlib.sha256(payload).hexdigest()} size: {len(payload)}"
+        assert line in text, f"missing per-target stamp line for {relative}"
+
+
+def test_fs_patch_dry_run_stays_stampless(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+    diff = (
+        "--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1 +1 @@\n-alpha body\n"
+        "+alpha patched\n"
+    )
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_patch",
+            {
+                "diff": diff,
+                "dry_run": True,
+                "targets": ["alpha.txt"],
+                "sensitive_exclusions": [],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "success"
+    assert result["result"] == "would patch alpha.txt"
+
+
+# ---------------------------------------------------------------------------
 # ping
 # ---------------------------------------------------------------------------
 
