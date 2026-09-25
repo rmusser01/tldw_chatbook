@@ -85,10 +85,13 @@ def test_default_registry_contains_four_parakeet_roots_and_the_vad_dependency() 
     from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
     from tldw_chatbook.Model_Artifacts.service import ArtifactRole
 
+    # Scope to the Parakeet STT closure: the shared registry also admits
+    # other consumers (audio_cpp, the OmniVoice "tts" entry), each guarded
+    # by its own catalog test.
     descriptors = tuple(
         descriptor
         for descriptor in curated_registry().list()
-        if descriptor.consumer != "audio_cpp"
+        if descriptor.consumer == "stt"
     )
     references = {descriptor.reference for descriptor in descriptors}
 

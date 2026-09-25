@@ -244,6 +244,8 @@ def test_every_global_provider_mutation_targets_exactly_its_adapter() -> None:
             draft.providers[provider_id]["temperature"] = 0.7
         elif provider_id == "higgs":
             draft.providers[provider_id]["dtype"] = "float32"
+        elif provider_id == "omnivoice":
+            draft.providers[provider_id]["num_steps"] = 16
         else:
             draft.providers[provider_id]["server_url"] = "http://127.0.0.1:7852"
 

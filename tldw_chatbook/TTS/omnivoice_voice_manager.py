@@ -1,0 +1,676 @@
+# omnivoice_voice_manager.py
+# Description: Voice profile management for the OmniVoice ONNX TTS backend
+#
+# Imports
+import json
+import re
+import shutil
+import wave
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from loguru import logger
+
+try:  # optional: decodes non-WAV clips and float/24-bit WAVs
+    import soundfile as _sf
+
+    SOUNDFILE_AVAILABLE = True
+except ImportError:
+    SOUNDFILE_AVAILABLE = False
+    _sf = None
+
+from tldw_chatbook.TTS.backends.voice_manager_base import VoiceManagerBase
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
+from tldw_chatbook.TTS.profile_errors import ProfileValidationError
+from tldw_chatbook.TTS.profile_reference_types import (
+    MAX_REFERENCE_TEXT_CHARACTERS,
+    validate_reference_text,
+)
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+#######################################################################################################################
+#
+# OmniVoice Voice Manager
+#
+
+
+class _InvalidProfileName(ValueError):
+    """A profile name that cannot safely become a directory name."""
+
+
+_DEFAULT_VOICES_DIR = Path(OMNIVOICE_DEFAULT_VOICES_DIR)
+_EXPORT_PREFIX = "omnivoice_voice_"
+# Profile names become directory names; keep them to a safe, flat charset.
+_PROFILE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+class OmniVoiceVoiceManager(VoiceManagerBase):
+    """Voice profile manager for the OmniVoice ONNX TTS backend.
+
+    OmniVoice clones a voice from a reference clip plus its exact
+    transcript, so every profile stores both: each profile lives in its
+    own directory under ``voice_samples_dir`` as ``profile.json`` +
+    ``reference.<ext>`` with a required ``reference_text`` field.
+
+    Stored ``profile.json`` schema::
+
+        {
+          "name": "string",
+          "display_name": "string|null",
+          "language": "en",
+          "description": "string|null",
+          "reference_audio": "reference.wav",
+          "reference_text": "bounded transcript (required — cloning needs it)",
+          "created_at": "ISO-8601",
+          "updated_at": "ISO-8601"
+        }
+    """
+
+    def __init__(
+        self,
+        voice_samples_dir: Optional[Path] = None,
+        max_reference_duration: float = 30.0,
+    ):
+        """
+        Initialize the OmniVoice voice manager.
+
+        Args:
+            voice_samples_dir: Directory for storing voice profiles
+                (default: ``~/.config/tldw_cli/omnivoice_voices``).
+            max_reference_duration: Maximum reference clip duration in
+                seconds; values <= 0 disable the limit (engine parity).
+        """
+        super().__init__(voice_samples_dir or _DEFAULT_VOICES_DIR.expanduser())
+        self.max_reference_duration = float(max_reference_duration)
+
+    # -- profile CRUD ----------------------------------------------------------------
+
+    def create_profile(
+        self,
+        profile_name: str,
+        reference_audio_path: str,
+        display_name: Optional[str] = None,
+        language: str = "en",
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        reference_text: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Create a new OmniVoice voice profile.
+
+        ``reference_text`` — the transcript of the reference clip — is
+        required for zero-shot cloning; calls following the base
+        ``VoiceManagerBase`` signature without it are rejected with a
+        message naming ``reference_text``. ``tags`` and ``metadata`` are
+        accepted for signature compatibility but not stored (OmniVoice
+        profiles carry only the cloning payload).
+
+        Args:
+            profile_name: Profile id; becomes a directory name, so it is
+                limited to letters, digits, ``.``, ``_`` and ``-``.
+            reference_audio_path: Local path of the reference clip.
+            display_name: Human-readable label (defaults to the id).
+            language: Language id stored with the profile.
+            description: Optional free-text description.
+            tags: Accepted for base-class compatibility; not stored.
+            metadata: Accepted for base-class compatibility; not stored.
+            reference_text: Exact transcript of the reference clip.
+
+        Returns:
+            ``(success, message)``; on failure nothing is left on disk.
+        """
+        try:
+            if tags or metadata:
+                logger.debug(
+                    "OmniVoice profiles do not store tags/metadata; ignoring"
+                )
+            profile_dir, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
+
+            try:
+                transcript = validate_reference_text(reference_text)
+            except ProfileValidationError:
+                return False, (
+                    f"reference_text is required for OmniVoice voice cloning and "
+                    f"must be non-empty text of at most "
+                    f"{MAX_REFERENCE_TEXT_CHARACTERS} characters"
+                )
+
+            if profile_dir.exists():
+                return False, f"Profile '{profile_name}' already exists"
+
+            ref_path = self._local_path(reference_audio_path, require_exists=True)
+            if ref_path is None or not ref_path.is_file():
+                return False, "Reference audio not found or not a valid local file"
+            clip_error = self._reference_clip_error(ref_path)
+            if clip_error is not None:
+                return False, clip_error
+
+            now = utc_now_iso()
+            profile = {
+                "name": profile_name,
+                "display_name": display_name or profile_name,
+                "language": language,
+                "description": description,
+                "reference_audio": "",
+                "reference_text": transcript,
+                "created_at": now,
+                "updated_at": now,
+            }
+            # Everything that touches disk is undone on failure: a half-made
+            # directory would otherwise read as "already exists" on retry.
+            profile_dir.mkdir(parents=True)
+            try:
+                dest_audio = profile_dir / f"reference{ref_path.suffix.lower()}"
+                shutil.copy2(ref_path, dest_audio)
+                profile["reference_audio"] = dest_audio.name
+                self._write_profile(profile_dir, profile)
+            except Exception:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+                raise
+            logger.info(f"Created OmniVoice voice profile '{profile_name}'")
+            return True, f"Successfully created profile '{profile_name}'"
+
+        except Exception as e:
+            logger.error(
+                f"Error creating OmniVoice profile '{profile_name}': "
+                f"{redact_user_paths(str(e))}"
+            )
+            return False, f"Error: {str(e)}"
+
+    def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """List all OmniVoice voice profiles.
+
+        Args:
+            tags: Filter by tags (accepted but not stored for OmniVoice
+                profiles; providing it filters everything out).
+
+        Returns:
+            List of profile summaries.
+        """
+        result = []
+        if not self.voice_samples_dir.is_dir():
+            return result
+        for entry in sorted(self.voice_samples_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            stored = self._read_profile(entry)
+            if stored is None:
+                continue
+            profile_tags = []
+            if tags and not any(tag in profile_tags for tag in tags):
+                continue
+            result.append(
+                {
+                    "name": stored.get("name", entry.name),
+                    "display_name": stored.get("display_name") or entry.name,
+                    "language": stored.get("language", "unknown"),
+                    "description": stored.get("description", ""),
+                    "tags": profile_tags,
+                    "created_at": stored.get("created_at", "unknown"),
+                    "backend": "omnivoice",
+                    "has_reference": bool(stored.get("reference_audio")),
+                }
+            )
+        result.sort(key=lambda x: x["display_name"].lower())
+        return result
+
+    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        """Get a specific OmniVoice voice profile.
+
+        Unsafe profile names never resolve.
+
+        Args:
+            profile_name: Profile id.
+
+        Returns:
+            The stored profile mapping, or None if it is missing or unsafe.
+        """
+        profile_dir, error = self._profile_dir_or_error(profile_name)
+        if error is not None or profile_dir is None:
+            return None
+        if not profile_dir.is_dir():
+            return None
+        return self._read_profile(profile_dir)
+
+    def update_profile(
+        self,
+        profile_name: str,
+        display_name: Optional[str] = None,
+        language: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata_update: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Update an existing OmniVoice voice profile.
+
+        ``tags`` and ``metadata_update`` are accepted for signature
+        compatibility but not stored (OmniVoice profiles carry only the
+        cloning payload).
+
+        Args:
+            profile_name: Profile id.
+            display_name: New label, when given.
+            language: New language id, when given.
+            description: New description, when given.
+            tags: Accepted for base-class compatibility; not stored.
+            metadata_update: Accepted for base-class compatibility; not stored.
+
+        Returns:
+            ``(success, message)``.
+        """
+        try:
+            if tags is not None or metadata_update:
+                logger.debug(
+                    "OmniVoice profiles do not store tags/metadata; ignoring"
+                )
+            _, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
+            profile = self.get_profile(profile_name)
+            if profile is None:
+                return False, f"Profile '{profile_name}' not found"
+
+            if display_name is not None:
+                profile["display_name"] = display_name
+            if language is not None:
+                profile["language"] = language
+            if description is not None:
+                profile["description"] = description
+
+            profile["updated_at"] = utc_now_iso()
+            self._write_profile(self._profile_dir(profile_name), profile)
+            return True, f"Successfully updated profile '{profile_name}'"
+
+        except Exception as e:
+            logger.error(
+                f"Error updating OmniVoice profile '{profile_name}': "
+                f"{redact_user_paths(str(e))}"
+            )
+            return False, f"Error: {str(e)}"
+
+    def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
+        """Delete an OmniVoice voice profile and its reference audio.
+
+        Args:
+            profile_name: Profile id (unsafe names are refused, never resolved).
+
+        Returns:
+            ``(success, message)``.
+        """
+        try:
+            profile_dir, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
+            if not profile_dir.is_dir():
+                return False, f"Profile '{profile_name}' not found"
+
+            shutil.rmtree(profile_dir)
+            logger.info(f"Deleted OmniVoice voice profile '{profile_name}'")
+            return True, f"Successfully deleted profile '{profile_name}'"
+
+        except Exception as e:
+            logger.error(
+                f"Error deleting OmniVoice profile '{profile_name}': "
+                f"{redact_user_paths(str(e))}"
+            )
+            return False, f"Error: {str(e)}"
+
+    # -- import/export ---------------------------------------------------------------
+
+    def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
+        """Export a voice profile with its reference audio.
+
+        Args:
+            profile_name: Profile to export
+            export_path: Directory to export to
+
+        Returns:
+            (success, message) tuple
+        """
+        try:
+            _, error = self._profile_dir_or_error(profile_name)
+            if error is not None:
+                return False, error
+            profile = self.get_profile(profile_name)
+            if profile is None:
+                return False, f"Profile '{profile_name}' not found"
+
+            export_dir = self._local_path(export_path, require_exists=False)
+            if export_dir is None:
+                return False, "Export path is not a valid local path"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            package_dir = export_dir / f"{_EXPORT_PREFIX}{profile_name}"
+            package_dir.mkdir(exist_ok=True)
+
+            reference_name = profile.get("reference_audio")
+            if reference_name:
+                source_audio = self._profile_dir(profile_name) / reference_name
+                if source_audio.is_file():
+                    shutil.copy2(source_audio, package_dir / reference_name)
+                else:
+                    logger.warning(
+                        f"Reference audio not found for export: "
+                        f"{redact_user_paths(str(source_audio))}"
+                    )
+                    profile = {
+                        k: v for k, v in profile.items() if k != "reference_audio"
+                    }
+
+            with open(package_dir / "profile.json", "w") as f:
+                json.dump(profile, f, indent=2)
+
+            with open(package_dir / "README.txt", "w") as f:
+                f.write(f"OmniVoice Voice Profile: {profile_name}\n")
+                f.write(f"Display Name: {profile.get('display_name', profile_name)}\n")
+                f.write(f"Language: {profile.get('language', 'unknown')}\n")
+                f.write(f"Created: {profile.get('created_at', 'unknown')}\n")
+                description = profile.get("description") or "No description"
+                f.write(f"\nDescription:\n{description}\n")
+                f.write(
+                    f"\nReference transcript (reference_text, required for "
+                    f"cloning):\n{profile.get('reference_text', '')}\n"
+                )
+                f.write("\nTo import this profile, use the import_profile function.\n")
+
+            logger.info(
+                f"Exported OmniVoice profile '{profile_name}' to "
+                f"{redact_user_paths(str(package_dir))}"
+            )
+            return True, f"Successfully exported to {package_dir}"
+
+        except Exception as e:
+            logger.error(
+                f"Error exporting OmniVoice profile '{profile_name}': "
+                f"{redact_user_paths(str(e))}"
+            )
+            return False, f"Error: {str(e)}"
+
+    def import_profile(
+        self,
+        import_path: str,
+        profile_name: Optional[str] = None,
+        overwrite: bool = False,
+    ) -> Tuple[bool, str]:
+        """Import a voice profile from an export package.
+
+        Args:
+            import_path: Path to profile package or profile.json
+            profile_name: New name for profile (optional)
+            overwrite: Whether to overwrite existing profile
+
+        Returns:
+            (success, message) tuple
+        """
+        try:
+            import_dir = self._local_path(import_path, require_exists=True)
+            if import_dir is None:
+                return (
+                    False,
+                    "Invalid import path. Expected profile.json or package directory",
+                )
+            if import_dir.is_file() and import_dir.name == "profile.json":
+                package_dir = import_dir.parent
+            elif import_dir.is_dir():
+                package_dir = import_dir
+            else:
+                return (
+                    False,
+                    "Invalid import path. Expected profile.json or package directory",
+                )
+
+            profile_file = package_dir / "profile.json"
+            if not profile_file.is_file():
+                return False, "profile.json not found in import package"
+
+            try:
+                with open(profile_file, "r") as f:
+                    imported = json.load(f)
+            except Exception as e:
+                return False, f"Could not read profile.json: {e}"
+
+            try:
+                transcript = validate_reference_text(imported.get("reference_text"))
+            except ProfileValidationError:
+                return False, (
+                    "reference_text is required for OmniVoice voice cloning and is "
+                    "missing or invalid in the import package"
+                )
+
+            name = profile_name or self._name_from_package(package_dir)
+            profile_dir, error = self._profile_dir_or_error(name)
+            if error is not None:
+                return False, error
+
+            if profile_dir.exists() and not overwrite:
+                return (
+                    False,
+                    f"Profile '{name}' already exists. Use overwrite=True to replace",
+                )
+
+            # A profile without a usable clip cannot clone: hold imports to
+            # the same checks create_profile applies (format, frames,
+            # duration limit) BEFORE touching the destination.
+            reference_name = imported.get("reference_audio")
+            if not isinstance(reference_name, str) or not reference_name.strip():
+                return False, "reference_audio is missing from the import package"
+            clip_name = Path(reference_name).name
+            source_audio = package_dir / clip_name
+            if not source_audio.is_file():
+                return False, f"Reference audio not found in package: {clip_name}"
+            clip_error = self._reference_clip_error(source_audio)
+            if clip_error is not None:
+                return False, clip_error
+
+            now = utc_now_iso()
+            created = not profile_dir.exists()
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                # Overwrite replaces the clip: drop earlier reference.* files
+                # so a different extension never leaves a stale clip behind.
+                for stale in profile_dir.glob("reference.*"):
+                    if stale.name != clip_name:
+                        stale.unlink(missing_ok=True)
+                shutil.copy2(source_audio, profile_dir / clip_name)
+                imported["name"] = name
+                imported["reference_text"] = transcript
+                imported["reference_audio"] = clip_name
+                imported.setdefault("created_at", now)
+                imported["updated_at"] = now
+                self._write_profile(profile_dir, imported)
+            except Exception:
+                if created:
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+                raise
+
+            logger.info(f"Imported OmniVoice voice profile '{name}'")
+            return True, f"Successfully imported profile '{name}'"
+
+        except Exception as e:
+            logger.error(
+                f"Error importing OmniVoice profile "
+                f"'{profile_name or redact_user_paths(str(import_path))}': "
+                f"{redact_user_paths(str(e))}"
+            )
+            return False, f"Error: {str(e)}"
+
+    # -- helpers ---------------------------------------------------------------------
+
+    def get_reference_audio_path(self, profile_name: str) -> Optional[Path]:
+        """Return the absolute path of a profile's reference clip, if any.
+
+        Args:
+            profile_name: Profile identifier
+
+        Returns:
+            Resolved path to the copied reference audio, or None if the
+            profile or its clip is missing.
+        """
+        profile = self.get_profile(profile_name)
+        if profile is None:
+            return None
+        reference_name = profile.get("reference_audio")
+        if not reference_name:
+            return None
+        return self._profile_dir(profile_name) / Path(reference_name).name
+
+    def get_supported_features(self) -> List[str]:
+        """Capabilities advertised by this backend's profile manager.
+
+        Returns:
+            The feature ids the Voice Cloning window may offer.
+        """
+        return ["basic_profiles", "import_export", "zero_shot_cloning"]
+
+    @staticmethod
+    def _local_path(value: Any, *, require_exists: bool) -> Optional[Path]:
+        """Normalize a user-supplied path through ``path_validation``.
+
+        Args:
+            value: Raw path (``~`` is expanded).
+            require_exists: Whether the path must already exist.
+
+        Returns:
+            The validated path, or None when it is malformed or missing.
+        """
+        try:
+            return validate_path_simple(
+                Path(str(value)).expanduser(), require_exists=require_exists
+            )
+        except ValueError:
+            return None
+
+    def _reference_clip_error(self, clip: Path) -> Optional[str]:
+        """Check a reference clip the way cloning will use it.
+
+        Args:
+            clip: Existing local audio file.
+
+        Returns:
+            A user-facing refusal, or None when the clip is usable.
+        """
+        is_valid, audio_info = self.validate_audio_file(clip)
+        if not is_valid:
+            return f"Invalid audio file: {audio_info.get('error', 'unknown')}"
+        duration = self._probe_duration(clip)
+        if duration is None:
+            return (
+                f"Could not determine the duration of {clip.name}; provide a "
+                f"WAV file (or install soundfile for other formats)"
+            )
+        if duration <= 0:
+            return f"Reference audio has no audio frames: {clip.name}"
+        limit = self.max_reference_duration
+        if limit > 0 and duration > limit:
+            return (
+                f"Reference audio duration {duration:.1f}s exceeds the "
+                f"{limit:.1f}s maximum for OmniVoice cloning"
+            )
+        return None
+
+    def _profile_dir(self, profile_name: str) -> Path:
+        """Return the profile's directory.
+
+        Single choke point for every name-taking path: unsafe names raise
+        ``_InvalidProfileName`` instead of resolving, so no method (least of
+        all the destructive ``delete_profile``) can escape the voices dir.
+        """
+        valid, error = self._validate_profile_name(profile_name)
+        if not valid:
+            raise _InvalidProfileName(error)
+        return self.voice_samples_dir / profile_name
+
+    def _profile_dir_or_error(
+        self, profile_name: str
+    ) -> Tuple[Optional[Path], Optional[str]]:
+        """Resolve a profile directory, or a refusal message for unsafe names."""
+        try:
+            return self._profile_dir(profile_name), None
+        except _InvalidProfileName as e:
+            return None, str(e)
+
+    @staticmethod
+    def _validate_profile_name(profile_name: str) -> Tuple[bool, str]:
+        if not profile_name or not _PROFILE_NAME_PATTERN.fullmatch(profile_name):
+            return (
+                False,
+                "Profile name must be non-empty letters, digits, '.', '_' or '-' "
+                "(it becomes a directory name)",
+            )
+        return True, ""
+
+    @staticmethod
+    def _name_from_package(package_dir: Path) -> str:
+        if package_dir.name.startswith(_EXPORT_PREFIX):
+            return package_dir.name[len(_EXPORT_PREFIX) :]
+        return f"imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    @staticmethod
+    def _read_profile(profile_dir: Path) -> Optional[Dict[str, Any]]:
+        profile_file = profile_dir / "profile.json"
+        if not profile_file.is_file():
+            return None
+        try:
+            with open(profile_file, "r") as f:
+                stored = json.load(f)
+        except Exception as e:
+            logger.error(
+                f"Failed to load profile in {redact_user_paths(str(profile_dir))}: "
+                f"{redact_user_paths(str(e))}"
+            )
+            return None
+        if not isinstance(stored, dict):
+            logger.error(
+                f"Corrupt profile.json in {redact_user_paths(str(profile_dir))}"
+            )
+            return None
+        return stored
+
+    @staticmethod
+    def _write_profile(profile_dir: Path, profile: Dict[str, Any]) -> None:
+        with open(profile_dir / "profile.json", "w") as f:
+            json.dump(profile, f, indent=2)
+
+    @staticmethod
+    def _probe_duration(audio_path: Path) -> Optional[float]:
+        """Return the clip's duration in seconds, or None if unverifiable.
+
+        soundfile first (the library the OmniVoice engine decodes with, and
+        it reads float/24-bit WAVs the stdlib cannot); the stdlib ``wave``
+        header is the fallback for plain PCM WAVs without soundfile.
+        """
+        if not (SOUNDFILE_AVAILABLE and _sf is not None) and (
+            audio_path.suffix.lower() == ".wav"
+        ):
+            try:
+                with wave.open(str(audio_path), "rb") as reader:
+                    rate = reader.getframerate()
+                    if rate <= 0:
+                        return None
+                    return reader.getnframes() / rate
+            except (wave.Error, EOFError) as e:
+                logger.error(
+                    f"Could not read WAV header of "
+                    f"{redact_user_paths(str(audio_path))}: {redact_user_paths(str(e))}"
+                )
+                return None
+        if SOUNDFILE_AVAILABLE and _sf is not None:
+            try:
+                info = _sf.info(str(audio_path))
+                if info.samplerate > 0:
+                    return info.frames / info.samplerate
+            except Exception as e:
+                logger.error(
+                    f"Could not read audio info of "
+                    f"{redact_user_paths(str(audio_path))}: {redact_user_paths(str(e))}"
+                )
+        return None
+
+
+#
+# End of omnivoice_voice_manager.py
+#######################################################################################################################
