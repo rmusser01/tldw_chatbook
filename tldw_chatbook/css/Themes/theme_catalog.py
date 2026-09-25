@@ -187,10 +187,12 @@ def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
     return ThemeChange(previous_active, previous_launch, persisted)
 
 
-def revert_theme(app: Any, change: ThemeChange) -> None:
+def revert_theme(app: Any, change: ThemeChange) -> bool:
+    """Undo ``change``; False when the launch default could not be restored."""
     app.theme = change.previous_active
     if change.persisted:
-        _persist_launch_default(app, change.previous_launch_default)
+        return _persist_launch_default(app, change.previous_launch_default)
+    return True
 
 
 def user_theme_names(directory: Path) -> set[str]:

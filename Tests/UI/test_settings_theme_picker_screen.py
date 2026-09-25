@@ -90,15 +90,190 @@ async def test_appearance_shows_read_only_theme_row_and_opens_picker(request):
         assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
 
 
-def test_appearance_save_never_writes_default_theme():
+def test_appearance_save_sections_carry_no_default_theme():
+    # Spec §8, structural: Appearance never writes general.default_theme --
+    # not even the value it read. The config writer sets keys one by one
+    # (config._apply_literal_mutation_unlocked), so an absent key leaves the
+    # file's launch default alone.
     from dataclasses import replace
 
     from tldw_chatbook.UI.Screens import settings_appearance_defaults as sad
 
     values = replace(sad.SettingsAppearanceDefaults(), default_theme="textual-light")
-    sections = sad.build_appearance_save_sections({"general": {"default_theme": "nord"}}, values)
-    # The existing launch default passes through untouched; the draft value never lands.
-    assert sections["general"]["default_theme"] == "nord"
+    sections = sad.build_appearance_save_sections(
+        {"general": {"default_theme": "nord", "palette_theme_limit": 3}}, values
+    )
+    assert "default_theme" not in sections["general"]
+    assert "palette_theme_limit" in sections["general"]
+
+
+async def _save_appearance(host, pilot, saved):
+    from textual.widgets import Input
+
+    await _category(host, pilot, "Appearance")
+    screen = host.screen
+    limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
+    limit.value = "7" if limit.value != "7" else "6"
+    screen.handle_appearance_palette_theme_limit_changed(Input.Changed(limit, limit.value))
+    await pilot.pause()
+    before = len(saved)
+    await pilot.click("#settings-save-category")
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if len(saved) > before and "Appearance defaults saved." in str(
+            screen.query_one("#settings-appearance-save-result").render()
+        ):
+            return
+    raise AssertionError("Appearance save did not complete")
+
+
+@pytest.fixture
+def appearance_writes(monkeypatch):
+    from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    return saved
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_appearance_save_round_trip_keeps_launch_default(request, appearance_writes):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        config = host.screen.app_instance.app_config
+        config.setdefault("general", {})["default_theme"] = "dracula"
+        await _save_appearance(host, pilot, appearance_writes)
+        assert "default_theme" not in appearance_writes[-1]["general"]
+        assert config["general"]["default_theme"] == "dracula"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_launch_default_changed_survives_a_later_appearance_save(request, appearance_writes):
+    # Task 6 review: the editor's Delete -> _save_launch_default path posts
+    # LaunchDefaultChanged; a later Appearance Save must not clobber it.
+    from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        host.screen.post_message(SettingsThemeEditor.LaunchDefaultChanged("nord"))
+        await pilot.pause()
+        config = host.screen.app_instance.app_config
+        assert config["general"]["default_theme"] == "nord"
+        await _save_appearance(host, pilot, appearance_writes)
+        assert "default_theme" not in appearance_writes[-1]["general"]
+        assert config["general"]["default_theme"] == "nord"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_chip_survives_a_category_round_trip(request, monkeypatch):
+    # R9 / spec §5: the pending Revert lasts for the session.
+    from types import SimpleNamespace
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.css.Themes import theme_catalog as tc
+
+    writes = []
+    monkeypatch.setattr(
+        tc, "_apply_config_mutation",
+        lambda m: writes.append(m) or SimpleNamespace(file_replaced=True, caches_reloaded=True),
+    )
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        original, launch = host.theme, tc.current_launch_default()
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use
+        await pilot.pause(0.2)
+        assert host.theme != original
+        await _category(host, pilot, "Appearance")
+        await _category(host, pilot, "Theme")
+        revert = host.screen.query_one("#settings-theme-revert", Button)
+        assert revert.display
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == original
+        assert writes[-1] == {"general": {"default_theme": launch}}
+
+
+async def _dirty_editor_then_back(host, pilot, choice):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    await _category(host, pilot, "Theme")
+    host.screen.query_one("#settings-theme-list").focus()
+    await pilot.press("c")  # Clone: editor opens modified
+    await pilot.pause(0.2)
+    screen = host.screen
+    # custom_themes_path is the private profile's themes dir (the editor's
+    # writer refuses paths outside the profile, so no tmp_path override).
+    editor = screen.query_one("#settings-theme-editor")
+    assert editor.is_modified and screen.theme_editor_modified
+    await pilot.click("#settings-theme-back")
+    await pilot.pause(0.2)
+    assert isinstance(host.screen, ThemeLeaveModal)
+    await pilot.click(choice)
+    await host.workers.wait_for_complete()
+    await pilot.pause(0.2)
+    return screen, editor
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_back_discard_clears_both_flags_and_shows_picker(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen, editor = await _dirty_editor_then_back(host, pilot, "#settings-theme-leave-discard")
+        assert editor.is_modified is False and screen.theme_editor_modified is False
+        assert screen.query_one("#settings-theme-pane", ContentSwitcher).current == "settings-theme-picker"
+        assert not (editor.custom_themes_path / f"{editor.current_theme_name}.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_back_save_writes_the_theme_then_shows_picker(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen, editor = await _dirty_editor_then_back(host, pilot, "#settings-theme-leave-save")
+        assert (editor.custom_themes_path / f"{editor.current_theme_name}.toml").exists()
+        assert editor.is_modified is False
+        assert screen.query_one("#settings-theme-pane", ContentSwitcher).current == "settings-theme-picker"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_back_save_refused_stays_in_editor_with_edits(request):
+    from textual.widgets import Input
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        name = host.screen.query_one("#settings-theme-name", Input)
+        name.value = "textual-dark"  # built-in: Save refuses
+        await pilot.pause()
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-leave-save")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.2)
+        screen = host.screen
+        assert screen.query_one("#settings-theme-pane", ContentSwitcher).current == "settings-theme-editor-view"
+        assert screen.query_one("#settings-theme-editor").is_modified
+        assert screen.query_one("#settings-theme-name", Input).value == "textual-dark"
+        themes_dir = screen.query_one("#settings-theme-editor").custom_themes_path
+        assert not (themes_dir / "textual-dark.toml").exists()
 
 
 def test_appearance_validation_ignores_theme():
@@ -182,3 +357,43 @@ async def test_appearance_summary_recomposes_after_launch_default_changes_elsewh
         assert "Nord" in after
         assert after != before
 
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_search_for_an_editor_field_lands_on_the_picker_list(request):
+    # The editor sits hidden behind the picker (ContentSwitcher); a search
+    # landing must not put focus -- and keystrokes -- into a hidden Input.
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Primary color")
+        await pilot.pause(0.2)
+        screen = host.screen
+        assert screen.query_one("#settings-theme-pane", ContentSwitcher).current == "settings-theme-picker"
+        assert host.focused is not None and host.focused.id == "settings-theme-list"
+        await pilot.press("z", "9")
+        await pilot.pause(0.2)
+        assert screen.query_one("#settings-theme-editor").is_modified is False
+        assert screen.theme_editor_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_help_copy_describes_the_picker(request):
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Overview")
+        screen = host.screen
+        notes = " ".join(screen._category_help_notes(SettingsCategoryId.THEME))
+        assert "Save contract: Applies immediately." in notes
+        assert "Use/Try apply at once; Save in the editor stores a theme file." in notes
+        assert "Read-only" not in notes and "Review readiness" not in notes
+        summary = screen._category_summary_by_id(SettingsCategoryId.THEME)
+        assert "Full theme editor" not in summary.description
+        button = screen.query_one("#settings-open-appearance", Button)
+        assert "editor" not in str(button.label).lower()
+        assert "editor" not in str(button.tooltip).lower()

@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Literal
 from loguru import logger
 from rich.style import Style
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -77,6 +77,15 @@ class ThemeOptionList(OptionList):
             return
         super().action_cursor_up()
 
+    async def _on_click(self, event: events.Click) -> None:
+        # Spec D2: a click only highlights (repaints the preview). OptionList's
+        # own handler also selects (= Use), so stop it running after this one;
+        # Enter and the Use button stay the only ways to Use.
+        event.prevent_default()
+        clicked = event.style.meta.get("option")
+        if clicked is not None and not self.get_option_at_index(clicked).disabled:
+            self.highlighted = clicked
+
     def action_try_theme(self) -> None:
         self.query_ancestor(ThemePicker).try_highlighted()
 
@@ -98,7 +107,23 @@ class ThemePicker(Vertical):
         super().__init__(**kwargs)
         self.entries: list[ThemeEntry] = []
         self.highlighted_id: str | None = None
-        self._revert: ThemeChange | None = None
+
+    # The pending Revert lives on the app, not this widget: the pane is
+    # recomposed on every category switch, and spec §5 keeps Revert for the
+    # rest of the session (ruling R9).
+    @property
+    def _revert(self) -> ThemeChange | None:
+        return getattr(self.app, "theme_revert_change", None)
+
+    @_revert.setter
+    def _revert(self, change: ThemeChange | None) -> None:
+        self.app.theme_revert_change = change
+
+    def _sync_revert_chip(self) -> None:
+        revert = self.query_one("#settings-theme-revert", Button)
+        revert.display = self._revert is not None
+        if self._revert is not None:
+            revert.label = f"Revert to {display_name(self._revert.previous_active)}"
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings-theme-picker-columns"):
@@ -117,7 +142,7 @@ class ThemePicker(Vertical):
                     yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
 
     def on_mount(self) -> None:
-        self.query_one("#settings-theme-revert").display = False
+        self._sync_revert_chip()
         self.query_one("#settings-theme-empty").display = False
         self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_catalog())
         self.refresh_catalog(highlight=str(self.app.theme))
@@ -221,11 +246,14 @@ class ThemePicker(Vertical):
             return
         change, self._revert = self._revert, None
         try:
-            revert_theme(self.app, change)
+            restored = revert_theme(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
             self.app.notify(f"Could not revert the theme: {exc}", severity="error")
-        self.query_one("#settings-theme-revert").display = False
+        else:
+            if not restored:
+                self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
+        self._sync_revert_chip()
         self.refresh_catalog()
 
     # -- actions -------------------------------------------------------
@@ -250,10 +278,7 @@ class ThemePicker(Vertical):
             self.refresh_catalog()
             return
         self._revert = change if self._revert is None else self._revert.merge(change)
-        was = display_name(self._revert.previous_active)
-        revert = self.query_one("#settings-theme-revert", Button)
-        revert.label = f"Revert to {was}"
-        revert.display = True
+        self._sync_revert_chip()
         if not persist:
             self.app.notify(f"Trying {display_name(theme_id)} for this session", severity="information")
         elif change.persisted:

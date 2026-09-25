@@ -4309,7 +4309,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.THEME,
                 "Theme",
-                "Full theme editor, custom colors, presets, and live preview.",
+                "Pick, try, or clone a theme with live preview; Clone/New open the editor.",
                 "Custom",
             ),
             SettingsCategorySummary(
@@ -5557,7 +5557,7 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=("custom theme files", "general.default_theme"),
                 reads_runtime_state_from=("app theme", "custom theme files"),
                 writes_allowed=True,
-                runtime_owner="Theme editor",
+                runtime_owner="Theme picker and editor",
                 boundary_copy=(
                     "Settings Theme editor owns custom color palettes and theme files; "
                     "use the editor's Apply/Save/Reset buttons."
@@ -9340,6 +9340,19 @@ class SettingsScreen(BaseAppScreen):
             widget = self.query_one(f"#{field_id}")
         except QueryError:
             return
+        # TASK-32948: Theme's editor sits hidden behind the picker (a
+        # ContentSwitcher); keystrokes must not go into a hidden editor
+        # field, so land on the picker list instead. (Not a generic
+        # display check: collapsed Collapsible contents are display:none
+        # too, and those are expanded below.)
+        theme_pane = next(
+            (node for node in widget.ancestors if isinstance(node, ThemePane)), None
+        )
+        if (
+            theme_pane is not None
+            and theme_pane.visible_content not in widget.ancestors_with_self
+        ):
+            widget = theme_pane.query_one("#settings-theme-list")
         if widget.disabled or any(
             getattr(node, "disabled", False) for node in widget.ancestors
         ):
@@ -9450,6 +9463,10 @@ class SettingsScreen(BaseAppScreen):
             return "Reviewed actions"
         if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
+        if category is SettingsCategoryId.THEME:
+            # Use/Try/Revert act at once; the banner stays hidden for Theme,
+            # but F1/category help reads this (TASK-32948).
+            return "Applies immediately"
         if category is SettingsCategoryId.NETWORK:
             # No SettingsDraft: edits stage in `self._network_pending`
             # until the screen-wide `s` reaches the Network save branch.
@@ -9504,6 +9521,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.AGENTS:
             return "agent_runs.db (SQLite) — immediate CRUD, no draft"
+        if category is SettingsCategoryId.THEME:
+            return "Use/Try apply at once; Save in the editor stores a theme file."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
         if category is SettingsCategoryId.SCHEDULES:
@@ -22136,9 +22155,9 @@ class SettingsScreen(BaseAppScreen):
             # compact contract requires a painted recovery action
             # (test_compact_overview_keeps_a_painted_recovery_action).
             yield Button(
-                "Open Theme editor",
+                "Open Theme picker",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
+                tooltip="Open Settings ▸ Theme to pick, try, or clone a theme.",
             )
         # task-181 copy, task-1583 placement, task-1714 length: the full
         # reassurance paragraph reads once on Overview; everywhere else a
@@ -22298,9 +22317,9 @@ class SettingsScreen(BaseAppScreen):
                 "full theme editing, custom colors, and deeper preview",
             )
             yield Button(
-                "Open Theme editor",
+                "Open Theme picker",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
+                tooltip="Open Settings ▸ Theme to pick, try, or clone a theme.",
             )
         elif summary.category is SettingsCategoryId.THEME:
             yield Static(
@@ -31252,7 +31271,14 @@ class SettingsScreen(BaseAppScreen):
         section_values: Mapping[str, object],
     ) -> None:
         if saved:
-            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            # Merge per section: the saved sections omit keys Appearance does
+            # not own (general.default_theme), which must survive in memory.
+            target = self._app_config_update_target()
+            for section, values in copy.deepcopy(dict(section_values)).items():
+                current = target.get(section)
+                target[section] = (
+                    {**current, **values} if isinstance(current, Mapping) else values
+                )
             self._signal_console_appearance_refresh()
             self._signal_library_reader_layout_refresh()
             self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
