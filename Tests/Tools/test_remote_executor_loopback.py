@@ -11,6 +11,7 @@ contract ``_parse_worker_output`` established.
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
@@ -62,6 +63,12 @@ _EXACT_BOOTSTRAP = (
 #: exact string is authoritative; the class still excludes every
 #: shell-active character (no quote/dollar/backtick/bang/globs/controls).
 _BOOTSTRAP_CHARSET = re.compile(r"[A-Za-z0-9\-_.\"(),:;<>=+%\\\[\] ]")
+
+#: The artifact's stamp assignment — its final line, and the ONLY byte
+#: range outside the stamp's own coverage (review fix: the entry logic
+#: moved into the stamped region so a rewritten tail can no longer
+#: launch divergent code while echoing a matching stamp).
+_STAMP_ASSIGNMENT_MARKER = b"\nBUNDLE_SHA256 = _enter_worker_exchange("
 
 _PING_PROBE_IDENTITY = {"device": 0, "inode": 0, "mode": 0, "reparse": False}
 
@@ -191,6 +198,27 @@ def test_parse_fs_read_stamps_rejects_stampless_text() -> None:
     assert parse_fs_read_stamps("") is None
 
 
+@pytest.mark.parametrize(
+    "tail",
+    [
+        # Non-hex digest characters (review minor: pin the shape gate).
+        "\nsha256: " + "z" * 64 + "\nsize: 5",
+        # Uppercase hex is not the wire form.
+        "\nsha256: " + "AB" * 32 + "\nsize: 5",
+        # Too short.
+        "\nsha256: " + "a" * 63 + "\nsize: 5",
+        # Size must be digits, and the tail must be last.
+        "\nsha256: " + "ab" * 32 + "\nsize: five",
+        "\nsha256: " + "ab" * 32 + "\nsize: 5\ntrailing",
+        # Wrong order / missing size line.
+        "\nsize: 5\nsha256: " + "ab" * 32,
+        "\nsha256: " + "ab" * 32,
+    ],
+)
+def test_parse_fs_read_stamps_rejects_malformed_tails(tail: str) -> None:
+    assert parse_fs_read_stamps("1\tbody" + tail) is None
+
+
 # ---------------------------------------------------------------------------
 # ping
 # ---------------------------------------------------------------------------
@@ -231,8 +259,8 @@ def test_ping_bundle_sha256_matches_the_artifact_stamp(tmp_path: Path) -> None:
 
     artifact = _BUNDLE_PATH.read_bytes()
     # Independent derivation: the stamp is the SHA-256 of the artifact's
-    # bytes above the (sole) BUNDLE_SHA256 assignment line.
-    boundary = artifact.rindex(b'\nBUNDLE_SHA256 = "')
+    # bytes above the (sole) stamp-assignment line.
+    boundary = artifact.rindex(_STAMP_ASSIGNMENT_MARKER)
     assert payload["bundle_sha256"] == hashlib.sha256(
         artifact[: boundary + 1]
     ).hexdigest()
@@ -473,11 +501,124 @@ def test_loopback_requires_a_directory_root(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _dispatch_read(root: Path, relative: str, *, offset: int = 1) -> str:
+    """Run one in-process pinned fs_read through the shared dispatch."""
+    from tldw_chatbook.Tools.workspace_root_pin import pin_workspace_root
+    from tldw_chatbook.Tools.workspace_tool_dispatch import (
+        execute_pinned_operation,
+    )
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    chain = capture_directory_chain(root)
+    request = SimpleNamespace(
+        operation="fs_read",
+        arguments={
+            "path": relative,
+            "offset": offset,
+            "sensitive_exclusions": [],
+        },
+    )
+    with pin_workspace_root(chain.canonical_root, chain) as pinned:
+        return execute_pinned_operation(request, pinned)
+
+
+def test_fs_read_hashes_in_the_same_read_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review minor 2: content and CAS stamps come from ONE read.
+
+    Reopening the target after the content read produced a torn pair
+    under concurrent modification; the read path now hashes the very
+    bytes it rendered. Pinned by counting the target's materialising
+    reads (``Path.read_bytes`` and ``open`` both instrumented, so the
+    pin holds whichever mechanism the read uses) during one dispatched
+    fs_read: exactly one.
+    """
+    root = _workspace(tmp_path)
+    target = (root / "alpha.txt").resolve()
+
+    reads: list[str] = []
+    real_open = builtins.open
+    real_read_bytes = Path.read_bytes
+
+    def counting_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            resolved = Path(file).resolve()
+        except (TypeError, ValueError, OSError):
+            resolved = None
+        if resolved == target:
+            reads.append("open")
+        return real_open(file, *args, **kwargs)
+
+    def counting_read_bytes(self: Path) -> bytes:
+        if self.resolve() == target:
+            reads.append("read_bytes")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(builtins, "open", counting_open)
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+    result = _dispatch_read(root, "alpha.txt")
+    monkeypatch.undo()
+
+    assert len(reads) == 1, "fs_read must materialise its target exactly once"
+    body = "alpha body\n".encode("utf-8")
+    stamps = parse_fs_read_stamps(result)
+    assert stamps == (hashlib.sha256(body).hexdigest(), len(body))
+
+
+def test_fs_read_stamps_cover_empty_and_paged_reads(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    (root / "empty.txt").write_text("", encoding="utf-8")
+    (root / "paged.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    empty = _dispatch_read(root, "empty.txt")
+    assert empty.startswith("(empty file)")
+    assert parse_fs_read_stamps(empty) == (hashlib.sha256(b"").hexdigest(), 0)
+
+    data = "one\ntwo\nthree\n".encode("utf-8")
+    full = _dispatch_read(root, "paged.txt")
+    assert parse_fs_read_stamps(full) == (
+        hashlib.sha256(data).hexdigest(),
+        len(data),
+    )
+
+    past_end = _dispatch_read(root, "paged.txt", offset=99)
+    assert "past end of file" in past_end
+    assert parse_fs_read_stamps(past_end) == (
+        hashlib.sha256(data).hexdigest(),
+        len(data),
+    )
+
+
 def test_committed_bundle_stamp_matches_artifact_prefix() -> None:
     artifact = _BUNDLE_PATH.read_bytes()
     assert expected_bundle_stamp(artifact) == BUNDLE_STAMP
     # The stamp assignment occurs exactly once in the artifact.
-    assert artifact.count(b"\nBUNDLE_SHA256 = \"") == 1
+    assert artifact.count(_STAMP_ASSIGNMENT_MARKER) == 1
+
+
+def test_stamp_covers_the_executable_entry_guard() -> None:
+    """Review fix pin: only the stamp's own assignment line is uncovered.
+
+    The bootstrap entry logic (``_enter_worker_exchange``) lives INSIDE
+    the hashed prefix; everything after the stamp assignment is the
+    assignment line itself. A divergent bundle can no longer append or
+    rewrite executable tail code while echoing a matching stamp — under
+    the bootstrap the entry helper's ``SystemExit`` fires from the
+    assignment line, so nothing after it ever executes.
+    """
+    artifact = _BUNDLE_PATH.read_bytes()
+    boundary = artifact.rindex(_STAMP_ASSIGNMENT_MARKER)
+    prefix = artifact[: boundary + 1]
+    suffix = artifact[boundary + 1 :]
+
+    assert b"def _enter_worker_exchange" in prefix
+    assert b'raise SystemExit(main(sys.stdin.buffer, bundle_sha256=stamp))' in prefix
+    # Nothing but the stamp's own assignment follows: one line plus its
+    # terminating newline, closing over the literal digest.
+    assert suffix.count(b"\n") == 1
+    assert suffix.endswith(b'")\n')
+    assert hashlib.sha256(prefix).hexdigest() in suffix.decode()
 
 
 def test_loopback_spawns_isolated_interpreter(

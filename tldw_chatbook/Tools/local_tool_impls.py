@@ -336,8 +336,39 @@ def _read_relative_file(
     limit: int | None,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
+    content_stamps: bool = False,
 ) -> str:
-    """Read a pinned-root-relative text file without reopening its resolved path."""
+    """Read a pinned-root-relative text file without reopening its resolved path.
+
+    The file is opened exactly ONCE and fully read as bytes: the binary
+    sniff, the decoded text, and (when ``content_stamps`` is set) the
+    CAS stamp digest all come from that single read, so the rendered
+    content and its sha256/size stamps can never be a torn pair under
+    concurrent modification. (``str.splitlines`` splits untranslated
+    ``\\r``/``\\r\\n`` exactly where the old universal-newline
+    ``read_text`` translation produced splits, so the output is
+    byte-identical to the previous two-open implementation.)
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        workspace: The confinement root ``relative`` resolves against.
+        offset: 1-based first line to render.
+        limit: Optional cap on the rendered line count.
+        sensitive_exclusions: Deny rules applied to the target.
+        display_path: Caller-facing path for error messages.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) computed from the same
+            read — the pinned dispatch path sets this; the plain local
+            ``read_file`` surface does not.
+
+    Returns:
+        The numbered (or notice) body, plus the stamp tail when
+        requested.
+
+    Raises:
+        LocalToolError: If the target is missing/protected, oversized,
+            or binary.
+    """
     target = workspace / relative
     if not _relative_target_is_safe(
         relative, workspace, sensitive_exclusions, is_directory=False
@@ -349,24 +380,26 @@ def _read_relative_file(
             f"'{display_path or relative}' is too large to read "
             f"({file_size} bytes; maximum {MAX_READ_FILE_BYTES})"
         )
-    with open(target, "rb") as fh:
-        sniff = fh.read(8192)
-    if b"\x00" in sniff:
+    data = target.read_bytes()
+    if b"\x00" in data[:8192]:
         raise LocalToolError(
             f"'{display_path or relative}' appears to be binary; fs_read only reads text files"
         )
-    text = target.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
+    lines = data.decode("utf-8", errors="replace").splitlines()
     if not lines:
-        return "(empty file)"
-    start = max(offset, 1) - 1
-    if start >= len(lines):
-        return f"(offset {offset} is past end of file; {len(lines)} lines total)"
-    window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
-    numbered = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
-    if len(numbered) > MAX_READ_CHARS:
-        numbered = numbered[:MAX_READ_CHARS] + "\n… [truncated]"
-    return numbered
+        body = "(empty file)"
+    else:
+        start = max(offset, 1) - 1
+        if start >= len(lines):
+            body = f"(offset {offset} is past end of file; {len(lines)} lines total)"
+        else:
+            window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
+            body = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
+            if len(body) > MAX_READ_CHARS:
+                body = body[:MAX_READ_CHARS] + "\n… [truncated]"
+    if content_stamps:
+        body += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+    return body
 
 
 def stat_path(path: str, *, workspace_root: Path) -> str:

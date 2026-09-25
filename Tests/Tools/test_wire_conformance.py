@@ -564,6 +564,20 @@ _add_valid_response(
         '"python_version":"3.12.11","bundle_sha256":"' + "ab" * 32 + '"}'
     ),
 )
+# Task 9 review: fs_read results end in a worker-reported CAS stamp tail
+# (``\nsha256: <64 hex>\nsize: <digits>``). The frame schema keeps
+# ``result`` an opaque string — the decoders pin that such results
+# round-trip both sides identically; the hex/size SHAPE gate lives in
+# ``remote_workspace_executor.parse_fs_read_stamps`` (pinned there).
+_add_valid_response(
+    "valid-stamp-tail-result",
+    result="1\thello wörld\n2\tbody\nsha256: " + "ab" * 32 + "\nsize: 12",
+)
+# Malformed stamp-tail flavour: a NUL inside the digest field is a frame
+# contract violation on BOTH decoders (the string NUL rule).
+d = _response_base()
+d["result"] = "1\tbody\nsha256: " + "a\x00b"
+_add_response("stamp-tail-nul-in-sha256", d)
 # Only success forbids ``error`` and only failure forbids ``result``;
 # ``admitted`` may carry an error and success may omit its result.
 _add_valid_response("valid-admitted-with-error", outcome="admitted", error="late")

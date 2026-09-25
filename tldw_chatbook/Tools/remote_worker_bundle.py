@@ -18,9 +18,10 @@ Contract:
   in ``sys.modules`` first — the closure's ``dataclass(slots=True)``
   classes resolve their defining module through it. The fixed remote
   bootstrap needs no such registration: it execs this file inside the
-  interpreter's own ``__main__`` namespace, and the builder-emitted
-  entry guard at the bottom of this file then runs the one exchange and
-  propagates the worker exit code.
+  interpreter's own ``__main__`` namespace, and the artifact's FINAL
+  line — the ``BUNDLE_SHA256`` assignment — triggers
+  ``_enter_worker_exchange`` (defined above, inside the stamped region),
+  which runs the one exchange and propagates the worker exit code.
 * Every response frame is emitted as ``RESPONSE_MAGIC + <json frame>``;
   use ``split_magic(raw)`` to strip before parsing. The LOCAL worker
   does not add this prefix — its pipe has no noise source.
@@ -28,10 +29,14 @@ Contract:
   captures the full root-to-``/`` directory identity chain, canonical
   path, remote python version, and ``BUNDLE_SHA256`` so a first-contact
   caller can build every other operation's pinned request.
-* ``BUNDLE_SHA256`` (bottom of this file) is the SHA-256 of this file's
+* ``BUNDLE_SHA256`` (the final line) is the SHA-256 of this file's
   bytes ABOVE its own assignment line — a full-file digest is not
-  self-embeddable (the stamp would change its own input). Derive the
-  same value from the artifact with
+  self-embeddable (the stamp would change its own input). Every
+  executable byte, including the bootstrap entry logic, lives in that
+  stamped region; only the assignment's own line falls outside it (and
+  under the bootstrap the entry helper's ``SystemExit`` fires from that
+  line, so nothing after it could ever run). Derive the same value from
+  the artifact with
   ``build_remote_worker_bundle.expected_bundle_stamp``.
 * ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
   nothing yet.
@@ -2066,30 +2071,62 @@ def read_file(path: str, *, workspace_root: Path, offset: int=1, limit: int | No
     root = resolve_workspace_path(path, workspace_root, intent='read')
     return _read_relative_file(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), offset=offset, limit=limit, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()), display_path=path)
 
-def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: int | None, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None) -> str:
-    """Read a pinned-root-relative text file without reopening its resolved path."""
+def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: int | None, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None, content_stamps: bool=False) -> str:
+    """Read a pinned-root-relative text file without reopening its resolved path.
+
+    The file is opened exactly ONCE and fully read as bytes: the binary
+    sniff, the decoded text, and (when ``content_stamps`` is set) the
+    CAS stamp digest all come from that single read, so the rendered
+    content and its sha256/size stamps can never be a torn pair under
+    concurrent modification. (``str.splitlines`` splits untranslated
+    ``\\r``/``\\r\\n`` exactly where the old universal-newline
+    ``read_text`` translation produced splits, so the output is
+    byte-identical to the previous two-open implementation.)
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        workspace: The confinement root ``relative`` resolves against.
+        offset: 1-based first line to render.
+        limit: Optional cap on the rendered line count.
+        sensitive_exclusions: Deny rules applied to the target.
+        display_path: Caller-facing path for error messages.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) computed from the same
+            read — the pinned dispatch path sets this; the plain local
+            ``read_file`` surface does not.
+
+    Returns:
+        The numbered (or notice) body, plus the stamp tail when
+        requested.
+
+    Raises:
+        LocalToolError: If the target is missing/protected, oversized,
+            or binary.
+    """
     target = workspace / relative
     if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False) or not target.is_file():
         raise LocalToolError(f'file not found: {display_path or relative}')
     file_size = target.stat().st_size
     if file_size > MAX_READ_FILE_BYTES:
         raise LocalToolError(f"'{display_path or relative}' is too large to read ({file_size} bytes; maximum {MAX_READ_FILE_BYTES})")
-    with open(target, 'rb') as fh:
-        sniff = fh.read(8192)
-    if b'\x00' in sniff:
+    data = target.read_bytes()
+    if b'\x00' in data[:8192]:
         raise LocalToolError(f"'{display_path or relative}' appears to be binary; fs_read only reads text files")
-    text = target.read_text(encoding='utf-8', errors='replace')
-    lines = text.splitlines()
+    lines = data.decode('utf-8', errors='replace').splitlines()
     if not lines:
-        return '(empty file)'
-    start = max(offset, 1) - 1
-    if start >= len(lines):
-        return f'(offset {offset} is past end of file; {len(lines)} lines total)'
-    window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
-    numbered = '\n'.join((f'{i}\t{line}' for i, line in enumerate(window, start=start + 1)))
-    if len(numbered) > MAX_READ_CHARS:
-        numbered = numbered[:MAX_READ_CHARS] + '\n… [truncated]'
-    return numbered
+        body = '(empty file)'
+    else:
+        start = max(offset, 1) - 1
+        if start >= len(lines):
+            body = f'(offset {offset} is past end of file; {len(lines)} lines total)'
+        else:
+            window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
+            body = '\n'.join((f'{i}\t{line}' for i, line in enumerate(window, start=start + 1)))
+            if len(body) > MAX_READ_CHARS:
+                body = body[:MAX_READ_CHARS] + '\n… [truncated]'
+    if content_stamps:
+        body += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
+    return body
 
 def stat_path(path: str, *, workspace_root: Path) -> str:
     """Return a small allowlisted metadata view for one workspace path.
@@ -4069,7 +4106,6 @@ arrive already decoded/validated; dispatch consumes the attribute surface
 ``WorkspaceToolRequest`` dataclass and the worker's decoded-request view
 both satisfy it).
 """
-import hashlib
 import shutil
 from pathlib import Path
 from typing import Any, Protocol
@@ -4104,8 +4140,7 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
     if request.operation == 'fs_list':
         return _list_relative_directory(_request_relative_path(request, root), workspace=Path('.'), max_entries=MAX_LIST_ENTRIES, sensitive_exclusions=exclusions)
     if request.operation == 'fs_read':
-        relative = _request_relative_path(request, root)
-        return _read_relative_file(relative, workspace=Path('.'), offset=request.arguments.get('offset', 1), limit=request.arguments.get('limit'), sensitive_exclusions=exclusions) + _file_content_stamps(relative)
+        return _read_relative_file(_request_relative_path(request, root), workspace=Path('.'), offset=request.arguments.get('offset', 1), limit=request.arguments.get('limit'), sensitive_exclusions=exclusions, content_stamps=True)
     if request.operation == 'fs_glob':
         try:
             pattern = validate_glob_pattern(request.arguments['pattern'])
@@ -4114,29 +4149,6 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
         return _glob_relative_files(pattern, workspace=Path('.'), max_results=request.arguments.get('max_results', MAX_GLOB_RESULTS), sensitive_exclusions=exclusions, validate_targets=True)
     if request.operation == 'fs_grep':
         return _grep_relative_files(request.arguments['pattern'], workspace=Path('.'), mode=request.arguments.get('mode', 'content'), max_results=request.arguments.get('max_results', MAX_GREP_RESULTS), sensitive_exclusions=_request_exclusions(request, 'content_exclusions'))
-
-def _file_content_stamps(relative: Path) -> str:
-    """Render the worker-reported CAS stamps for one read target.
-
-    The spec moves CAS stamping to worker-reported values (read side
-    here; the write side follows): the parent's ledger records these
-    instead of hashing its own copy of the path — which for a remote
-    root is the WRONG file whenever the same path exists on both
-    machines. Stamps cover the WHOLE file (the CAS target), rendered in
-    the established ``key: value`` style (see ``_format_stat_result``)
-    as the final two lines of the result, so consumers parse them from
-    the tail and file bodies can never shadow them.
-    """
-    digest = hashlib.sha256()
-    size = 0
-    with open(relative, 'rb') as handle:
-        while True:
-            chunk = handle.read(64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-            size += len(chunk)
-    return f'\nsha256: {digest.hexdigest()}\nsize: {size}'
 
 def _git_request(request: _PinnedOperationRequest) -> str:
     """Run one closed read-only Git operation beneath the retained root."""
@@ -4401,21 +4413,43 @@ class _MagicPrefixStdout:
         return self._stream.flush()
 
 
-def main(stream: Any) -> int:
+def main(stream: Any, *, bundle_sha256: str = "") -> int:
     """Run one isolated protocol exchange over an already-positioned stdin.
 
     ``stream`` is the buffered stdin AFTER the remote bootstrap consumed
     this bundle's own bytes (Task 9's harness positions it). Responses
     are written to the process stdout buffer with ``RESPONSE_MAGIC``
     prefixed to each frame; the process exit code follows the local
-    worker's contract (0 success, 2 refused/failed).
+    worker's contract (0 success, 2 refused/failed). ``bundle_sha256``
+    defaults to the empty string for direct/in-process callers; the
+    bootstrap entry path always supplies the artifact stamp.
     """
     return run_workspace_worker(
         stream,
         _MagicPrefixStdout(sys.stdout.buffer),
         sys.stderr.buffer,
-        bundle_sha256=BUNDLE_SHA256,
+        bundle_sha256=bundle_sha256,
     )
+
+
+def _enter_worker_exchange(stamp: str) -> str:
+    """Bootstrap entry seam — run the exchange when exec'd as ``__main__``.
+
+    The builder emits the artifact's FINAL line as
+    ``BUNDLE_SHA256 = _enter_worker_exchange("<digest>")``. Under the
+    fixed remote bootstrap this module executes inside the interpreter's
+    own ``__main__`` namespace, so evaluating that assignment fires the
+    one exchange (and the ``SystemExit`` aborts module execution before
+    anything uncovered could follow the line). In-process loaders run
+    under their own module name and simply get the stamp bound.
+
+    Defined ABOVE the stamp assignment on purpose: the entry logic must
+    sit inside the region ``BUNDLE_SHA256`` attests, so a rewritten tail
+    cannot launch divergent code while echoing a matching stamp.
+    """
+    if __name__ == "__main__":
+        raise SystemExit(main(sys.stdin.buffer, bundle_sha256=stamp))
+    return stamp
 
 
 # ---------------------------------------------------------------------------
@@ -4473,22 +4507,12 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Bundle identity stamp (builder-emitted; ping echoes this value)
 # ---------------------------------------------------------------------------
-#: SHA-256 of this file's bytes ABOVE this assignment line. A full-file
-#: digest is not self-embeddable (the stamp would change its own input),
-#: so the stamp pins the code prefix; derive the same value from the
-#: artifact with ``build_remote_worker_bundle.expected_bundle_stamp``.
-#: The remote worker's ``ping`` echoes it so callers can confirm which
-#: bundle the remote actually executed.
-BUNDLE_SHA256 = "792b5fffeed08f19717d9fcf641847ed0039de1d3e937c10a0a78a87597517f2"
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap entry (builder-emitted)
-# ---------------------------------------------------------------------------
-# The fixed remote bootstrap (``python3 -I -c '<bootstrap>'``) execs this
-# file inside the interpreter's own __main__ namespace with stdin already
-# positioned past the compressed bundle bytes — run the one exchange and
-# propagate the worker exit code. In-process loaders that register this
-# file under its own module name never trigger this guard.
-if __name__ == "__main__":
-    raise SystemExit(main(sys.stdin.buffer))
+#: SHA-256 of this file's bytes ABOVE this assignment line — which is the
+#: file's FINAL line, so every executable byte (bootstrap entry included)
+#: is covered; only this assignment's own line falls outside the digest.
+#: A full-file digest is not self-embeddable (the stamp would change its
+#: own input); derive the same value from the artifact with
+#: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
+#: worker's ``ping`` echoes it so callers can confirm which bundle the
+#: remote actually executed.
+BUNDLE_SHA256 = _enter_worker_exchange("e58c8eb105262e87caeb001a9d01539510ff5aa5df94346336084bd885f8d588")

@@ -110,9 +110,10 @@ Contract:
   in ``sys.modules`` first — the closure's ``dataclass(slots=True)``
   classes resolve their defining module through it. The fixed remote
   bootstrap needs no such registration: it execs this file inside the
-  interpreter's own ``__main__`` namespace, and the builder-emitted
-  entry guard at the bottom of this file then runs the one exchange and
-  propagates the worker exit code.
+  interpreter's own ``__main__`` namespace, and the artifact's FINAL
+  line — the ``BUNDLE_SHA256`` assignment — triggers
+  ``_enter_worker_exchange`` (defined above, inside the stamped region),
+  which runs the one exchange and propagates the worker exit code.
 * Every response frame is emitted as ``RESPONSE_MAGIC + <json frame>``;
   use ``split_magic(raw)`` to strip before parsing. The LOCAL worker
   does not add this prefix — its pipe has no noise source.
@@ -120,10 +121,14 @@ Contract:
   captures the full root-to-``/`` directory identity chain, canonical
   path, remote python version, and ``BUNDLE_SHA256`` so a first-contact
   caller can build every other operation's pinned request.
-* ``BUNDLE_SHA256`` (bottom of this file) is the SHA-256 of this file's
+* ``BUNDLE_SHA256`` (the final line) is the SHA-256 of this file's
   bytes ABOVE its own assignment line — a full-file digest is not
-  self-embeddable (the stamp would change its own input). Derive the
-  same value from the artifact with
+  self-embeddable (the stamp would change its own input). Every
+  executable byte, including the bootstrap entry logic, lives in that
+  stamped region; only the assignment's own line falls outside it (and
+  under the bootstrap the entry helper's ``SystemExit`` fires from that
+  line, so nothing after it could ever run). Derive the same value from
+  the artifact with
   ``build_remote_worker_bundle.expected_bundle_stamp``.
 * ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
   nothing yet.
@@ -456,21 +461,43 @@ class _MagicPrefixStdout:
         return self._stream.flush()
 
 
-def main(stream: Any) -> int:
+def main(stream: Any, *, bundle_sha256: str = "") -> int:
     """Run one isolated protocol exchange over an already-positioned stdin.
 
     ``stream`` is the buffered stdin AFTER the remote bootstrap consumed
     this bundle's own bytes (Task 9's harness positions it). Responses
     are written to the process stdout buffer with ``RESPONSE_MAGIC``
     prefixed to each frame; the process exit code follows the local
-    worker's contract (0 success, 2 refused/failed).
+    worker's contract (0 success, 2 refused/failed). ``bundle_sha256``
+    defaults to the empty string for direct/in-process callers; the
+    bootstrap entry path always supplies the artifact stamp.
     """
     return run_workspace_worker(
         stream,
         _MagicPrefixStdout(sys.stdout.buffer),
         sys.stderr.buffer,
-        bundle_sha256=BUNDLE_SHA256,
+        bundle_sha256=bundle_sha256,
     )
+
+
+def _enter_worker_exchange(stamp: str) -> str:
+    """Bootstrap entry seam — run the exchange when exec'd as ``__main__``.
+
+    The builder emits the artifact's FINAL line as
+    ``BUNDLE_SHA256 = _enter_worker_exchange("<digest>")``. Under the
+    fixed remote bootstrap this module executes inside the interpreter's
+    own ``__main__`` namespace, so evaluating that assignment fires the
+    one exchange (and the ``SystemExit`` aborts module execution before
+    anything uncovered could follow the line). In-process loaders run
+    under their own module name and simply get the stamp bound.
+
+    Defined ABOVE the stamp assignment on purpose: the entry logic must
+    sit inside the region ``BUNDLE_SHA256`` attests, so a rewritten tail
+    cannot launch divergent code while echoing a matching stamp.
+    """
+    if __name__ == "__main__":
+        raise SystemExit(main(sys.stdin.buffer, bundle_sha256=stamp))
+    return stamp
 
 
 # ---------------------------------------------------------------------------
@@ -526,21 +553,25 @@ def _denylist_section() -> str:
     )
 
 
-#: The stamp assignment line the artifact ends with (minus the digest).
+#: The stamp assignment line the artifact ENDS with (minus the digest):
+#: ``BUNDLE_SHA256 = _enter_worker_exchange("<digest>")`` — the final
+#: line, and the only byte range outside the stamp's own coverage.
 #: ``expected_bundle_stamp`` locates it from the RIGHT so the hashed
 #: prefix rule is machine-derivable by any consumer.
-_BUNDLE_STAMP_ASSIGNMENT = 'BUNDLE_SHA256 = "'
+_BUNDLE_STAMP_ASSIGNMENT = "BUNDLE_SHA256 = _enter_worker_exchange("
 
 
 def expected_bundle_stamp(data: bytes) -> str:
     """Return the artifact stamp derivable from committed bundle bytes.
 
     The stamp is the SHA-256 of the artifact's bytes ABOVE the (sole)
-    ``BUNDLE_SHA256 = "..."`` assignment line — a full-file digest is not
-    self-embeddable, because the stamp would change its own input. The
-    loopback harness, the transport, and the tests all derive the
-    expected value through this single rule so a tampered or divergent
-    bundle cannot silently agree with the caller.
+    stamp-assignment line — the artifact's final line. Everything
+    executable, including the bootstrap entry helper, lives inside that
+    hashed region; a full-file digest is not self-embeddable, because
+    the stamp would change its own input. The loopback harness, the
+    transport, and the tests all derive the expected value through this
+    single rule so a tampered or divergent bundle cannot silently agree
+    with the caller.
 
     Args:
         data: The bundle artifact's exact bytes.
@@ -564,25 +595,15 @@ _BUNDLE_TAIL_TEMPLATE = '''
 # ---------------------------------------------------------------------------
 # Bundle identity stamp (builder-emitted; ping echoes this value)
 # ---------------------------------------------------------------------------
-#: SHA-256 of this file's bytes ABOVE this assignment line. A full-file
-#: digest is not self-embeddable (the stamp would change its own input),
-#: so the stamp pins the code prefix; derive the same value from the
-#: artifact with ``build_remote_worker_bundle.expected_bundle_stamp``.
-#: The remote worker's ``ping`` echoes it so callers can confirm which
-#: bundle the remote actually executed.
-BUNDLE_SHA256 = "{stamp}"
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap entry (builder-emitted)
-# ---------------------------------------------------------------------------
-# The fixed remote bootstrap (``python3 -I -c '<bootstrap>'``) execs this
-# file inside the interpreter's own __main__ namespace with stdin already
-# positioned past the compressed bundle bytes — run the one exchange and
-# propagate the worker exit code. In-process loaders that register this
-# file under its own module name never trigger this guard.
-if __name__ == "__main__":
-    raise SystemExit(main(sys.stdin.buffer))
+#: SHA-256 of this file's bytes ABOVE this assignment line — which is the
+#: file's FINAL line, so every executable byte (bootstrap entry included)
+#: is covered; only this assignment's own line falls outside the digest.
+#: A full-file digest is not self-embeddable (the stamp would change its
+#: own input); derive the same value from the artifact with
+#: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
+#: worker's ``ping`` echoes it so callers can confirm which bundle the
+#: remote actually executed.
+BUNDLE_SHA256 = _enter_worker_exchange("{stamp}")
 '''
 
 
@@ -616,11 +637,13 @@ def build_bundle_text() -> str:
     unstamped = head + _BUNDLE_TAIL_TEMPLATE.format(stamp=placeholder)
     # Stage 2: hash the bytes above the assignment line, then substitute
     # — the placeholder and digest are both 64 characters, so the
-    # substitution cannot shift the hashed prefix.
+    # substitution cannot shift the hashed prefix (which now includes
+    # the bootstrap entry helper; only the assignment's own line stays
+    # outside the digest).
     stamp = expected_bundle_stamp(unstamped.encode("utf-8"))
     return unstamped.replace(
-        f'{_BUNDLE_STAMP_ASSIGNMENT}{placeholder}"',
-        f'{_BUNDLE_STAMP_ASSIGNMENT}{stamp}"',
+        f'{_BUNDLE_STAMP_ASSIGNMENT}"{placeholder}"',
+        f'{_BUNDLE_STAMP_ASSIGNMENT}"{stamp}"',
         1,
     )
 

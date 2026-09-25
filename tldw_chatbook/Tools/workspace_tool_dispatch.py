@@ -10,7 +10,6 @@ both satisfy it).
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 from pathlib import Path
 from typing import Any, Protocol
@@ -115,14 +114,14 @@ def execute_pinned_operation(
             sensitive_exclusions=exclusions,
         )
     if request.operation == "fs_read":
-        relative = _request_relative_path(request, root)
         return _read_relative_file(
-            relative,
+            _request_relative_path(request, root),
             workspace=Path("."),
             offset=request.arguments.get("offset", 1),
             limit=request.arguments.get("limit"),
             sensitive_exclusions=exclusions,
-        ) + _file_content_stamps(relative)
+            content_stamps=True,
+        )
     if request.operation == "fs_glob":
         try:
             pattern = validate_glob_pattern(request.arguments["pattern"])
@@ -145,30 +144,6 @@ def execute_pinned_operation(
             max_results=request.arguments.get("max_results", MAX_GREP_RESULTS),
             sensitive_exclusions=_request_exclusions(request, "content_exclusions"),
         )
-
-
-def _file_content_stamps(relative: Path) -> str:
-    """Render the worker-reported CAS stamps for one read target.
-
-    The spec moves CAS stamping to worker-reported values (read side
-    here; the write side follows): the parent's ledger records these
-    instead of hashing its own copy of the path — which for a remote
-    root is the WRONG file whenever the same path exists on both
-    machines. Stamps cover the WHOLE file (the CAS target), rendered in
-    the established ``key: value`` style (see ``_format_stat_result``)
-    as the final two lines of the result, so consumers parse them from
-    the tail and file bodies can never shadow them.
-    """
-    digest = hashlib.sha256()
-    size = 0
-    with open(relative, "rb") as handle:
-        while True:
-            chunk = handle.read(64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-            size += len(chunk)
-    return f"\nsha256: {digest.hexdigest()}\nsize: {size}"
 
 
 def _git_request(request: _PinnedOperationRequest) -> str:
