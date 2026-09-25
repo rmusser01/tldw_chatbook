@@ -112,8 +112,8 @@ class ThemePicker(Vertical):
                 with Horizontal(classes="settings-action-row"):
                     yield Button("Use this theme", id="settings-theme-use", variant="primary", classes="theme-editor-action")
                     yield Button("Try", id="settings-theme-try", classes="theme-editor-action")
-                    yield Button("Clone", id="settings-theme-clone", classes="theme-editor-action")
-                    yield Button("New", id="settings-theme-new", classes="theme-editor-action")
+                    yield Button("Clone", id="settings-theme-picker-clone", classes="theme-editor-action")
+                    yield Button("New", id="settings-theme-picker-new", classes="theme-editor-action")
                     yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
 
     def on_mount(self) -> None:
@@ -159,7 +159,7 @@ class ThemePicker(Vertical):
         self.highlighted_id = theme_id
         entry = next((e for e in self.entries if e.id == theme_id), None)
         title = self.query_one("#settings-theme-card-title", Static)
-        for button_id in ("#settings-theme-use", "#settings-theme-try", "#settings-theme-clone"):
+        for button_id in ("#settings-theme-use", "#settings-theme-try", "#settings-theme-picker-clone"):
             self.query_one(button_id, Button).disabled = entry is None
         if entry is None:
             title.update("")
@@ -204,12 +204,12 @@ class ThemePicker(Vertical):
         event.stop()
         self.try_highlighted()
 
-    @on(Button.Pressed, "#settings-theme-clone")
+    @on(Button.Pressed, "#settings-theme-picker-clone")
     def _clone_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.request_edit("clone")
 
-    @on(Button.Pressed, "#settings-theme-new")
+    @on(Button.Pressed, "#settings-theme-picker-new")
     def _new_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.request_edit("new")
