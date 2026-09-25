@@ -5354,6 +5354,12 @@ StatCard:hover {
     border-left: outer $ds-status-error-readable;
     border-right: outer $ds-status-error-readable;
 }
+#settings-theme-card-column .settings-action-row .theme-editor-action.-primary:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
 
 #settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
 #settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,

@@ -547,8 +547,9 @@ the theme you just saved is the one currently running, it repaints live so it
 is never stale. Save no longer sets the launch default itself — use the
 picker's **Use** for that. **Save as…** prompts for a new name ("Save theme
 as", pre-filled `\<current\>_copy`) and always confirms an overwrite, even of
-the loaded theme's own name, since Save as always means a new file; the
-editor then follows the new name. **Reset** reloads it as last saved;
+the loaded theme's own name, since Save as always means a new file; like
+Save, it then returns you to the picker with the new theme highlighted, not
+back into the editor. **Reset** reloads it as last saved;
 **Generate from Primary** derives a palette from the primary colour. **Color
 Palette** is ten hex boxes, Primary through Error, each with a swatch showing
 the colour and its hex; an invalid value marks the box and the swatch reads

@@ -254,6 +254,45 @@ async def test_picker_delete_chip_meets_contrast_at_rest_and_focus(theme, reques
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", THEMES)
 @private_profile_test
+async def test_picker_use_chip_meets_contrast_at_rest_and_focus(theme, request):
+    """R24 (extends R19/R23): the picker's Use chip (`#settings-theme-use`,
+    variant primary) is the same defect class as the Delete chip above --
+    `#settings-theme-card-column` only had a colour-keeping `-error:focus`
+    rule, so a focused Use chip still fell back to the generic neutral
+    `.settings-action-row Button:focus`."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        use_button = picker.query_one("#settings-theme-use", Button)
+        await _show(pilot, use_button)
+
+        rest_fg, rest_bg = _label_colors(host, use_button)
+        assert _contrast(rest_fg, rest_bg) >= 4.5, (
+            f"{theme}/use rest {_contrast(rest_fg, rest_bg):.2f}:1 ({rest_fg} on {rest_bg})"
+        )
+
+        use_button.focus()
+        await pilot.pause(0.1)
+        focus_fg, focus_bg = _label_colors(host, use_button)
+        assert _contrast(focus_fg, focus_bg) >= 4.5, (
+            f"{theme}/use focused {_contrast(focus_fg, focus_bg):.2f}:1"
+        )
+        # Focus is a strong state change (inversion), not a neutral wash.
+        assert _contrast(focus_bg, rest_bg) >= 3.0, (
+            f"{theme}/use focus shift {_contrast(focus_bg, rest_bg):.2f}:1"
+        )
+        # The primary hue survives focus: one of the focused fg/bg pair is
+        # still the rest-state primary colour (fg or bg, inversion swaps them).
+        assert {rest_fg, rest_bg} & {focus_fg, focus_bg}, (
+            f"{theme}/use lost its primary hue on focus"
+        )
+        host.set_focus(None)
+        await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
 async def test_focused_theme_buttons_keep_variant_meaning(theme, request):
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
