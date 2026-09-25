@@ -1371,3 +1371,32 @@ async def test_settings_theme_editor_save_as_confirms_overwrite_and_keeps_source
         assert editor.current_theme_name == "sea"
         assert editor.query_one("#settings-theme-name", Input).value == "sea"
         assert editor.is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_save_as_own_name_still_confirms(request, tmp_path):
+    """R21: Save as confirms whenever name.toml exists -- even the loaded
+    theme's own name; plain Save of the loaded theme stays an update."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    source = _write_user_theme(tmp_path, "ocean")
+    source_bytes = source.read_bytes()
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.save_as("ocean")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert source.read_bytes() == source_bytes
+
+        editor.on_save_theme()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "#123456" in source.read_text(encoding="utf-8")

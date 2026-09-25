@@ -243,16 +243,11 @@
     border-left: outer $text-warning;
     border-right: outer $text-warning;
 }
-#settings-theme-card .settings-action-row .theme-editor-action.-error:focus {
-    background: $ds-status-error-readable;
-    border-left: outer $ds-status-error-readable;
-    border-right: outer $ds-status-error-readable;
-}
 
 
 /* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
    detail pane is ~45 cells; four 16-cell-minimum buttons cannot share a row,
-   so the library and action rows stack and each button takes the width. */
+   so the action rows stack and each button takes the width. */
 #settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
     layout: vertical;
     height: auto;
