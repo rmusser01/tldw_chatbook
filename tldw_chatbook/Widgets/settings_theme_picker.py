@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar, Literal
 
 from loguru import logger
@@ -16,6 +17,7 @@ from textual.message import Message
 from textual.widgets import Button, ContentSwitcher, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     ThemeChange,
@@ -27,6 +29,7 @@ from ..css.Themes.theme_catalog import (
     use_theme,
     user_theme_names,
 )
+from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL
 from .theme_preview import ThemePreview
 
 _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
@@ -61,6 +64,9 @@ class ThemeOptionList(OptionList):
         Binding("t", "try_theme", "Try"),
         Binding("c", "clone_theme", "Clone"),
         Binding("n", "new_theme", "New"),
+        Binding("e", "edit_theme", "Edit"),
+        Binding("r", "rename_theme", "Rename"),
+        Binding("delete", "delete_theme", "Delete"),
     ]
 
     def _first_enabled_index(self) -> int | None:
@@ -95,18 +101,44 @@ class ThemeOptionList(OptionList):
     def action_new_theme(self) -> None:
         self.query_ancestor(ThemePicker).request_edit("new")
 
+    def action_edit_theme(self) -> None:
+        self.query_ancestor(ThemePicker).request_edit("edit")
+
+    def action_rename_theme(self) -> None:
+        self.query_ancestor(ThemePicker).request_rename()
+
+    def action_delete_theme(self) -> None:
+        self.query_ancestor(ThemePicker).request_delete()
+
 
 class ThemePicker(Vertical):
     class EditRequested(Message):
-        def __init__(self, theme_id: str, mode: Literal["clone", "new"]) -> None:
+        def __init__(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
             self.theme_id = theme_id
             self.mode = mode
             super().__init__()
 
-    def __init__(self, **kwargs: Any) -> None:
+    class RenameRequested(Message):
+        def __init__(self, theme_id: str) -> None:
+            self.theme_id = theme_id
+            super().__init__()
+
+    class DeleteRequested(Message):
+        def __init__(self, theme_id: str) -> None:
+            self.theme_id = theme_id
+            super().__init__()
+
+    class ExportRequested(Message):
+        def __init__(self, theme_id: str) -> None:
+            self.theme_id = theme_id
+            super().__init__()
+
+    def __init__(self, list_user_names: Callable[[], set[str]] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.entries: list[ThemeEntry] = []
         self.highlighted_id: str | None = None
+        self.files_available: bool = True
+        self._list_user_names = list_user_names or (lambda: user_theme_names(get_user_themes_dir()))
 
     # The pending Revert lives on the app, not this widget: the pane is
     # recomposed on every category switch, and spec §5 keeps Revert for the
@@ -140,6 +172,11 @@ class ThemePicker(Vertical):
                     yield Button("Clone", id="settings-theme-picker-clone", classes="theme-editor-action")
                     yield Button("New", id="settings-theme-picker-new", classes="theme-editor-action")
                     yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
+                with Horizontal(classes="settings-action-row"):
+                    yield Button("Edit", id="settings-theme-picker-edit", classes="theme-editor-action")
+                    yield Button("Rename", id="settings-theme-picker-rename", classes="theme-editor-action")
+                    yield Button("Delete", id="settings-theme-picker-delete", variant="error", classes="theme-editor-action")
+                    yield Button("Export", id="settings-theme-picker-export", classes="theme-editor-action")
 
     def on_mount(self) -> None:
         self._sync_revert_chip()
@@ -149,9 +186,15 @@ class ThemePicker(Vertical):
 
     # -- catalog -------------------------------------------------------
     def refresh_catalog(self, highlight: str | None = None) -> None:
+        try:
+            user_names = self._list_user_names()
+            self.files_available = True
+        except RecoveryRequired:
+            user_names = set()
+            self.files_available = False
         self.entries = build_catalog(
             self.app.available_themes,
-            user_theme_names(get_user_themes_dir()),
+            user_names,
             str(self.app.theme),
             current_launch_default(),
         )
@@ -163,11 +206,14 @@ class ThemePicker(Vertical):
         options: list[Option] = []
         for origin, title in _GROUP_TITLES.items():
             group = [e for e in shown if e.origin == origin]
-            if not group:
+            show_pause_row = origin == "yours" and not self.files_available
+            if not group and not show_pause_row:
                 continue
             header = f"{title} ({len(group)})" if query else title
             options.append(Option(header, disabled=True))
             options.extend(Option(_row(e), id=e.id) for e in group)
+            if show_pause_row:
+                options.append(Option(THEMES_UNAVAILABLE_LABEL, disabled=True))
         lst = self.query_one("#settings-theme-list", OptionList)
         lst.clear_options()
         lst.add_options(options)
@@ -186,6 +232,18 @@ class ThemePicker(Vertical):
         title = self.query_one("#settings-theme-card-title", Static)
         for button_id in ("#settings-theme-use", "#settings-theme-try", "#settings-theme-picker-clone"):
             self.query_one(button_id, Button).disabled = entry is None
+        is_yours = entry is not None and entry.origin == "yours"
+        tooltip = None if self.files_available else THEMES_UNAVAILABLE_LABEL
+        for button_id in (
+            "#settings-theme-picker-edit",
+            "#settings-theme-picker-rename",
+            "#settings-theme-picker-delete",
+            "#settings-theme-picker-export",
+        ):
+            button = self.query_one(button_id, Button)
+            button.display = is_yours
+            button.disabled = not self.files_available
+            button.tooltip = tooltip
         if entry is None:
             title.update("")
             return
@@ -239,6 +297,26 @@ class ThemePicker(Vertical):
         event.stop()
         self.request_edit("new")
 
+    @on(Button.Pressed, "#settings-theme-picker-edit")
+    def _edit_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.request_edit("edit")
+
+    @on(Button.Pressed, "#settings-theme-picker-rename")
+    def _rename_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.request_rename()
+
+    @on(Button.Pressed, "#settings-theme-picker-delete")
+    def _delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.request_delete()
+
+    @on(Button.Pressed, "#settings-theme-picker-export")
+    def _export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.request_export()
+
     @on(Button.Pressed, "#settings-theme-revert")
     def _revert_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -263,9 +341,31 @@ class ThemePicker(Vertical):
     def try_highlighted(self) -> None:
         self._switch(persist=False)
 
-    def request_edit(self, mode: Literal["clone", "new"]) -> None:
-        if self.highlighted_id is not None:
-            self.post_message(self.EditRequested(self.highlighted_id, mode))
+    def request_edit(self, mode: Literal["clone", "new", "edit"]) -> None:
+        if self.highlighted_id is None:
+            return
+        if mode == "edit" and not self._can_manage_files():
+            return
+        self.post_message(self.EditRequested(self.highlighted_id, mode))
+
+    def request_rename(self) -> None:
+        if self._can_manage_files():
+            self.post_message(self.RenameRequested(self.highlighted_id))
+
+    def request_delete(self) -> None:
+        if self._can_manage_files():
+            self.post_message(self.DeleteRequested(self.highlighted_id))
+
+    def request_export(self) -> None:
+        if self._can_manage_files():
+            self.post_message(self.ExportRequested(self.highlighted_id))
+
+    def _can_manage_files(self) -> bool:
+        # Rename/Delete/Export/Edit all touch the theme file on disk: gated
+        # on the highlighted entry being one of yours AND on files being
+        # reachable (backup/recovery may be holding them, spec pause row).
+        entry = next((e for e in self.entries if e.id == self.highlighted_id), None)
+        return entry is not None and entry.origin == "yours" and self.files_available
 
     def _switch(self, *, persist: bool) -> None:
         theme_id = self.highlighted_id
