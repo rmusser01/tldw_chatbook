@@ -11,7 +11,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
@@ -115,3 +116,66 @@ def build_catalog(
     ]
     entries.sort(key=lambda e: (_ORIGIN_ORDER[e.origin], e.display_name.casefold()))
     return entries
+
+
+@dataclass(frozen=True)
+class ThemeChange:
+    previous_active: str
+    previous_launch_default: str
+    persisted: bool
+
+    def merge(self, later: ThemeChange) -> ThemeChange:
+        """Chain a later change after this one; Revert goes back to the first."""
+        return ThemeChange(self.previous_active, self.previous_launch_default, self.persisted or later.persisted)
+
+
+def current_launch_default() -> str:
+    from ...config import get_cli_setting
+
+    return str(get_cli_setting("general", "default_theme", "textual-dark"))
+
+
+def _apply_config_mutation(mutation: dict) -> Any:
+    from ...config import apply_settings_mutation_to_cli_config
+
+    return apply_settings_mutation_to_cli_config(mutation)
+
+
+def _persist_launch_default(app: Any, name: str) -> bool:
+    result = _apply_config_mutation({"general": {"default_theme": name}})
+    if not getattr(result, "file_replaced", False):
+        return False
+    # The in-memory copy Settings reads (was handle_theme_launch_default_changed).
+    config = getattr(app, "app_config", None)
+    if isinstance(config, dict):
+        general = dict(config.get("general", {}))
+        general["default_theme"] = name
+        config["general"] = general
+    return True
+
+
+def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
+    """Switch the app theme; with ``persist`` also make it the launch default.
+
+    Raises textual.app.InvalidThemeError (before any write) for an
+    unregistered name.
+    """
+    previous_active = str(app.theme)
+    previous_launch = current_launch_default()
+    app.theme = name
+    persisted = _persist_launch_default(app, name) if persist else False
+    return ThemeChange(previous_active, previous_launch, persisted)
+
+
+def revert_theme(app: Any, change: ThemeChange) -> None:
+    app.theme = change.previous_active
+    if change.persisted:
+        _persist_launch_default(app, change.previous_launch_default)
+
+
+def user_theme_names(directory: Path) -> set[str]:
+    """Stems of the saved theme files (the editor saves ``<name>.toml``)."""
+    try:
+        return {path.stem for path in directory.glob("*.toml")}
+    except OSError:
+        return set()

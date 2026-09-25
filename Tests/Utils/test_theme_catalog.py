@@ -1,5 +1,10 @@
+from types import SimpleNamespace
+
+import pytest
+from textual.app import InvalidThemeError
 from textual.theme import BUILTIN_THEMES, Theme
 
+from tldw_chatbook.css.Themes import theme_catalog as tc
 from tldw_chatbook.css.Themes.theme_catalog import (
     STRIP_KEYS,
     build_catalog,
@@ -89,3 +94,96 @@ def test_duplicate_display_names_get_id_suffix():
 def test_is_catalog_theme():
     assert is_catalog_theme("textual-dark") and is_catalog_theme("nord") and is_catalog_theme("apricot")
     assert not is_catalog_theme("warm_paper")
+
+
+class _FakeApp:
+    def __init__(self, theme="textual-dark", known=("textual-dark", "nord", "apricot")):
+        self._theme = theme
+        self._known = set(known)
+        self.app_config = {"general": {"default_theme": "textual-dark"}}
+
+    @property
+    def theme(self):
+        return self._theme
+
+    @theme.setter
+    def theme(self, value):
+        if value not in self._known:
+            raise InvalidThemeError(value)
+        self._theme = value
+
+
+@pytest.fixture
+def writes(monkeypatch):
+    calls = []
+
+    def fake_apply(mutation):
+        calls.append(mutation)
+        return SimpleNamespace(file_replaced=True, caches_reloaded=True)
+
+    monkeypatch.setattr(tc, "_apply_config_mutation", fake_apply)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: "textual-dark")
+    return calls
+
+
+def test_use_theme_persist_writes_config_and_app_config(writes):
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=True)
+    assert app.theme == "nord"
+    assert writes == [{"general": {"default_theme": "nord"}}]
+    assert app.app_config["general"]["default_theme"] == "nord"
+    assert change == tc.ThemeChange("textual-dark", "textual-dark", True)
+
+
+def test_try_does_not_write(writes):
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=False)
+    assert app.theme == "nord" and writes == [] and change.persisted is False
+
+
+def test_use_theme_unknown_name_raises_and_writes_nothing(writes):
+    app = _FakeApp()
+    with pytest.raises(InvalidThemeError):
+        tc.use_theme(app, "no_such_theme", persist=True)
+    assert writes == [] and app.theme == "textual-dark"
+
+
+def test_use_theme_persist_failure_reports_not_persisted(monkeypatch):
+    monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False))
+    monkeypatch.setattr(tc, "current_launch_default", lambda: "textual-dark")
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=True)
+    assert app.theme == "nord" and change.persisted is False
+    assert app.app_config["general"]["default_theme"] == "textual-dark"
+
+
+def test_revert_restores_active_and_launch_default(writes):
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=True)
+    tc.revert_theme(app, change)
+    assert app.theme == "textual-dark"
+    assert writes[-1] == {"general": {"default_theme": "textual-dark"}}
+
+
+def test_revert_of_try_writes_nothing(writes):
+    app = _FakeApp()
+    tc.revert_theme(app, tc.use_theme(app, "nord", persist=False))
+    assert app.theme == "textual-dark" and writes == []
+
+
+def test_merge_keeps_first_previous_values(writes):
+    app = _FakeApp()
+    first = tc.use_theme(app, "apricot", persist=False)   # Try apricot
+    second = tc.use_theme(app, "nord", persist=True)      # then Use nord
+    merged = first.merge(second)
+    assert merged == tc.ThemeChange("textual-dark", "textual-dark", True)
+    tc.revert_theme(app, merged)
+    assert app.theme == "textual-dark"
+    assert writes[-1] == {"general": {"default_theme": "textual-dark"}}
+
+
+def test_user_theme_names_reads_toml_stems(tmp_path):
+    (tmp_path / "warm_paper.toml").write_text("[theme]\nname='warm_paper'\n")
+    (tmp_path / "notes.txt").write_text("x")
+    assert tc.user_theme_names(tmp_path) == {"warm_paper"}
+    assert tc.user_theme_names(tmp_path / "missing") == set()
