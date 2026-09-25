@@ -140,6 +140,9 @@ class ThemePicker(Vertical):
         self.entries: list[ThemeEntry] = []
         self.highlighted_id: str | None = None
         self.files_available: bool = True
+        # R27 (5): while paused, your themes keep their origin from the last
+        # good listing instead of being relabelled "shipped".
+        self._last_user_names: set[str] = set()
         self._list_user_names = list_user_names or (lambda: user_theme_names(get_user_themes_dir()))
 
     # The pending Revert lives on the app, not this widget: the pane is
@@ -199,15 +202,22 @@ class ThemePicker(Vertical):
         try:
             user_names = self._list_user_names()
             self.files_available = True
+            self._last_user_names = user_names
         except RecoveryRequired:
-            user_names = set()
+            user_names = self._last_user_names
             self.files_available = False
+        except OSError as exc:
+            # R27 (6): an unreadable themes dir reads as "no user themes".
+            logger.warning(f"Could not list saved themes: {exc.strerror or type(exc).__name__}")
+            user_names = set()
+            self.files_available = True
         self.entries = build_catalog(
             self.app.available_themes,
             user_names,
             str(self.app.theme),
             current_launch_default(),
         )
+        self._sync_revert_chip()  # a rename/delete may have retargeted it
         self._render_list(highlight or self.highlighted_id)
 
     def _render_list(self, highlight: str | None) -> None:

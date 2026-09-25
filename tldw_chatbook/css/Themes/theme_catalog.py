@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -190,6 +190,36 @@ def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
         general["default_theme"] = name
         config["general"] = general
     return True, caches_reloaded
+
+
+def persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
+    """Make ``name`` the launch default without touching the running theme.
+
+    Spec §7 step 4: renaming a non-active launch default only rewrites config.
+    Returns ``(file_replaced, caches_reloaded)``.
+    """
+    return _persist_launch_default(app, name)
+
+
+def retarget_pending_revert(app: Any, old: str, new: str | None) -> None:
+    """Keep the session's pending Revert off a renamed (``new``) or deleted
+    (``new is None``) theme, so Revert never targets a missing theme."""
+    change: ThemeChange | None = getattr(app, "theme_revert_change", None)
+    if change is None:
+        return
+    names = (old, f"custom_{old}")
+    if change.previous_active not in names and change.previous_launch_default not in names:
+        return
+    if new is None:
+        app.theme_revert_change = None
+        return
+    app.theme_revert_change = replace(
+        change,
+        previous_active=new if change.previous_active in names else change.previous_active,
+        previous_launch_default=(
+            new if change.previous_launch_default in names else change.previous_launch_default
+        ),
+    )
 
 
 def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:

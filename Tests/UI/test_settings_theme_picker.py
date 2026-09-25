@@ -497,3 +497,44 @@ async def test_empty_your_themes_says_none_yet(request, config_writes):
         await pilot.pause()
         prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
         assert "(none yet)" not in prompts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pause_keeps_last_known_your_themes(request, config_writes):
+    """R27 (5): a pause after a good listing must not relabel your themes
+    as shipped -- the last successfully listed names keep their origin."""
+    state = {"paused": False}
+
+    def lister():
+        if state["paused"]:
+            raise RecoveryRequired("x")
+        return {"mine"}
+
+    app, picker = await _picker_app(list_user_names=lister)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        state["paused"] = True
+        picker.refresh_catalog()
+        await pilot.pause()
+        assert picker.files_available is False
+        origin = {e.id: e.origin for e in picker.entries}["mine"]
+        assert origin == "yours"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lister_oserror_reads_as_no_user_themes(request, config_writes):
+    """R27 (6): an OSError from the lister is "no user themes", not a crash
+    and not a backup/recovery pause."""
+
+    def broken():
+        raise OSError(13, "Permission denied")
+
+    app, picker = await _picker_app(list_user_names=broken)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert picker.files_available is True
+        assert not [e for e in picker.entries if e.origin == "yours"]
+        assert picker.entries  # the catalog still lists

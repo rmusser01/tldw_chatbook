@@ -748,3 +748,218 @@ async def test_save_buttons_disabled_while_theme_files_are_paused(request, monke
             button = host.screen.query_one(button_id, Button)
             assert button.disabled, button_id
             assert button.tooltip == THEMES_UNAVAILABLE_LABEL, button_id
+
+
+# Final-review fixes (TASK-32948).
+def _saved_theme_file(host, stem, name, primary="#AB0001"):
+    """A saved theme whose ``[theme].name`` differs from its file stem (R12)."""
+    from textual.theme import Theme
+
+    from tldw_chatbook import config
+
+    themes = config._get_effective_config_path().parent / "themes"
+    themes.mkdir(exist_ok=True)
+    path = themes / f"{stem}.toml"
+    path.write_text(
+        f'[theme]\nname = "{name}"\ndark = true\n[colors]\nprimary = "{primary}"\n',
+        encoding="utf-8",
+    )
+    host.register_theme(Theme(name=name, primary=primary, dark=True))
+    return path
+
+
+def _stateful_launch_default(monkeypatch, launch):
+    """Fake config writes that the launch-default reads then see."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.css.Themes import theme_catalog as tc
+
+    state = {"launch": launch}
+    writes = []
+
+    def fake_apply(mutation):
+        writes.append(mutation)
+        state["launch"] = mutation["general"]["default_theme"]
+        return SimpleNamespace(file_replaced=True, caches_reloaded=True)
+
+    monkeypatch.setattr(tc, "_apply_config_mutation", fake_apply)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: state["launch"])
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.settings_theme_picker.current_launch_default",
+        lambda: state["launch"],
+    )
+    return writes
+
+
+async def _rename_highlighted(host, pilot, new):
+    from textual.widgets import Input
+
+    await pilot.press("r")
+    await pilot.pause(0.2)
+    host.screen.query_one("#settings-rag-profile-name-input", Input).value = new
+    await pilot.click("#settings-rag-profile-name-confirm")
+    await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edit_and_save_a_theme_whose_name_differs_from_its_file(request):
+    """R12: Edit of a.toml (name "b") loads b; Save rewrites a.toml."""
+    from textual.widgets import Input
+
+    host = _host()
+    path = _saved_theme_file(host, "a", "b")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "b")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        screen = host.screen
+        assert screen.query_one("#settings-theme-name", Input).value == "b"
+        assert screen.query_one("#settings-theme-color-primary", Input).value == "#AB0001"
+        header = screen.query_one("#settings-theme-editor-header")
+        assert str(header.render()) == "Editing b · saved theme"
+        await _edit_primary(host, pilot)
+        await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        assert "#123456" in path.read_text(encoding="utf-8")
+        assert not (path.parent / "b.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clone_of_a_theme_whose_name_differs_from_its_file(request):
+    from textual.widgets import Input
+
+    host = _host()
+    _saved_theme_file(host, "a", "b")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "b")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        screen = host.screen
+        assert screen.query_one("#settings-theme-name", Input).value == "b_copy"
+        assert screen.query_one("#settings-theme-color-primary", Input).value == "#AB0001"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_of_non_active_launch_default_keeps_running_theme(request, monkeypatch):
+    """Spec §7 step 4: renaming the launch default only rewrites config."""
+    writes = _stateful_launch_default(monkeypatch, "mine")
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "nord")
+        await pilot.press("t")  # Try nord
+        await pilot.pause(0.2)
+        assert host.theme == "nord"
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause(0.1)
+        await _rename_highlighted(host, pilot, "ours")
+        assert host.theme == "nord"
+        assert writes == [{"general": {"default_theme": "ours"}}]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_follows_a_renamed_theme(request, monkeypatch):
+    from textual.widgets import Button
+
+    writes = _stateful_launch_default(monkeypatch, "mine")
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = "mine"
+        await _highlight(host, pilot, "nord")
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause(0.1)
+        await _rename_highlighted(host, pilot, "mine2")
+        revert = host.screen.query_one("#settings-theme-revert", Button)
+        assert revert.display
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == "mine2"
+        assert writes[-1] == {"general": {"default_theme": "mine2"}}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_drops_a_revert_that_names_the_deleted_theme(request, monkeypatch):
+    from textual.widgets import Button
+
+    _stateful_launch_default(monkeypatch, "mine")
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = "mine"
+        await _highlight(host, pilot, "nord")
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause(0.1)
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")
+        await pilot.pause(0.3)
+        assert getattr(host, "theme_revert_change", None) is None
+        assert not host.screen.query_one("#settings-theme-revert", Button).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_escape_with_nothing_focused_leaves_the_editor(request):
+    """R26: the first Esc releases field focus (task-1560), the second is Back."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "apricot")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert host.focused is None
+        assert pane.current == "settings-theme-editor-view"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert pane.current == "settings-theme-picker"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_escape_with_unsaved_edits_asks_first(request):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "apricot")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.press("escape", "escape")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ThemeLeaveModal)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_prompt_escapes_markup_in_theme_name(request):
+    """R27 (7): a hand-edited [theme].name like ``x[/]`` must not raise
+    MarkupError in the Rename prompt's title."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    host = _host()
+    _saved_theme_file(host, "odd", "x[/]")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "x[/]")
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        title = host.screen.query_one(".destination-section", Static)
+        assert "x[/]" in str(title.render())

@@ -462,3 +462,32 @@ launch default and theme reset to Textual Dark" — AC #8, live, again). Real
 config mtime and the real `themes/` directory were re-checked before this
 re-run and after: unchanged. See task-6-report.md's Fix Round 1 section for
 the full path list.
+
+### PR 2 final-review fixes (R12 completion, R26, R27)
+
+- **I1 / R12 completion** — Edit/Clone/Save of a theme whose `[theme].name`
+  differs from its file stem. `load_user_theme` and `_save_under` now resolve
+  the file through `_user_theme_files()` (RecoveryRequired → the unavailable
+  notice), so Edit on `a.toml` (name "b") loads b, Save writes back to
+  `a.toml` (no second `b.toml`), and Clone clones b's palette. Deviation:
+  no `_loaded_user_path` field — resolving at save time covers Save *and*
+  Save as with no extra state.
+- **I2** — renaming a non-active launch default only rewrites config
+  (spec §7 step 4): new `theme_catalog.persist_launch_default()`; the
+  running-theme switch stays for the active theme only.
+- **I3** — the session's pending Revert follows a rename and is dropped on
+  delete (`theme_catalog.retarget_pending_revert`); the picker re-syncs the
+  Revert chip on every catalog refresh.
+- **R26** — Esc with nothing focused in the editor view acts as "Back to
+  themes" (leave prompt when dirty); the first Esc still releases field
+  focus (task-1560). `SettingsScreen.on_key` + `_theme_editor_shown()`.
+- **R27 (5)** — while paused, the picker keeps the last successfully listed
+  user names, so your themes are not relabelled "shipped".
+- **R27 (6)** — an `OSError` from the lister reads as "no user themes"
+  (warning logged; `files_available` stays True).
+- **R27 (7)** — the Rename prompt title escapes the theme name
+  (`escape_markup`). The Save-as title ("Save theme as") contains no name,
+  so it needed nothing; the name is only its Input's value (not markup).
+- Tests: 2 in `Tests/UI/test_settings_theme_picker.py`, 8 in
+  `Tests/UI/test_settings_theme_picker_screen.py`; User Guide updated
+  (Esc, Revert/rename).
