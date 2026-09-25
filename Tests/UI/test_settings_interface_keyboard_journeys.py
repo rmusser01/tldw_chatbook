@@ -23,12 +23,13 @@ async def test_interface_controls_are_keyboard_reachable_and_painted(
     host.theme = theme
     async with host.run_test(size=size) as pilot:
         await _category(host, pilot, category)
-        # TASK-32948: Theme opens on the picker; Clone swaps the editor in and
-        # its controls are walked here. The picker's own controls join this
-        # walk once its layout lands (plan Task 7 bounds the columns).
+        # TASK-32948 Task 7: Theme opens on the picker (filter, list, Use/Try/
+        # Clone/New chips walked first); Clone then swaps the editor in and
+        # its controls are walked second -- the editor-view scope must stay
+        # last since the post-loop Blues-0 preset tap below needs it open.
         scopes = {
             "Appearance": ["#settings-appearance-card"],
-            "Theme": ["#settings-theme-editor-view"],
+            "Theme": ["#settings-theme-picker", "#settings-theme-editor-view"],
             "Splash Screen": ["#settings-splash-card"],
         }[category]
         failures = []
