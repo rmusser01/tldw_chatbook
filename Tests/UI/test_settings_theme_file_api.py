@@ -20,6 +20,7 @@ from tldw_chatbook.Backup_Recovery import raw_participants
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.css.Themes import theme_catalog
 from tldw_chatbook.css.Themes.themes import ALL_THEMES, create_theme_from_dict
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
@@ -503,7 +504,7 @@ async def test_delete_removes_an_unreadable_file(request, tmp_path, config_write
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        await _confirm_delete(pilot, app, editor, "a")
+        await _confirm_delete(pilot, app, editor, "unreadable:a")
         assert not (tmp_path / "a.toml").exists()
 
 
@@ -521,7 +522,95 @@ async def test_rename_of_unreadable_file_notice_escapes_file_content(request, tm
         await _mounted(pilot, app, editor, tmp_path)
         assert editor.user_theme_listing()[1] == {"broken": "[/mismatched] is not a theme colour"}
         app.notify.reset_mock()
-        assert editor.rename_user_theme("broken", "fixed") is False
+        assert editor.rename_user_theme("unreadable:broken", "fixed") is False
         message = app.notify.call_args.args[0]
         assert "[/mismatched] is not a theme colour" in Content.from_markup(message).plain
         assert path.exists() and not (tmp_path / "fixed.toml").exists()
+
+
+def _terminal_text(markup: str) -> str:
+    """The text Textual would send to the terminal for a notice or card."""
+    from textual.content import Content
+    from textual.strip import Strip
+
+    return Strip(Content.from_markup(markup).render_segments()).text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_errors_and_notices_carry_no_control_characters(request, tmp_path, config_writes):
+    """R39: TOML ``\\u001b`` escapes are real ESC chars; an OSC 52 clipboard
+    write in a key, or a reset in a name, must not reach the terminal."""
+    # A raw ESC byte: the toml parser does not unescape quoted keys.
+    osc = "\x1b]52;c;eA==\x1b\\\\"
+    (tmp_path / "osckey.toml").write_text(
+        f'[colors]\nprimary = "#112233"\n"{osc}" = "#000000"\n', encoding="utf-8"
+    )
+    (tmp_path / "escname.toml").write_text(
+        '[theme]\nname = "x\\u001bc"\n[colors]\nprimary = "#112233"\n', encoding="utf-8"
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {}
+        assert unreadable["escname"] == "name has control characters"
+        assert unreadable["osckey"] == "?]52;c;eA==?\\ is not a theme colour"
+        for error in unreadable.values():
+            assert all(ch.isprintable() for ch in _terminal_text(escape_markup(error)))
+        # The rename refusal quotes the card error.
+        app.notify.reset_mock()
+        assert editor.rename_user_theme("unreadable:osckey", "fixed") is False
+        assert all(ch.isprintable() for ch in _terminal_text(app.notify.call_args.args[0]))
+        assert not (tmp_path / "fixed.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_broken_file_named_like_a_shipped_theme_is_deleted_by_its_own_id(
+    request, tmp_path, config_writes
+):
+    """R40(a): a corrupted nord.toml resolves through ``unreadable:nord``;
+    plain ``nord`` is still the Textual built-in and deletes nothing."""
+    path = tmp_path / "nord.toml"
+    path.write_text("garbage [[ not toml", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.request_delete("nord")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "built-in" in app.notify.call_args.args[0]
+        editor.request_delete("unreadable:nord")
+        await pilot.pause()
+        assert app.screen.message.startswith("Delete the saved theme 'nord.toml'?")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert not path.exists()
+        assert "nord" in app.available_themes  # the built-in stays registered
+        assert app.notify.call_args.args[0] == "Deleted theme 'nord.toml'"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_files_log_at_warning_not_error(request, tmp_path):
+    """R40(b): the picker re-lists on every theme change; a broken file must
+    not raise an ERROR each time."""
+    from loguru import logger
+
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    records = []
+    sink = logger.add(lambda m: records.append(m.record), level="DEBUG")
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _mounted(pilot, app, editor, tmp_path)
+            records.clear()
+            editor.user_theme_listing()
+    finally:
+        logger.remove(sink)
+    about = [r for r in records if "a.toml" in r["message"]]
+    assert about and {r["level"].name for r in about} == {"WARNING"}

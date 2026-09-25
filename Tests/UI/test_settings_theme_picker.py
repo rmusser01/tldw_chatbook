@@ -65,8 +65,16 @@ def config_writes(monkeypatch, tmp_path):
     return calls
 
 
+def _names(list_user_names):
+    """Adapt a names-only lister to the picker's one ``list_themes`` hook."""
+    return lambda: (list_user_names(), {})
+
+
 async def _picker_app(size=(160, 45), list_user_names=None):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=list_user_names)
+    picker = ThemePicker(
+        id="settings-theme-picker",
+        list_themes=_names(list_user_names) if list_user_names else None,
+    )
     app = _app(picker)
     for theme in ALL_THEMES:
         app.register_theme(theme)
@@ -415,7 +423,7 @@ async def test_yours_actions_only_show_for_your_themes(request, config_writes):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_rename_delete_export_edit_post_requests(request, config_writes):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: ({"mine"}, {}))
 
     def compose() -> ComposeResult:
         yield picker
@@ -442,7 +450,7 @@ async def test_rename_delete_export_edit_post_requests(request, config_writes):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_keys_ignored_for_catalog_themes(request, config_writes):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: ({"mine"}, {}))
 
     def compose() -> ComposeResult:
         yield picker
@@ -565,8 +573,7 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
     error = "missing [colors].primary [b]not markup[/b]"
     picker = ThemePicker(
         id="settings-theme-picker",
-        list_user_names=set,
-        list_unreadable=lambda: {"a": error},
+        list_themes=lambda: (set(), {"a": error}),
     )
 
     def compose() -> ComposeResult:
@@ -580,7 +587,7 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
         before = app.theme
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.focus()
-        lst.highlighted = lst.get_option_index("a")
+        lst.highlighted = lst.get_option_index("unreadable:a")
         await pilot.pause()
         assert "(unreadable)" in str(lst.get_option_at_index(lst.highlighted).prompt)
         title = picker.query_one("#settings-theme-card-title")
@@ -596,15 +603,19 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
         delete = picker.query_one("#settings-theme-picker-delete", Button)
         assert delete.display and not delete.disabled
 
+        app.notify.reset_mock()
         await pilot.press("enter", "t", "c", "n", "e", "r")
         await pilot.pause()
         assert app.theme == before
         assert app.edits == [] and app.renames == []
         assert config_writes == []
+        # R40(d): each blocked key says why, once.
+        notes = [Content.from_markup(c.args[0]).plain for c in app.notify.call_args_list]
+        assert notes == [f"This theme file can't be read: {error}"] * 6
 
         await pilot.press("delete")
         await pilot.pause()
-        assert app.deletes == ["a"]
+        assert app.deletes == ["unreadable:a"]
 
         # A readable theme hides the error line and re-enables the actions.
         lst.highlighted = lst.get_option_index("nord")
@@ -620,7 +631,7 @@ async def test_unreadable_error_with_markup_renders_its_tooltip_literally(reques
     """Fix round 1: the error quotes untrusted file content; a tooltip parses markup."""
     error = "unknown colour '[/mismatched]'"
     picker = ThemePicker(
-        id="settings-theme-picker", list_user_names=set, list_unreadable=lambda: {"a": error}
+        id="settings-theme-picker", list_themes=lambda: (set(), {"a": error})
     )
     app = _app(picker)
     for theme in ALL_THEMES:
@@ -628,7 +639,7 @@ async def test_unreadable_error_with_markup_renders_its_tooltip_literally(reques
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         lst = picker.query_one("#settings-theme-list", OptionList)
-        lst.highlighted = lst.get_option_index("a")
+        lst.highlighted = lst.get_option_index("unreadable:a")
         await pilot.pause()
         use = picker.query_one("#settings-theme-use", Button)
         assert "[/mismatched]" in Content.from_markup(use.tooltip).plain
@@ -673,7 +684,7 @@ async def test_import_is_disabled_while_paused(request, config_writes):
     def raiser():
         raise RecoveryRequired("x")
 
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=raiser)
+    picker = ThemePicker(id="settings-theme-picker", list_themes=_names(raiser))
     app = _capture_app(picker)
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -709,3 +720,25 @@ async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(requ
         picker.use_highlighted()
         await pilot.pause()
         assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_one_listing_call_per_refresh(request, config_writes):
+    """R40(b): readable and unreadable come from ONE read of the themes dir."""
+    calls = []
+
+    def lister():
+        calls.append(1)
+        return {"mine"}, {"broken": "not valid TOML"}
+
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        calls.clear()
+        picker.refresh_catalog()
+        assert len(calls) == 1
+        assert "unreadable:broken" in _option_ids(picker)

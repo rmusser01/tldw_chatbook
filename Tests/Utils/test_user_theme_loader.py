@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+import toml
+
 from tldw_chatbook.css.Themes.themes import load_user_themes
 
 
@@ -107,3 +110,28 @@ def test_load_user_themes_skips_non_colour_keys(tmp_path):
     assert [t.name for t in themes] == ["good"]
     for theme in themes:
         theme.to_color_system().generate()  # would raise for a bad key
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [('"false"', False), ('"OFF"', False), ('"0"', False), ('"no"', False),
+     ('"true"', True), ('"Yes"', True), ("false", False), ("true", True), ('"maybe"', True)],
+)
+def test_theme_file_dark_flag_coerces_strings(raw, expected):
+    """R31: ``dark = "false"`` is a light theme, not ``bool("false")``."""
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    data = toml.loads(f'[theme]\nname = "t"\ndark = {raw}\n[colors]\nprimary = "#FFAA00"\n')
+    assert theme_from_file_data(data, "t", "t.toml").dark is expected
+
+
+def test_theme_name_with_control_characters_is_refused_and_skipped(tmp_path):
+    """R39: a name like ``x<ESC>c`` would emit a terminal reset when shown."""
+    from tldw_chatbook.css.Themes.themes import printable, theme_from_file_data
+
+    body = '[theme]\nname = "x\\u001bc"\n[colors]\nprimary = "#FFAA00"\n'
+    with pytest.raises(ValueError, match="name has control characters"):
+        theme_from_file_data(toml.loads(body), "t", "t.toml")
+    _write(tmp_path, "t", body)
+    assert load_user_themes(tmp_path) == []
+    assert printable("a\x1b]52;c;eA==\x07b\u00e9 ") == "a?]52;c;eA==?b\u00e9 "

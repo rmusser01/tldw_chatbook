@@ -146,8 +146,7 @@ class ThemePicker(Vertical):
 
     def __init__(
         self,
-        list_user_names: Callable[[], set[str]] | None = None,
-        list_unreadable: Callable[[], Mapping[str, str]] | None = None,
+        list_themes: Callable[[], tuple[set[str], Mapping[str, str]]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -158,9 +157,9 @@ class ThemePicker(Vertical):
         # good listing instead of being relabelled "shipped".
         self._last_user_names: set[str] = set()
         self._last_unreadable: Mapping[str, str] = {}
-        self._list_user_names = list_user_names or (lambda: user_theme_names(get_user_themes_dir()))
-        # Unreadable saved files (stem -> short error), listed so they can be deleted.
-        self._list_unreadable = list_unreadable or dict
+        # R40(b): ONE listing per refresh -- (readable names, unreadable
+        # stem -> short error); unreadable files are listed so they can be deleted.
+        self._list_themes = list_themes or (lambda: (user_theme_names(get_user_themes_dir()), {}))
         # TASK-32948 Task 3: the last Export's full path, for Copy path.
         self._export_path: Path | None = None
 
@@ -230,8 +229,7 @@ class ThemePicker(Vertical):
     # -- catalog -------------------------------------------------------
     def refresh_catalog(self, highlight: str | None = None) -> None:
         try:
-            user_names = self._list_user_names()
-            unreadable = self._list_unreadable()
+            user_names, unreadable = self._list_themes()
             self.files_available = True
             self._last_user_names, self._last_unreadable = user_names, unreadable
         except RecoveryRequired:
@@ -352,9 +350,16 @@ class ThemePicker(Vertical):
         return next((e for e in self.entries if e.id == self.highlighted_id), None)
 
     def _highlighted_readable(self) -> bool:
-        """False for an unreadable file: only Delete acts on it (R29)."""
+        """False for an unreadable file: only Delete acts on it (R29).
+
+        R40(d): a blocked action says why, once, instead of doing nothing.
+        """
         entry = self._highlighted_entry()
-        return entry is None or entry.error is None
+        if entry is None or entry.error is None:
+            return True
+        # notify parses markup; the error quotes untrusted file content.
+        self.app.notify(f"This theme file can't be read: {escape_markup(entry.error)}", severity="warning")
+        return False
 
     def focus_list(self) -> None:
         lst = self.query_one("#settings-theme-list", OptionList)
@@ -531,22 +536,22 @@ class ThemePane(ContentSwitcher):
 
     def compose(self) -> ComposeResult:
         # The editor is composed first so the picker's first refresh_catalog
-        # (its on_mount) can reach it through _editor_names.
+        # (its on_mount) can reach it through _editor_listing.
         with Vertical(id="settings-theme-editor-view"):
             with Horizontal(classes="settings-action-row"):
                 yield Button("Back to themes", id="settings-theme-back", classes="theme-editor-action")
             yield SettingsThemeEditor(id="settings-theme-editor")
         yield ThemePicker(
-            list_user_names=self._editor_names,
-            list_unreadable=lambda: self._editor().user_theme_listing()[1],
+            list_themes=self._editor_listing,
             id="settings-theme-picker",
         )
 
     def _editor(self) -> SettingsThemeEditor:
         return self.query_one(SettingsThemeEditor)
 
-    def _editor_names(self) -> set[str]:
-        return self._editor().list_user_theme_names()
+    def _editor_listing(self) -> tuple[set[str], dict[str, str]]:
+        files, unreadable = self._editor().user_theme_listing()
+        return set(files), unreadable
 
     def show_picker(self) -> None:
         self.current = "settings-theme-picker"

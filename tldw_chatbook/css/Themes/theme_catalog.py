@@ -18,7 +18,12 @@ from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
 from ...Utils.input_validation import escape_markup
-from .themes import ALL_THEMES
+from .themes import ALL_THEMES, printable
+
+#: R40(a): an unreadable saved file's entry id, ``unreadable:<stem>`` -- its
+#: own id, so a broken ``nord.toml`` is listed next to shipped ``nord``.
+#: A registered theme literally named ``unreadable:<stem>`` wins the id.
+UNREADABLE_ID_PREFIX = "unreadable:"
 
 Origin = Literal["yours", "shipped", "textual"]
 STRIP_KEYS = ("background", "surface", "primary", "secondary", "accent", "success", "error")
@@ -118,8 +123,8 @@ def build_catalog(
     """List every registered theme once, grouped yours → shipped → textual.
 
     ``unreadable`` maps each unreadable saved file's stem to its error; each
-    becomes a grey "yours" entry. A stem that is already a listed id is
-    skipped, since option ids must stay unique.
+    becomes a grey "yours" entry with id ``unreadable:<stem>`` (skipped in
+    the freak case a registered theme already has that id: ids are unique).
     """
     rows: list[tuple[str, Origin, Literal["shipped", "textual"] | None, Theme]] = []
     for name, theme in available.items():
@@ -147,8 +152,9 @@ def build_catalog(
     listed = {entry.id for entry in entries}
     entries.extend(
         ThemeEntry(
-            id=stem,
-            display_name=f"{display_name(stem)} (unreadable)",
+            id=f"{UNREADABLE_ID_PREFIX}{stem}",
+            # R39: a file name can carry control characters too.
+            display_name=f"{printable(display_name(stem))} (unreadable)",
             origin="yours",
             dark=True,
             colours=tuple((key, "#808080") for key in BASE_KEYS),
@@ -157,7 +163,7 @@ def build_catalog(
             error=error,
         )
         for stem, error in (unreadable or {}).items()
-        if stem not in listed
+        if f"{UNREADABLE_ID_PREFIX}{stem}" not in listed
     )
     entries.sort(key=lambda e: (_ORIGIN_ORDER[e.origin], e.display_name.casefold()))
     return entries

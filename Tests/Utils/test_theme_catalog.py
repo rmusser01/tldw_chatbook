@@ -276,7 +276,7 @@ def test_unreadable_file_is_listed_under_yours_with_its_error():
         unreadable={"broken_one": "not valid TOML"},
     )
     by_id = {e.id: e for e in entries}
-    bad = by_id["broken_one"]
+    bad = by_id["unreadable:broken_one"]
     assert bad.origin == "yours" and bad.error == "not valid TOML"
     assert bad.display_name == "Broken One (unreadable)"
     assert bad.dark is True and bad.overrides is None
@@ -284,12 +284,23 @@ def test_unreadable_file_is_listed_under_yours_with_its_error():
     assert not bad.is_active and not bad.is_launch_default
     assert by_id["warm_paper"].error is None
     yours = [e.id for e in entries if e.origin == "yours"]
-    assert yours == ["broken_one", "warm_paper"]
+    assert yours == ["unreadable:broken_one", "warm_paper"]
     assert [e.origin for e in entries][: len(yours)] == ["yours"] * len(yours)
 
 
-def test_unreadable_stem_that_collides_with_a_listed_theme_is_skipped():
-    """Option ids must stay unique: a registered name wins over a stem."""
+def test_unreadable_stem_that_matches_a_listed_theme_is_still_listed():
+    """R40(a): a corrupted nord.toml is listed (so it can be deleted) under
+    its own id, next to the Textual built-in nord."""
     entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"nord": "not valid TOML"})
-    assert [e.id for e in entries].count("nord") == 1
-    assert next(e for e in entries if e.id == "nord").error is None
+    by_id = {e.id: e for e in entries}
+    assert by_id["nord"].error is None and by_id["nord"].origin == "textual"
+    broken = by_id["unreadable:nord"]
+    assert broken.error == "not valid TOML" and broken.display_name == "Nord (unreadable)"
+    assert len(by_id) == len(entries)  # ids stay unique
+
+
+def test_unreadable_display_name_has_no_control_characters():
+    """R39: a file name can carry an ESC too."""
+    entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"x\x1bc": "not valid TOML"})
+    entry = next(e for e in entries if e.error)
+    assert entry.display_name.isprintable()
