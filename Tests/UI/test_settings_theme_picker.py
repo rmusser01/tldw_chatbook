@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.theme import Theme
 from textual.widgets import Button, OptionList
 
@@ -546,6 +547,7 @@ _UNREADABLE_DISABLED_IDS = (
     "#settings-theme-use",
     "#settings-theme-try",
     "#settings-theme-picker-clone",
+    "#settings-theme-picker-new",  # R29
     "#settings-theme-picker-edit",
     "#settings-theme-picker-rename",
     "#settings-theme-picker-export",
@@ -583,11 +585,13 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
         for button_id in _UNREADABLE_DISABLED_IDS:
             button = picker.query_one(button_id, Button)
             assert button.disabled, button_id
-            assert button.tooltip == f"This theme file can't be read: {error}", button_id
+            assert Content.from_markup(button.tooltip).plain == (
+                f"This theme file can't be read: {error}"
+            ), button_id
         delete = picker.query_one("#settings-theme-picker-delete", Button)
         assert delete.display and not delete.disabled
 
-        await pilot.press("enter", "t", "c", "e", "r")
+        await pilot.press("enter", "t", "c", "n", "e", "r")
         await pilot.pause()
         assert app.theme == before
         assert app.edits == [] and app.renames == []
@@ -603,3 +607,28 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
         assert not card_error.display
         assert not picker.query_one("#settings-theme-use", Button).disabled
         assert picker.query_one("#settings-theme-use", Button).tooltip is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_error_with_markup_renders_its_tooltip_literally(request, config_writes):
+    """Fix round 1: the error quotes untrusted file content; a tooltip parses markup."""
+    error = "unknown colour '[/mismatched]'"
+    picker = ThemePicker(
+        id="settings-theme-picker", list_user_names=set, list_unreadable=lambda: {"a": error}
+    )
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("a")
+        await pilot.pause()
+        use = picker.query_one("#settings-theme-use", Button)
+        assert "[/mismatched]" in Content.from_markup(use.tooltip).plain
+        # The tooltip actually renders on hover.
+        await pilot.hover("#settings-theme-picker-delete")
+        await pilot.hover("#settings-theme-use")
+        await pilot.pause(0.6)
+        assert "[/mismatched]" in str(picker.query_one("#settings-theme-card-error").render())

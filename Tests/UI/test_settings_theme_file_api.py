@@ -502,3 +502,23 @@ async def test_delete_removes_an_unreadable_file(request, tmp_path, config_write
         await _mounted(pilot, app, editor, tmp_path)
         await _confirm_delete(pilot, app, editor, "a")
         assert not (tmp_path / "a.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_of_unreadable_file_notice_escapes_file_content(request, tmp_path, config_writes):
+    """Fix round 1: notify parses markup; the error quotes an untrusted key."""
+    from textual.content import Content
+
+    path = tmp_path / "broken.toml"
+    path.write_text('[colors]\nprimary = "#112233"\n"[/mismatched]" = "#fff"\n', encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.user_theme_listing()[1] == {"broken": "unknown colour '[/mismatched]'"}
+        app.notify.reset_mock()
+        assert editor.rename_user_theme("broken", "fixed") is False
+        message = app.notify.call_args.args[0]
+        assert "unknown colour '[/mismatched]'" in Content.from_markup(message).plain
+        assert path.exists() and not (tmp_path / "fixed.toml").exists()

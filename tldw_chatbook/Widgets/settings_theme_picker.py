@@ -31,6 +31,7 @@ from ..css.Themes.theme_catalog import (
     use_theme_toast,
     user_theme_names,
 )
+from ..Utils.input_validation import escape_markup
 from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
 from .theme_preview import ThemePreview
 
@@ -266,12 +267,18 @@ class ThemePicker(Vertical):
         self.highlighted_id = theme_id
         entry = self._highlighted_entry()
         error = entry.error if entry is not None else None
-        unreadable_tip = f"This theme file can't be read: {error}" if error else None
+        # Tooltips parse markup; the error quotes untrusted file content.
+        unreadable_tip = f"This theme file can't be read: {escape_markup(error)}" if error else None
         title = self.query_one("#settings-theme-card-title", Static)
         for button_id in ("#settings-theme-use", "#settings-theme-try", "#settings-theme-picker-clone"):
             button = self.query_one(button_id, Button)
             button.disabled = entry is None or error is not None
             button.tooltip = unreadable_tip
+        # R29: New is blocked on an unreadable row too (it would start from a
+        # stale palette); with nothing highlighted it stays available.
+        new = self.query_one("#settings-theme-picker-new", Button)
+        new.disabled = error is not None
+        new.tooltip = unreadable_tip
         is_yours = entry is not None and entry.origin == "yours"
         tooltip = None if self.files_available else THEMES_UNAVAILABLE_LABEL
         for button_id in (
@@ -305,7 +312,7 @@ class ThemePicker(Vertical):
         return next((e for e in self.entries if e.id == self.highlighted_id), None)
 
     def _highlighted_readable(self) -> bool:
-        """False for an unreadable file: only Delete (and New) act on it."""
+        """False for an unreadable file: only Delete acts on it (R29)."""
         entry = self._highlighted_entry()
         return entry is None or entry.error is None
 
@@ -402,7 +409,7 @@ class ThemePicker(Vertical):
     def request_edit(self, mode: Literal["clone", "new", "edit"]) -> None:
         if self.highlighted_id is None:
             return
-        if mode != "new" and not self._highlighted_readable():
+        if not self._highlighted_readable():
             return
         if mode == "edit" and not self._can_manage_files():
             return
