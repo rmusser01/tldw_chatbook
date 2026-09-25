@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, ContentSwitcher, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..config import get_user_themes_dir
@@ -261,3 +261,47 @@ class ThemePicker(Vertical):
         else:
             self.app.notify(f"{display_name(theme_id)} applied; the launch default was not saved", severity="warning")
         self.refresh_catalog(highlight=theme_id)
+
+
+class ThemePane(ContentSwitcher):
+    """Picker first; the editor swaps in for Clone/New (spec §4, D3)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(initial="settings-theme-picker", **kwargs)
+
+    def compose(self) -> ComposeResult:
+        from .settings_theme_editor import SettingsThemeEditor
+
+        yield ThemePicker(id="settings-theme-picker")
+        with Vertical(id="settings-theme-editor-view"):
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Back to themes", id="settings-theme-back", classes="theme-editor-action")
+            yield SettingsThemeEditor(id="settings-theme-editor")
+
+    def show_picker(self) -> None:
+        self.current = "settings-theme-picker"
+        picker = self.query_one(ThemePicker)
+        picker.refresh_catalog()
+        picker.focus_list()
+
+    def open_editor(self, theme_id: str, mode: Literal["clone", "new"]) -> None:
+        from .settings_theme_editor import SettingsThemeEditor
+
+        editor = self.query_one(SettingsThemeEditor)
+        picker = self.query_one(ThemePicker)
+        entry = next((e for e in picker.entries if e.id == theme_id), None)
+        if entry is not None and entry.origin == "yours":
+            editor.load_user_theme(theme_id)
+        else:
+            editor.load_theme(theme_id)
+        if mode == "clone":
+            editor.on_clone_theme()
+        else:
+            editor.on_new_theme()
+        self.current = "settings-theme-editor-view"
+        editor.query_one("#settings-theme-name").focus()
+
+    @on(ThemePicker.EditRequested)
+    def _edit_requested(self, event: ThemePicker.EditRequested) -> None:
+        event.stop()
+        self.open_editor(event.theme_id, event.mode)

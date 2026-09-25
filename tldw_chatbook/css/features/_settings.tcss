@@ -374,8 +374,11 @@ Button.settings-category-group-toggle:focus {
 }
 
 /* Interface subviews must grow with their forms so the detail pane owns
-   scrolling, including stacked Theme actions and the Splash gallery. */
+   scrolling, including stacked Theme actions and the Splash gallery.
+   TASK-32948: the editor now sits in the ThemePane's editor view, which
+   must grow with it too (a 1fr Vertical there clips the editor). */
 #settings-theme-editor,
+#settings-theme-editor-view,
 #settings-splash-screen-viewer {
     height: auto;
 }
