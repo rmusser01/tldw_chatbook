@@ -602,7 +602,8 @@ _MUX_ERROR_MARKERS: tuple[bytes, ...] = (
 )
 
 #: stderr marker the worker's graceful watchdog tier writes before
-#: ``os._exit(75)``; post-admission failure reasons quote its line.
+#: ``os._exit(75)``; its presence types a post-admission failure
+#: OP_TIMEOUT (one of the classification triggers, Task 12 ruling).
 _WATCHDOG_STDERR_MARKER: tuple[bytes, ...] = (b"tldw-worker-watchdog",)
 
 #: The bootstrap's version-gate stderr line: the found version rides the
@@ -632,7 +633,9 @@ class TransportFailureKind(enum.Enum):
     PYTHON_TOO_OLD = "python_too_old"
     #: Any other no-marker exit: the worker never reached framing.
     WORKER_FAILED_TO_START = "worker_failed_to_start"
-    #: Admitted, then watchdog exit 75 or the completion-deadline kill.
+    #: Admitted, then watchdog exit 75, the watchdog stderr marker, the
+    #: completion-deadline kill, or any post-admission death after the
+    #: op ran its full budget (the worker's own signal-killing tiers).
     OP_TIMEOUT = "op_timeout"
     #: Admitted, then any other death (signal, lost connection, EOF
     #: without a final frame).
@@ -704,10 +707,21 @@ class _BoundedCapture:
 
 @dataclass
 class _ExchangeOutcome:
-    """What the stdout watcher concluded about one call."""
+    """What the stdout watcher concluded about one call.
+
+    Attributes:
+        terminal_frame: The final response frame, or ``None`` when the
+            exchange died before one arrived.
+        admitted: Whether the admitted marker was seen.
+        admitted_at: ``time.monotonic()`` when the marker parsed — the
+            classification clock's anchor (``None`` when no marker).
+        killed: Whether the laptop-side deadline group kill fired.
+        noise_capped: Whether leading stdout garbage exceeded the cap.
+    """
 
     terminal_frame: bytes | None
     admitted: bool
+    admitted_at: float | None
     killed: bool
     noise_capped: bool
 
@@ -892,6 +906,7 @@ def _watch_exchange(
     return _ExchangeOutcome(
         terminal_frame=terminal,
         admitted=admitted_at is not None,
+        admitted_at=admitted_at,
         killed=killed,
         noise_capped=noise_capped,
     )
@@ -1067,6 +1082,8 @@ class RemoteWorkspaceTransport:
             loc,
             exit_code=exit_code,
             admitted=outcome.admitted,
+            admitted_at=outcome.admitted_at,
+            budget=budget,
             killed=outcome.killed,
             noise_capped=outcome.noise_capped,
             stderr=stderr_bytes,
@@ -1083,6 +1100,8 @@ class RemoteWorkspaceTransport:
         *,
         exit_code: int,
         admitted: bool,
+        admitted_at: float | None,
+        budget: float,
         killed: bool,
         noise_capped: bool,
         stderr: bytes,
@@ -1092,9 +1111,20 @@ class RemoteWorkspaceTransport:
         Order mirrors the spec's taxonomy: the garbage cap and the
         admitted marker outrank exit codes; within no-marker exits the
         specific codes (255 mux-checked, 127, 76) precede the
-        WORKER_FAILED_TO_START catch-all; within admitted failures only
-        exit 75 (the reserved watchdog code) and the laptop kill are
-        OP_TIMEOUT — everything else is REMOTE_OP_FAILED.
+        WORKER_FAILED_TO_START catch-all.
+
+        Within admitted failures, OP_TIMEOUT fires on any of: the
+        reserved watchdog exit 75; the watchdog stderr marker; our
+        completion-deadline kill; or the CLOCK rule — the op ran its
+        full budget (``monotonic_now - admitted_at >= budget``). The
+        clock rule exists because the worker's own alarm/RLIMIT_CPU
+        tiers (Task 12) kill the remote python mid-op by SIGNAL, and
+        ssh deliberately does not decode remote signal deaths (they
+        surface as a bare non-zero exit): an admitted op that dies on
+        its own only after consuming its whole budget is a timeout by
+        definition, whichever tier fired. Fast post-admission deaths
+        (elapsed < budget, no marker) stay REMOTE_OP_FAILED — a mid-op
+        process/network death is an operation failure, not a timeout.
         """
         if noise_capped:
             return TransportFailure(
@@ -1103,18 +1133,19 @@ class RemoteWorkspaceTransport:
                 "remote shell emits stdout noise before the response magic",
             )
         if admitted:
-            if killed or exit_code == 75:
+            watchdog_marker = _stderr_marker_line(stderr, _WATCHDOG_STDERR_MARKER)
+            ran_full_budget = (
+                admitted_at is not None
+                and time.monotonic() - admitted_at >= budget
+            )
+            if killed or exit_code == 75 or watchdog_marker is not None or ran_full_budget:
                 return TransportFailure(
                     TransportFailureKind.OP_TIMEOUT,
                     exit_code,
                     "operation timed out",
                 )
-            reason = (
-                _stderr_marker_line(stderr, _WATCHDOG_STDERR_MARKER)
-                or "remote op failed"
-            )
             return TransportFailure(
-                TransportFailureKind.REMOTE_OP_FAILED, exit_code, reason
+                TransportFailureKind.REMOTE_OP_FAILED, exit_code, "remote op failed"
             )
         if killed:
             # No marker + our deadline kill: a stalled handshake is

@@ -146,6 +146,19 @@ case "$mode" in
     fi
     exit "$exit_code"
     ;;
+  admitted-then-slow-exit)
+    # The worker's own alarm/rlimit tier killed the remote python
+    # mid-op: ssh then exits on its own (no final frame) BEFORE the
+    # laptop's completion deadline would fire.
+    write_pid
+    drain_stdin
+    emit_admitted
+    if [ -n "$stderr_line" ]; then
+      printf '%s\n' "$stderr_line" >&2
+    fi
+    sleep "${FAKE_SSH_SLOW_SECONDS:-1.0}"
+    exit "$exit_code"
+    ;;
   stall)
     write_pid
     drain_stdin
@@ -255,6 +268,7 @@ class FakeSsh:
             "FAKE_SSH_STDERR_LINE",
             "FAKE_SSH_EXIT",
             "FAKE_SSH_ADMIT_DELAY",
+            "FAKE_SSH_SLOW_SECONDS",
         ):
             monkeypatch.delenv(stale, raising=False)
 
@@ -654,20 +668,75 @@ def test_admitted_exit_255_is_remote_op_failed(
     assert failure.exit_code == 255
 
 
-def test_admitted_failure_reason_comes_from_watchdog_stderr_marker(
+def test_admitted_fast_death_without_marker_stays_remote_op_failed(
     env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Fast post-admission death (elapsed far under budget): a mid-op
+    network/process death is an operation failure, not a timeout."""
     monkeypatch.setenv("FAKE_SSH_MODE", "admitted-then-exit")
     monkeypatch.setenv("FAKE_SSH_EXIT", "2")
-    marker = "tldw-worker-watchdog: budget exhausted, temp files swept"
-    monkeypatch.setenv("FAKE_SSH_STDERR_LINE", marker)
 
     result = env.call()
 
+    assert result.admitted is True
     failure = result.failure
     assert failure.kind is TransportFailureKind.REMOTE_OP_FAILED
-    assert marker in failure.reason
     assert failure.exit_code == 2
+
+
+def test_admitted_watchdog_stderr_marker_is_op_timeout(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task-12 ruling: the worker's graceful tier writes the marker and
+    exits (here a non-75 code, e.g. a marker line surviving a different
+    exit) — the marker alone types the failure OP_TIMEOUT even when the
+    death was fast."""
+    monkeypatch.setenv("FAKE_SSH_MODE", "admitted-then-exit")
+    monkeypatch.setenv("FAKE_SSH_EXIT", "2")
+    monkeypatch.setenv(
+        "FAKE_SSH_STDERR_LINE",
+        "tldw-worker-watchdog: budget exhausted, temp files swept",
+    )
+
+    result = env.call()
+
+    assert result.admitted is True
+    failure = result.failure
+    assert failure.kind is TransportFailureKind.OP_TIMEOUT
+    assert failure.reason == "operation timed out"
+    assert failure.exit_code == 2
+
+
+def test_admitted_full_budget_death_by_signal_is_op_timeout(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task-12 ruling clock rule: the worker's own alarm/RLIMIT_CPU tier
+    kills the remote python mid-op; ssh dies on its own (exit 255, no
+    final frame, no marker) BEFORE the laptop's completion deadline.
+    ssh does not decode remote signal deaths, so the classifier uses the
+    clock: the op ran its full budget — a timeout by definition,
+    regardless of which tier fired. Elapsed < budget stays
+    REMOTE_OP_FAILED (tests above).
+    """
+    monkeypatch.setenv("FAKE_SSH_MODE", "admitted-then-slow-exit")
+    monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+    monkeypatch.setenv("FAKE_SSH_SLOW_SECONDS", "1.0")
+    # Grace 2.0s keeps the laptop kill (admitted_at + budget + grace)
+    # strictly BEHIND the fake's own 1.0s exit: the clock rule, not the
+    # kill bit, must type this failure.
+    transport = RemoteWorkspaceTransport(env.manager, grace_seconds=2.0)
+
+    started = time.monotonic()
+    result = transport.call(_LOC, _REQUEST, budget=0.5)
+    elapsed = time.monotonic() - started
+
+    assert result.admitted is True
+    failure = result.failure
+    assert failure.kind is TransportFailureKind.OP_TIMEOUT
+    assert failure.reason == "operation timed out"
+    assert failure.exit_code == 255  # died on its own; we did not kill
+    assert elapsed < 3.0
+    env.fake.assert_pid_gone()
 
 
 # ---------------------------------------------------------------------------
