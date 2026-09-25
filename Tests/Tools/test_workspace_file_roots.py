@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import traceback
 from types import SimpleNamespace
 
 import pytest
@@ -588,3 +589,147 @@ def test_note_launch_label_has_no_double_slash_when_launched_from_root(
     note = wfr.workspace_context_note("ws-a", launch_cwd="/", registry=registry)
     assert "Launched from: /" in note
     assert "//" not in note
+
+
+# -- Phase 3a (task 15): the frozen-authority check is LocalRoot-only ------
+
+
+def _frozen_authority_for(folder: Path) -> SimpleNamespace:
+    """Capture the identity a locally admitted root would freeze."""
+    identities = []
+    for component in (*reversed(folder.parents), folder):
+        value = os.lstat(component)
+        identities.append((str(component), value.st_dev, value.st_ino, value.st_mode))
+    from tldw_chatbook.Chat.console_project_instructions import (
+        fingerprint_canonical_locator,
+    )
+
+    return SimpleNamespace(
+        binding_id="binding-1",
+        root=folder,
+        locator_fingerprint=fingerprint_canonical_locator(str(folder)),
+        root_identity=tuple(identities),
+        allow_write=True,
+    )
+
+
+def test_frozen_authority_accepts_localroot_wrapped_root(tmp_path: Path) -> None:
+    from tldw_chatbook.Tools.remote_root_types import LocalRoot
+
+    folder = tmp_path / "bound"
+    folder.mkdir()
+
+    frozen = _frozen_authority_for(folder)
+
+    assert wfr._binding_matches_frozen_authority(folder, frozen)
+    wrapped = dataclasses_replace_root(frozen, LocalRoot(folder))
+    assert wfr._binding_matches_frozen_authority(folder, wrapped)
+
+
+def dataclasses_replace_root(namespace: SimpleNamespace, root: object) -> SimpleNamespace:
+    return SimpleNamespace(**{**namespace.__dict__, "root": root})
+
+
+def test_frozen_authority_still_rejects_a_drifted_local_root(tmp_path: Path) -> None:
+    folder = tmp_path / "bound"
+    folder.mkdir()
+    frozen = _frozen_authority_for(folder)
+    other = tmp_path / "other"
+    other.mkdir()
+
+    assert not wfr._binding_matches_frozen_authority(other, frozen)
+
+
+def test_frozen_authority_refuses_remote_root_loudly(tmp_path: Path) -> None:
+    """A RemoteRoot must never silently degrade to "not admitted".
+
+    The per-component lstat in this check is laptop-disk work; the remote
+    authority check is the client-side registry+cache in the executor. A
+    RemoteRoot reaching this function is a composition bug and raises.
+    """
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    folder = tmp_path / "bound"
+    folder.mkdir()
+    frozen = _frozen_authority_for(folder)
+    remote_frozen = dataclasses_replace_root(
+        frozen,
+        RemoteRoot(
+            alias="proj",
+            canonical_locator="devbox:/srv/www",
+            root="/srv/www",
+            binding_id="binding-1",
+        ),
+    )
+
+    with pytest.raises(TypeError, match="remote root reached laptop-disk path"):
+        wfr._binding_matches_frozen_authority(folder, remote_frozen)
+
+
+def test_allowed_file_roots_admits_localroot_frozen_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LocalRoot in the frozen authority slot keeps today's admission."""
+    from tldw_chatbook.Tools.remote_root_types import LocalRoot
+
+    folder = tmp_path / "bound"
+    folder.mkdir()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    frozen = _frozen_authority_for(folder)
+    wrapped = dataclasses_replace_root(frozen, LocalRoot(folder))
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: _root_consumer_registry(folder))
+
+    with wfr.run_workspace(
+        "ws-a", binding_authority=(wrapped,)
+    ):
+        roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+
+    assert roots == (sandbox, folder)
+
+
+def test_allowed_file_roots_remote_frozen_authority_raises_not_silently_drops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a RemoteRoot authority must fail loud, not vanish."""
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    folder = tmp_path / "bound"
+    folder.mkdir()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    frozen = _frozen_authority_for(folder)
+    remote_frozen = dataclasses_replace_root(
+        frozen,
+        RemoteRoot(
+            alias="proj",
+            canonical_locator="devbox:/srv/www",
+            root="/srv/www",
+            binding_id="binding-1",
+        ),
+    )
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: _root_consumer_registry(folder))
+
+    # ``allowed_file_roots``'s documented fail-safe catches registry-level
+    # failures and degrades to sandbox-only, but the tripwire must still
+    # FIRE there (the warning carries the loud TypeError, not a routine
+    # authority-mismatch drop) rather than silently dropping the binding.
+    records: list = []
+    sink_id = wfr.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        with wfr.run_workspace("ws-a", binding_authority=(remote_frozen,)):
+            roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+    finally:
+        wfr.logger.remove(sink_id)
+
+    assert roots == (sandbox,)
+    tripwire_texts = []
+    for record in records:
+        exception = record["exception"]
+        if exception is not None:
+            tripwire_texts.append(
+                "".join(traceback.format_exception(*exception))
+            )
+    assert any("remote root reached laptop-disk path" in text for text in tripwire_texts)

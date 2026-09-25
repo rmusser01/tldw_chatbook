@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
+import tldw_chatbook.Tools.workspace_tool_executor as workspace_tool_executor_module
 import tldw_chatbook.Tools.workspace_tool_worker as workspace_tool_worker
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_tool_executor import (
@@ -2639,3 +2640,232 @@ def test_user_exclusion_provider_failure_keeps_base_context(tmp_path: Path) -> N
     executor = WorkspaceToolExecutor(root, user_exclusion_paths=broken)
     result = executor.execute("fs_read", {"path": "ok.txt"}, intent="read")
     assert "o" in result
+
+
+# -- Phase 3a (task 15): LocalRoot | RemoteRoot request-builder boundary ----------------
+
+
+def _remote_root() -> "RemoteRoot":
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    return RemoteRoot(
+        alias="proj",
+        canonical_locator="devbox:/srv/www",
+        root="/srv/www",
+        binding_id="binding-15",
+    )
+
+
+def _remote_chain() -> "list[list[object]]":
+    return [["/srv/www", 99, 7, 16877], ["/srv", 98, 6, 16877]]
+
+
+def _remote_exclusions() -> "tuple[Any, ...]":
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    return (SensitiveExclusion("subtree", "secrets"), SensitiveExclusion("name", ".env"))
+
+
+def _remote_executor(**kwargs: Any) -> WorkspaceToolExecutor:
+    kwargs.setdefault("remote_identity_source", _remote_chain)
+    kwargs.setdefault("remote_sensitive_exclusions", _remote_exclusions)
+    return WorkspaceToolExecutor(_remote_root(), **kwargs)
+
+
+def test_remote_root_constructor_never_touches_the_laptop_disk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def blow_up(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("remote construction must not touch the laptop disk")
+
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "capture_directory_chain", blow_up
+    )
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "validate_path", blow_up
+    )
+
+    executor = _remote_executor()
+
+    assert executor is not None
+
+
+def test_remote_root_constructor_requires_an_identity_source() -> None:
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    with pytest.raises(ValueError):
+        WorkspaceToolExecutor(
+            RemoteRoot(alias="a", canonical_locator="h:/r", root="/r", binding_id="b")
+        )
+
+
+def test_remote_request_carries_cached_identity_without_laptop_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
+
+    cache = RemoteBindingStatusCache()
+    cache.record_success("binding-15", _remote_chain())
+    executor = WorkspaceToolExecutor(
+        _remote_root(),
+        remote_identity_source=lambda: cache.identity_for("binding-15"),
+        remote_sensitive_exclusions=_remote_exclusions,
+    )
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "capture_directory_chain", blow_up_on_disk
+    )
+
+    request = executor._build_request("fs_read", {"path": "notes.txt"}, intent="read")
+
+    assert str(request.root_locator) == "/srv/www"
+    assert (request.root_identity.device, request.root_identity.inode) == (99, 7)
+    assert [
+        (identity.device, identity.inode) for identity in request.ancestor_identities
+    ] == [(99, 7), (98, 6)]
+    assert request.arguments["path"] == "notes.txt"
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"},
+        {"kind": "name", "value": ".env"},
+    ]
+
+
+def blow_up_on_disk(*_args: Any, **_kwargs: Any) -> Any:
+    raise AssertionError("remote request building must not touch the laptop disk")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../escape", "a/../../b", "/etc/passwd", "a/..\\..\\b", "..", "a/../.."],
+)
+def test_remote_request_rejects_parent_escape_lexically(path: str) -> None:
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_read", {"path": path}, intent="read")
+
+    assert caught.value.code == "invalid_request"
+
+
+@pytest.mark.parametrize("path", ["C:/x", "C:\\x", "\\\\host\\share\\x"])
+def test_remote_request_rejects_cross_platform_rooted_paths(path: str) -> None:
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_read", {"path": path}, intent="read")
+
+    assert caught.value.code == "invalid_request"
+
+
+def test_remote_write_request_rejects_git_metadata_hidden_target() -> None:
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request(
+            "fs_write", {"path": ".git/config", "content": "x"}, intent="write"
+        )
+
+    assert caught.value.code == "invalid_request"
+
+
+def test_remote_read_request_allows_hidden_components() -> None:
+    executor = _remote_executor()
+
+    request = executor._build_request(
+        "fs_read", {"path": ".github/workflows/ci.yml"}, intent="read"
+    )
+
+    assert request.arguments["path"] == ".github/workflows/ci.yml"
+
+
+def test_remote_request_without_cached_identity_fails_closed() -> None:
+    executor = _remote_executor(remote_identity_source=lambda: None)
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_read", {"path": "notes.txt"}, intent="read")
+
+    assert caught.value.code == "root_pin_failed"
+
+
+def test_remote_glob_pattern_is_normalized_lexically() -> None:
+    executor = _remote_executor()
+
+    ok = executor._build_request("fs_glob", {"pattern": "**/*.py"}, intent="read")
+    assert ok.arguments["pattern"] == "**/*.py"
+
+    with pytest.raises(WorkspaceToolExecutionError):
+        executor._build_request("fs_glob", {"pattern": "../**"}, intent="read")
+
+
+def test_remote_patch_targets_are_normalized_lexically() -> None:
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError):
+        executor._build_request(
+            "fs_patch",
+            {
+                "diff": "--- a/x.txt\n+++ b/../../escape.txt\n@@ -1 +1 @@\n-a\n+b\n"
+            },
+            intent="write",
+        )
+
+
+def test_remote_mode_execute_refuses_to_spawn_a_laptop_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def blow_up(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("remote mode must never spawn a local worker")
+
+    monkeypatch.setattr(
+        workspace_tool_executor_module.subprocess, "Popen", blow_up
+    )
+    executor = _remote_executor()
+
+    with pytest.raises((TypeError, NotImplementedError)) as caught:
+        executor.execute("fs_read", {"path": "notes.txt"}, intent="read")
+
+    assert "remote root reached laptop-disk path" in str(caught.value)
+
+
+def test_local_root_request_is_byte_identical_to_plain_path_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Tools.remote_root_types import LocalRoot
+    from tldw_chatbook.Utils.sensitive_paths import SensitivePathContext
+
+    # Pin the sensitive context to its empty snapshot: resolve_sensitive_context
+    # reads live config, which trips this machine's KNOWN pre-existing
+    # Backup_Recovery environment failure in isolated runs (task-15 brief:
+    # compare against base). Byte-identity is unaffected -- both builders
+    # see the same context.
+    monkeypatch.setattr(
+        workspace_tool_executor_module,
+        "resolve_sensitive_context",
+        lambda: SensitivePathContext((), (), (), None, ()),
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "sentinel.txt").write_text("A_ONLY", encoding="utf-8")
+
+    plain = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_read", {"path": "sentinel.txt"}, intent="read"
+    )
+    wrapped = WorkspaceToolExecutor(LocalRoot(workspace))._build_request(
+        "fs_read", {"path": "sentinel.txt"}, intent="read"
+    )
+
+    assert plain.operation_id != wrapped.operation_id  # fresh uuid per request
+    assert plain.root_locator == wrapped.root_locator
+    assert plain.root_identity == wrapped.root_identity
+    assert plain.ancestor_identities == wrapped.ancestor_identities
+    assert plain.arguments == wrapped.arguments
+    assert plain.timeout_seconds == wrapped.timeout_seconds
+    assert plain.output_max_bytes == wrapped.output_max_bytes
+    assert plain.intent == wrapped.intent
+    assert plain.operation == wrapped.operation
+    # Regression pin on the wire form itself: identical bytes once the
+    # per-request operation_id is normalized away.
+    assert plain.to_bytes().replace(
+        plain.operation_id.encode(), b"OP"
+    ) == wrapped.to_bytes().replace(wrapped.operation_id.encode(), b"OP")

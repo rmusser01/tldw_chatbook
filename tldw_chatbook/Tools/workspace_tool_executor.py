@@ -19,6 +19,11 @@ from tldw_chatbook.STT.executor_process_tree import (
 )
 from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
 from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
+from tldw_chatbook.Tools.remote_root_types import (
+    AdmittedRoot,
+    LocalRoot,
+    RemoteRoot,
+)
 from tldw_chatbook.Tools.workspace_tool_protocol import (
     MAX_RESPONSE_BYTES,
     WorkspaceProtocolError,
@@ -27,6 +32,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
 )
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
+    DirectoryIdentity,
     DirectoryIdentityError,
     capture_directory_chain,
 )
@@ -122,14 +128,48 @@ def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
 
 
 class WorkspaceToolExecutor:
-    """Launch one contained helper for one workspace operation."""
+    """Launch one contained helper for one workspace operation.
+
+    Phase 3a (task 15) added a remote request-building mode: constructed
+    with a :class:`~tldw_chatbook.Tools.remote_root_types.RemoteRoot`
+    descriptor the executor validates and normalizes requests LEXICALLY
+    and carries the binding-cache identity -- it never touches the
+    laptop's disk and :meth:`execute` refuses to spawn a local worker
+    (spawning is the ssh transport executor's job; Task 14 built it).
+    A ``LocalRoot`` (or plain ``Path``) keeps the historical fd-based
+    behavior byte-identically.
+    """
 
     def __init__(
         self,
-        workspace_root: Path,
+        workspace_root: "Path | AdmittedRoot",
         *,
         user_exclusion_paths: Callable[[], tuple[Path, ...]] | None = None,
+        remote_identity_source: Callable[[], list[list[object]] | None] | None = None,
+        remote_sensitive_exclusions: (
+            Callable[[], tuple[SensitiveExclusion, ...]] | None
+        ) = None,
     ) -> None:
+        if isinstance(workspace_root, RemoteRoot):
+            if remote_identity_source is None:
+                raise ValueError(
+                    "remote roots require remote_identity_source (the binding "
+                    "status cache's captured identity chain)"
+                )
+            if not callable(remote_identity_source):
+                raise ValueError("remote_identity_source must be callable")
+            # No validate_path, no capture_directory_chain, no laptop stat:
+            # the descriptor is pure data and identity is cache-owned.
+            self._remote_root: RemoteRoot | None = workspace_root
+            self._workspace_root: Path | None = None
+            self._authority_chain: DirectoryChain | None = None
+            self._remote_identity_source = remote_identity_source
+            self._remote_sensitive_exclusions = remote_sensitive_exclusions
+            self._user_exclusion_paths = user_exclusion_paths
+            return
+        self._remote_root = None
+        if isinstance(workspace_root, LocalRoot):
+            workspace_root = workspace_root.path
         candidate = Path(os.path.abspath(workspace_root))
         try:
             self._workspace_root = validate_path(
@@ -183,6 +223,15 @@ class WorkspaceToolExecutor:
             WorkspaceToolExecutionError: If admission, validation, execution,
                 protocol handling, containment, or cleanup fails.
         """
+        if self._remote_root is not None:
+            # A local helper spawn would read the LAPTOP's filesystem
+            # against a remote root's POSIX path -- exactly the silent
+            # laptop IO Phase 3a exists to make impossible. Spawning for
+            # remote roots is the ssh transport executor's job.
+            raise NotImplementedError(
+                "remote root reached laptop-disk path: local worker spawn "
+                "(use the ssh transport executor)"
+            )
         request = self._build_request(operation, arguments, intent=intent)
         deadline = time.monotonic() + request.timeout_seconds
         process: subprocess.Popen[bytes] | None = None
@@ -379,6 +428,8 @@ class WorkspaceToolExecutor:
         *,
         intent: str,
     ) -> WorkspaceToolRequest:
+        if self._remote_root is not None:
+            return self._build_remote_request(operation, arguments, intent=intent)
         try:
             current_chain = capture_directory_chain(self._workspace_root)
             if current_chain != self._authority_chain:
@@ -501,6 +552,175 @@ class WorkspaceToolExecutor:
             raise
         except (DirectoryIdentityError, WorkspaceProtocolError, OSError, ValueError):
             raise WorkspaceToolExecutionError("invalid_request") from None
+
+    def _remote_serialized_exclusions(self) -> list[dict[str, str]]:
+        """Serialize caller-supplied relative exclusions verbatim.
+
+        The remote builder NEVER resolves exclusions against the laptop's
+        filesystem (``_parent_read_exclusions``' laptop walk is
+        local-only): the caller hands in already-relative
+        :class:`SensitiveExclusion` entries -- Task 17 routes the binding's
+        stored relative paths here -- and they ride the request as-is for
+        worker-side matching.
+        """
+        if self._remote_sensitive_exclusions is None:
+            return []
+        try:
+            return _serialize_exclusions(tuple(self._remote_sensitive_exclusions()))
+        except Exception:  # noqa: BLE001 - a failed provider degrades to none
+            return []
+
+    def _build_remote_request(
+        self,
+        operation: str,
+        arguments: dict[str, Any],
+        *,
+        intent: str,
+    ) -> WorkspaceToolRequest:
+        """Build one request for a remote root with ZERO laptop filesystem access.
+
+        Mirrors the LOCAL builder's per-operation argument admission using
+        lexical rules only (see :func:`_normalize_remote_relative_path`);
+        identity comes from the binding status cache (the ping-captured
+        chain), never a laptop ``capture_directory_chain``; exclusions are
+        serialized from caller-supplied relative entries. The emitted
+        ``WorkspaceToolRequest`` wire dict is shape-identical to a local
+        one, so the remote worker (same bundle) parses it unchanged.
+        """
+        try:
+            chain = self._remote_identity_source()
+            if not chain:
+                # The cached identity IS the root pin (the ping captured
+                # it); no chain means the pin was never proven here.
+                raise WorkspaceToolExecutionError("root_pin_failed")
+            identities = tuple(
+                DirectoryIdentity(
+                    device=int(entry[1]),
+                    inode=int(entry[2]),
+                    mode=int(entry[3]),
+                    reparse=False,
+                )
+                for entry in chain
+            )
+            locator = str(chain[0][0])
+            exclusions = self._remote_serialized_exclusions()
+            normalized = dict(arguments)
+            if operation == "stat_path" and type(arguments) is dict:
+                raw_path = arguments.get("path")
+                if type(raw_path) is str:
+                    normalized["path"] = _normalize_remote_relative_path(raw_path)
+            if operation in _GIT_OPERATIONS and type(arguments) is dict:
+                normalized["sensitive_exclusions"] = exclusions
+                raw_path = arguments.get("path")
+                if raw_path is not None:
+                    if type(raw_path) is not str:
+                        raise ValueError("invalid git path")
+                    normalized["path"] = (
+                        _normalize_remote_relative_path(raw_path) or "."
+                    )
+            if operation in _READ_OPERATIONS and type(arguments) is dict:
+                normalized["sensitive_exclusions"] = exclusions
+                if operation == "fs_grep":
+                    normalized["content_exclusions"] = exclusions
+                if operation in {"fs_list", "fs_read"}:
+                    raw_path = arguments.get("path")
+                    if type(raw_path) is not str:
+                        raise ValueError("invalid read path")
+                    normalized["path"] = _normalize_remote_relative_path(raw_path)
+                if operation == "fs_glob":
+                    raw_pattern = arguments.get("pattern")
+                    if type(raw_pattern) is not str:
+                        raise ValueError("invalid glob pattern")
+                    normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
+            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+                raw_path = arguments.get("path")
+                if type(raw_path) is not str:
+                    raise ValueError("invalid mutation path")
+                normalized["path"] = _normalize_remote_relative_path(
+                    raw_path, intent="write"
+                )
+                normalized["sensitive_exclusions"] = exclusions
+            if operation == "fs_patch" and type(arguments) is dict:
+                raw_diff = arguments.get("diff")
+                if type(raw_diff) is not str:
+                    raise ValueError("invalid patch")
+                targets: list[str] = []
+                for patch_file in parse_patch_targets(raw_diff):
+                    rel_path = patch_file.new_path
+                    if rel_path is None:
+                        raise ValueError("invalid patch target")
+                    targets.append(
+                        _normalize_remote_relative_path(rel_path, intent="write")
+                    )
+                normalized["targets"] = targets
+                normalized["sensitive_exclusions"] = exclusions
+            request = WorkspaceToolRequest(
+                operation_id=uuid.uuid4().hex,
+                operation=operation,  # type: ignore[arg-type]
+                intent=intent,  # type: ignore[arg-type]
+                root_locator=Path(locator),
+                root_identity=identities[0],
+                ancestor_identities=identities,
+                arguments=normalized,
+                timeout_seconds=WORKSPACE_HELPER_TIMEOUT_SECONDS,
+                output_max_bytes=MAX_RESPONSE_BYTES,
+            )
+            return WorkspaceToolRequest.from_bytes(request.to_bytes())
+        except WorkspaceToolExecutionError:
+            raise
+        except (
+            WorkspaceProtocolError,
+            ValueError,
+            TypeError,
+            IndexError,
+            KeyError,
+        ):
+            raise WorkspaceToolExecutionError("invalid_request") from None
+
+
+def _normalize_remote_relative_path(path: str, *, intent: str = "read") -> str:
+    """Lexically confine one root-relative remote path; no filesystem access.
+
+    The remote mirror of the checks the LOCAL builder gets from
+    ``resolve_workspace_path`` + ``_normalize_relative_path``, reduced to
+    what is decidable without the laptop's disk:
+
+    - absolute, drive, or anchored forms are rejected (checked through
+      BOTH ``PurePosixPath`` and ``PureWindowsPath`` so a Windows-rooted
+      form is refused on any parent host);
+    - ``..`` components are rejected under BOTH separator conventions --
+      with no resolved ancestry available to the parent, the component
+      check IS the confinement;
+    - NUL is rejected;
+    - hidden components are ALLOWED under the root (ADR-032 parity with
+      the family's ``allow_hidden`` policy: a coding agent that cannot
+      read ``.github/`` is useless);
+    - write intents refuse an exact ``.git`` path component (case-insensitive,
+      matching :func:`tldw_chatbook.Utils.sensitive_paths.is_git_metadata_write`)
+      -- the one hidden-path rule that is purely lexical, so remote write
+      admission is never WEAKER than the local one. The denylist proper
+      rides the request as serialized exclusions and is matched by the
+      worker (Task 17).
+    """
+    if "\x00" in path:
+        raise ValueError("invalid workspace path")
+    posix = PurePosixPath(path)
+    windows = PureWindowsPath(path)
+    if (
+        posix.is_absolute()
+        or posix.anchor
+        or windows.is_absolute()
+        or windows.root
+        or windows.drive
+        or windows.anchor
+    ):
+        raise ValueError("invalid workspace path")
+    for part in (*posix.parts, *windows.parts):
+        if part == "..":
+            raise ValueError("invalid workspace path")
+    if intent == "write" and any(part.lower() == ".git" for part in posix.parts):
+        raise ValueError("invalid workspace path")
+    return posix.as_posix()
 
 
 def _normalize_glob_pattern(pattern: str) -> str:

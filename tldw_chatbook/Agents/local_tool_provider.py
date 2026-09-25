@@ -51,6 +51,13 @@ from tldw_chatbook.MCP.execution_log import (
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.remote_root_types import (
+    AdmittedRoot,
+    LocalRoot,
+    RemoteRoot,
+    is_remote,
+    local_root_path,
+)
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutionError,
     WorkspaceToolExecutor,
@@ -394,12 +401,21 @@ class LocalToolSpec:
 
 @dataclass(frozen=True, slots=True)
 class RunAdmittedWorkspaceRoot:
-    """Immutable local-folder authority captured for one Console run."""
+    """Immutable local-folder authority captured for one Console run.
+
+    Phase 3a (task 15): ``root`` carries the :data:`AdmittedRoot` union.
+    A plain ``Path`` remains an implicit local root through the Phase 3
+    migration (every existing construction site passes one; behavior is
+    pinned byte-identical), a ``LocalRoot`` is the explicit local form,
+    and a ``RemoteRoot`` is the SSH-binding descriptor whose consumers
+    must either route through the remote executor or fail loudly -- a
+    remote root can never silently reach a laptop-disk call site.
+    """
 
     workspace_id: str
     binding_id: str
     alias: str
-    root: Path
+    root: "Path | AdmittedRoot"
     locator_fingerprint: str
     root_identity: tuple[tuple[str, int, int, int], ...]
     allow_write: bool
@@ -418,7 +434,11 @@ class RunAdmittedWorkspaceRoot:
         ):
             if not str(getattr(self, field_name)).strip():
                 raise ValueError(f"{field_name} must be non-empty")
-        object.__setattr__(self, "root", Path(self.root))
+        if not isinstance(self.root, (LocalRoot, RemoteRoot)):
+            # Implicit local root: same coercion every consumer saw before
+            # the union existed (LocalRoot/RemoteRoot descriptors are
+            # stored verbatim -- unwrapping happens at the consumer).
+            object.__setattr__(self, "root", Path(self.root))
         if not self.root_identity:
             raise ValueError("root_identity must be non-empty")
         if not callable(self.guard):
@@ -683,6 +703,18 @@ class LocalToolProvider:
             representative_specs: list[LocalToolSpec] | None = None
             usable_roots: dict[str, RunAdmittedWorkspaceRoot] = {}
             for alias, authority in self._admitted_roots.items():
+                if is_remote(authority.root) and authority.workspace_executor is None:
+                    # Phase 3a type boundary: without an executor in the
+                    # slot, the fallback below would construct a local
+                    # WorkspaceToolExecutor against the root -- laptop-disk
+                    # work. Checked BEFORE the try (whose broad except
+                    # would otherwise convert this into a silently
+                    # revoked root). Task 18's composition always supplies
+                    # the remote transport executor for RemoteRoots.
+                    raise TypeError(
+                        "remote root reached laptop-disk path: per-alias "
+                        "executor construction"
+                    )
                 try:
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
                         authority.root,
@@ -856,6 +888,13 @@ class LocalToolProvider:
             # entry, bound to ITS root/executor, or dispatch would either
             # KeyError or (worse) silently fall back to the generic spec
             # bound to the provider's own base root.
+            if is_remote(authority.root) and authority.workspace_executor is None:
+                # Phase 3a type boundary: the fallback below would build a
+                # local executor (laptop capture) against a remote root.
+                raise TypeError(
+                    "remote root reached laptop-disk path: agent-root executor "
+                    "construction"
+                )
             executor = authority.workspace_executor or WorkspaceToolExecutor(
                 authority.root,
                 user_exclusion_paths=authority.exclusions_provider,
@@ -1137,7 +1176,14 @@ class LocalToolProvider:
             if authority is not None
             else self._authority_scope
         )
-        root = authority.root if authority is not None else self._root
+        # Phase 3a type boundary: the preflight below resolves targets on
+        # the LAPTOP (Path.resolve + resolve_workspace_path). A RemoteRoot
+        # must fail loudly here -- Task 17 migrates target resolution over
+        # the remote executor. Plain paths pass through by identity.
+        root = local_root_path(
+            authority.root if authority is not None else self._root,
+            site="path-target preflight resolution",
+        )
         if scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
             with scope():
                 return self._path_targets_without_authority(
@@ -1821,8 +1867,12 @@ class LocalToolProvider:
                         dispatch_started=False,
                         provider_terminal=LocalProviderTerminal.NOT_STARTED,
                     )
+                # Phase 3a type boundary: redaction strips the laptop root
+                # locator from results/paths. Task 17 (Phase 3c) migrates
+                # redaction to the RemoteRoot URI form; until then a
+                # remote root fails loud instead of leaking or mis-stripping.
                 redaction_root = (
-                    authority.root
+                    local_root_path(authority.root, site="result redaction")
                     if authority is not None
                     else self._result_redaction_root
                 )
@@ -1840,6 +1890,18 @@ class LocalToolProvider:
                             provider_terminal=LocalProviderTerminal.NOT_STARTED,
                         )
                 dispatch_started = True
+                # Phase 3a type boundary: the four CAS/ledger sites below
+                # (fs_read observation, fs_write guard injection, stale
+                # target detection, post-write re-stamp) resolve and hash
+                # targets on the LAPTOP. Task 16 (Phase 3b) migrates them
+                # to worker-reported sha256/size stamps; until then a
+                # remote root fails loud HERE -- before the swallowed
+                # observation try and before any handler dispatch -- so no
+                # laptop read of a remote-named path can happen silently.
+                ledger_root = local_root_path(
+                    authority.root if authority is not None else self._root,
+                    site="read/write CAS ledger hashing",
+                )
                 # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
                 # fs_read branch below BEFORE the fs_write branch's
                 # would-be reassignment; assigning to `clean_args` anywhere
@@ -1852,16 +1914,13 @@ class LocalToolProvider:
                 stale_guard = None
                 if name == "fs_read":
                     try:
-                        self._record_fs_read_observation(
-                            clean_args,
-                            authority.root if authority is not None else self._root,
-                        )
+                        self._record_fs_read_observation(clean_args, ledger_root)
                     except Exception:  # noqa: BLE001 - observation must never affect dispatch
                         pass
                 elif name == "fs_write":
                     stale_guard = self._fs_write_guard_injection(
                         clean_args,
-                        authority.root if authority is not None else self._root,
+                        ledger_root,
                     )
                     if stale_guard is not None:
                         dispatch_args = stale_guard[0]
@@ -1874,7 +1933,7 @@ class LocalToolProvider:
                     _stale = self._stale_targets_for(
                         name,
                         clean_args,
-                        authority.root if authority is not None else self._root,
+                        ledger_root,
                     )
                     if _stale:
                         shown, stamp, resolved = _stale[0]
@@ -1910,7 +1969,7 @@ class LocalToolProvider:
                         self._update_ledger_after_write(
                             name,
                             clean_args,
-                            authority.root if authority is not None else self._root,
+                            ledger_root,
                         )
                     provider_terminal = LocalProviderTerminal.RETURNED
                     return LocalToolInvocationResult(

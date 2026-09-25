@@ -4677,3 +4677,179 @@ def test_local_builder_preserves_selected_name_fallback_fact(
     )
     assert value.approval_decision == expected
     assert provider.invoke("local:fs_list", {"path": "."}).approval_decision == expected
+
+
+# -- Phase 3a (task 15): LocalRoot | RemoteRoot type boundary ----------------
+#
+# Spec: "Remote roots never touch the laptop's disk." A RemoteRoot in the
+# ``root`` slot of a run authority must fail LOUDLY at every consumer that
+# still does laptop-disk work (Phase 3b/3c migrate those sites), never
+# silently read the laptop's filesystem. The laptop-IO tripwires below
+# monkeypatch the primitives those sites would have used.
+
+
+def _remote_authority(
+    *,
+    executor: RecordingWorkspaceExecutor | None = RecordingWorkspaceExecutor(),
+) -> RunAdmittedWorkspaceRoot:
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    return RunAdmittedWorkspaceRoot(
+        workspace_id="workspace-1",
+        binding_id="binding-remote",
+        alias="binding-remote",
+        root=RemoteRoot(
+            alias="binding-remote",
+            canonical_locator="devbox:/srv/www",
+            root="/srv/www",
+            binding_id="binding-remote",
+        ),
+        locator_fingerprint="fingerprint-remote",
+        root_identity=(("/srv/www", 99, 7, 0o40755),),
+        allow_write=True,
+        guard=lambda _write: True,
+        workspace_executor=executor,
+    )
+
+
+@pytest.fixture
+def _laptop_disk_tripwire(monkeypatch: pytest.MonkeyPatch):
+    """Blow up on any laptop filesystem touch of the remote root's paths."""
+    import builtins
+
+    remote_paths = ("/srv/www", "/srv")
+    real_open = builtins.open
+    real_lstat = os.lstat
+
+    def tripwire_open(file, *args, **kwargs):
+        if isinstance(file, (str, Path)) and any(
+            str(file).startswith(prefix) for prefix in remote_paths
+        ):
+            raise AssertionError(f"laptop open() on remote path: {file}")
+        return real_open(file, *args, **kwargs)
+
+    def tripwire_lstat(path, *args, **kwargs):
+        if any(str(path).startswith(prefix) for prefix in remote_paths):
+            raise AssertionError(f"laptop lstat() on remote path: {path}")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", tripwire_open)
+    monkeypatch.setattr(os, "lstat", tripwire_lstat)
+
+
+@pytest.fixture
+def _default_specs_without_config_reads(monkeypatch: pytest.MonkeyPatch):
+    """Keep provider construction off the live config machinery.
+
+    ``_default_specs`` reads the web-deep-search gate through
+    ``get_cli_setting``; under this repo's sandboxed test-config redirect
+    that read trips the KNOWN pre-existing Backup_Recovery environment
+    failure (task-15 brief: compare against base). These tests exercise
+    the Phase 3a root-type boundary, not the config bootstrap, so the
+    gate is pinned to its disabled default instead.
+    """
+    monkeypatch.setattr(
+        local_tool_provider, "get_cli_setting", lambda *args, **kwargs: False
+    )
+
+
+def test_remote_root_authority_without_executor_fails_loud_at_composition(
+    tmp_path, monkeypatch, _default_specs_without_config_reads
+):
+    import tldw_chatbook.Tools.workspace_tool_executor as wte
+
+    def blow_up(captured_root, *args, **kwargs):
+        if "/srv" in str(captured_root):
+            raise AssertionError(
+                f"composition must not capture a remote root locally: {captured_root}"
+            )
+
+    monkeypatch.setattr(wte, "capture_directory_chain", blow_up)
+    authority = _remote_authority(executor=None)
+
+    with pytest.raises(TypeError, match="remote root reached laptop-disk path"):
+        make_provider(root=tmp_path, admitted_roots=(authority,))
+
+
+def test_remote_agent_authority_admission_fails_loud_without_executor(
+    tmp_path, _default_specs_without_config_reads
+):
+    provider = make_provider(root=tmp_path, use_default_executor=True)
+
+    with pytest.raises(TypeError, match="remote root reached laptop-disk path"):
+        provider.admit_run_workspace_root("run-remote", _remote_authority(executor=None))
+
+
+def test_path_targets_preflight_refuses_remote_root_loudly(
+    tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
+):
+    provider = make_provider(
+        root=tmp_path, admitted_roots=(_remote_authority(),)
+    )
+
+    with pytest.raises((TypeError, NotImplementedError)) as caught:
+        provider.path_targets("local:fs_read", {"path": "notes.txt"})
+
+    assert "remote root reached laptop-disk path" in str(caught.value)
+
+
+def test_remote_root_dispatch_fails_loud_at_the_cas_redaction_boundary(
+    tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
+):
+    provider = make_provider(
+        root=tmp_path, admitted_roots=(_remote_authority(),)
+    )
+
+    with pytest.raises((TypeError, NotImplementedError)) as caught:
+        provider.invoke("local:fs_read", {"path": "notes.txt"})
+
+    assert "remote root reached laptop-disk path" in str(caught.value)
+
+
+def test_remote_root_write_dispatch_fails_loud_at_the_cas_boundary(
+    tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
+):
+    provider = make_provider(
+        root=tmp_path, admitted_roots=(_remote_authority(),)
+    )
+
+    with pytest.raises((TypeError, NotImplementedError)) as caught:
+        provider.invoke(
+            "local:fs_write", {"path": "notes.txt", "content": "payload"}
+        )
+
+    assert "remote root reached laptop-disk path" in str(caught.value)
+
+
+def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(
+    tmp_path, _default_specs_without_config_reads
+):
+    from tldw_chatbook.Tools.remote_root_types import LocalRoot
+
+    executor = RecordingWorkspaceExecutor()
+    plain = admitted_root(
+        alias="folder-plain", root=tmp_path, allow_write=True, executor=executor
+    )
+    wrapped_executor = RecordingWorkspaceExecutor()
+    wrapped = dataclasses.replace(
+        admitted_root(
+            alias="folder-wrapped",
+            root=tmp_path,
+            allow_write=True,
+            executor=wrapped_executor,
+        ),
+        root=LocalRoot(tmp_path),
+    )
+
+    plain_provider = make_provider(root=tmp_path, admitted_roots=(plain,))
+    wrapped_provider = make_provider(root=tmp_path, admitted_roots=(wrapped,))
+
+    plain_result = plain_provider.invoke("local:fs_read", {"path": "a.txt"})
+    wrapped_result = wrapped_provider.invoke("local:fs_read", {"path": "a.txt"})
+
+    assert plain_result.ok and wrapped_result.ok
+    assert executor.calls == wrapped_executor.calls
+    assert plain_result.content == wrapped_result.content
+    assert plain_provider.path_targets("local:fs_read", {"path": "a.txt"}) == (
+        wrapped_provider.path_targets("local:fs_read", {"path": "a.txt"})
+    )

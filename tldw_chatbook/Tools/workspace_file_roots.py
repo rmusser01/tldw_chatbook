@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from loguru import logger
 
+from tldw_chatbook.Tools.remote_root_types import LocalRoot, RemoteRoot
+
 if TYPE_CHECKING:
     from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
@@ -670,8 +672,26 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
 
 def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
     """Return whether one live binding is still the exact admitted root."""
+    # Phase 3a (task 15) type boundary: this check lstats every path
+    # component on the LAPTOP, so it admits LOCAL roots only. A RemoteRoot
+    # in the frozen authority is a composition bug (remote authority is
+    # validated client-side -- registry row + status cache -- inside the
+    # executor, never here). The raise sits OUTSIDE the try below on
+    # purpose: the except clause would otherwise swallow it into a silent
+    # authority mismatch and just drop the binding.
+    raw_root = getattr(frozen, "root", None)
+    if isinstance(raw_root, RemoteRoot):
+        raise TypeError(
+            "remote root reached laptop-disk path: frozen-authority lstat check"
+        )
+    if raw_root is None:
+        return False
     try:
-        expected_root = Path(frozen.root)
+        expected_root = (
+            raw_root.path
+            if isinstance(raw_root, LocalRoot)
+            else Path(raw_root)
+        )
         if folder != expected_root:
             return False
         from tldw_chatbook.Chat.console_project_instructions import (
