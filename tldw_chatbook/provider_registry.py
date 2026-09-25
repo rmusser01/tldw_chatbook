@@ -288,6 +288,10 @@ CUSTOM_HOSTED = ProviderRecord(
             "thinking_budget_tokens",
         }
     ),
+    # "logprobs": evidence-backed (non-null once the forwarded logprobs
+    # param is set). "stop_reason": PROVISIONAL -- vLLM memory, not fixture
+    # evidence (no CUDA host for capture; see Tests/fixtures/longtail/
+    # CAPTURE.md). Reconcile when a vLLM capture lands.
     choice_allowances=frozenset({"logprobs", "stop_reason"}),
     tolerant_response_extras=True,
     reasoning_disposition="ignored",

@@ -478,7 +478,8 @@ unchanged — what changed is response validation and request strictness:
   `config.toml` to return every OpenAI-compatible custom-endpoint entry to
   the legacy handler. The built-in `custom`/`custom_2` slots never execute
   through the engine, so the switch does not affect them. It defaults to
-  `true`; flip it only to isolate a suspected engine regression, and please
+  `true`; any value other than an unquoted `true`/`false` (for example
+  `"false"` in quotes) also selects the legacy handler and logs a warning; flip it only to isolate a suspected engine regression, and please
   report the server's response shape so the tolerant profile can be widened
   with evidence.
 

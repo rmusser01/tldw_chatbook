@@ -568,11 +568,13 @@ async def test_swap_off_keeps_the_legacy_execution_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_switch_value_fails_open_to_the_default() -> None:
+@pytest.mark.parametrize("value", ["false", "true", 0, None])
+async def test_malformed_switch_value_falls_back_to_legacy(value) -> None:
+    """A quoted "false" must still roll back: any non-bool -> legacy path."""
     resolved = await _resolve(
-        _entry_config(console={"custom_endpoints_use_engine": "false"})
+        _entry_config(console={"custom_endpoints_use_engine": value})
     )
-    assert resolved.execution_key == "custom-hosted"
+    assert resolved.execution_key == "custom-openai-api"
 
 
 @pytest.mark.asyncio

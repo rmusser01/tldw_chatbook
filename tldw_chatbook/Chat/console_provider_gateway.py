@@ -289,16 +289,24 @@ def _custom_endpoints_use_engine(app_config: Mapping[str, Any]) -> bool:
 
     ``[console] custom_endpoints_use_engine`` (default ``True``) decides
     whether ``openai_compatible`` custom-ep entries execute through the
-    strict hosted engine (``custom-hosted``). A missing or non-boolean
-    value resolves to the documented default -- the switch is an operator
-    rollback control, not a security boundary, and a malformed value must
-    not brick every custom-endpoint send.
+    strict hosted engine (``custom-hosted``). A missing value resolves to
+    the documented default. A present-but-malformed value (e.g. the string
+    ``"false"``) resolves to the legacy path with a warning: the switch is
+    a rollback control, so an operator's evident attempt to set it must
+    never leave the engine on. Both paths are known-good, so neither
+    direction bricks custom-endpoint sends.
     """
     console = app_config.get("console", {})
     if not isinstance(console, Mapping):
         return True
     value = console.get("custom_endpoints_use_engine", True)
-    return value if type(value) is bool else True
+    if type(value) is bool:
+        return value
+    logger.warning(
+        "[console] custom_endpoints_use_engine must be true or false; "
+        "using the legacy custom-endpoint path."
+    )
+    return False
 
 
 def _apply_custom_endpoint_engine_swap(
