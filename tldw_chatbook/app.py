@@ -1221,7 +1221,14 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
             return
         if change.persisted:
-            self.app.notify(f"{display_name(theme_name)} is now your theme", severity="information")
+            message = f"{display_name(theme_name)} is now your theme (was: {display_name(change.previous_active)})"
+            if change.caches_reloaded:
+                self.app.notify(message, severity="information")
+            else:
+                self.app.notify(
+                    f"{message}; configuration refresh failed — reopen Settings to refresh",
+                    severity="warning",
+                )
         else:
             self.app.notify(
                 f"{display_name(theme_name)} applied; the launch default was not saved",

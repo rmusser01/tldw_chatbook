@@ -90,6 +90,25 @@ async def test_appearance_shows_read_only_theme_row_and_opens_picker(request):
         assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_open_theme_highlights_the_launch_default(request):
+    # Task 5 (TASK-32948 PR 2, spec §8): Open Theme highlights the launch
+    # default, not whatever happens to be active right now -- those can
+    # differ (e.g. a palette Try/Use elsewhere in the session).
+    from tldw_chatbook.Widgets.settings_theme_picker import ThemePicker
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        host.theme = "nord"  # active diverges from the launch default (textual-dark)
+        await pilot.pause(0.2)
+        await pilot.click("#settings-appearance-open-theme")
+        await pilot.pause(0.3)
+        picker = host.screen.query_one(ThemePicker)
+        assert picker.highlighted_id == "textual-dark"
+
+
 def test_appearance_save_sections_carry_no_default_theme():
     # Spec §8, structural: Appearance never writes general.default_theme --
     # not even the value it read. The config writer sets keys one by one

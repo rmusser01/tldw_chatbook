@@ -143,10 +143,25 @@ class ThemeChange:
     previous_active: str
     previous_launch_default: str
     persisted: bool
+    # Whether the in-process config caches were refreshed after a persisted
+    # write (ConfigMutationResult.caches_reloaded). True by default: a Try
+    # (persist=False) never attempts a reload, so there is nothing to fail.
+    caches_reloaded: bool = True
 
     def merge(self, later: ThemeChange) -> ThemeChange:
-        """Chain a later change after this one; Revert goes back to the first."""
-        return ThemeChange(self.previous_active, self.previous_launch_default, self.persisted or later.persisted)
+        """Chain a later change after this one; Revert goes back to the first.
+
+        ``persisted`` is OR'd: if either leg actually wrote to disk, the
+        chain owns a persisted state that Revert must undo. ``caches_reloaded``
+        is AND'd the other way -- a failed reload in either leg must still
+        surface, even if a later leg's reload happened to succeed.
+        """
+        return ThemeChange(
+            self.previous_active,
+            self.previous_launch_default,
+            self.persisted or later.persisted,
+            self.caches_reloaded and later.caches_reloaded,
+        )
 
 
 def current_launch_default() -> str:
@@ -161,17 +176,20 @@ def _apply_config_mutation(mutation: dict) -> Any:
     return apply_settings_mutation_to_cli_config(mutation)
 
 
-def _persist_launch_default(app: Any, name: str) -> bool:
+def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
+    """Write the launch default; return ``(file_replaced, caches_reloaded)``."""
     result = _apply_config_mutation({"general": {"default_theme": name}})
-    if not getattr(result, "file_replaced", False):
-        return False
+    file_replaced = bool(getattr(result, "file_replaced", False))
+    caches_reloaded = bool(getattr(result, "caches_reloaded", False))
+    if not file_replaced:
+        return False, caches_reloaded
     # The in-memory copy Settings reads (was handle_theme_launch_default_changed).
     config = getattr(app, "app_config", None)
     if isinstance(config, dict):
         general = dict(config.get("general", {}))
         general["default_theme"] = name
         config["general"] = general
-    return True
+    return True, caches_reloaded
 
 
 def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
@@ -183,15 +201,19 @@ def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
     previous_active = str(app.theme)
     previous_launch = current_launch_default()
     app.theme = name
-    persisted = _persist_launch_default(app, name) if persist else False
-    return ThemeChange(previous_active, previous_launch, persisted)
+    if persist:
+        persisted, caches_reloaded = _persist_launch_default(app, name)
+    else:
+        persisted, caches_reloaded = False, True
+    return ThemeChange(previous_active, previous_launch, persisted, caches_reloaded)
 
 
 def revert_theme(app: Any, change: ThemeChange) -> bool:
     """Undo ``change``; False when the launch default could not be restored."""
     app.theme = change.previous_active
     if change.persisted:
-        return _persist_launch_default(app, change.previous_launch_default)
+        persisted, _caches_reloaded = _persist_launch_default(app, change.previous_launch_default)
+        return persisted
     return True
 
 

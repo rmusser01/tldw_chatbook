@@ -442,7 +442,8 @@ editing and deeper visual preview." **Global visual defaults** leads with a
 read-only **Theme** row — "\<Launch theme\> (launch default) · active: \<Active
 theme\>" (or "launch default missing: \<id\> · active: …" if that theme is no
 longer registered) — and an **Open Theme** button that jumps straight to the
-Theme picker; Appearance itself no longer sets or saves a theme. Below that:
+Theme picker, highlighting the launch default (not whatever's merely active,
+if the two differ); Appearance itself no longer sets or saves a theme. Below that:
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Character expressions**, an **Animations** checkbox,
 and **Reduce motion**, **ASCII glyphs**, and **Smooth scrolling** toggles. **Shared Library rail**
@@ -495,11 +496,18 @@ match '\<text\>'" and Enter does nothing.
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
 Try/Use, so one Revert always lands back where you started); it disappears
-once pressed. Toasts name what happened: Try says "Trying \<name\> for this
+once pressed. When a persisted Use captures a moment where the active theme
+and the launch default already disagreed (e.g. an earlier Try left the
+active theme unsaved), the label also names the launch default: "Revert to
+\<theme\> (launch: \<launch theme\>)". Toasts name what happened: Try says
+"Trying \<name\> for this
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
-crashes and Revert stays available.
+crashes and Revert stays available. The command palette's "Switch to
+\<theme\>" uses the same wording and, if the save lands but the in-process
+config cache fails to refresh, adds "; configuration refresh failed —
+reopen Settings to refresh".
 
 **Clone** or **New** swap in the same full editor this category has always
 had, behind a **Back to themes** button. **Theme Library**: a **Name** box
@@ -1124,3 +1132,11 @@ Use), Clone opened the editor and Back with an edit showed the Stay /
 Discard / Save prompt, Appearance's read-only row and Open Theme button
 landed on the picker, and a full relaunch loaded the theme a prior session
 had Used.*
+
+*Verified against `feat/theme-picker-pr2` @ ed7c9f1cc7 — 2026-09-25
+(TASK-32948 PR 2, Task 5): the command palette's toast now matches the
+picker's wording and gains a cache-refresh-failed warning; Appearance's
+Open Theme highlights the launch default, not merely the active theme;
+the Revert chip names the launch default too when a persisted change left
+it disagreeing with the active theme. Pinned by pilot tests, not driven
+live.*
