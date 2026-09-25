@@ -126,10 +126,10 @@ def test_settings_execution_provider_keys_match_chat_api_handlers() -> None:
     execution-only spelling -- identity surfaces keep the
     ``custom``/``custom-openai-api`` spellings per ADR-179 Phase 2 Task 6
     decision 1 -- and the cloud engine presets (databricks, together,
-    fireworks, cerebras) have not been added to the Console settings
-    modal's support set, so the modal labels them "(WIP)" with blocked
-    readiness copy even though the gateway's default handler universe
-    (full API_CALL_HANDLERS) already dispatches them.
+    fireworks, cerebras) were temporarily absent from the Console settings
+    modal's support set (TASK-32918 pinned that gap; TASK-32919 closed it,
+    so the gap set below is now empty and must stay empty: engine presets
+    join the settings set the moment they become dispatchable).
 
     The invariant therefore compares identity keys, not raw key sets:
 
@@ -155,9 +155,11 @@ def test_settings_execution_provider_keys_match_chat_api_handlers() -> None:
         assert identity.is_supported, settings_key
 
     engine_execution_only_keys = frozenset({"custom-hosted"})
-    console_settings_gap = frozenset(
-        {"databricks", "together", "fireworks", "cerebras"}
-    )
+    # TASK-32919: empty by design. New engine presets must land in
+    # CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS together with their dispatch
+    # entry; adding a key here again means the modal offers a "(WIP)" label
+    # for a provider the gateway can already send.
+    console_settings_gap = frozenset()
     # Both exclusion lists must name real handlers (no typo'd gap entries).
     assert (
         engine_execution_only_keys | console_settings_gap
@@ -634,6 +636,160 @@ def test_provider_options_label_configured_unsupported_providers_as_wip() -> Non
 
     assert options_by_value["local_onnx"].label == "local_onnx (WIP)"
     assert options_by_value["local_ollama"].label == "local_ollama"
+
+
+def test_engine_cloud_providers_are_first_class_console_provider_options() -> None:
+    """ADR-179 presets are selectable without configuring them first.
+
+    The modal's provider picker is fed by ``build_console_provider_options``:
+    a key outside the settings support set only appears once configured, and
+    then with a "(WIP)" label. databricks/together/fireworks/cerebras are
+    dispatchable, so they must be offered unconfigured and WIP-free, sorted
+    into the cloud group ahead of every local provider.
+    """
+    options = build_console_provider_options({"llama_cpp": ["local-model"]})
+    options_by_value = {option.value: option for option in options}
+    option_values = [option.value for option in options]
+
+    for engine_key in ("databricks", "together", "fireworks", "cerebras"):
+        assert engine_key in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        assert engine_key in options_by_value
+        assert "(WIP)" not in options_by_value[engine_key].label
+    # Cloud-group membership: all four sort ahead of the local llama.cpp.
+    for engine_key in ("databricks", "together", "fireworks", "cerebras"):
+        assert option_values.index(engine_key) < option_values.index("llama_cpp")
+
+
+def test_engine_cloud_providers_render_shared_catalog_display_names() -> None:
+    """Modal/provider-picker labels relabel through the shared catalog.
+
+    ``ConsoleSettingsModal._provider_select_options`` relabels every option
+    value with ``provider_display_name``; unmapped keys would render as raw
+    config keys, so the shared catalog (task-180's Settings/Wizard/Console
+    label source) must carry the four display names.
+    """
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+    assert provider_display_name("databricks") == "Databricks"
+    assert provider_display_name("together") == "Together"
+    assert provider_display_name("fireworks") == "Fireworks"
+    assert provider_display_name("cerebras") == "Cerebras"
+
+
+@pytest.mark.parametrize(
+    "provider_key,env_var",
+    [
+        ("databricks", "DATABRICKS_TOKEN"),
+        ("together", "TOGETHER_API_KEY"),
+        ("fireworks", "FIREWORKS_API_KEY"),
+        ("cerebras", "CEREBRAS_API_KEY"),
+    ],
+)
+def test_engine_cloud_readiness_is_configuration_blocked_not_unsupported(
+    provider_key: str, env_var: str
+) -> None:
+    """Selecting an engine preset blocks on configuration, never "Unknown".
+
+    With the keys in the settings support set, the readiness gate reports a
+    concrete, actionable credential blocker naming the provider's env var
+    instead of the pre-TASK-32919 ``provider_unsupported`` dead end, and the
+    shipped ``[api_settings]`` tables (api_key_env_var, and api_base_url for
+    the inference clouds) are enough for the credential to be the only
+    missing piece.
+    """
+    config = {
+        "api_settings": {
+            provider_key: {"api_key_env_var": env_var},
+        }
+    }
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider_key, model="some-model"),
+        app_config=config,
+        environ={},
+    )
+
+    assert readiness.blocker == "credential_missing"
+    assert env_var in readiness.detail
+    assert readiness.recovery_action == "configure_credential"
+
+
+def test_databricks_readiness_names_workspace_url_once_credentialed() -> None:
+    """A resolved Databricks token alone still blocks on the workspace URL.
+
+    provider_readiness requires api_base_url for databricks (per-account
+    workspace host, no shipped default); the settings readiness must surface
+    that copy -- and once the workspace URL joins the config the session is
+    send-capable (model picked), never "provider_unsupported".
+    """
+    base_config = {
+        "api_settings": {
+            "databricks": {
+                "api_key_env_var": "DATABRICKS_TOKEN",
+                "api_key": "dapi-stored-secret-canary",
+            }
+        }
+    }
+
+    without_url = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="databricks", model="databricks-mixtral"),
+        app_config=base_config,
+        environ={},
+    )
+    assert without_url.blocker != "provider_unsupported"
+    assert "workspace" in without_url.detail
+
+    with_url = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="databricks", model="databricks-mixtral"),
+        app_config={
+            "api_settings": {
+                "databricks": {
+                    **base_config["api_settings"]["databricks"],
+                    "api_base_url": "https://adb-1234567890123456.7.azuredatabricks.net",
+                }
+            }
+        },
+        environ={},
+    )
+    assert with_url.blocker is None
+    assert with_url.native_send_supported is True
+
+
+@pytest.mark.parametrize(
+    "provider_key,default_base",
+    [
+        ("together", "https://api.together.xyz/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+        ("cerebras", "https://api.cerebras.ai/v1"),
+    ],
+)
+def test_inference_cloud_readiness_is_ready_with_key_and_shipped_default(
+    provider_key: str, default_base: str
+) -> None:
+    """Key + the shipped default api_base_url is a send-capable session.
+
+    The inference clouds ship ``api_base_url`` in their default
+    ``[api_settings]`` tables (provider_registry records carry the same
+    default_base_url), so configuring the credential alone reaches Ready.
+    """
+    env_var = f"{provider_key.upper()}_API_KEY"
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider_key, model="served-model"),
+        app_config={
+            "api_settings": {
+                provider_key: {
+                    "api_key_env_var": env_var,
+                    "api_base_url": default_base,
+                    "api_key": "stored-secret-canary",
+                }
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.blocker is None
+    assert readiness.native_send_supported is True
+    assert readiness.operability == "ready_to_send"
 
 
 def test_validation_rejects_out_of_range_temperature() -> None:

@@ -90,14 +90,24 @@ if TYPE_CHECKING:
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
 CONSOLE_SESSION_SETTINGS_SOURCES = frozenset({"derived", "user"})
+#: Provider keys the Console settings modal offers and readiness accepts.
+#: Includes the ADR-179 engine-driven cloud presets (databricks, together,
+#: fireworks, cerebras -- TASK-32919): they dispatch through
+#: ``API_CALL_HANDLERS`` like every legacy key, so they are identity keys
+#: here too; only ``custom-hosted`` stays execution-only (Phase 2 Task 6
+#: decision 1). Reconciled against the handler map by
+#: ``test_settings_execution_provider_keys_match_chat_api_handlers``.
 CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
     {
         "anthropic",
         "aphrodite",
+        "cerebras",
         "cohere",
         "custom-openai-api",
         "custom-openai-api-2",
+        "databricks",
         "deepseek",
+        "fireworks",
         "google",
         "groq",
         "huggingface",
@@ -119,6 +129,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "openrouter",
         "qwencloud",
         "tabbyapi",
+        "together",
         "vllm",
         "zai",
     }
@@ -1628,6 +1639,15 @@ def build_console_settings_readiness(
         )
     elif endpoint_invalid:
         blocker, recovery_action = "endpoint_invalid", "configure_endpoint"
+    elif readiness.configuration_issue == "endpoint_missing":
+        # ADR-179 (databricks, first provider blocked on a missing endpoint
+        # while credentialed): the structured contract maps
+        # endpoint_missing to the endpoint_invalid blocker
+        # (_CONFIGURATION_ISSUE_BLOCKER), which outranks credential_missing
+        # in _BLOCKER_PRECEDENCE -- the builder must pick it here or
+        # _validate_console_blocker_contract rejects the snapshot and the
+        # modal raises instead of showing the workspace-URL remedy.
+        blocker, recovery_action = "endpoint_invalid", "configure_endpoint"
     elif provider_configuration_invalid or (
         readiness.configuration_issue == "invalid_settings"
     ):
@@ -1650,11 +1670,19 @@ def build_console_settings_readiness(
 
     native_send_supported = blocker is None
     if blocker == "endpoint_invalid":
-        detail = (
-            INVALID_LLAMACPP_BASE_URL_COPY
-            if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-            else "Provider blocked: invalid base URL. Use an http(s) URL."
-        )
+        if not endpoint_invalid:
+            # Missing-endpoint copy path (see the endpoint_missing branch
+            # above): nothing the user typed is invalid, so the remedy is
+            # the readiness copy naming the required endpoint setting
+            # (e.g. Databricks's per-account workspace URL), not the
+            # generic malformed-URL wording.
+            detail = readiness.user_message
+        else:
+            detail = (
+                INVALID_LLAMACPP_BASE_URL_COPY
+                if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
+                else "Provider blocked: invalid base URL. Use an http(s) URL."
+            )
         label = "Invalid URL"
     elif blocker == "endpoint_not_saved":
         label = "Endpoint not saved"
