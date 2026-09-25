@@ -5313,6 +5313,55 @@ StatCard:hover {
 
 
 
+#settings-theme-pane,
+#settings-theme-picker,
+#settings-theme-picker-columns,
+#settings-theme-list-column,
+#settings-theme-card-column {
+    height: auto;
+}
+#settings-theme-list-column,
+#settings-theme-card-column {
+    width: 1fr;
+}
+#settings-theme-list {
+    height: auto;
+    min-height: $ds-size-8;
+    max-height: $ds-size-24;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
+    layout: vertical;
+}
+
+#settings-theme-list > .option-list--option-highlighted {
+    text-style: bold;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-list {
+    max-height: $ds-size-9;
+}
+
+#settings-theme-card-column .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+#settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-success,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-warning,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-error {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview {
+    border: none;
+    margin: $ds-space-0;
+}
+
+
 #settings-theme-tree {
     width: $ds-width-full;
     height: $ds-size-12;

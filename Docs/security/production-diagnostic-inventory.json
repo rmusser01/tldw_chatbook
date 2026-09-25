@@ -4040,6 +4040,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "9068df9e89e15c74d31b",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/settings_theme_picker.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 19,
       "diagnostic_digest": "626a1d6fd29003f958fc",
       "owner": "TASK-494",

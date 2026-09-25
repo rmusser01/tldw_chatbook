@@ -32,14 +32,6 @@ async def test_theme_preview_paints_rows_from_colours(request):
         assert "[ Send ]" in str(preview.query_one("#pv-accent").render())
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_compact_preview_has_two_rows(request):
-    preview = ThemePreview("pv", compact=True)
-    async with _app(preview).run_test(size=(80, 20)):
-        assert [w.id for w in preview.children] == ["pv-rail", "pv-accent"]
-
-
 @pytest.fixture
 def config_writes(monkeypatch, tmp_path):
     calls = []

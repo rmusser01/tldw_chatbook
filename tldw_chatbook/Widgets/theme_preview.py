@@ -27,15 +27,19 @@ PREVIEW_STYLE = {
     "error": ("background", "error"),
     "accent": ("background", "accent"),
 }
-_COMPACT_ROWS = ("rail", "accent")
 
 
 class ThemePreview(Vertical):
-    def __init__(self, prefix: str, *, compact: bool = False, **kwargs: Any) -> None:
+    def __init__(self, prefix: str, **kwargs: Any) -> None:
         kwargs.setdefault("classes", "settings-theme-preview")
         super().__init__(**kwargs)
         self._prefix = prefix
-        self._rows = tuple(r for r in PREVIEW_ROWS if not compact or r[0] in _COMPACT_ROWS)
+        # TASK-32948 Task 7: the compact-width row reduction moved to CSS
+        # (`display: none` on the non-rail/accent rows under
+        # settings-workbench-compact, in _settings_splash_theme.tcss) so the
+        # same rows are always composed -- YAGNI'd the compose-time
+        # `compact` parameter and its rows filter.
+        self._rows = PREVIEW_ROWS
 
     def compose(self) -> ComposeResult:
         for suffix, text in self._rows:

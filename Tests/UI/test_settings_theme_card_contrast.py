@@ -92,6 +92,15 @@ async def _open_theme_card(pilot, host, theme):
     return editor
 
 
+async def _open_theme_picker(pilot, host, theme):
+    """Land on the picker (Theme's default view; no Clone needed)."""
+    host.theme = theme
+    await _category(host, pilot, "Theme")
+    host.set_focus(None)
+    await pilot.pause(0.2)
+    return host.screen.query_one("#settings-theme-picker")
+
+
 async def _show(pilot, widget):
     widget.scroll_visible(animate=False, immediate=True)
     await pilot.pause(0.05)
@@ -118,6 +127,63 @@ async def test_theme_card_button_labels_and_boundaries(theme, request):
                 assert char.strip() and _contrast(style.color, card) >= 3.0, (
                     f"{theme}/{name} edge {char!r} {style.color} on card {card}"
                 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
+async def test_theme_picker_use_and_try_chips_meet_contrast(theme, request):
+    """TASK-32948 Task 7: the picker's own chips reuse `.theme-editor-action`
+    (TASK-32947's contrast rules), measured on the picker card, not the
+    editor's."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        use_button = picker.query_one("#settings-theme-use", Button)
+        await _show(pilot, use_button)
+        fg, bg = _label_colors(host, use_button)
+        assert _contrast(fg, bg) >= 4.5, (
+            f"{theme}/use label {_contrast(fg, bg):.2f}:1 ({fg} on {bg})"
+        )
+
+        try_button = picker.query_one("#settings-theme-try", Button)
+        await _show(pilot, try_button)
+        card = _card_bg(host, try_button)
+        for _, char, style in _edges(host, try_button):
+            assert char.strip() and _contrast(style.color, card) >= 3.0, (
+                f"{theme}/try edge {char!r} {style.color} on card {card}"
+            )
+
+        # The highlighted list row must not be carried by colour alone: bold
+        # on its alphanumeric cells is the non-colour cue (Textual's
+        # OptionList has no per-row cursor glyph slot to hold a `>`).
+        #
+        # DEVIATION from the brief's formula (`lst.region.y + (lst.highlighted
+        # - lst.scroll_offset.y)`): `lst.highlighted` is an OPTION index, but
+        # `scroll_offset.y` is a LINE offset, and group headers render a
+        # divider line of their own (`option._divider`, textual's
+        # OptionList._get_option_render) -- so the two only agree with zero
+        # dividers above the highlighted row. Measured directly: at the
+        # catalog's default highlight ("Textual Dark", scrolled into view),
+        # the formula pointed at dy=21 (a plain, unhighlighted "Solarized
+        # Light" row) while the real highlighted row painted at dy=22.
+        # Locating the row by its own text is robust to the divider count.
+        lst = picker.query_one("#settings-theme-list")
+        await _show(pilot, lst)
+        highlighted_text = lst.get_option_at_index(lst.highlighted).prompt.plain
+        needle = highlighted_text.split("  ")[0].strip()
+        row_cells = None
+        for dy in range(lst.region.height):
+            row_region = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
+            cells = list(_cells(host, row_region))
+            if needle and needle in "".join(c for _, c, _ in cells):
+                row_cells = cells
+                break
+        assert row_cells is not None, f"{theme}: highlighted row {needle!r} not visible"
+        alnum_cells = [(char, style) for _, char, style in row_cells if char.isalnum()]
+        assert alnum_cells, f"{theme}: no painted glyph on the highlighted row"
+        for char, style in alnum_cells:
+            assert style.bold, f"{theme}: highlighted row cell {char!r} is not bold"
 
 
 @pytest.mark.asyncio
