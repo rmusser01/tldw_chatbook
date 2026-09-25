@@ -5348,6 +5348,13 @@ StatCard:hover {
     width: $ds-width-full;
 }
 
+#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    color: $ds-surface-panel;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+
 #settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
 #settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,
 #settings-workbench.settings-workbench-compact #settings-theme-picker-preview-success,

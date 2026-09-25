@@ -42,8 +42,8 @@ picker. Delivered as three PRs, each leaving a working screen (design spec
 - [x] #4 (PR 1) Appearance shows a read-only theme row (launch default + active theme, each named) and an Open Theme button that lands on the picker; Appearance no longer has its own theme dropdown, and its Save/Preview no longer touch the theme
 - [x] #5 (PR 1) At 80×24 and 190×55, under textual-dark and textual-light, every picker control is reachable and the list shows at least 5 rows at 80×24 (pinned by a geometry test); the picker's Use/Try chips and the highlighted row meet the existing contrast floor
 - [x] #6 (PR 1) A config write failure on Use still switches the theme for the session and reports that the launch default was not saved, without crashing or leaving Revert unusable
-- [ ] #7 (PR 2) The theme tree and its own New/Clone/Delete/Export row are removed from the editor now that the picker owns discovery; the editor gains Save as, Back to themes, Edit (opened from an existing saved theme's picker row) and Rename
-- [ ] #8 (PR 2) Deleting the active or launch-default theme falls back to a working theme (not a crash or a dangling reference) and both the picker and Appearance reflect the fallback
+- [x] #7 (PR 2) The theme tree and its own New/Clone/Delete/Export row are removed from the editor now that the picker owns discovery; the editor gains Save as, Back to themes, Edit (opened from an existing saved theme's picker row) and Rename
+- [x] #8 (PR 2) Deleting the active or launch-default theme falls back to a working theme (not a crash or a dangling reference) and both the picker and Appearance reflect the fallback
 - [ ] #9 (PR 3) Import brings an external theme file into the picker's YOUR THEMES group, through the same backup-recovery-gated file layer as Save/Delete/Export
 - [ ] #10 (PR 3) The picker and editor state unreadable-theme-file and launch-default-missing conditions in plain language instead of silently dropping the row or crashing
 - [ ] #11 (PR 3) Export's toast shows the full path and a Copy path chip
@@ -236,3 +236,198 @@ Rewritten (every file, confirmation and registration assertion kept):
 - `test_settings_theme_card_contrast.py`: the editor's button set is now Try/Save/Reset (filled) and Save as/Generate (plain).
 - `test_settings_theme_picker_screen.py`: the R6 id test expects no editor Clone/New; the Back-prompt tests make a real edit (Clone now opens clean).
 - `test_css_build_integrity.py`: the `#settings-theme-tree` pin became `#settings-theme-editor-header`.
+
+### PR 2 complete (Tasks 1–6): editor file API, picker Edit/Rename/Delete/Export, backup-pause row, editor rework, PR 1 carry-over polish, geometry/contrast/docs
+
+**What shipped**, on top of the retired/rewritten tests above:
+
+- **Editor file API** (`settings_theme_editor.py`): `list_user_theme_names()`,
+  `request_delete(name)`, `rename_user_theme(old, new) -> bool`,
+  `export_theme(name)`, and a no-field `ThemesChanged` message posted after
+  any successful delete/rename/save. Every file op resolves through
+  `_user_theme_files() -> dict[name, Path]` (keyed by `[theme].name`, stem
+  fallback), not `f"{name}.toml"` (R12), so a file whose declared name
+  differs from its filename is still found by every operation, not just
+  listed. `theme_from_file_data()` was extracted in `css/Themes/themes.py`
+  so the startup loader and rename share one Theme-construction path.
+- **Picker Edit/Rename/Delete/Export** (`settings_theme_picker.py`): a
+  second `settings-action-row` with those four buttons, plus `e`/`r`/Delete-key
+  list bindings, visible and armed only when the highlighted entry is one of
+  **yours** (`_can_manage_files()`); Rename and Delete open confirmation
+  UI, Export writes straight to `~/Downloads`. `ThemePicker` now takes an
+  injectable `list_user_names` and is fed the editor's own
+  `list_user_theme_names` (Task 3) instead of scanning the directory a
+  second time.
+- **Backup-pause row**: a disabled "Theme files unavailable while
+  backup/recovery is in progress" row appears under YOUR THEMES during a
+  pause; Edit, Rename, Delete and Export (buttons and keys alike, R17) are
+  disabled with that string as a tooltip; Use and Try keep working. The
+  editor's own Save and Save as get the same tooltip treatment (R20), fed
+  from `picker.files_available` through `open_editor`.
+- **Editor rework**: the theme tree, its hint, and the New/Clone/Delete/Export
+  row are gone. A `#settings-theme-editor-header` Static reads "Editing
+  \<name\> · copy of \<source\>" / "· new" / "· saved theme". Actions are
+  Try (relabelled from Apply), Save, **Save as…** (new — prompts via
+  `RagProfileNameModal`, always confirms an overwrite even of the loaded
+  theme's own name, R21), Reset, Generate. Save and Save as share
+  `_save_under`; on success both post `ThemesChanged` then `Saved(name)`,
+  which `ThemePane._saved` turns into `show_picker()` +
+  `refresh_catalog(highlight=name)` — Save always returns you to the picker.
+  If the saved theme is the one currently running, `_reapply_if_active`
+  repaints it live so it's never stale; this lives in the editor, not the
+  pane's `Saved` handler, because a category-leave Save can fire against a
+  pane that's about to be detached (R18).
+- **Delete fallback**: deleting the active-and-launch-default theme resets
+  both to Textual Dark and says so; deleting the merely-active one switches
+  to your launch default; either way `ThemesChanged`/`LaunchDefaultChanged`
+  keep the picker and Appearance in sync (AC #8; pinned by
+  `test_appearance_summary_recomposes_after_launch_default_changes_elsewhere`).
+- **PR 1 carry-over polish** (Task 5): the command palette's persisted-Use
+  toast now matches the picker's exact wording via one shared
+  `theme_catalog.use_theme_toast()` helper (fix round 1 folded the picker's
+  own Use toast onto the same helper, closing a gap where only the palette
+  warned on a failed cache reload); `ThemeChange` gained
+  `caches_reloaded: bool = True` (`merge()` ANDs it, ORs `persisted`, R11);
+  Appearance's Open Theme now highlights the **launch default**, not merely
+  the active theme, queued via `SettingsScreen._after_category_panes` rather
+  than `call_after_refresh` (the latter raced the category-swap worker and
+  was overwritten by the picker's own `on_mount` highlight — a real bug the
+  test caught, not a style choice); the Revert chip names the launch default
+  too when a persisted change left it disagreeing with the active theme.
+- **Geometry, contrast, docs** (Task 6): `test_every_picker_control_is_reachable`
+  now writes a user theme, highlights it, and walks the four yours-only
+  buttons too, at 80×24/190×55 across textual-dark/light (re-scrolling the
+  list into view before measuring its row count — scrolling to the lower
+  action row had pushed the list off-screen, a real regression the extended
+  test caught: `3 >= 5` failed at 80×24 before that fix); a new
+  `test_every_editor_control_is_reachable` walks Back/Name/Save/Save as/Try
+  at both sizes. A new `test_picker_delete_chip_meets_contrast_at_rest_and_focus`
+  (R19/R23) measures the picker's Delete chip across all 4 THEMES at rest
+  and focused: focus was falling back to the generic neutral
+  `.settings-action-row Button:focus`, because the colour-keeping
+  `.theme-editor-action.-error:focus` rule only ever existed scoped to
+  `#settings-theme-card` — the editor's own card, whose Delete Task 4
+  removed — and was never re-added for the picker's Delete under
+  `#settings-theme-card-column` (confirmed RED first: `focus shift 1.09:1`
+  against the 3.0 floor). Fixed with the same rule re-scoped to
+  `#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus`
+  and a CSS bundle rebuild. The keyboard-journey Theme walk
+  (`test_settings_interface_keyboard_journeys.py`) needed no code change —
+  it discovers whatever's mounted under `#settings-theme-editor-view`
+  generically (`Button, Input, Select, Checkbox, OptionList, Tree`) and was
+  independently confirmed to already cover every new editor control (probed
+  directly: back/name/dark-mode/apply/save/save-as/reset/generate/ten colour
+  inputs/preset select), plus the full 4-parametrization run green
+  (4 passed). `Docs/User_Guide/settings.md` §Theme rewritten for the
+  picker's yours-only actions and their keys, the reworked editor
+  actions/header, Save's return-to-picker behaviour, and the pause copy; the
+  stray "Theme Library" name is gone. The production diagnostic inventory
+  was regenerated after reading all 4 added / 1 removed logger rows in
+  `settings_theme_editor.py` (all Task 1's file-op error logs: theme names
+  and `_failure_reason()`-scrubbed reasons only, no paths — the removed one
+  is the R16 fix that stopped logging the full path).
+
+**Rulings (R10–R23; full detail in the gitignored, worktree-local
+`.superpowers/sdd/2026-09-25-theme-picker-pr2/progress.md`)**:
+
+- R10 — Task 1 kept `_delete_user_theme`'s tree-node sync until Task 4
+  deleted the tree, so the two tasks' tests stayed green independently.
+- R11 — `ThemeChange.caches_reloaded` follows Task 5's text, not the plan's
+  stale "returns the new launch default" summary.
+- R12 — list/delete/rename/export identity is `_user_theme_files()`
+  (`[theme].name` → path), not `f"{name}.toml"`.
+- R13 — renaming the theme currently loaded in the editor updates the
+  editor's `current_theme_name` too, so a later Save can't resurrect the
+  old file under the old name.
+- R14 — the pre-Task-4 editor Export kept exporting the *working* (possibly
+  unsaved) palette, not the saved file, until Task 4 removed the button.
+- R15 — `RecoveryRequired` must escape the per-file scan handler (the
+  picker's pause row depends on it, not a silent skip).
+- R16 — no file-op notice or log interpolates a full path; theme names and
+  `_failure_reason()`-scrubbed reasons only.
+- R17 — the backup-pause gate covers Edit too, not just Rename/Delete/Export
+  (the brief's own two statements disagreed; the more specific one won).
+- R18 — Save's re-apply-if-active lives in the editor
+  (`_reapply_if_active`), not the pane's `Saved` handler, since a
+  category-leave Save can fire against a pane about to be detached.
+- R19/R23 — Task 6 adds a picker-card contrast case for the Delete chip
+  covering both rest and **focus** (PR 1's TASK-32947 found
+  `.settings-action-row Button:focus` neutralises variant fills, and the
+  colour-keeping override was never re-scoped from the editor's card to the
+  picker's).
+- R20 — the editor's Save/Save as are disabled with the pause tooltip, fed
+  from `picker.files_available` via `ThemePane.open_editor`.
+- R21 — Save as always confirms an existing target, including the source
+  theme's own name (Save as always means "a new file").
+- R22 — the editor-scoped `.theme-editor-action.-error:focus` rule was
+  removed only after confirming it matched nothing (the editor's own Delete
+  is gone; the unscoped `.theme-editor-action.-error:enabled` rest-state
+  rule still matches the picker's Delete and was kept).
+
+**Files (PR 2, cumulative, Tasks 1–6):** new —
+`tldw_chatbook/Widgets/settings_theme_picker.py` (already existed from PR 1;
+gains the file-action buttons/bindings), `Tests/UI/test_settings_theme_file_api.py`.
+Modified — `tldw_chatbook/Widgets/settings_theme_editor.py`,
+`tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/app.py`,
+`tldw_chatbook/css/Themes/theme_catalog.py`, `tldw_chatbook/css/Themes/themes.py`,
+`tldw_chatbook/css/components/_settings_splash_theme.tcss`,
+`tldw_chatbook/css/features/_settings.tcss`, `tldw_chatbook/css/screen_agentic_settings.tcss`,
+`tldw_chatbook/css/tldw_cli_modular.tcss`, `Docs/security/production-diagnostic-inventory.json`,
+`Docs/User_Guide/settings.md`, plus the test files listed above under
+"Retired or rewritten tests" and `Tests/Utils/test_theme_catalog.py`,
+`Tests/UI/test_settings_theme_picker.py`, `Tests/UI/test_settings_theme_picker_screen.py`,
+`Tests/UI/test_settings_theme_card_contrast.py`, `Tests/UI/theme_editor_helpers.py`,
+`Tests/UI/test_command_palette_providers.py`, `Tests/UI/test_settings_configuration_hub.py`,
+`Tests/UI/test_css_build_integrity.py`, `Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py`.
+
+**Full checks (Task 6, real output):** the 14 named suites together
+(`Tests/Utils/test_theme_catalog.py`, `test_settings_theme_picker.py`,
+`test_settings_theme_picker_screen.py`, `test_settings_theme_file_api.py`,
+`test_settings_theme_editor.py`, `test_settings_theme_editor_render.py`,
+`test_settings_theme_card_contrast.py`, `test_theme_contrast.py`,
+`test_settings_interface_keyboard_journeys.py`, `test_css_build_integrity.py`,
+`test_user_theme_loader.py`, `test_settings_file_participant_lifetimes.py`,
+`test_no_blocking_io_on_message_pump.py`, `test_command_palette_providers.py`),
+`-n 4`: **462 passed, 4 failed in 413.5s**. The 4 failures
+(`TestTabNavigationProvider::test_palette_library_skills_command_opens_hidden_starter_route`,
+`TestSettingsProvider::test_discover_shows_popular_settings`,
+`TestLibraryIngestProvider::test_search_ingest_returns_exactly_one_hit`,
+`TestLibraryIngestProvider::test_discover_includes_library_ingest`) are
+stale hardcoded hit-counts unrelated to theme code (confirmed pre-existing
+in Task 5's report by running them in isolation, untouched by this branch's
+diff). Hub-vs-base comparison
+(`test_settings_configuration_hub.py` + `test_command_palette_providers.py`,
+`-k "theme or Theme or TabNavigationProvider or SettingsProvider or
+LibraryIngestProvider"`) in a detached scratch worktree at
+`origin/feat/theme-picker-pr1` (2c4585c1ea): base **10 failed, 42 passed**;
+branch **10 failed, 43 passed** (branch's +1 pass is a new Task 5 test
+matching the `-k` filter). The FAILED test names are identical on both —
+same 6 hub tests without `@private_profile_test` (CI-only, `RecoveryRequired`)
+plus the same 4 palette tests above. Scratch worktree removed afterward.
+`ruff check` on every file this task touched: `All checks passed!` before
+and after. `PYTHON=<venv> ./scripts/preflight.sh`: rc 1 → (after reading
+and writing the diagnostic inventory rows above) rc 0.
+
+**Live check (Task 6, real output).** Ran twice in a scratch `HOME`/
+`TLDW_CONFIG_PATH`/XDG profile (`tmux`, splash disabled), at 190×55 and
+80×24: Clone → edit Primary → Save (toast "Theme '\<name\>' saved"; returned
+to the picker with the new theme highlighted, YOUR THEMES gained it) → `r`
+Rename (toast "Renamed '\<old\>' to '\<new\>'") → `e` Edit (header "Editing
+\<name\> · saved theme"; the earlier colour edit was still there — a real
+reload of the saved file, not a fresh clone) → Save as… (prefilled
+"\<name\>\_copy"; toast "Theme '\<name\>\_copy' saved") → Use (toast
+"\<name\> is now your theme (was: Textual Dark)", matching Task 5's shared
+toast helper) → Delete (confirmed; toast "Deleted '\<name\>'; launch default
+and theme reset to Textual Dark" — AC #8 live) → Export (toast named the
+scratch profile's own Downloads path). Every toast was captured in the same
+command as its triggering click, per the brief's evidence-trap warning.
+Both `<name>_theme.toml` exports were confirmed on disk under the scratch
+`HOME/Downloads`, absent from the real `~/Downloads`. The real
+`~/.config/tldw_cli/config.toml` mtime (`Sep 25 00:10:38`) and the real
+`~/.config/tldw_cli/themes/` directory (empty) were checked before the first
+launch and after both passes; neither changed. One trap hit along the way:
+the OptionList's Delete-key binding only fires once the list itself has
+keyboard focus, not merely a highlighted row from a prior click — a stray
+click that leaves focus on a button (e.g. after "Use this theme") silently
+no-ops the `delete` key; clicking back onto the list row first, or using the
+Delete button directly, both work.
