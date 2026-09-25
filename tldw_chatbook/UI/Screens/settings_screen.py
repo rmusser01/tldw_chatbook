@@ -2148,7 +2148,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+            "Revert undoes a Use or Try this session; Clone opens the editor, where Reset restores the saved palette; delete a theme file to remove it",
         ),
         (
             "Boundary",
@@ -16244,7 +16244,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 (
                     "Recovery",
-                    "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+                    "Revert undoes a Use or Try this session; Clone opens the editor, where Reset restores the saved palette; delete a theme file to remove it",
                 ),
                 (
                     "Boundary",

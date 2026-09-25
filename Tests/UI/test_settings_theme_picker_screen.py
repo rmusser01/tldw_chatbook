@@ -26,6 +26,10 @@ async def test_theme_category_opens_on_the_picker_without_state_banner(request):
         pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
         assert pane.current == "settings-theme-picker"
         assert not host.screen.query("#settings-category-state-banner")
+        # R6: picker and editor buttons no longer share ids.
+        for button_id in ("clone", "new"):
+            assert len(host.screen.query(f"#settings-theme-{button_id}")) == 1
+            assert len(host.screen.query(f"#settings-theme-picker-{button_id}")) == 1
 
 
 @pytest.mark.asyncio

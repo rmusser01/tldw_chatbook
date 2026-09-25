@@ -49,8 +49,7 @@ async def test_interface_controls_are_keyboard_reachable_and_painted(
                 if not control.id or control.has_class("select-overlay"):
                     continue
                 try:
-                    # Scoped: picker and editor both carry #settings-theme-clone/-new.
-                    await _tab_to(host, pilot, f"{scope} #{control.id}")
+                    await _tab_to(host, pilot, f"#{control.id}")
                     painted = _painted(host, control)
                     if isinstance(control, Button):
                         assert str(control.label) in painted, (control.id, painted)
