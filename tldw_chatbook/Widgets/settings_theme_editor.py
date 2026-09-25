@@ -524,9 +524,12 @@ class SettingsThemeEditor(Vertical):
                 with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
                     with raw._file(operation, theme_path, "r") as f:
                         theme_data = toml.load(f)
+                # Follow-up (R41): validate what was read, not the earlier
+                # scan's copy -- the file can change in between.
+                theme_from_file_data(theme_data, theme_path.stem, theme_path.name)
 
                 self.current_theme_name = theme_name
-                self.current_theme_data = theme_data.get("colors", {})
+                self.current_theme_data = dict(theme_data.get("colors", {}))
                 self._theme_variables = sanitize_theme_variables(
                     theme_data.get("variables", {}) or {}, theme_path.name
                 )
@@ -544,7 +547,7 @@ class SettingsThemeEditor(Vertical):
                 self._loaded_user_theme = theme_name
 
             except Exception as e:
-                logger.error(f"Failed to load user theme {theme_name}: {e}")
+                logger.error(f"Failed to load user theme {printable(theme_name)}: {self._failure_reason(e)}")
                 self.app.notify(f"Failed to load theme: {escape_markup(self._failure_reason(e))}", severity="error")
 
     def _extract_theme_colors(self, theme: Theme) -> dict[str, str]:
@@ -618,7 +621,7 @@ class SettingsThemeEditor(Vertical):
                 swatch.update(_INVALID_COLOUR_TEXT)
 
     def _validate_color_input(self, color_value: str) -> bool:
-        """Validate a color input value (``#RGB``/``#RRGGBB``, R41)."""
+        """Validate a color input value (``#RGB``/``#RRGGBB``/``#RRGGBBAA``, R41)."""
         return is_hex_colour(color_value)
 
     def _preset_target(self) -> str:
@@ -1145,7 +1148,8 @@ class SettingsThemeEditor(Vertical):
                 self.post_message(self.ThemesChanged())
             # The editor must not keep offering the deleted file as loaded;
             # a delete of some other theme (from the picker) keeps its edits.
-            if self.current_theme_name == theme_name:
+            # An unreadable file was never loaded under ``theme_name``.
+            if registered and self.current_theme_name == theme_name:
                 self.load_theme("textual-dark")
         except Exception as e:
             logger.error(f"Failed to delete theme '{theme_name}': {e}")
@@ -1343,7 +1347,7 @@ class SettingsThemeEditor(Vertical):
             validate_filename(name)  # it names the file in ~/Downloads
             theme_path = self._user_theme_files().get(name)
             if theme_path is None:
-                self.app.notify(f"No saved custom theme named '{escape_markup(name)}'", severity="warning")
+                self.app.notify(f"No saved custom theme named '{escape_markup(printable(name))}'", severity="warning")
                 return
             with (
                 raw._scope(self, "theme_file", selected_read=theme_path) as operation,
@@ -1355,8 +1359,11 @@ class SettingsThemeEditor(Vertical):
             return
         except (ValueError, OSError) as exc:  # TomlDecodeError is a ValueError
             reason = self._failure_reason(exc)
-            logger.error(f"Failed to read theme '{name}' for export: {reason}")
-            self.app.notify(f"Failed to export theme '{escape_markup(name)}': {escape_markup(reason)}", severity="error")
+            logger.error(f"Failed to read theme '{printable(name)}' for export: {reason}")
+            self.app.notify(
+                f"Failed to export theme '{escape_markup(printable(name))}': {escape_markup(reason)}",
+                severity="error",
+            )
             return
         self._export(name, theme_data)
 
@@ -1488,7 +1495,7 @@ class SettingsThemeEditor(Vertical):
         for key, value in colors.items():
             # Spec §7 / R40(c): what the editor's colour fields accept.
             if not (isinstance(value, str) and self._validate_color_input(value)):
-                return f"{str(key)[:40]}: '{str(value)[:40]}' is not #RRGGBB"
+                return f"{str(key)[:40]}: '{str(value)[:40]}' is not #RGB, #RRGGBB or #RRGGBBAA"
         name = str(meta.get("name") or path.stem).strip() or path.stem
         try:
             validate_filename(name)

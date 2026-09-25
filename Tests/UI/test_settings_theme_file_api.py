@@ -688,3 +688,96 @@ async def test_stale_unreadable_id_notice_is_printable(request, tmp_path, config
         text = _terminal_text(app.notify.call_args.args[0])
         assert text.startswith("No saved custom theme named")
         assert text.isprintable(), repr(text)
+
+
+# -- Fix round 2 follow-up ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clone_of_translucent_shipped_theme_saves_a_readable_file(request, tmp_path, config_writes):
+    """deep_dive_cyberspace.error is #FF33AACC; its saved clone must load."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes, theme_from_file_data
+
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.load_theme("deep_dive_cyberspace")
+        await pilot.pause()
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        path = tmp_path / "deep_dive_cyberspace_copy.toml"
+        data = toml.loads(path.read_text(encoding="utf-8"))
+        assert len(data["colors"]["error"]) == 9  # #RRGGBBAA
+        theme_from_file_data(data, "x", path.name)
+        readable, unreadable = editor.user_theme_listing()
+        assert "deep_dive_cyberspace_copy" in readable and unreadable == {}
+        assert [t.name for t in load_user_themes(tmp_path)] == ["deep_dive_cyberspace_copy"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_deleting_unreadable_file_keeps_editor_state_of_same_named_theme(
+    request, tmp_path, config_writes
+):
+    """Follow-up item 2: the editor keeps a readable 'b.toml' it has loaded."""
+    (tmp_path / "b.toml").write_text("garbage [[", encoding="utf-8")
+    data = {"theme": {"name": "b.toml", "dark": True}, "colors": dict(MINE)}
+    (tmp_path / "other.toml").write_text(toml.dumps(data), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.load_user_theme("b.toml")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#445566"
+        await pilot.pause()
+        await _confirm_delete(pilot, app, editor, "unreadable:b")
+        assert not (tmp_path / "b.toml").exists()
+        assert editor.current_theme_name == "b.toml"
+        assert editor.color_inputs["primary"].value == "#445566"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_load_user_theme_validates_the_data_it_reads(request, tmp_path, config_writes, monkeypatch):
+    """Follow-up item 3: the file may change between the scan and the read."""
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        real_load = toml.load
+        hostile = {"theme": {"name": "mine"}, "colors": {**MINE, "secondary": _OSC_VALUE}}
+        # The scan reads through the real parser; the editor's re-read is swapped.
+        editor._user_theme_files()
+        monkeypatch.setattr(editor, "_user_theme_files", lambda: {"mine": tmp_path / "mine.toml"})
+        monkeypatch.setattr(toml, "load", lambda f: hostile)
+        editor.load_user_theme("mine")
+        monkeypatch.setattr(toml, "load", real_load)
+        await pilot.pause()
+        for input_widget in editor.query(Input):
+            assert input_widget.value.isprintable(), repr(input_widget.value)
+        assert editor.current_theme_data.get("secondary") != _OSC_VALUE
+        assert all(ch.isprintable() for ch in _terminal_text(app.notify.call_args.args[0]))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_stale_name_notice_is_printable(request, tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # BEL-terminated OSC passes validate_filename -> "No saved custom theme";
+        # the ESC-backslash form fails it -> "Failed to export theme".
+        for name in ("x\x1b]52;c;eA==\x07", f"x{_OSC_VALUE}"):
+            editor.export_theme(name)
+            await pilot.pause()
+            text = _terminal_text(app.notify.call_args.args[0])
+            assert text.isprintable(), repr(text)
+        assert not list(tmp_path.glob("Downloads/*"))

@@ -784,3 +784,13 @@ test_theme_catalog.py`, `Tests/Utils/test_user_theme_loader.py`,
   name through `printable()`; `sanitize_theme_variables` prints its
   `source` label through `printable()` itself (one guard for all four
   callers).
+- Follow-up (re-review): `is_hex_colour` also accepts `#RRGGBBAA` — the
+  editor writes `Color.hex` (8 digits when alpha < 1; shipped
+  `deep_dive_cyberspace.error = #FF33AACC`), so a saved clone was refused.
+  Import's refusal now reads "is not #RGB, #RRGGBB or #RRGGBBAA".
+  `load_user_theme` validates the data it re-reads with
+  `theme_from_file_data` (scan/read race); an unreadable-file delete no
+  longer resets the editor; `[variables]` names/values use `fullmatch` and
+  reject non-printable values (`$` let a trailing `\n` through, and
+  `Color.parse` accepts `"#fff\n"`); export notices pass the name through
+  `printable()`.

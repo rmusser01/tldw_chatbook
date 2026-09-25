@@ -551,7 +551,7 @@ row clears the next time you highlight a different theme.
 
 A saved file that can't be read — invalid TOML, a missing or unparseable
 primary colour, a `[colors]` key that isn't one of the ten base colours, a
-colour that isn't `#RGB` or `#RRGGBB` ("invalid colour 'secondary'"), or
+colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
 a name containing control characters ("name has control characters") —
 is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
 the reason as both a short label on the card and every disabled button's
@@ -568,9 +568,9 @@ typed, pasted (quoted or not), or dropped from Finder or a terminal, which
 unescapes every backslash-escaped character a drop pastes on macOS
 (`My\ \&\ Theme.toml`). The file must be a real `.toml` under 64 KB with a valid
 `[colors].primary`, using only the ten base colour keys — a stray
-`variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB` or
-`#RRGGBB` (the editor's own rule: "background: 'blue' is not #RRGGBB" — no
-names, `rgb(…)` or `#RRGGBBAA`), invalid TOML, or a name that isn't
+`variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB`,
+`#RRGGBB` or `#RRGGBBAA` (the editor's own rule: "background: 'blue' is not
+#RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
 filename-safe, contains `[`, or contains control characters each refuse
 with a specific reason and write nothing. A `[variables]` entry that isn't a colour
 (or `auto NN%`, or a text style) is dropped with a warning instead, the same
@@ -1289,10 +1289,10 @@ startup loader) — a bare drop alone needs one of those two to take effect,
 which is by design, not a defect.*
 
 *Verified against `feat/theme-picker-pr3` (final-review fixes, off 868e9cc526)
-— 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`
+— 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`/`#RRGGBBAA`
 colours; control characters in a theme file's name refuse it (import) or
 list it as unreadable (saved file), and every file-derived error shows them
-as `?`; a saved file's colours, like Import's, must be `#RGB`/`#RRGGBB`
+as `?`; a saved file's colours, like Import's, must be `#RGB`/`#RRGGBB`/`#RRGGBBAA`
 or the file is unreadable and skipped at startup (R41); a broken file named
 like a shipped theme is listed and deletable;
 blocked keys on an unreadable row say why; the Import prompt names what it
