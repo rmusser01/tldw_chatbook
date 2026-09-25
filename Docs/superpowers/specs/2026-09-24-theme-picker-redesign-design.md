@@ -116,7 +116,7 @@ Changes elsewhere:
 
 **Back to themes, Esc, or switching category with unsaved edits.** Shows the Stay / Discard / Save prompt from TASK-32941. A category switch rebuilds the detail pane (`settings_screen.py:3729`), so returning to Theme always opens the picker, never the editor.
 
-**Carried-colour check.** TASK-32940 carries a shipped theme's extra colours into clones. They are not recomputed when the clone is recoloured. On Save and Try, each carried **text** colour is checked against the surface it is drawn on: `text-*` against `background`, and `footer-key-foreground` against the footer surface. Background-type variables such as `input-selection-background` are not text and are not checked. Any below 4.5:1 is dropped, so the theme falls back to the colour Textual derives.
+**Carried colours.** TASK-32940 carries a shipped theme's extra `variables` into clones. The fix wave on `fix/theme-ux-wave` settles the rule: they are carried only while the 10 base colours and the dark flag still equal what was loaded. Once the palette diverges, none are carried and Textual derives them. This avoids contrast arithmetic, and it was measured: a light-converted Dracula clone kept `text-muted` at 1.80:1 under the old rule. The editor inherits this rule unchanged.
 
 ## 7. Actions on your own themes
 
@@ -135,7 +135,7 @@ All of these go through `raw._scope` and the backup participant, as Save and Del
 **Import** (PR 3).
 
 - A dialog accepts a typed or pasted path. A terminal file-drop arrives as a pasted path (TASK-216).
-- Checks: `path_validation`, `.toml` only, at most 64 KB, parsed with `toml`, hex colours validated. `[variables]` is accepted only when each name matches `^[a-z0-9-]+$` and each value parses as a colour; any other entry is dropped with a warning. The same rule applies when `load_user_themes` reads files at startup, because a hand-edited file is equally untrusted. Nothing in the file is executed.
+- Checks: `path_validation`, `.toml` only, at most 64 KB, parsed with `toml`, hex colours validated. `[variables]` goes through the same validator `load_user_themes` uses since the fix wave: names must match `^[a-z0-9-]+$` and values must be colours, `auto NN%` or text-style keywords. Anything else is dropped with a warning. Nothing in the file is executed.
 - On success the file is copied into your themes folder (asking before overwriting) and registered.
 - On failure the message names the problem, for example "missing [colors].primary" or "background: 'blue' is not #RRGGBB".
 
@@ -175,7 +175,6 @@ Settings search keeps a "theme" entry, and it now lands on the picker.
 - The tree and library buttons removed from the editor.
 - Save as, Back to themes, Edit, and Rename.
 - The Delete fallback for the active or launch-default theme.
-- The carried-colour check.
 
 **PR 3: import and edge states.**
 
@@ -188,7 +187,7 @@ Each PR updates the User Guide stamp.
 
 ## 11. Testing
 
-**Unit tests** (no app needed): `build_catalog` covering the origins, the override marker, markers, strip colours and unreadable files; `is_catalog_theme`; `use_theme` with and without persist, including the return value; the carried-colour check; Rename and Import validation.
+**Unit tests** (no app needed): `build_catalog` covering the origins, the override marker, markers, strip colours and unreadable files; `is_catalog_theme`; `use_theme` with and without persist, including the `ThemeChange` return value; Rename and Import validation.
 
 **Pilot tests** using `run_test` with production CSS and `@private_profile_test`:
 
@@ -213,6 +212,6 @@ Each PR updates the User Guide stamp.
 ## 12. Out of scope
 
 - Whole-app live preview while browsing (D2).
-- Recomputing all carried variables for a recoloured clone. Only the ones failing contrast are dropped.
+- Recomputing carried variables for a recoloured clone. They are dropped and Textual derives them (§6).
 - An app-wide fix for Textual's filled-button label contrast. TASK-32947 found this is app-wide and scoped its fix to the Theme card.
 - Rebinding Settings' `/`.
