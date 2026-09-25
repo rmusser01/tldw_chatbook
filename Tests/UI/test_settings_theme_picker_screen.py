@@ -1096,3 +1096,116 @@ async def test_export_shows_full_path_and_copy_path_copies_it(request, monkeypat
         lst.highlighted = lst.get_option_index("nord")
         await pilot.pause(0.1)
         assert not host.screen.query_one("#settings-theme-export-result").display
+
+
+# TASK-32948 PR 3 Task 4 (R28): a theme name is untrusted file text.
+def _record_toasts(host):
+    """Each notify message as a Toast renders it (markup parsed), so a name
+    that is broken markup raises here just as it would on screen."""
+    from textual.content import Content
+
+    shown = []
+    original = host.notify
+
+    def notify(message, *args, **kwargs):
+        shown.append(Content.from_markup(message).plain)
+        return original(message, *args, **kwargs)
+
+    host.notify = notify
+    return shown
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_names_with_markup_render_literally_everywhere(request, monkeypatch):
+    """R28: ``x[/]`` from a hand-edited file shows literally in the Use/Try
+    toasts, the Revert chip, the Rename title and toast, and the Delete
+    dialog and toast; nothing raises."""
+    from textual.widgets import Button, Label
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _stateful_launch_default(monkeypatch, "textual-dark")
+    host = _host()
+    _saved_theme_file(host, "odd", "x[/]")
+    _saved_theme_file(host, "odd2", "z[/]")
+    toasts = _record_toasts(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = "x[/]"
+        await _highlight(host, pilot, "nord")
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        assert "Nord is now your theme (was: X[/])" in toasts
+        revert = host.screen.query_one("#settings-theme-revert", Button)
+        assert revert.label.plain.startswith("Revert to X[/]")
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == "x[/]"
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("x[/]")
+        await pilot.pause(0.1)
+        await pilot.press("t")
+        await pilot.pause(0.2)
+        assert "Trying X[/] for this session" in toasts
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert "X[/] is now your theme (was: X[/])" in toasts
+
+        await _rename_highlighted(host, pilot, "y")
+        assert "Renamed 'x[/]' to 'y'" in toasts
+        assert host.screen.query_one("#settings-theme-picker").highlighted_id == "y"
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("z[/]")
+        await pilot.pause(0.1)
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ConfirmationDialog)
+        # The dialog renders with markup off: no escape backslash shows.
+        message = str(host.screen.query_one(".dialog-message", Label).render())
+        assert message.startswith("Delete the saved theme 'z[/]'?")
+        await pilot.click("#confirm-button")
+        await pilot.pause(0.3)
+        assert "Deleted theme 'z[/]'" in toasts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reset_reloads_a_theme_whose_name_differs_from_its_file(request):
+    """R28: Reset resolves the file by [theme].name, like every file op (R12)."""
+    from textual.widgets import Input
+
+    host = _host()
+    _saved_theme_file(host, "a", "b")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "b")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.click("#settings-theme-reset")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Discard changes"
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-color-primary", Input).value == "#AB0001"
+        assert host.screen.query_one("#settings-theme-editor").is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_confirmed_after_the_pane_is_gone_does_not_crash(request):
+    """R38: the Rename prompt's callback may run after the theme pane was
+    torn down (a category switch); it must not raise QueryError."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    path = _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        screen = host.screen
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(screen.query("#settings-theme-pane")) == 0
+        screen._handle_theme_rename_result("mine", "ours")
+        await pilot.pause(0.1)
+        assert path.exists()

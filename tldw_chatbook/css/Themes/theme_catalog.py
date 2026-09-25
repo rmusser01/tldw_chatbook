@@ -17,6 +17,7 @@ from typing import Any, Literal
 from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
+from ...Utils.input_validation import escape_markup
 from .themes import ALL_THEMES
 
 Origin = Literal["yours", "shipped", "textual"]
@@ -273,12 +274,14 @@ def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
     keep their own separate wording for a Try (``persist=False``); this
     only covers the Use branch both of them share.
     """
+    # notify parses markup; a saved theme's name is untrusted file text (R28).
+    shown = escape_markup(display_name(name))
     if not change.persisted:
         return (
-            f"{display_name(name)} applied; the launch default was not saved",
+            f"{shown} applied; the launch default was not saved",
             "warning",
         )
-    message = f"{display_name(name)} is now your theme (was: {display_name(change.previous_active)})"
+    message = f"{shown} is now your theme (was: {escape_markup(display_name(change.previous_active))})"
     if change.caches_reloaded:
         return message, "information"
     return (

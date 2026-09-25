@@ -684,3 +684,28 @@ async def test_import_is_disabled_while_paused(request, config_writes):
         await pilot.press("i")
         await pilot.pause()
         assert app.imports == 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(request, monkeypatch, config_writes):
+    """R28: an exception text quoting a theme name goes through escape_markup."""
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append(Content.from_markup(message).plain)
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted): arms Revert
+        await pilot.pause()
+
+        def boom(*_args, **_kwargs):
+            raise ValueError("theme 'x[/]' is gone")
+
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.revert_theme", boom)
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert "Could not revert the theme: theme 'x[/]' is gone" in notes
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.use_theme", boom)
+        picker.use_highlighted()
+        await pilot.pause()
+        assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)

@@ -207,6 +207,20 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     return safe
 
 
+_DARK_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def theme_file_dark(value: object) -> bool:
+    """A theme file's ``[theme].dark``: R31, ``dark = "false"`` is light.
+
+    Real bools are kept; the strings false/0/no/off and true/1/yes/on
+    (any case) coerce; anything else is dark (the default).
+    """
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() not in _DARK_FALSE
+
+
 def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> Theme:
     """Build a Theme from one saved theme file's parsed TOML.
 
@@ -231,7 +245,7 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
     for key in colors:
         if key not in THEME_COLOUR_KEYS:
             raise ValueError(f"{str(key)[:40]} is not a theme colour")
-    colors["dark"] = bool(meta.get("dark", True))
+    colors["dark"] = theme_file_dark(meta.get("dark", True))
     # TASK-32940: extra colour variables the editor carried over.
     variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)
     if variables:

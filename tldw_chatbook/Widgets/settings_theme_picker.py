@@ -181,12 +181,13 @@ class ThemePicker(Vertical):
         revert.display = change is not None
         if change is None:
             return
-        label = f"Revert to {display_name(change.previous_active)}"
+        # Button labels parse markup; theme names are untrusted file text (R28).
+        label = f"Revert to {escape_markup(display_name(change.previous_active))}"
         # Only worth naming the launch default too when it persisted AND
         # disagrees with the active theme it's reverting to -- otherwise
         # they're the same theme and the parenthetical is noise.
         if change.persisted and change.previous_active != change.previous_launch_default:
-            label = f"{label} (launch: {display_name(change.previous_launch_default)})"
+            label = f"{label} (launch: {escape_markup(display_name(change.previous_launch_default))})"
         revert.label = label
 
     def compose(self) -> ComposeResult:
@@ -440,7 +441,7 @@ class ThemePicker(Vertical):
             restored = revert_theme(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
-            self.app.notify(f"Could not revert the theme: {exc}", severity="error")
+            self.app.notify(f"Could not revert the theme: {escape_markup(exc)}", severity="error")
         else:
             if not restored:
                 self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
@@ -499,13 +500,13 @@ class ThemePicker(Vertical):
         try:
             change = use_theme(self.app, theme_id, persist=persist)
         except Exception as exc:  # noqa: BLE001 - stale entry / unregistered theme
-            self.app.notify(f"Could not apply {display_name(theme_id)}: {exc}", severity="error")
+            self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
         self._revert = change if self._revert is None else self._revert.merge(change)
         self._sync_revert_chip()
         if not persist:
-            self.app.notify(f"Trying {display_name(theme_id)} for this session", severity="information")
+            self.app.notify(f"Trying {escape_markup(display_name(theme_id))} for this session", severity="information")
         else:
             message, severity = use_theme_toast(theme_id, change)
             self.app.notify(message, severity=severity)

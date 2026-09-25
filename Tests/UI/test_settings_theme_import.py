@@ -454,3 +454,32 @@ async def test_uppercase_suffix_imports(request, tmp_path, src):
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         assert editor.import_theme(str(src / "THEME.TOML")) == "sunny"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [('"false"', False), ('"OFF"', False), ('"0"', False), ('"no"', False),
+     ('"true"', True), ('"Yes"', True), ("false", False), ("true", True), ('"maybe"', True)],
+)
+def test_theme_file_dark_flag_coerces_strings(raw, expected):
+    """R31: ``dark = "false"`` is a light theme, not ``bool("false")``."""
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    data = toml.loads(f'[theme]\nname = "t"\ndark = {raw}\n[colors]\nprimary = "#FFAA00"\n')
+    assert theme_from_file_data(data, "t", "t.toml").dark is expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_coerces_a_string_dark_flag(request, tmp_path, src):
+    """R31: Import writes a real bool and registers a light theme."""
+    source = src / "light.toml"
+    source.write_text(GOOD.replace("dark = false", 'dark = "false"'), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(str(source)) == "sunny"
+        written = toml.loads((tmp_path / "sunny.toml").read_text(encoding="utf-8"))
+        assert written["theme"]["dark"] is False
+        assert app.available_themes["sunny"].dark is False
