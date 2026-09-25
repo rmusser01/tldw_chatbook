@@ -90,14 +90,14 @@ BASELINE: dict[tuple[str, str, str], str] = {
     # The ChatbookExportManagementWindow glob+stat scan that was baselined
     # here moved off the pump in task-15471 (`refresh_chatbook_list` now
     # runs `_scan_chatbook_files` via `asyncio.to_thread`).
-    # `glob("*.toml")` plus a `toml.load` per user-created theme, when the theme
-    # editor is shown. Bounded by how many themes the user has authored by hand,
-    # realistically single digits.
-    (
-        "Widgets/settings_theme_editor.py",
-        "on_show",
-        "self.custom_themes_path.glob",
-    ): "one toml parse per hand-authored user theme",
+    #
+    # The settings_theme_editor.py::on_show glob entry that used to live here
+    # (`self.custom_themes_path.glob`) went stale in TASK-32948's catalog
+    # refactor (1cc5c1d92d): `on_show -> _populate_theme_tree` now lists user
+    # themes via `theme_catalog.user_theme_names()`, which globs in
+    # `css/Themes/theme_catalog.py` -- a different module this guard's
+    # per-file call graph does not walk into, so the call site is no longer
+    # visible here at all. Removed per this test's own policy.
 }
 
 
