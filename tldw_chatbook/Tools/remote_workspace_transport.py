@@ -1,8 +1,10 @@
-"""SSH transport for remote workspace bindings: the ControlMaster lifecycle.
+"""SSH transport for remote workspace bindings: ControlMaster lifecycle
+plus the per-call client path.
 
 Spec: ``Docs/superpowers/specs/2026-09-24-ssh-remote-workspace-bindings-design.md``,
-"ControlMaster lifecycle — explicit, and the executor owns its health". The
-rules this module exists to enforce:
+"Transport & executor" (call path, deadlines, failure taxonomy) and
+"ControlMaster lifecycle — explicit, and the executor owns its health".
+The rules this module exists to enforce:
 
 - **Explicit masters.** The first need for a host starts one
   ``ssh -MNf`` process (no remote command) under a per-host-key
@@ -46,11 +48,18 @@ the raw locator string.
 
 from __future__ import annotations
 
+import enum
+import json
 import os
+import re
+import selectors
+import signal
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from loguru import logger
 
@@ -58,11 +67,17 @@ from tldw_chatbook.Tools.remote_binding_locator import (
     RemoteLocator,
     build_ssh_argv,
 )
+from tldw_chatbook.Tools.remote_workspace_executor import _bundle_payload
+from tldw_chatbook.Tools.remote_worker_bundle import RESPONSE_MAGIC
 
 __all__ = [
     "PERCENT_C_EXPANSION_LENGTH",
+    "RemoteCallResult",
+    "RemoteWorkspaceTransport",
     "SUN_PATH_LIMIT",
     "SshMasterManager",
+    "TransportFailure",
+    "TransportFailureKind",
     "get_master_manager",
 ]
 
@@ -189,6 +204,16 @@ class SshMasterManager:
             tuple[str | None, str, int | None], RemoteLocator
         ] = {}
         self._control_dir: Path | None = None
+
+    @property
+    def ssh_bin(self) -> str:
+        """The ssh binary every manager op and per-call client executes.
+
+        ``RemoteWorkspaceTransport.call`` spawns through this value so a
+        manager (and its tests) inject exactly one binary for the whole
+        transport — master lifecycle and calls alike.
+        """
+        return self._ssh_bin
 
     # -- control dir -----------------------------------------------------
 
@@ -530,3 +555,593 @@ def get_master_manager() -> SshMasterManager:
                 connect_timeout_s=settings.connect_timeout_s,
             )
         return _MASTER_MANAGER
+
+
+# ---------------------------------------------------------------------------
+# Per-call client path (Phase 2b)
+# ---------------------------------------------------------------------------
+
+#: Leading stdout garbage tolerated before the first response magic
+#: (spec: ~4KB; a magicless channel beyond this is unusable). The same
+#: bound the loopback harness enforces
+#: (``remote_workspace_executor._NOISE_GARBAGE_CAP``).
+_NOISE_GARBAGE_CAP = 4 * 1024
+
+#: Hard ceiling on captured stderr per call — enough for the python
+#: version line, the watchdog marker, and a traceback; bounded so a
+#: chatty remote cannot grow memory (bytes past the cap are drained and
+#: discarded, never blocking the child).
+_STDERR_CAPTURE_CAP = 64 * 1024
+
+#: Grace added to both laptop-side deadlines, absorbing channel latency
+#: and clock drift (spec value; a constructor knob so tests can run
+#: deadlines in milliseconds).
+_DEFAULT_GRACE_SECONDS = 5.0
+
+#: How long the exchange waits for the ssh process itself to exit after
+#: stdout reached a conclusion (final frame or EOF) before killing the
+#: group; ssh exits with the channel, so this is a backstop only.
+_POST_READ_SETTLE_SECONDS = 2.0
+
+#: Bound on joining the stdin-writer / stderr-drainer threads once the
+#: process is settled; both see EOF/EPIPE at process death.
+_THREAD_JOIN_SECONDS = 2.0
+
+_READ_CHUNK_BYTES = 65536
+
+#: Cap on a stderr-derived failure reason (the line is remote output).
+_REASON_MAX_CHARS = 200
+
+#: stderr fragments that identify a ControlMaster/mux failure (OpenSSH
+#: wording variants). A mux failure types the call MUX_ERROR and
+#: triggers the failure-triggered master restart — never a retry.
+_MUX_ERROR_MARKERS: tuple[bytes, ...] = (
+    b"ControlSocket",
+    b"mux_client",
+    b"mux_protocol",
+)
+
+#: stderr marker the worker's graceful watchdog tier writes before
+#: ``os._exit(75)``; post-admission failure reasons quote its line.
+_WATCHDOG_STDERR_MARKER: tuple[bytes, ...] = (b"tldw-worker-watchdog",)
+
+#: The bootstrap's version-gate stderr line: the found version rides the
+#: line the taxonomy parses into the PYTHON_TOO_OLD reason.
+_PY_VERSION_RE = re.compile(
+    rb"tldw-worker:python3\.10\+:found:(\d+(?:\.\d+)+)"
+)
+
+
+class TransportFailureKind(enum.Enum):
+    """The transport failure taxonomy (spec: "Failure taxonomy").
+
+    The worker's admitted marker — not exit-code guessing — is the
+    primary classifier: kinds above :attr:`OP_TIMEOUT` mean the worker
+    never accepted the root (transport/setup class, BLOCKED-eligible for
+    the status cache); :attr:`OP_TIMEOUT`/:attr:`REMOTE_OP_FAILED` mean
+    the marker arrived and the operation itself failed (typed tool
+    error, status unchanged). Task 13/14 consume these names verbatim.
+    """
+
+    #: ssh exit 255 with no remote output, or a marker-arrival deadline
+    #: kill: unreachable, auth failure, or a stalled handshake.
+    UNREACHABLE = "unreachable"
+    #: Remote exit 127: the configured interpreter is not on the host.
+    INTERPRETER_MISSING = "interpreter_missing"
+    #: Remote exit 76: the bootstrap's version gate rejected the python.
+    PYTHON_TOO_OLD = "python_too_old"
+    #: Any other no-marker exit: the worker never reached framing.
+    WORKER_FAILED_TO_START = "worker_failed_to_start"
+    #: Admitted, then watchdog exit 75 or the completion-deadline kill.
+    OP_TIMEOUT = "op_timeout"
+    #: Admitted, then any other death (signal, lost connection, EOF
+    #: without a final frame).
+    REMOTE_OP_FAILED = "remote_op_failed"
+    #: >4KB of magicless stdout: the channel is unusable.
+    STDOUT_NOISE = "stdout_noise"
+    #: Mux connection/protocol failure; triggers a master restart for
+    #: the NEXT call, never a retry of this one.
+    MUX_ERROR = "mux_error"
+
+
+@dataclass(frozen=True)
+class TransportFailure:
+    """One typed transport-layer failure.
+
+    Attributes:
+        kind: The taxonomy row (see :class:`TransportFailureKind`).
+        exit_code: The reaped ssh process's returncode — negative for
+            signal deaths (e.g. ``-9`` after the deadline group kill),
+            ``None`` only when ssh could not be spawned at all.
+        reason: Static, human-readable reason (Task 13 surfaces it);
+            may quote one bounded stderr line when a marker line exists
+            (python version, watchdog, mux error).
+    """
+
+    kind: TransportFailureKind
+    exit_code: int | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class RemoteCallResult:
+    """The outcome of one ``RemoteWorkspaceTransport.call``.
+
+    Attributes:
+        admitted: Whether the admitted marker (``root_pinned``) was
+            seen — the status cache's transport-vs-operation bit.
+        response: The FINAL response frame bytes (magic stripped,
+            newline stripped), or ``None`` on transport failure. A
+            single worker-refusal frame is a response, not a transport
+            failure: the worker framed its own refusal.
+        failure: ``None`` when a frame was delivered; otherwise the
+            typed transport failure.
+    """
+
+    admitted: bool
+    response: bytes | None
+    failure: TransportFailure | None
+
+
+class _BoundedCapture:
+    """Byte sink capped at ``cap``; extra chunks are drained, not kept."""
+
+    def __init__(self, cap: int) -> None:
+        self._cap = cap
+        self._chunks: list[bytes] = []
+        self._size = 0
+
+    def append(self, chunk: bytes) -> None:
+        if self._size >= self._cap:
+            return
+        kept = chunk[: self._cap - self._size]
+        self._chunks.append(kept)
+        self._size += len(kept)
+
+    def value(self) -> bytes:
+        return b"".join(self._chunks)
+
+
+@dataclass
+class _ExchangeOutcome:
+    """What the stdout watcher concluded about one call."""
+
+    terminal_frame: bytes | None
+    admitted: bool
+    killed: bool
+    noise_capped: bool
+
+
+def _frame_is_admitted_marker(frame: bytes) -> bool:
+    """Whether one parsed frame is the admitted marker.
+
+    Mirrors the two-frame contract ``_parse_worker_output`` enforces:
+    the admitted frame is ``outcome="admitted"`` with
+    ``code="root_pinned"``. Full frame validation stays with the
+    executor layer; the transport only needs the marker bit.
+    """
+    try:
+        payload = json.loads(frame)
+    except ValueError:
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("outcome") == "admitted"
+        and payload.get("code") == "root_pinned"
+    )
+
+
+def _stderr_marker_line(
+    stderr: bytes, markers: tuple[bytes, ...]
+) -> str | None:
+    """The first bounded stderr line containing any marker, or ``None``."""
+    for line in stderr.splitlines():
+        if any(marker in line for marker in markers):
+            text = line.decode("utf-8", errors="replace").strip()
+            return text[:_REASON_MAX_CHARS]
+    return None
+
+
+def _kill_group(proc: "subprocess.Popen[bytes]") -> bool:
+    """SIGKILL the call's whole process group; True iff we killed it.
+
+    The call ssh was spawned with ``start_new_session=True``, so its
+    group is exactly itself (plus its children) — the shared master,
+    in its own session, is unreachable from here. Returns False when
+    the process already exited, so classification can prefer the real
+    exit code over the kill.
+    """
+    if proc.poll() is not None:
+        return False
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+    proc.wait()
+    return True
+
+
+def _settle_process(proc: "subprocess.Popen[bytes]") -> int:
+    """Reap the call ssh, killing the group if it outlives the read."""
+    try:
+        return proc.wait(timeout=_POST_READ_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        return proc.wait()
+
+
+def _feed_stdin(stream: BinaryIO, payload: bytes) -> None:
+    """Write the bundle + request to the call's stdin, then close it.
+
+    The compressed bundle (~64KB) exceeds a pipe buffer, so this runs on
+    its own thread: a remote that dies without reading must not
+    deadlock the exchange against the stdout read loop.
+    """
+    try:
+        stream.write(payload)
+        stream.flush()
+    except (BrokenPipeError, OSError):
+        pass  # ssh died before reading; classification handles it
+    finally:
+        try:
+            stream.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+
+def _drain_stderr(stream: BinaryIO, capture: _BoundedCapture) -> None:
+    """Read stderr to EOF, keeping at most ``cap`` bytes.
+
+    Draining continues past the cap so a chatty remote can never block
+    its own stderr pipe (which would wedge the call until the deadline
+    kill for a reason that has nothing to do with the operation).
+    """
+    while True:
+        chunk = stream.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            return
+        capture.append(chunk)
+
+
+def _watch_exchange(
+    proc: "subprocess.Popen[bytes]", *, budget: float, grace: float
+) -> _ExchangeOutcome:
+    """Read the call's stdout to a conclusion under two anchored deadlines.
+
+    Byte-level magic scan first (never line-based): pre-magic bytes are
+    garbage under the 4KB cap —STDOUT_NOISE, and a magic straddling a
+    chunk boundary is preserved. Frames complete at their newline; the
+    FIRST frame is either the admitted marker (``admitted_at`` recorded
+    the moment it parses) or a terminal worker refusal; any frame after
+    the marker is terminal.
+
+    Deadlines: marker-arrival at spawn + budget + grace; once the
+    marker arrives, completion at admitted_at + budget + grace — the
+    anchoring that keeps the laptop kill strictly behind the worker's
+    own watchdog tiers (spec: "Worker-side watchdog, two tiers").
+    """
+    magic_len = len(RESPONSE_MAGIC)
+    selector = selectors.DefaultSelector()
+    stdout_fd = proc.stdout.fileno()  # type: ignore[union-attr]
+    selector.register(stdout_fd, selectors.EVENT_READ)
+    try:
+        buffered = b""
+        garbage = bytearray()
+        expect_magic = True
+        admitted_at: float | None = None
+        terminal: bytes | None = None
+        killed = False
+        noise_capped = False
+        marker_deadline = time.monotonic() + budget + grace
+        while True:
+            progressed = True
+            while progressed:
+                progressed = False
+                if expect_magic:
+                    index = buffered.find(RESPONSE_MAGIC)
+                    if index != -1:
+                        garbage += buffered[:index]
+                        buffered = buffered[index + magic_len :]
+                        expect_magic = False
+                        progressed = True
+                    elif len(buffered) > magic_len - 1:
+                        # No magic yet: everything except a possible
+                        # magic prefix straddling the boundary is noise.
+                        cut = len(buffered) - (magic_len - 1)
+                        garbage += buffered[:cut]
+                        buffered = buffered[cut:]
+                else:
+                    newline = buffered.find(b"\n")
+                    if newline != -1:
+                        frame = buffered[:newline]
+                        buffered = buffered[newline + 1 :]
+                        expect_magic = True
+                        progressed = True
+                        if admitted_at is None and _frame_is_admitted_marker(
+                            frame
+                        ):
+                            admitted_at = time.monotonic()
+                        else:
+                            terminal = frame
+            # The garbage cap outranks a parsed terminal frame, matching
+            # the loopback harness: >4KB of leading noise makes the
+            # channel unusable even if frames eventually followed.
+            if len(garbage) > _NOISE_GARBAGE_CAP:
+                noise_capped = True
+                killed = _kill_group(proc)
+                break
+            if terminal is not None:
+                break
+            deadline = (
+                admitted_at + budget + grace
+                if admitted_at is not None
+                else marker_deadline
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                killed = _kill_group(proc)
+                break
+            if not selector.select(remaining):
+                continue  # deadline re-checked at the top of the loop
+            chunk = os.read(stdout_fd, _READ_CHUNK_BYTES)
+            if not chunk:
+                break  # EOF: the settle/classify phase takes over
+            buffered += chunk
+    finally:
+        selector.close()
+    return _ExchangeOutcome(
+        terminal_frame=terminal,
+        admitted=admitted_at is not None,
+        killed=killed,
+        noise_capped=noise_capped,
+    )
+
+
+class RemoteWorkspaceTransport:
+    """Executes one worker-bundle exchange per ssh call.
+
+    Each :meth:`call` spawns its own ssh client through the manager's
+    ``ssh_bin`` and ``client_options`` (BatchMode, ConnectTimeout,
+    ``ControlMaster=no`` + shared ControlPath when multiplexing), in its
+    OWN session so the deadline group kill can never touch the shared
+    master. stdin carries the zlib-compressed bundle (the bootstrap's N
+    is exactly that byte count) followed by the request JSON.
+
+    One call, one result — recovery and retries are the executor
+    layer's job (Task 13/14), never this class.
+    """
+
+    def __init__(
+        self,
+        master_manager: SshMasterManager,
+        *,
+        grace_seconds: float = _DEFAULT_GRACE_SECONDS,
+    ) -> None:
+        """Configure the transport around one master manager.
+
+        Args:
+            master_manager: The ControlMaster lifecycle owner; also the
+                source of the ssh binary and per-call client options,
+                and the target of the failure-triggered mux restart.
+            grace_seconds: Slack added to both deadlines (spec default
+                5.0); a knob so tests can tighten it.
+        """
+        self._manager = master_manager
+        if grace_seconds <= 0:
+            raise ValueError("grace_seconds must be positive")
+        self._grace_seconds = float(grace_seconds)
+
+    @property
+    def grace_seconds(self) -> float:
+        """Deadline slack (seconds) on both anchored deadlines."""
+        return self._grace_seconds
+
+    @property
+    def master_manager(self) -> SshMasterManager:
+        """The master lifecycle this transport's calls multiplex."""
+        return self._manager
+
+    # -- public surface ----------------------------------------------------
+
+    def call(
+        self,
+        loc: RemoteLocator,
+        request_bytes: bytes,
+        *,
+        budget: float,
+        python: str = "python3",
+    ) -> RemoteCallResult:
+        """Run one bundle exchange over ssh; return its typed outcome.
+
+        Args:
+            loc: A validated locator; argv is rebuilt from its parsed
+                parts.
+            request_bytes: The wire request JSON appended to the
+                compressed bundle on the call's stdin.
+            budget: Operation budget (seconds) anchoring both
+                deadlines; the same value the executor sends as the
+                request's remaining budget.
+            python: Remote interpreter invoked as
+                ``<python> -I -c <bootstrap>`` (binding-configured).
+
+        Returns:
+            A :class:`RemoteCallResult` — never an exception for a
+            failed exchange; spawn/typing problems raise ``TypeError``/
+            ``ValueError`` before any subprocess exists.
+        """
+        if not isinstance(request_bytes, bytes):
+            raise TypeError(
+                f"request_bytes must be bytes, got {type(request_bytes).__name__}"
+            )
+        if budget <= 0:
+            raise ValueError("budget must be positive")
+        if python.startswith("-") or any(char.isspace() for char in python):
+            raise ValueError(
+                f"python must be a bare interpreter name: {python!r}"
+            )
+        _bundle, compressed, bootstrap = _bundle_payload()
+        argv = [
+            self._manager.ssh_bin,
+            *self._manager.client_options(loc),
+            *build_ssh_argv(loc, [], [python, "-I", "-c", bootstrap]),
+        ]
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            return RemoteCallResult(
+                admitted=False,
+                response=None,
+                failure=TransportFailure(
+                    TransportFailureKind.UNREACHABLE,
+                    None,
+                    f"ssh could not be run: {exc}",
+                ),
+            )
+        stderr_capture = _BoundedCapture(_STDERR_CAPTURE_CAP)
+        stderr_thread = threading.Thread(
+            target=_drain_stderr,
+            args=(proc.stderr, stderr_capture),
+            daemon=True,
+            name=f"ssh-call-stderr-{loc.host}",
+        )
+        stdin_thread = threading.Thread(
+            target=_feed_stdin,
+            args=(proc.stdin, compressed + request_bytes),
+            daemon=True,
+            name=f"ssh-call-stdin-{loc.host}",
+        )
+        stderr_thread.start()
+        stdin_thread.start()
+
+        outcome = _watch_exchange(
+            proc, budget=budget, grace=self._grace_seconds
+        )
+        exit_code = _settle_process(proc)
+        stdin_thread.join(timeout=_THREAD_JOIN_SECONDS)
+        stderr_thread.join(timeout=_THREAD_JOIN_SECONDS)
+        stderr_bytes = stderr_capture.value()
+
+        if outcome.terminal_frame is not None:
+            return RemoteCallResult(
+                admitted=outcome.admitted,
+                response=outcome.terminal_frame,
+                failure=None,
+            )
+        failure = self._classify_failure(
+            loc,
+            exit_code=exit_code,
+            admitted=outcome.admitted,
+            killed=outcome.killed,
+            noise_capped=outcome.noise_capped,
+            stderr=stderr_bytes,
+        )
+        return RemoteCallResult(
+            admitted=outcome.admitted, response=None, failure=failure
+        )
+
+    # -- taxonomy ----------------------------------------------------------
+
+    def _classify_failure(
+        self,
+        loc: RemoteLocator,
+        *,
+        exit_code: int,
+        admitted: bool,
+        killed: bool,
+        noise_capped: bool,
+        stderr: bytes,
+    ) -> TransportFailure:
+        """Bucket one failed exchange (marker primary, exit code secondary).
+
+        Order mirrors the spec's taxonomy: the garbage cap and the
+        admitted marker outrank exit codes; within no-marker exits the
+        specific codes (255 mux-checked, 127, 76) precede the
+        WORKER_FAILED_TO_START catch-all; within admitted failures only
+        exit 75 (the reserved watchdog code) and the laptop kill are
+        OP_TIMEOUT — everything else is REMOTE_OP_FAILED.
+        """
+        if noise_capped:
+            return TransportFailure(
+                TransportFailureKind.STDOUT_NOISE,
+                exit_code,
+                "remote shell emits stdout noise before the response magic",
+            )
+        if admitted:
+            if killed or exit_code == 75:
+                return TransportFailure(
+                    TransportFailureKind.OP_TIMEOUT,
+                    exit_code,
+                    "operation timed out",
+                )
+            reason = (
+                _stderr_marker_line(stderr, _WATCHDOG_STDERR_MARKER)
+                or "remote op failed"
+            )
+            return TransportFailure(
+                TransportFailureKind.REMOTE_OP_FAILED, exit_code, reason
+            )
+        if killed:
+            # No marker + our deadline kill: a stalled handshake is
+            # transport-class, never OP_TIMEOUT (the worker never
+            # accepted the root, so no operation ever started).
+            return TransportFailure(
+                TransportFailureKind.UNREACHABLE,
+                exit_code,
+                "handshake stalled",
+            )
+        if exit_code == 255:
+            mux_line = _stderr_marker_line(stderr, _MUX_ERROR_MARKERS)
+            if mux_line is not None:
+                self._restart_master_after_mux_failure(loc)
+                return TransportFailure(
+                    TransportFailureKind.MUX_ERROR, exit_code, mux_line
+                )
+            return TransportFailure(
+                TransportFailureKind.UNREACHABLE,
+                exit_code,
+                "unreachable or auth failed",
+            )
+        if exit_code == 127:
+            return TransportFailure(
+                TransportFailureKind.INTERPRETER_MISSING,
+                exit_code,
+                "host lacks python3",
+            )
+        if exit_code == 76:
+            match = _PY_VERSION_RE.search(stderr)
+            reason = (
+                f"python ≥ 3.10 required (found {match.group(1).decode()})"
+                if match
+                else "python ≥ 3.10 required"
+            )
+            return TransportFailure(
+                TransportFailureKind.PYTHON_TOO_OLD, exit_code, reason
+            )
+        return TransportFailure(
+            TransportFailureKind.WORKER_FAILED_TO_START,
+            exit_code,
+            "remote worker failed to start",
+        )
+
+    def _restart_master_after_mux_failure(self, loc: RemoteLocator) -> None:
+        """Replace a dead master for the NEXT call; never retry this one.
+
+        Fire-and-forget by contract (spec: "ControlMaster lifecycle"):
+        the failed call already returned its typed error — this runs the
+        failure-triggered ``restart_if_dead`` so subsequent calls find a
+        live master. Bounded inside the manager; any failure is logged,
+        never raised into the call path.
+        """
+        try:
+            restarted = self._manager.restart_if_dead(loc)
+            logger.info(
+                f"mux failure on {loc.host}: master restart attempted={restarted}"
+            )
+        except Exception as exc:  # noqa: BLE001 - janitor must not break the call
+            logger.warning(f"mux master restart for {loc.host} failed: {exc!r}")
