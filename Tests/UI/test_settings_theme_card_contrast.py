@@ -103,6 +103,28 @@ async def _open_theme_picker(pilot, host, theme):
     return host.screen.query_one("#settings-theme-picker")
 
 
+async def _open_theme_picker_with_a_user_theme(pilot, host, theme):
+    """Land on the picker with a saved (yours-only) theme highlighted, so
+    the Edit/Rename/Delete/Export row is visible (TASK-32948 PR 2 Task 6,
+    R19/R23)."""
+    from textual.theme import Theme as TextualTheme
+
+    from tldw_chatbook import config
+
+    themes_dir = config._get_effective_config_path().parent / "themes"
+    themes_dir.mkdir(exist_ok=True)
+    (themes_dir / "mine.toml").write_text(
+        '[theme]\nname = "mine"\ndark = true\n[colors]\nprimary = "#0099FF"\n',
+        encoding="utf-8",
+    )
+    host.register_theme(TextualTheme(name="mine", primary="#0099FF", dark=True))
+    picker = await _open_theme_picker(pilot, host, theme)
+    lst = picker.query_one("#settings-theme-list")
+    lst.highlighted = lst.get_option_index("mine")
+    await pilot.pause(0.1)
+    return picker
+
+
 async def _show(pilot, widget):
     widget.scroll_visible(animate=False, immediate=True)
     await pilot.pause(0.05)
@@ -186,6 +208,47 @@ async def test_theme_picker_use_and_try_chips_meet_contrast(theme, request):
         assert alnum_cells, f"{theme}: no painted glyph on the highlighted row"
         for char, style in alnum_cells:
             assert style.bold, f"{theme}: highlighted row cell {char!r} is not bold"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
+async def test_picker_delete_chip_meets_contrast_at_rest_and_focus(theme, request):
+    """TASK-32948 PR 2 Task 6 (R19/R23): the picker's yours-only Delete chip
+    (`#settings-theme-picker-delete`, visible only once a user theme is
+    highlighted) must clear the 4.5:1 label floor both at rest and focused,
+    and focus must keep the error hue, not the generic neutral inversion
+    `.settings-action-row Button:focus` gives every other chip (the gap
+    TASK-32947 found for the editor's own Delete, before Task 4 removed it
+    from the editor card and moved it to the picker)."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker_with_a_user_theme(pilot, host, theme)
+        delete_button = picker.query_one("#settings-theme-picker-delete", Button)
+        await _show(pilot, delete_button)
+
+        rest_fg, rest_bg = _label_colors(host, delete_button)
+        assert _contrast(rest_fg, rest_bg) >= 4.5, (
+            f"{theme}/delete rest {_contrast(rest_fg, rest_bg):.2f}:1 ({rest_fg} on {rest_bg})"
+        )
+
+        delete_button.focus()
+        await pilot.pause(0.1)
+        focus_fg, focus_bg = _label_colors(host, delete_button)
+        assert _contrast(focus_fg, focus_bg) >= 4.5, (
+            f"{theme}/delete focused {_contrast(focus_fg, focus_bg):.2f}:1"
+        )
+        # Focus is a strong state change (inversion), not a neutral wash.
+        assert _contrast(focus_bg, rest_bg) >= 3.0, (
+            f"{theme}/delete focus shift {_contrast(focus_bg, rest_bg):.2f}:1"
+        )
+        # The error hue survives focus: one of the focused fg/bg pair is
+        # still the rest-state error colour (fg or bg, inversion swaps them).
+        assert {rest_fg, rest_bg} & {focus_fg, focus_bg}, (
+            f"{theme}/delete lost its error hue on focus"
+        )
+        host.set_focus(None)
+        await pilot.pause(0.05)
 
 
 @pytest.mark.asyncio

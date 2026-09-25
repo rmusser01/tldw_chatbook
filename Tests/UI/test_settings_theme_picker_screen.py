@@ -319,6 +319,25 @@ PICKER_CONTROLS = (
     "#settings-theme-picker-new",
 )
 
+# TASK-32948 PR 2 Task 6: the four yours-only file-action buttons, visible
+# only once a user theme is highlighted (`_show` gates on origin == "yours").
+YOURS_ONLY_CONTROLS = (
+    "#settings-theme-picker-edit",
+    "#settings-theme-picker-rename",
+    "#settings-theme-picker-delete",
+    "#settings-theme-picker-export",
+)
+
+# The editor view behind Clone/New/Edit: header + Save/Save as replaced the
+# tree (PR 2 Task 4).
+EDITOR_CONTROLS = (
+    "#settings-theme-back",
+    "#settings-theme-name",
+    "#settings-theme-save",
+    "#settings-theme-save-as",
+    "#settings-theme-apply",
+)
+
 
 def _visible(host, widget):
     geometry = host.screen._compositor.find_widget(widget)
@@ -331,17 +350,41 @@ def _visible(host, widget):
 @private_profile_test
 async def test_every_picker_control_is_reachable(request, theme, size):
     host = _host()
+    _saved_theme(host)
     async with host.run_test(size=size) as pilot:
         host.theme = theme
-        await _category(host, pilot, "Theme")
-        for selector in PICKER_CONTROLS:
+        await _highlight(host, pilot, "mine")
+        for selector in PICKER_CONTROLS + YOURS_ONLY_CONTROLS:
             widget = host.screen.query_one(selector)
             widget.scroll_visible(animate=False)
             await pilot.pause(0.1)
             region = _visible(host, widget)
             assert region.height > 0 and region.width > 0, f"{selector} unreachable at {size}"
         lst = host.screen.query_one("#settings-theme-list")
+        # The yours-only row sits below the list; scrolling to reach it (the
+        # last control checked above) can leave the list itself scrolled
+        # off-screen, so re-scroll it into view before measuring its rows.
+        lst.scroll_visible(animate=False)
+        await pilot.pause(0.1)
         assert _visible(host, lst).height >= 5, f"list shows <5 rows at {size}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (190, 55)])
+@private_profile_test
+async def test_every_editor_control_is_reachable(request, size):
+    from Tests.UI.theme_editor_helpers import open_theme_editor
+
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        await _category(host, pilot, "Theme")
+        await open_theme_editor(host, pilot)
+        for selector in EDITOR_CONTROLS:
+            widget = host.screen.query_one(selector)
+            widget.scroll_visible(animate=False)
+            await pilot.pause(0.1)
+            region = _visible(host, widget)
+            assert region.height > 0 and region.width > 0, f"{selector} unreachable at {size}"
 
 
 @pytest.mark.asyncio
