@@ -5238,23 +5238,48 @@ class PersonasScreen(BaseAppScreen):
         App-posted message to App handlers only, so this method is called
         directly rather than through Textual's own dispatch (see
         ``forward_model_catalog_refreshed`` for the identical constraint).
+
+        Fix round 1 (review): this runs under a worker with
+        ``exit_on_error=False`` (a background notification must never crash
+        the app), and this method also wraps its own body in a try/except --
+        ``_select_character`` performs unguarded ``query_one``/DB/server
+        work. The unsaved-work check is the same one ``_run_guarded`` uses
+        (``self.state.has_unsaved_changes`` plus the three visual-identity
+        authoring predicates), not just the character-editor's private
+        ``_dirty_posted`` flag, so an unsaved Persona-visual/lore edit made
+        while a *different* pane is showing also blocks the silent reload.
         """
-        state = self.state
-        if (
-            state.selected_entity_kind != "character"
-            or str(state.selected_entity_id) != str(message.character_id)
-        ):
-            return
-        if self._character_editor_is_active():
-            editor = self.query_one(PersonasCharacterEditorWidget)
-            if getattr(editor, "_dirty_posted", False):
+        try:
+            state = self.state
+            if (
+                state.selected_entity_kind != "character"
+                or str(state.selected_entity_id) != str(message.character_id)
+            ):
+                return
+            if (
+                state.has_unsaved_changes
+                or self._visual_identity_has_unsaved_authoring()
+                or self._persona_shared_visual_identity_has_unsaved_authoring()
+                or self._persona_visual_has_unsaved_authoring()
+            ):
                 self._notify(
                     "This character was changed elsewhere. Your unsaved edits "
                     "are kept; save or discard them to see the new version.",
                     "warning",
                 )
                 return
-        await self._select_character(str(message.character_id), state.selected_entity_name)
+            await self._select_character(
+                str(message.character_id),
+                state.selected_entity_name,
+                # Preserve the live preview chat instead of letting
+                # _select_character reset it to the character's greeting.
+                restore_preview=self.save_state().get("personas_preview"),
+            )
+        except Exception:  # noqa: BLE001 - a background notification must never crash the app
+            logger.opt(exception=True).warning(
+                "Personas character refresh after a Console save failed "
+                "(category=character_card_changed_refresh_failed)."
+            )
 
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None

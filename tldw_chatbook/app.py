@@ -12591,17 +12591,24 @@ class TldwCli(
         Textual delivers an App-posted message to App handlers only (it
         never bubbles down into a Screen's own handler -- see
         ``forward_model_catalog_refreshed`` for the identical constraint),
-        so the active screen's handler is called directly instead.
+        so the screen's handler is called directly instead. Walks the full
+        screen stack, not just ``self.screen``, so a modal sitting on top of
+        Personas (e.g. an unsaved-changes confirm dialog) does not silently
+        drop the notification (fix round 1, review point 4).
+        ``exit_on_error=False``: a background notification must never crash
+        the app (review point 1).
         """
         from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 
-        screen = self.screen
-        if isinstance(screen, PersonasScreen):
-            screen.run_worker(
-                screen._on_character_card_changed(message),
-                group="personas-character-changed",
-                exclusive=True,
-            )
+        for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+            if isinstance(screen, PersonasScreen):
+                screen.run_worker(
+                    screen._on_character_card_changed(message),
+                    group="personas-character-changed",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
 
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
