@@ -20,6 +20,8 @@ from textual.screen import ModalScreen
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
+from ..Backup_Recovery import raw_participants as raw
+from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..css.Themes.themes import (
     ALL_THEMES,
     create_theme_from_dict,
@@ -28,10 +30,7 @@ from ..css.Themes.themes import (
 )
 from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
-
-
-from ..Backup_Recovery import raw_participants as raw
-from ..Backup_Recovery.bootstrap import RecoveryRequired
+from .theme_preview import ThemePreview
 
 #: TASK-32942: shown in the tree while backup/recovery holds the theme files.
 THEMES_UNAVAILABLE_LABEL = "Theme files unavailable while backup/recovery is in progress"
@@ -133,27 +132,6 @@ class SettingsThemeEditor(Vertical):
         "Dark": ["#1A1A1A", "#2D2D2D", "#404040", "#525252", "#656565"],
     }
 
-    # TASK-31259: the Live Preview is a Console-shaped stub. Each row is
-    # (id suffix, text); _PREVIEW_STYLE maps the suffix to the BASE_COLORS
-    # keys used for its background and text, painted by _refresh_preview.
-    _PREVIEW_ROWS = (
-        ("rail", " Console ▸ Conversation · ready"),
-        ("user", " You: summarise the attached paper"),
-        ("assistant", " Assistant: Here is the summary…"),
-        ("success", " ✓ tool web_search finished"),
-        ("warning", " ! approval needed before the next call"),
-        ("error", " ✗ provider returned 401"),
-        ("accent", " [ Send ]   Ctrl+P palette"),
-    )
-    _PREVIEW_STYLE = {
-        "rail": ("panel", "foreground"),
-        "user": ("primary", "foreground"),
-        "assistant": ("surface", "foreground"),
-        "success": ("background", "success"),
-        "warning": ("background", "warning"),
-        "error": ("background", "error"),
-        "accent": ("background", "accent"),
-    }
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -307,14 +285,7 @@ class SettingsThemeEditor(Vertical):
         yield Static("Live Preview", classes="destination-section")
         # TASK-31259: painted from the palette being edited (see
         # _refresh_preview), so it follows every keystroke, not just Apply.
-        with Vertical(id="settings-theme-preview", classes="settings-theme-preview"):
-            for suffix, text in self._PREVIEW_ROWS:
-                yield Static(
-                    text,
-                    id=f"settings-theme-preview-{suffix}",
-                    classes="settings-theme-preview-row",
-                    markup=False,  # task-32946: "[ Send ]" is literal text
-                )
+        yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
 
     def on_mount(self) -> None:
         """Initialize after composed descendants are mounted."""
@@ -513,22 +484,10 @@ class SettingsThemeEditor(Vertical):
 
     def _refresh_preview(self) -> None:
         """Paint the preview rows from the palette being edited (TASK-31259)."""
-        for suffix, (bg_key, fg_key) in self._PREVIEW_STYLE.items():
-            try:
-                row = self.query_one(f"#settings-theme-preview-{suffix}", Static)
-            except QueryError:
-                return
-            background = self.current_theme_data.get(bg_key)
-            foreground = self.current_theme_data.get(fg_key)
-            try:
-                if background:
-                    # ds-runtime: preview the user-edited theme palette.
-                    row.set_styles(background=background)
-                if foreground:
-                    # ds-runtime: preview the user-edited theme palette.
-                    row.set_styles(color=foreground)
-            except Exception:  # noqa: BLE001 - a half-typed hex must not break painting
-                continue
+        try:
+            self.query_one("#settings-theme-preview", ThemePreview).paint(self.current_theme_data)
+        except QueryError:
+            return
 
     def _update_dark_mode_checkbox(self) -> None:
         """Update the dark mode checkbox."""
