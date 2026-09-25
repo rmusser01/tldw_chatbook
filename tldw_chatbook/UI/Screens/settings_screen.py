@@ -24509,8 +24509,8 @@ class SettingsScreen(BaseAppScreen):
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
         except QueryError:
             return
-        if name := editor.import_theme(source):
-            self.query_one(ThemePicker).refresh_catalog(highlight=name)
+        # R37: the editor's ThemesChanged(highlight=) refreshes the picker.
+        editor.import_theme(source)
 
     @on(SettingsThemeEditor.SaveAsRequested)
     def handle_theme_save_as_requested(

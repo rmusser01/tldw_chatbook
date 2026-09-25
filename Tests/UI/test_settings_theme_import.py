@@ -146,6 +146,17 @@ HOSTILE = [
         "Invalid theme name",
     ),
     ("theme-not-table.toml", 'theme = 3\n[colors]\nprimary = "#112233"\n', "[theme] must be a table"),
+    # R32: real Theme kwargs that are not colours (crashed generate()).
+    (
+        "variables-key.toml",
+        '[colors]\nprimary = "#112233"\nvariables = "#ffffff"\n',
+        "variables is not a theme colour",
+    ),
+    (
+        "dark-key.toml",
+        '[colors]\nprimary = "#112233"\ndark = "#000000"\n',
+        "dark is not a theme colour",
+    ),
 ]
 
 
@@ -312,3 +323,134 @@ async def test_import_during_pause_writes_nothing(request, tmp_path, src, monkey
         assert app.notify.call_args.args[0] == THEMES_UNAVAILABLE_LABEL
         assert _snapshot(tmp_path) == before
         assert "sunny" not in app.available_themes
+
+
+# -- Fix round 1 (R33-R36) ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_replace_dialog_and_toast_escape_the_name(request, tmp_path, src, monkeypatch):
+    """R33: the name goes through escape_markup in the dialog and the toast."""
+    from tldw_chatbook.Widgets import settings_theme_editor as module
+
+    monkeypatch.setattr(module, "escape_markup", lambda value: f"<{value}>")
+    (tmp_path / "sunny.toml").write_text('[colors]\nprimary = "#010203"\n', encoding="utf-8")
+    source = src / "new.toml"
+    source.write_text(GOOD, encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.import_theme(str(source))
+        await pilot.pause()
+        assert app.screen.message == "Replace the saved theme '<sunny>'?"
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert app.notify.call_args.args[0] == "Imported '<sunny>'"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_source_is_checked_and_read_through_one_nonblocking_descriptor(
+    request, tmp_path, src, monkeypatch
+):
+    """R34: open O_NONBLOCK, fstat that fd, read that fd -- no window between
+    a path check and the read for a FIFO to be swapped in."""
+    import os
+
+    from tldw_chatbook.Widgets import settings_theme_editor as module
+
+    source = src / "fd.toml"
+    source.write_text(GOOD, encoding="utf-8")
+    opened: list[int] = []  # flags of each open of the SOURCE file
+    real_open = os.open
+
+    def spy(path, flags, *args, **kwargs):
+        if str(path) == str(source):
+            opened.append(flags)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", spy)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(str(source)) == "sunny"
+    assert opened and all(
+        flags & os.O_NONBLOCK and not flags & (os.O_WRONLY | os.O_RDWR) for flags in opened
+    ), opened
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", ["My\\ Theme.toml", "My\\ \\(copy\\).toml"])
+@private_profile_test
+async def test_backslash_escaped_drop_path_imports(request, tmp_path, src, typed):
+    """R35: macOS Terminal/iTerm drop `/a/My\\ Theme.toml` (unquoted)."""
+    real_name = typed.replace("\\", "")
+    (src / real_name).write_text(GOOD, encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(f"{src}/{typed}") == "sunny"
+
+
+def _special_sources(src: Path) -> list[tuple[str, str]]:
+    """R36: (typed path, expected reason) for special-file sources."""
+    import os
+
+    big = src / "big-target.toml"
+    big.write_text(GOOD + "# " + "x" * (64 * 1024) + "\n", encoding="utf-8")
+    (src / "to-big.toml").symlink_to(big)
+    (src / "to-devnull.toml").symlink_to(os.devnull)
+    return [
+        (str(src / "to-devnull.toml"), "Import needs a regular file"),
+        (str(src / "to-big.toml"), "Theme file is larger than 64 KB"),
+        (f"{src}/nul\x00.toml", "Import needs the full path to a .toml file"),
+    ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_special_file_sources_are_refused(request, tmp_path, src):
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        before = _snapshot(tmp_path)
+        for typed, reason in _special_sources(src):
+            app.notify.reset_mock()
+            assert editor.import_theme(typed) is None, typed
+            assert reason in app.notify.call_args.args[0], typed
+            assert str(src) not in app.notify.call_args.args[0]
+        assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="no FIFOs here")
+@private_profile_test
+async def test_fifo_source_is_refused_without_blocking(request, tmp_path, src):
+    import os
+
+    fifo = src / "pipe.toml"
+    os.mkfifo(fifo)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        before = _snapshot(tmp_path)
+        assert editor.import_theme(str(fifo)) is None
+        assert "Import needs a regular file" in app.notify.call_args.args[0]
+        assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_uppercase_suffix_imports(request, tmp_path, src):
+    (src / "THEME.TOML").write_text(GOOD, encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(str(src / "THEME.TOML")) == "sunny"
