@@ -55,11 +55,34 @@ itself writes through `ccp_character_handler` to the DB; this service is the
 schema-validated path.) Owns bounding, the truncation guard, avatar resolution
 and the change notification. No UI imports.
 
-- Refuses every call when the active Console session's runtime backend is
-  `server`: "Character editing is local-only; switch this chat to local to create
-  or edit characters."
-- Holds, per agent run, the set of `(character_id, version, field)` returned
-  truncated and not since read in full (the truncation guard, §4.4).
+- Wired per turn by `console_chat_controller` through a `_character_wiring(session_id)`
+  helper, following the existing `_todo_wiring(session_id)` /
+  `_ask_user_wiring(session_id)` precedent (the controller builds a fresh
+  `LocalToolProvider` per turn with the session id in hand). The wiring supplies
+  the session's runtime backend and an injected change notifier.
+- Refuses every call when that session's runtime backend is `server`:
+  "Character editing is local-only; switch this chat to local to create or edit
+  characters."
+- **Truncation guard (per Console session, not per turn):** a turn-scoped memory
+  would forget a truncated read in turn N before the save in turn N+1 (the usual
+  "propose, then confirm" flow). The guard state lives on the controller per
+  session (as todo state does) and records fields read *in full* at a given
+  version. Rule at save time: a field whose **stored** value is longer than the
+  `character_get` per-field bound may be updated only if this session has read it
+  in full at the current version; shorter fields are never truncated and need no
+  record.
+
+### 3.1a Local character service fixes (required, and a latent bug)
+
+`LocalCharacterPersonaService.create_character`/`update_character` validate
+`image_base64` but pass it straight to `ChaChaNotes_DB`, which only understands an
+`image` key holding bytes — **so images sent through this service are silently
+dropped today** (only the card-import path in `Character_Chat_Lib` decodes
+`image_base64`). Its `update_character` also strips `None` values, so it cannot
+remove an image. Fix: decode and validate `image_base64` into `image` bytes
+(reusing the import path's decoder and limits), and add an explicit
+`clear_image=True` on update. Covered by service-level tests independent of the
+tools.
 
 ### 3.2 Tool specs (in `Agents/local_tool_provider.py`)
 
@@ -86,7 +109,8 @@ master switch (default ON) still governs the family.
 
 `resolve_avatar(request, card) -> AvatarOutcome` with no UI dependencies:
 
-- `generate`: `compose_expression_prompt` (or the model's prompt) →
+- `generate`: `compose_expression_prompt(state="avatar", …)` (or the model's
+  prompt), with the user's configured expression style template when one is set →
   `Image_Generation.worker.build_request` → `run_generation`. Refuses up front
   when no image backend is configured.
 - `file`: path checked with `path_validation`; bytes read with the same size and
@@ -114,18 +138,22 @@ master switch (default ON) still governs the family.
   and goes through normal trust.
 - Off switch: `[skills] disabled_builtins = []`, read from the cached config
   snapshot (never a per-send `get_cli_setting`).
-- Library ▸ Skills: built-in rows show Customize and the toggle, hide Edit/Delete,
-  and are labelled "overridden" when a user copy exists (the copy is labelled
-  "overrides built-in"). If the Skills list cannot host a read-only row cleanly,
-  the toggle falls back to Settings.
+- Library ▸ Skills: the skill pane is a full editor (dirty tracking, Save/Discard
+  vetoes, trust review) with no read-only mode, so built-ins do **not** open it.
+  A built-in row carries a "Built-in" badge and opens a **read-only preview**
+  (rendered Markdown) with **Customize** and an **Enabled** switch. A user copy is
+  labelled "overrides built-in"; the built-in row then reads "overridden". The
+  editor is untouched.
 - Local mode only.
 
 ### 3.6 Change notification
 
-After a successful save the service posts an app-level `CharacterCardChanged`
-message (via `call_from_thread`). The Personas screen reloads that character when
-showing it; if its editor has unsaved changes it keeps them and shows "This
-character was changed elsewhere" instead of discarding them.
+After a successful save the service calls its injected notifier (supplied by the
+wiring), which posts an app-level `CharacterCardChanged` message thread-safely;
+the service itself imports no UI. The Personas screen reloads that character when
+showing it; if its editor is dirty (existing change-based tracking,
+`_mark_dirty`) it keeps the edits and shows "This character was changed
+elsewhere" instead of discarding them.
 
 ## 4. Tool contracts
 
@@ -212,9 +240,14 @@ TDD; real in-memory SQLite.
   a counting keyring proving no trust read; digest mismatch blocks; user copy
   overrides; `disabled_builtins` honoured without per-send config reads;
   Customize copies; edit/delete refused; `SKILL.md` present in the built wheel.
-- **End to end:** one real-app agent run with a scripted model (search → draft →
-  save → approve) asserting the DB row and the Personas refresh message. (Which
-  scripted-provider harness exists is confirmed in the plan.)
+- **Service fixes (§3.1a):** `image_base64` round-trips to stored bytes on create
+  and update; `clear_image` removes it; invalid base64 is rejected.
+- **Truncation guard across turns:** a full read in one turn permits the save in
+  the next; a truncated-only read never does.
+- **End to end:** a mounted Console run modelled on
+  `Tests/UI/test_console_watchlists_mounted_uat.py` (approvals as in
+  `test_console_mcp_approval.py`): search → draft → save → approve, asserting the
+  DB row and the Personas refresh message.
 
 ## 7. Out of scope (v1)
 
@@ -222,13 +255,10 @@ Delete; lorebook/world-book linking; `extensions`; card import/export; server
 (tldw_server) mode; exposing the tools to external MCP clients; reusing an image
 generated earlier in the chat as the avatar.
 
-## 8. Open items to confirm in the implementation plan
+## 8. Resolved during spec review
 
-- The scripted-provider harness for the end-to-end test.
-- Whether Library ▸ Skills can render a read-only built-in row (else the toggle
-  moves to Settings).
-- How the tool service learns the active Console session's runtime backend
-  (turn context vs. session store).
-- That `LocalCharacterPersonaService` maps `image_base64` onto the DB `image`
-  column on create and update; if it does not, the single write sets the DB
-  `image` field directly in the same `update_character_card` call.
+- Session backend and per-session state: `_character_wiring(session_id)` on the
+  controller (precedent `_todo_wiring`).
+- End-to-end harness: `test_console_watchlists_mounted_uat.py` pattern.
+- Library ▸ Skills: read-only preview, not the editor (§3.5).
+- Local service image handling: broken today; fixed in §3.1a.
