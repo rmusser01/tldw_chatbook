@@ -439,6 +439,7 @@ class ThemePane(ContentSwitcher):
         elif mode == "new":
             editor.on_new_theme()
         editor.set_editing_context(theme_id, mode)
+        editor.set_files_available(picker.files_available)
         self.current = "settings-theme-editor-view"
         editor.query_one("#settings-theme-name").focus()
 

@@ -683,12 +683,21 @@ class SettingsThemeEditor(Vertical):
     def save_as(self, name: str) -> None:
         """Write the working palette as a new theme ``name``.
 
-        The file the editor was loaded from is left untouched; an existing
-        ``name.toml`` gets the same overwrite confirmation as Save.
+        The file the editor was loaded from is left untouched unless it is
+        ``name`` itself. R21: an existing ``name.toml`` always asks first --
+        even the loaded theme's own file, since Save as means "a new file".
         """
-        self._save_under(name.strip())
+        self._save_under(name.strip(), always_confirm=True)
 
-    def _save_under(self, theme_name: str) -> None:
+    def set_files_available(self, available: bool) -> None:
+        """R20 / spec §9: Save and Save as write theme files, so a
+        backup/recovery pause disables them with the reason as a tooltip."""
+        for button_id in ("#settings-theme-save", "#settings-theme-save-as"):
+            button = self.query_one(button_id, Button)
+            button.disabled = not available
+            button.tooltip = None if available else THEMES_UNAVAILABLE_LABEL
+
+    def _save_under(self, theme_name: str, *, always_confirm: bool = False) -> None:
         """Validate ``theme_name``, confirm an overwrite, then write it."""
         if not theme_name:
             self.app.notify("Please enter a theme name", severity="warning")
@@ -709,8 +718,8 @@ class SettingsThemeEditor(Vertical):
 
         # TASK-31258: writing over another saved theme is one keypress from
         # destroying it; re-saving the theme loaded from that very file is an
-        # update and needs no dialog.
-        if theme_path.exists() and self._loaded_user_theme != theme_name:
+        # update and needs no dialog (Save as always asks, R21).
+        if theme_path.exists() and (always_confirm or self._loaded_user_theme != theme_name):
 
             async def _confirmed_overwrite() -> None:
                 self._write_theme_file(theme_name, theme_path, theme_data)

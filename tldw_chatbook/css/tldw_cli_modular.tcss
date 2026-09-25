@@ -5481,11 +5481,6 @@ StatCard:hover {
     border-left: outer $text-warning;
     border-right: outer $text-warning;
 }
-#settings-theme-card .settings-action-row .theme-editor-action.-error:focus {
-    background: $ds-status-error-readable;
-    border-left: outer $ds-status-error-readable;
-    border-right: outer $ds-status-error-readable;
-}
 
 
 

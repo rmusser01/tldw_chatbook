@@ -568,6 +568,13 @@ async def test_save_active_theme_reapplies_and_returns(request):
         assert host.theme == "mine"
         active = host.available_themes[host.theme]
         assert Color.parse(active.primary).hex.upper() == "#AB1234"
+        # What the app actually paints: the stylesheet variables are only
+        # refreshed by a re-apply (registration alone leaves them stale).
+        # (Compared with Textual's own generation: it rounds #AB1234 to #AA1234.)
+        painted = Color.parse(host.stylesheet._variables["primary"])
+        expected = Color.parse(active.to_color_system().generate()["primary"])
+        assert painted == expected
+        assert painted != Color.parse("#0099FF")  # not the pre-save palette
 
 
 @pytest.mark.asyncio
@@ -581,6 +588,7 @@ async def test_save_as_keeps_original(request):
     path = _saved_theme(host)
     original = path.read_bytes()
     async with host.run_test(size=(190, 55)) as pilot:
+        before = host.theme
         await _highlight(host, pilot, "mine")
         await pilot.press("e")
         await pilot.pause(0.2)
@@ -599,6 +607,7 @@ async def test_save_as_keeps_original(request):
         pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
         assert pane.current == "settings-theme-picker"
         assert host.screen.query_one("#settings-theme-picker").highlighted_id == "mine2"
+        assert host.theme == before  # saving a non-active theme applies nothing
 
 
 @pytest.mark.asyncio
@@ -649,3 +658,31 @@ async def test_clone_then_back_without_edits_does_not_prompt(request):
         assert not isinstance(host.screen, ThemeLeaveModal)
         pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
         assert pane.current == "settings-theme-picker"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_buttons_disabled_while_theme_files_are_paused(request, monkeypatch):
+    """R20 / spec §9: during a backup/recovery pause Save and Save as are
+    disabled, with the reason as their tooltip."""
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Widgets.settings_theme_editor import (
+        THEMES_UNAVAILABLE_LABEL,
+        SettingsThemeEditor,
+    )
+
+    def paused(self):
+        raise RecoveryRequired("x")
+
+    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "apricot")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        for button_id in ("#settings-theme-save", "#settings-theme-save-as"):
+            button = host.screen.query_one(button_id, Button)
+            assert button.disabled, button_id
+            assert button.tooltip == THEMES_UNAVAILABLE_LABEL, button_id
