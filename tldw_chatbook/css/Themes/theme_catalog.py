@@ -39,6 +39,9 @@ class ThemeEntry:
     is_active: bool
     is_launch_default: bool
     overrides: Literal["shipped", "textual"] | None = None
+    # Set for a saved file that can't be read (spec §4): a short, path-free
+    # reason. The entry is listed so the file can be deleted.
+    error: str | None = None
 
     @property
     def strip(self) -> tuple[str, ...]:
@@ -109,8 +112,14 @@ def build_catalog(
     user_names: Collection[str],
     active: str,
     launch_default: str,
+    unreadable: Mapping[str, str] | None = None,
 ) -> list[ThemeEntry]:
-    """List every registered theme once, grouped yours → shipped → textual."""
+    """List every registered theme once, grouped yours → shipped → textual.
+
+    ``unreadable`` maps each unreadable saved file's stem to its error; each
+    becomes a grey "yours" entry. A stem that is already a listed id is
+    skipped, since option ids must stay unique.
+    """
     rows: list[tuple[str, Origin, Literal["shipped", "textual"] | None, Theme]] = []
     for name, theme in available.items():
         if name.startswith("custom_"):
@@ -134,6 +143,21 @@ def build_catalog(
         )
         for name, origin, overrides, theme in rows
     ]
+    listed = {entry.id for entry in entries}
+    entries.extend(
+        ThemeEntry(
+            id=stem,
+            display_name=f"{display_name(stem)} (unreadable)",
+            origin="yours",
+            dark=True,
+            colours=tuple((key, "#808080") for key in BASE_KEYS),
+            is_active=False,
+            is_launch_default=False,
+            error=error,
+        )
+        for stem, error in (unreadable or {}).items()
+        if stem not in listed
+    )
     entries.sort(key=lambda e: (_ORIGIN_ORDER[e.origin], e.display_name.casefold()))
     return entries
 

@@ -963,3 +963,27 @@ async def test_rename_prompt_escapes_markup_in_theme_name(request):
         assert isinstance(host.screen, RagProfileNameModal)
         title = host.screen.query_one(".destination-section", Static)
         assert "x[/]" in str(title.render())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_of_an_unreadable_file_removes_it(request):
+    """PR 3 Task 1: an unreadable file is listed under Yours and deletable."""
+    from tldw_chatbook import config
+
+    themes = config._get_effective_config_path().parent / "themes"
+    themes.mkdir(exist_ok=True)
+    path = themes / "broken.toml"
+    path.write_text("garbage [[ not toml", encoding="utf-8")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "broken")
+        picker = host.screen.query_one("#settings-theme-picker")
+        entry = next(e for e in picker.entries if e.id == "broken")
+        assert entry.origin == "yours" and entry.error == "not valid TOML"
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Delete theme"
+        await pilot.pause(0.3)
+        assert not path.exists()
+        assert "broken" not in _picker_ids(host)

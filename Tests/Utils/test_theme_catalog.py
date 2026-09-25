@@ -264,3 +264,32 @@ def test_user_theme_names_reads_toml_stems(tmp_path):
     (tmp_path / "notes.txt").write_text("x")
     assert tc.user_theme_names(tmp_path) == {"warm_paper"}
     assert tc.user_theme_names(tmp_path / "missing") == set()
+
+
+def test_unreadable_file_is_listed_under_yours_with_its_error():
+    mine = Theme(name="warm_paper", primary="#BD6B32", dark=False)
+    entries = build_catalog(
+        _available(warm_paper=mine),
+        {"warm_paper"},
+        "broken_one",
+        "broken_one",
+        unreadable={"broken_one": "not valid TOML"},
+    )
+    by_id = {e.id: e for e in entries}
+    bad = by_id["broken_one"]
+    assert bad.origin == "yours" and bad.error == "not valid TOML"
+    assert bad.display_name == "Broken One (unreadable)"
+    assert bad.dark is True and bad.overrides is None
+    assert dict(bad.colours) == {key: "#808080" for key in BASE_KEYS}
+    assert not bad.is_active and not bad.is_launch_default
+    assert by_id["warm_paper"].error is None
+    yours = [e.id for e in entries if e.origin == "yours"]
+    assert yours == ["broken_one", "warm_paper"]
+    assert [e.origin for e in entries][: len(yours)] == ["yours"] * len(yours)
+
+
+def test_unreadable_stem_that_collides_with_a_listed_theme_is_skipped():
+    """Option ids must stay unique: a registered name wins over a stem."""
+    entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"nord": "not valid TOML"})
+    assert [e.id for e in entries].count("nord") == 1
+    assert next(e for e in entries if e.id == "nord").error is None
