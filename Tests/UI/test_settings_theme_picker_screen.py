@@ -71,3 +71,40 @@ async def test_back_with_unsaved_edits_asks_first(request):
         await pilot.pause(0.2)
         pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
         assert pane.current == "settings-theme-editor-view"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_appearance_shows_read_only_theme_row_and_opens_picker(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        assert not host.screen.query("#settings-appearance-theme")
+        summary = str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        assert "launch default" in summary and "active" in summary
+        host.theme = "nord"  # e.g. from the palette, while Appearance is open
+        await pilot.pause(0.2)
+        assert "active: Nord" in str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        await pilot.click("#settings-appearance-open-theme")
+        await pilot.pause(0.3)
+        assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
+
+
+def test_appearance_save_never_writes_default_theme():
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Screens import settings_appearance_defaults as sad
+
+    values = replace(sad.SettingsAppearanceDefaults(), default_theme="textual-light")
+    sections = sad.build_appearance_save_sections({"general": {"default_theme": "nord"}}, values)
+    # The existing launch default passes through untouched; the draft value never lands.
+    assert sections["general"]["default_theme"] == "nord"
+
+
+def test_appearance_validation_ignores_theme():
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Screens import settings_appearance_defaults as sad
+
+    values = replace(sad.SettingsAppearanceDefaults(), default_theme="")
+    assert sad.validate_appearance_defaults(values).valid

@@ -1964,10 +1964,9 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         assert "Theme owns: full theme editing" in text
         assert "Save targets: general, web_server, appearance, and library" in text
         assert "Open Theme" in text
-        assert (
-            screen.query_one("#settings-appearance-theme", Select).value
-            == "textual-dark"
-        )
+        # TASK-32948: the theme is a read-only row; the picker owns choosing.
+        assert not screen.query("#settings-appearance-theme")
+        assert screen.query("#settings-appearance-theme-summary")
         assert (
             screen.query_one("#settings-appearance-palette-theme-limit", Input).value
             == "1"
@@ -2037,6 +2036,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
 
     assert saved
+    # Passed through from the loaded config, never drafted by Appearance.
     assert saved[-1]["general"]["default_theme"] == "textual-dark"
     assert saved[-1]["general"]["palette_theme_limit"] == 5
     assert saved[-1]["web_server"]["font_size"] == 14
@@ -2483,7 +2483,8 @@ async def test_settings_appearance_revert_restores_loaded_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_preview_updates_runtime_without_saving(monkeypatch):
+async def test_settings_appearance_preview_checks_draft_without_theme_or_save(monkeypatch):
+    """TASK-32948: Preview no longer sets app.theme (the picker's Try does)."""
     app = _build_test_app()
     app.app_config["general"] = {"default_theme": "textual-dark"}
     app.theme = "textual-dark"
@@ -2500,18 +2501,18 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
-        theme = screen.query_one("#settings-appearance-theme", Select)
-        theme.value = "textual-light"
-        screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
+        density = screen.query_one("#settings-appearance-density", Select)
+        density.value = "compact"
+        screen.handle_appearance_density_changed(Select.Changed(density, density.value))
 
         screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
         await pilot.pause()
         await pilot.click("#settings-preview-appearance")
         text = _visible_text(screen)
 
-        assert app.theme == "textual-light"
+        assert app.theme == "textual-dark"
         assert saved == []
-        assert "Appearance preview applied for this session only." in text
+        assert "Appearance defaults are valid; Save persists them." in text
         assert "Unsaved" in text
 
 
@@ -2549,14 +2550,6 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
         '@work(exclusive=True, group="settings-save-appearance", thread=True)\n'
         "    def _settings_save_appearance_worker"
     ) in source
-
-
-def test_settings_appearance_theme_options_use_specific_import_fallback():
-    source = inspect.getsource(SettingsScreen._appearance_theme_options)
-
-    assert "from tldw_chatbook.css.Themes.themes import ALL_THEMES" in source
-    assert "except (ImportError, ModuleNotFoundError):" in source
-    assert "except Exception:" not in source
 
 
 def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path):
@@ -5493,7 +5486,7 @@ async def test_settings_jk_never_steals_keys_from_select(request):
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
-        theme_select = screen.query_one("#settings-appearance-theme", Select)
+        theme_select = screen.query_one("#settings-appearance-density", Select)
         theme_select.focus()
         await pilot.pause()
 
@@ -13002,43 +12995,6 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
         assert model.state.validated_revision is None
 
 
-def test_settings_appearance_theme_options_include_registered_user_themes(
-    tmp_path, monkeypatch
-):
-    """TASK-31250: themes registered with the app (saved user themes) are offered.
-
-    task-32945: "(saved)" only when a file exists in the user themes dir;
-    Textual's own built-ins say "(Textual)" instead.
-    """
-    import types
-
-    from tldw_chatbook.UI.Screens import settings_screen as settings_module
-
-    (tmp_path / "ocean.toml").write_text('[theme]\nname = "ocean"\n', encoding="utf-8")
-    monkeypatch.setattr(settings_module, "_theme_save_target", lambda: tmp_path)
-    stub = types.SimpleNamespace(
-        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
-        app_instance=types.SimpleNamespace(
-            available_themes={
-                "textual-dark": object(),
-                "ocean": object(),
-                "catppuccin-macchiato": object(),
-                "solarized-light": object(),
-                "registered-elsewhere": object(),
-            }
-        ),
-    )
-    options = SettingsScreen._appearance_theme_options(stub)
-    assert ("Ocean (saved)", "ocean") in options
-    assert ("Catppuccin Macchiato (Textual)", "catppuccin-macchiato") in options
-    assert ("Solarized Light (Textual)", "solarized-light") in options
-    assert ("Registered Elsewhere", "registered-elsewhere") in options
-    assert not any("(saved)" in label for label, value in options if value != "ocean")
-    labels = [label for label, _value in options]
-    assert len(labels) == len(set(labels))
-    assert [value for _label, value in options].count("textual-dark") == 1
-
-
 async def _dirty_theme_editor(screen, pilot):
     await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
     for _ in range(6):
@@ -13141,20 +13097,3 @@ def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
     inside = Path.home() / ".config" / "tldw_cli" / "themes"
     assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
     assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
-
-
-def test_settings_appearance_theme_options_skip_runtime_only_custom_themes():
-    """PR #2375 review #8: Apply registers an unsaved palette as custom_<name>; it
-    exists only for this process and must not be offered as a launch default."""
-    import types
-
-    stub = types.SimpleNamespace(
-        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
-        app_instance=types.SimpleNamespace(
-            available_themes={"textual-dark": object(), "ocean": object(), "custom_ocean": object()}
-        ),
-    )
-    options = SettingsScreen._appearance_theme_options(stub)
-    values = [value for _label, value in options]
-    assert "ocean" in values
-    assert "custom_ocean" not in values
