@@ -38,6 +38,7 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.theme_editor_helpers import open_theme_editor
 from Tests.UI.test_console_session_settings import (
     _assert_public_value_equal,
     _assert_schema_key_absent,
@@ -575,12 +576,12 @@ def test_inspector_guidance_covers_every_settings_category():
 
 @pytest.mark.asyncio
 async def test_theme_category_opens_without_crashing():
-    """Selecting the Theme category mounts its editor without crashing compose.
+    """Selecting the Theme category mounts its picker without crashing compose.
 
-    The editor widget mounting is the regression signal: the original bug
-    raised KeyError inside compose, so a crash would leave the editor unmounted
-    and time this wait out. Editor content is verified in
-    test_settings_theme_editor.py.
+    The pane mounting is the regression signal: the original bug raised
+    KeyError inside compose, so a crash would leave it unmounted and time this
+    wait out. TASK-32948 (spec D1): Theme opens on the picker, the editor sits
+    behind Clone/New. Editor content is verified in test_settings_theme_editor.py.
     """
     app = _build_test_app()
     host = ConversationReturnSettingsHarness(app)
@@ -589,7 +590,8 @@ async def test_theme_category_opens_without_crashing():
         screen = _active_destination_screen(host)
         # Poll rather than a fixed settle: selecting a category triggers a
         # recompose whose mount lands at a load-dependent moment.
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        await _wait_for_selector(screen, pilot, "#settings-theme-picker", timeout=8.0)
+        assert screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
 
 
 @pytest.mark.asyncio
@@ -5395,7 +5397,7 @@ async def test_settings_jk_leaves_theme_editor_focus_alone(request):
         await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
+        editor = await open_theme_editor(host, pilot)
         for selector in ("#settings-theme-tree", ".color-preset-swatch"):
             target = editor.query(selector).first()
             target.focus()
@@ -11789,7 +11791,12 @@ async def test_theme_user_edit_does_not_remount_editor():
         await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
+        editor = await open_theme_editor(host, pilot)
+        # Clone marks the editor modified; start clean so the edit is the signal.
+        editor.is_modified = False
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is False
         target = editor.query_one("#settings-theme-color-primary", Input)
         target.value = "#123456"
         for _ in range(6):
@@ -12111,7 +12118,6 @@ def test_state_banner_leads_with_persistence_badge():
         SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
         SettingsCategoryId.WORKSPACES: "Applies immediately",
-        SettingsCategoryId.THEME: "Managed in editor",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
         SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
         SettingsCategoryId.ARTIFACTS: "Read-only here",
@@ -12283,6 +12289,11 @@ async def test_every_category_renders_the_state_banner():
             # categories used to compose a second in-card copy on top of
             # the pinned one, doubling the save-contract line.
             banners = screen.query(".settings-state-banner")
+            if summary.category is SettingsCategoryId.THEME:
+                # TASK-32948: Theme opens on the picker, whose Use/Try/Revert
+                # carry their own save contract -- no pinned banner there.
+                assert len(banners) == 0, [str(b.renderable) for b in banners]
+                continue
             assert len(banners) == 1, (
                 summary.category,
                 [str(b.renderable) for b in banners],
@@ -13032,7 +13043,7 @@ async def _dirty_theme_editor(screen, pilot):
     await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
     for _ in range(6):
         await pilot.pause()
-    editor = screen.query_one("#settings-theme-editor")
+    editor = await open_theme_editor(pilot.app, pilot)
     editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
     for _ in range(6):
         await pilot.pause()
@@ -13089,7 +13100,7 @@ async def test_theme_leave_with_unsaved_edits_discard_clears_the_dirty_flag(requ
         assert screen.theme_editor_modified is False
 
         screen._select_category(SettingsCategoryId.THEME.value)
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        await _wait_for_selector(screen, pilot, "#settings-theme-picker", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
         note = screen.query_one("#settings-theme-unsaved-note", Static)

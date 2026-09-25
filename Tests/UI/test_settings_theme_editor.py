@@ -400,7 +400,8 @@ async def test_settings_theme_editor_apply_hint_announces_instant_apply(request)
         from textual.widgets import Static
 
         hint = editor.query_one("#settings-theme-apply-hint", Static)
-        assert "applies immediately - no Save needed" in str(hint.renderable)
+        # TASK-32948: "Apply previews" (Use in the picker is what persists).
+        assert "previews this palette now - no Save needed" in str(hint.renderable)
 
 
 @pytest.mark.asyncio
@@ -652,46 +653,6 @@ async def test_settings_theme_editor_save_registers_theme_with_app(request, tmp_
         editor.on_save_theme()
         await pilot.pause()
         assert "ocean" in app.available_themes
-
-
-@pytest.mark.asyncio
-@private_profile_test
-async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
-    request, tmp_path, monkeypatch
-):
-    """TASK-31250: unsaved -> warning; saved -> general.default_theme written."""
-    import tldw_chatbook.config as config_module
-
-    written: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        config_module,
-        "apply_settings_mutation_to_cli_config",
-        lambda sections: (
-            written.append(
-                ("general", "default_theme", sections["general"]["default_theme"])
-            )
-            or ConfigMutationResult(True, True, None)
-        ),
-    )
-    editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
-    app = _isolated_editor_app(editor)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        editor.on_new_theme()
-        await pilot.pause()
-        editor.query_one("#settings-theme-name", Input).value = "ocean"
-        await pilot.pause()
-        editor.on_set_launch_default()
-        await pilot.pause()
-        assert "Save the theme first" in app.notify.call_args.args[0]
-        assert written == []
-
-        editor.on_save_theme()
-        await pilot.pause()
-        editor.on_set_launch_default()
-        await pilot.pause()
-        assert written == [("general", "default_theme", "ocean")]
 
 
 @pytest.mark.asyncio
@@ -1015,7 +976,7 @@ async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(
 async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_using_stale_name(
     request, tmp_path
 ):
-    """Qodo #6: an emptied Name box must not let Apply/Export/Delete/Set default
+    """Qodo #6: an emptied Name box must not let Apply/Export/Delete
     act on the previously loaded name."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -1033,7 +994,6 @@ async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_usin
             editor.on_apply_theme,
             editor.on_export_theme,
             editor.on_delete_theme,
-            editor.on_set_launch_default,
         ):
             app.notify.reset_mock()
             handler()
@@ -1048,34 +1008,27 @@ async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_usin
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_theme_editor_set_launch_default_validates_name_and_reports_write_failure(
+async def test_settings_theme_editor_launch_default_write_failure_is_reported(
     request, tmp_path, monkeypatch
 ):
-    """Qodo #2 + #7: a traversal-shaped name is rejected before any path check, and
-    a failed config write is reported as an error, not success."""
+    """Qodo #7: a failed config write is reported as an error, not success.
+
+    TASK-32948 removed the "Set as launch default" button; Delete still resets
+    the launch default through ``_save_launch_default``, so it is driven directly.
+    """
     import tldw_chatbook.config as config_module
 
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
-    _write_user_theme(tmp_path, "ocean")
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("ocean")
-        await pilot.pause()
-
-        editor.current_theme_name = "../evil"
-        editor.on_set_launch_default()
-        await pilot.pause()
-        assert "Invalid theme name" in app.notify.call_args.args[0]
-
-        editor.current_theme_name = "ocean"
         monkeypatch.setattr(
             config_module,
             "apply_settings_mutation_to_cli_config",
             lambda *a, **k: ConfigMutationResult(False, False, "before_replace"),
         )
-        editor.on_set_launch_default()
+        editor._save_launch_default("textual-dark", "reset")
         await pilot.pause()
         message, kwargs = app.notify.call_args.args[0], app.notify.call_args.kwargs
         assert "Could not save" in message

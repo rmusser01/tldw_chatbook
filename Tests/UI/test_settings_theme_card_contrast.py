@@ -15,11 +15,12 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
+from Tests.UI.theme_editor_helpers import open_theme_editor
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 THEMES = ("textual-dark", "textual-light", "gruvbox_dark", "solarized_light")
 FILLED = ("apply", "save", "reset", "delete")
-PLAIN = ("new", "clone", "export", "generate", "set-default")
+PLAIN = ("new", "clone", "export", "generate")
 
 
 def _host():
@@ -85,9 +86,10 @@ def _edges(host, widget):
 async def _open_theme_card(pilot, host, theme):
     host.theme = theme
     await _category(host, pilot, "Theme")
+    editor = await open_theme_editor(host, pilot)
     host.set_focus(None)
     await pilot.pause(0.2)
-    return host.screen.query_one("#settings-theme-editor")
+    return editor
 
 
 async def _show(pilot, widget):

@@ -289,6 +289,7 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
+from ...Widgets.settings_theme_picker import ThemePane
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -2151,7 +2152,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
+            "Use applies a theme and keeps it at launch; Try applies it for this session; Clone or New opens the editor",
         ),
     ),
     SettingsCategoryId.SPLASH_SCREEN: (
@@ -8719,7 +8720,7 @@ class SettingsScreen(BaseAppScreen):
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
         if category == SettingsCategoryId.THEME:
-            return "Use the editor's Apply/Save/Reset buttons to manage themes."
+            return "Use or Try a theme; Clone or New opens the editor."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return f"Splash defaults: {INSTANT_APPLY_BEHAVIOR_COPY}."
         if category == SettingsCategoryId.WORKSPACES:
@@ -9446,8 +9447,6 @@ class SettingsScreen(BaseAppScreen):
             # No SettingsDraft: edits stage in `self._network_pending`
             # until the screen-wide `s` reaches the Network save branch.
             return "Pending — save with s"
-        if category is SettingsCategoryId.THEME:
-            return "Managed in editor"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
         if category is SettingsCategoryId.SCHEDULES:
@@ -9498,8 +9497,6 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.AGENTS:
             return "agent_runs.db (SQLite) — immediate CRUD, no draft"
-        if category is SettingsCategoryId.THEME:
-            return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
         if category is SettingsCategoryId.SCHEDULES:
@@ -16251,7 +16248,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 (
                     "Boundary",
-                    "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
+                    "Use applies a theme and keeps it at launch; Try applies it for this session; Clone or New opens the editor",
                 ),
             )
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -21589,7 +21586,7 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.THEME:
             yield Static("Theme", classes="destination-section settings-column-title")
-            yield SettingsThemeEditor(id="settings-theme-editor")
+            yield ThemePane(id="settings-theme-pane")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static(
                 "Splash Screen", classes="destination-section settings-column-title"
@@ -22187,7 +22184,7 @@ class SettingsScreen(BaseAppScreen):
             "server unless you run Manual sync yourself."
             if summary.category is SettingsCategoryId.OVERVIEW
             else (
-                "Local-only: Save stores a theme file; Set as launch default updates your config."
+                "Local-only: Save stores a theme file; Use updates your config."
                 if summary.category is SettingsCategoryId.THEME
                 else "Local-only: saves write your config file."
             ),
@@ -22531,7 +22528,8 @@ class SettingsScreen(BaseAppScreen):
         # category composed its own inside the scrollable content, so the
         # persistence badge (the save-contract carrier) scrolled away mid-task
         # (RAG showed no State line at all in evidence).
-        yield self._render_category_state_banner(active_summary.category)
+        if active_summary.category is not SettingsCategoryId.THEME:
+            yield self._render_category_state_banner(active_summary.category)
         detail_body = detail_pane_container(id="settings-detail-pane-body")
         detail_body.add_class("h-fill")
         detail_body.styles.scrollbar_size_vertical = 1
@@ -23988,6 +23986,41 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
+
+    @on(Button.Pressed, "#settings-theme-back")
+    def handle_theme_back(self, event: Button.Pressed) -> None:
+        """Editor -> picker; unsaved edits get the Save/Discard/Stay prompt (TASK-32948)."""
+        event.stop()
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return
+        if not editor.is_modified:
+            pane.show_picker()
+            return
+        self.run_worker(
+            self._confirm_theme_back(pane, editor),
+            group="settings-theme-back",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _confirm_theme_back(
+        self, pane: ThemePane, editor: SettingsThemeEditor
+    ) -> None:
+        choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        if choice == "cancel":
+            return
+        if choice == "save":
+            editor.on_save_theme()
+            if editor.is_modified:
+                return  # refused name or pending overwrite confirmation: stay
+        else:
+            editor.is_modified = False
+            self.theme_editor_modified = False
+            self._refresh_theme_modified_widgets()
+        pane.show_picker()
 
     async def _confirm_theme_category_leave(
         self,
