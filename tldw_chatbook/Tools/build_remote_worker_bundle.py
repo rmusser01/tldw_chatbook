@@ -350,22 +350,25 @@ def _module_section(module_name: str) -> tuple[str, set[str]]:
                 if kept:
                     body.append(ast.Import(names=kept))
                 continue
-        if module_name == _WORKER_MODULE and isinstance(node, ast.FunctionDef):
-            if node.name == "main":
-                # The bundle's IO adapter below defines the real entry
-                # ``main(stream)``; the local no-arg ``main`` must not
-                # survive to be shadowed by it.
-                argument_names = [
-                    *(arg.arg for arg in node.args.posonlyargs),
-                    *(arg.arg for arg in node.args.args),
-                    *(arg.arg for arg in node.args.kwonlyargs),
-                ]
-                if argument_names or node.args.vararg or node.args.kwarg:
-                    raise BundleBuildError(
-                        "workspace_tool_worker.main grew parameters; the "
-                        "builder's drop rule for it must be re-reviewed"
-                    )
-                continue
+        if (
+            module_name == _WORKER_MODULE
+            and isinstance(node, ast.FunctionDef)
+            and node.name == "main"
+        ):
+            # The bundle's IO adapter below defines the real entry
+            # ``main(stream)``; the local no-arg ``main`` must not
+            # survive to be shadowed by it.
+            argument_names = [
+                *(arg.arg for arg in node.args.posonlyargs),
+                *(arg.arg for arg in node.args.args),
+                *(arg.arg for arg in node.args.kwonlyargs),
+            ]
+            if argument_names or node.args.vararg or node.args.kwarg:
+                raise BundleBuildError(
+                    "workspace_tool_worker.main grew parameters; the "
+                    "builder's drop rule for it must be re-reviewed"
+                )
+            continue
         body.append(node)
 
     transformed = _NonStdlibImportRewriter().visit(
@@ -602,6 +605,17 @@ def build_bundle_text() -> str:
     head = "\n".join(
         [
             _BUNDLE_DOCSTRING.format(floor=floor),
+            # File-level lint opt-out (Task 21 lint pass): the artifact is
+            # a GENERATED concatenation of real modules — per-section
+            # imports, cross-section name reuse (F811/F821), and vendored
+            # annotation spellings are structural to that form, and every
+            # auto-"fix" would either break the worker or drift it from
+            # the sources the drift guard rebuilds from. Lint the SOURCE
+            # modules; the artifact is verified byte-for-byte by the
+            # builder --check / drift guard instead.
+            "# ruff: noqa",
+            "# (generated concatenation: lint the SOURCE modules, not this",
+            "# artifact — see build_remote_worker_bundle.py)",
             "from __future__ import annotations",
             "",
             "\n\n".join(sections).rstrip("\n"),

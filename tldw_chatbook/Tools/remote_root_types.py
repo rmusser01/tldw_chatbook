@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Union
 
 __all__ = [
     "AdmittedRoot",
@@ -84,15 +83,15 @@ class RemoteRoot:
 #: The typed slot every run-admitted authority carries from Phase 3a on.
 #: Plain ``Path`` values remain valid (implicit local roots) while the
 #: Phase 3 tasks migrate the remaining construction sites.
-AdmittedRoot = Union[LocalRoot, RemoteRoot]
+AdmittedRoot = LocalRoot | RemoteRoot
 
 
-def is_remote(root: "Path | AdmittedRoot") -> bool:
+def is_remote(root: Path | AdmittedRoot) -> bool:
     """Whether ``root`` is a remote (server-side) workspace root."""
     return isinstance(root, RemoteRoot)
 
 
-def display_uri(root: "Path | AdmittedRoot") -> str:
+def display_uri(root: Path | AdmittedRoot) -> str:
     """Render one admitted root as its model-facing URI.
 
     ``LocalRoot``/``Path`` → ``file://`` + the (absolute) local path;
@@ -135,7 +134,7 @@ def _ssh_display_uri(locator: str) -> str:
     return f"ssh://{authority}{slash}{path}"
 
 
-def local_root_path(root: "Path | AdmittedRoot", *, site: str) -> Path:
+def local_root_path(root: Path | AdmittedRoot, *, site: str) -> Path:
     """Unwrap a local root to its ``Path``; refuse remote roots loudly.
 
     The Phase 3a boundary helper for every consumer that is about to do

@@ -244,8 +244,7 @@ def _spawn_loopback_worker(
         return subprocess.run(
             argv,
             input=compressed + payload,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=budget_seconds,
             check=False,
         )
@@ -400,18 +399,18 @@ def run_bundle_loopback(
 _HOST_SEMAPHORE_LOCK = threading.Lock()
 _HOST_SEMAPHORES: dict[
     tuple[str | None, str, int | None],
-    tuple[int, "threading.Semaphore"],
+    tuple[int, threading.Semaphore],
 ] = {}
 
 
 def _host_key_tuple(
-    loc: "RemoteLocator",
+    loc: RemoteLocator,
 ) -> tuple[str | None, str, int | None]:
     """The resolved host identity — the master manager's own key."""
     return (loc.user, loc.host, loc.port)
 
 
-def _host_key_string(loc: "RemoteLocator") -> str:
+def _host_key_string(loc: RemoteLocator) -> str:
     """The same identity rendered as the status cache's probe key."""
     user = loc.user if loc.user is not None else ""
     port = loc.port if loc.port is not None else 22
@@ -420,7 +419,7 @@ def _host_key_string(loc: "RemoteLocator") -> str:
 
 def _host_semaphore(
     key: tuple[str | None, str, int | None], max_concurrent: int
-) -> "threading.Semaphore":
+) -> threading.Semaphore:
     with _HOST_SEMAPHORE_LOCK:
         registered = _HOST_SEMAPHORES.get(key)
         if registered is not None and registered[0] == max_concurrent:
@@ -434,11 +433,11 @@ def _host_semaphore(
 class _SshModeConfig:
     """Everything the ssh transport mode wires around one binding."""
 
-    loc: "RemoteLocator"
+    loc: RemoteLocator
     binding_id: str
-    cache: "RemoteBindingStatusCache"
-    masters: "SshMasterManager"
-    transport: "RemoteWorkspaceTransport"
+    cache: RemoteBindingStatusCache
+    masters: SshMasterManager
+    transport: RemoteWorkspaceTransport
     python: str
     max_concurrent_calls: int
     recovery_probes: bool
@@ -511,11 +510,11 @@ class RemoteWorkspaceToolExecutor:
     @classmethod
     def for_ssh(
         cls,
-        loc: "RemoteLocator",
+        loc: RemoteLocator,
         binding_id: str,
         *,
-        cache: "RemoteBindingStatusCache",
-        masters: "SshMasterManager | None" = None,
+        cache: RemoteBindingStatusCache,
+        masters: SshMasterManager | None = None,
         ssh_bin: str = "ssh",
         python: str = "python3",
         grace: float = 5.0,
@@ -523,7 +522,7 @@ class RemoteWorkspaceToolExecutor:
         max_concurrent_calls: int | None = None,
         recovery_probes: bool = True,
         sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
-    ) -> "RemoteWorkspaceToolExecutor":
+    ) -> RemoteWorkspaceToolExecutor:
         """Build the executor that drives one remote binding over ssh.
 
         Imports of the transport stack are deferred to THIS method on
@@ -961,7 +960,7 @@ class RemoteWorkspaceToolExecutor:
         )
         return payload, terminal
 
-    def _ssh_call(self, request_bytes: bytes, *, budget: float) -> "RemoteCallResult":
+    def _ssh_call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
         """One transport call under the master and the host cap.
 
         ``ensure_master`` is a cheap no-op while the tracked socket
@@ -981,7 +980,7 @@ class RemoteWorkspaceToolExecutor:
             )
 
     def _map_ssh_result(
-        self, result: "RemoteCallResult", operation_id: str
+        self, result: RemoteCallResult, operation_id: str
     ) -> dict[str, Any]:
         """Fold one transport outcome into cache state and a typed result.
 

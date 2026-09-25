@@ -51,17 +51,17 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
 
 __all__ = [
     "BLOCKING_TRANSPORT_KINDS",
-    "BindingState",
-    "CachedStatus",
     "NO_FLIP_TRANSPORT_KINDS",
-    "cached_status_display",
     "PROBE_BLOCKED",
     "PROBE_MISSING",
     "PROBE_OP_FAILED",
     "PROBE_PIN_FAILED",
     "PROBE_READY",
+    "BindingState",
+    "CachedStatus",
     "ProbeClassification",
     "RemoteBindingStatusCache",
+    "cached_status_display",
     "classify_probe_result",
     "get_remote_binding_status_cache",
     "set_remote_binding_status_cache",
@@ -193,11 +193,11 @@ def _moment(now: float | None) -> float:
 #: debounced recovery probe must all see the SAME binding states or
 #: availability decisions fragment per call site. Lazily constructed;
 #: ``set_remote_binding_status_cache`` is the test seam.
-_APP_STATUS_CACHE: "RemoteBindingStatusCache | None" = None
+_APP_STATUS_CACHE: RemoteBindingStatusCache | None = None
 _APP_STATUS_CACHE_LOCK = threading.Lock()
 
 
-def get_remote_binding_status_cache() -> "RemoteBindingStatusCache":
+def get_remote_binding_status_cache() -> RemoteBindingStatusCache:
     """Return the process-wide :class:`RemoteBindingStatusCache`.
 
     Lazily constructed with the shipped defaults on first use; stable
@@ -214,7 +214,7 @@ def get_remote_binding_status_cache() -> "RemoteBindingStatusCache":
 
 
 def set_remote_binding_status_cache(
-    cache: "RemoteBindingStatusCache | None",
+    cache: RemoteBindingStatusCache | None,
 ) -> None:
     """Install or clear the process-wide status cache (test seam).
 
@@ -229,7 +229,7 @@ def set_remote_binding_status_cache(
 
 
 def cached_status_display(
-    binding_id: str, cache: "RemoteBindingStatusCache | None" = None
+    binding_id: str, cache: RemoteBindingStatusCache | None = None
 ) -> str:
     """One binding's cached state as the UI live-status word (pure read).
 

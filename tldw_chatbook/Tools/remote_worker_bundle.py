@@ -51,6 +51,9 @@ Contract:
   worker must never touch; enforcement wiring lands with the remote
   binding tasks.
 """
+# ruff: noqa
+# (generated concatenation: lint the SOURCE modules, not this
+# artifact — see build_remote_worker_bundle.py)
 from __future__ import annotations
 
 # ===========================================================================
@@ -4781,4 +4784,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("b1b7abc167a08a93da795458efdf31456744803943446c3ad08be9fce901ac5b")
+BUNDLE_SHA256 = _enter_worker_exchange("16b0a0df371930e696209bad94e2c8980545e6d8d22b45fbc57ca6bf3c7a3066")

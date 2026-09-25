@@ -68,15 +68,15 @@ from tldw_chatbook.Tools.remote_binding_locator import (
     RemoteLocator,
     build_ssh_argv,
 )
-from tldw_chatbook.Tools.remote_workspace_executor import _bundle_payload
 from tldw_chatbook.Tools.remote_worker_bundle import RESPONSE_MAGIC
+from tldw_chatbook.Tools.remote_workspace_executor import _bundle_payload
 
 __all__ = [
     "PERCENT_C_EXPANSION_LENGTH",
-    "RemoteCallResult",
-    "RemoteWorkspaceTransport",
     "SSH_UNAVAILABLE_MESSAGE",
     "SUN_PATH_LIMIT",
+    "RemoteCallResult",
+    "RemoteWorkspaceTransport",
     "SshMasterManager",
     "TransportFailure",
     "TransportFailureKind",
@@ -141,7 +141,7 @@ _SOCKET_LEARN_TIMEOUT_SECONDS = 2.0
 _SOCKET_LEARN_POLL_SECONDS = 0.025
 
 #: The process-wide manager (see :func:`get_master_manager`).
-_MASTER_MANAGER: "SshMasterManager | None" = None
+_MASTER_MANAGER: SshMasterManager | None = None
 _MASTER_MANAGER_LOCK = threading.Lock()
 
 
@@ -783,7 +783,7 @@ def _stderr_marker_line(
     return None
 
 
-def _kill_group(proc: "subprocess.Popen[bytes]") -> bool:
+def _kill_group(proc: subprocess.Popen[bytes]) -> bool:
     """SIGKILL the call's whole process group; True iff we killed it.
 
     The call ssh was spawned with ``start_new_session=True``, so its
@@ -802,7 +802,7 @@ def _kill_group(proc: "subprocess.Popen[bytes]") -> bool:
     return True
 
 
-def _settle_process(proc: "subprocess.Popen[bytes]") -> int:
+def _settle_process(proc: subprocess.Popen[bytes]) -> int:
     """Reap the call ssh, killing the group if it outlives the read."""
     try:
         return proc.wait(timeout=_POST_READ_SETTLE_SECONDS)
@@ -845,7 +845,7 @@ def _drain_stderr(stream: BinaryIO, capture: _BoundedCapture) -> None:
 
 
 def _watch_exchange(
-    proc: "subprocess.Popen[bytes]", *, budget: float, grace: float
+    proc: subprocess.Popen[bytes], *, budget: float, grace: float
 ) -> _ExchangeOutcome:
     """Read the call's stdout to a conclusion under two anchored deadlines.
 
