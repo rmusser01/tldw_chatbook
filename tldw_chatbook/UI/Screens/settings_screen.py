@@ -24490,8 +24490,12 @@ class SettingsScreen(BaseAppScreen):
     def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
         if not new or new == old:
             return
-        if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
-            self.query_one(ThemePicker).refresh_catalog(highlight=new)
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return  # R38: the pane was torn down while the prompt was up
+        # The editor's ThemesChanged(highlight=new) refreshes the picker.
+        editor.rename_user_theme(old, new)
 
     @on(ThemePicker.ImportRequested)
     def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:

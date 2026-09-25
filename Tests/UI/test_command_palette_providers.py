@@ -1280,3 +1280,24 @@ def assert_hit_contains_text(hits: List[Hit], expected_text: str):
 
 
 # End of test_command_palette_providers.py
+
+
+@requires_imports
+@pytest.mark.asyncio
+async def test_palette_theme_hit_shows_a_markup_name_literally():
+    """R28: a saved theme named ``x[/]`` must not raise MarkupError in the
+    palette (its display and help both parse markup)."""
+    from textual.content import Content
+    from textual.fuzzy import Matcher
+
+    app = MagicMock()
+    app.available_themes = {"x[/]": object()}
+    screen = MagicMock()
+    screen.app = app
+    provider = ThemeProvider(screen=screen)
+    provider.matcher = lambda query: Matcher(query)
+    hits = [hit async for hit in provider.search("theme")]
+    shown = [hit for hit in hits if "X[/]" in str(getattr(hit.match_display, "plain", hit.match_display))]
+    assert shown
+    for hit in shown:
+        assert Content.from_markup(hit.help).plain == "Change theme to x[/]"

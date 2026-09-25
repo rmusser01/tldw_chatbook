@@ -31,6 +31,7 @@ from ..css.Themes.themes import (
     create_theme_from_dict,
     pinned_text_hues,
     sanitize_theme_variables,
+    theme_file_dark,
     theme_from_file_data,
 )
 from ..Utils.input_validation import escape_markup
@@ -498,7 +499,7 @@ class SettingsThemeEditor(Vertical):
         try:
             validate_filename(theme_name)
         except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {exc}", severity="error")
+            self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
             return
 
         # R12: resolve by [theme].name, so a.toml holding name "b" loads as b.
@@ -519,7 +520,7 @@ class SettingsThemeEditor(Vertical):
                     theme_data.get("variables", {}) or {}, theme_path.name
                 )
                 self._loaded_catalog_theme = None
-                self.is_dark_theme = theme_data.get("theme", {}).get("dark", True)
+                self.is_dark_theme = theme_file_dark(theme_data.get("theme", {}).get("dark", True))
                 self._snapshot_variables_palette()
 
                 name_input = self.query_one("#settings-theme-name", Input)
@@ -533,7 +534,7 @@ class SettingsThemeEditor(Vertical):
 
             except Exception as e:
                 logger.error(f"Failed to load user theme {theme_name}: {e}")
-                self.app.notify(f"Failed to load theme: {self._failure_reason(e)}", severity="error")
+                self.app.notify(f"Failed to load theme: {escape_markup(self._failure_reason(e))}", severity="error")
 
     def _extract_theme_colors(self, theme: Theme) -> dict[str, str]:
         """Resolve a Theme's ten base colours as uppercase hex.
@@ -689,7 +690,7 @@ class SettingsThemeEditor(Vertical):
         try:
             validate_filename(name)
         except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+            self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="warning")
             return None
         return name
 
@@ -725,11 +726,11 @@ class SettingsThemeEditor(Vertical):
             self.app.register_theme(theme)
             self.app.theme = theme.name
             self.app.notify(
-                f"Theme '{self.current_theme_name}' applied", severity="information"
+                f"Theme '{escape_markup(self.current_theme_name)}' applied", severity="information"
             )
         except Exception as e:
             logger.error(f"Failed to apply theme: {e}")
-            self.app.notify(f"Failed to apply theme: {e}", severity="error")
+            self.app.notify(f"Failed to apply theme: {escape_markup(e)}", severity="error")
 
     @on(Button.Pressed, "#settings-theme-save")
     def on_save_theme(self) -> None:
@@ -768,7 +769,7 @@ class SettingsThemeEditor(Vertical):
         try:
             validate_filename(theme_name)
         except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+            self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="warning")
             return
 
         if theme_name in ["textual-dark", "textual-light"]:
@@ -822,7 +823,7 @@ class SettingsThemeEditor(Vertical):
             # offer the theme without a restart.
             self.app.register_theme(create_theme_from_dict(theme_name, self._theme_dict()))
 
-            self.app.notify(f"Theme '{theme_name}' saved", severity="success")
+            self.app.notify(f"Theme '{escape_markup(theme_name)}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
             if self.current_theme_name != theme_name:
@@ -835,7 +836,7 @@ class SettingsThemeEditor(Vertical):
             self.post_message(self.Saved(theme_name))
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
-            self.app.notify(f"Failed to save theme: {self._failure_reason(e)}", severity="error")
+            self.app.notify(f"Failed to save theme: {escape_markup(self._failure_reason(e))}", severity="error")
 
     def _write_toml(self, theme_path: Path, data: dict[str, Any]) -> None:
         """Temp-then-replace ``data`` into ``theme_path`` in the backup scope.
@@ -959,8 +960,14 @@ class SettingsThemeEditor(Vertical):
 
     def _reset_theme(self) -> None:
         """Reload original theme values (post-confirmation when modified)."""
-        user_theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
-        if user_theme_path.exists():
+        # R28: resolve by [theme].name, so a.toml holding name "b" resets
+        # from a.toml, like every other file operation (R12).
+        try:
+            saved = self.current_theme_name in self._user_theme_files()
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return
+        if saved:
             self.load_user_theme(self.current_theme_name)
         elif is_catalog_theme(self.current_theme_name):
             self.load_theme(self.current_theme_name)
@@ -968,7 +975,7 @@ class SettingsThemeEditor(Vertical):
             # TASK-31251: a renamed, never-saved theme has nothing to go back
             # to; say so instead of claiming a reset happened.
             self.app.notify(
-                f"No saved version of '{self.current_theme_name}' to reset to",
+                f"No saved version of '{escape_markup(self.current_theme_name)}' to reset to",
                 severity="warning",
             )
             return
@@ -1047,7 +1054,7 @@ class SettingsThemeEditor(Vertical):
         self._loaded_user_theme = None
         self.is_modified = False  # TASK-32948: clean until the first real edit
 
-        self.app.notify(f"Cloned theme as '{new_name}'", severity="information")
+        self.app.notify(f"Cloned theme as '{escape_markup(new_name)}'", severity="information")
 
     def request_delete(self, name: str) -> None:
         """Confirm, then delete the saved theme ``name`` (see ``_delete_user_theme``)."""
@@ -1068,17 +1075,17 @@ class SettingsThemeEditor(Vertical):
         if theme_path is None:
             if name in built_in_names:
                 self.app.notify(
-                    f"'{name}' is a built-in theme and cannot be deleted",
+                    f"'{escape_markup(name)}' is a built-in theme and cannot be deleted",
                     severity="warning",
                 )
             elif name in shipped_names:
                 self.app.notify(
-                    f"'{name}' is a shipped theme and cannot be deleted",
+                    f"'{escape_markup(name)}' is a shipped theme and cannot be deleted",
                     severity="warning",
                 )
             else:
                 self.app.notify(
-                    f"No saved custom theme named '{name}'",
+                    f"No saved custom theme named '{escape_markup(name)}'",
                     severity="warning",
                 )
             return
@@ -1123,7 +1130,7 @@ class SettingsThemeEditor(Vertical):
                 self.load_theme("textual-dark")
         except Exception as e:
             logger.error(f"Failed to delete theme '{theme_name}': {e}")
-            self.app.notify(f"Failed to delete theme: {self._failure_reason(e)}", severity="error")
+            self.app.notify(f"Failed to delete theme: {escape_markup(self._failure_reason(e))}", severity="error")
 
     def _release_registration(self, name: str) -> None:
         """Drop ``name``'s user registration once its file is gone.
@@ -1161,12 +1168,12 @@ class SettingsThemeEditor(Vertical):
             if change.persisted:
                 self.post_message(self.LaunchDefaultChanged("textual-dark"))
                 self.app.notify(
-                    f"Deleted '{name}'; launch default and theme reset to Textual Dark",
+                    f"Deleted '{escape_markup(name)}'; launch default and theme reset to Textual Dark",
                     severity="success",
                 )
             else:
                 self.app.notify(
-                    f"Deleted '{name}', but could not save the launch default; check the config file",
+                    f"Deleted '{escape_markup(name)}', but could not save the launch default; check the config file",
                     severity="error",
                 )
         elif launch == name:
@@ -1174,12 +1181,12 @@ class SettingsThemeEditor(Vertical):
             if persisted:
                 self.post_message(self.LaunchDefaultChanged("textual-dark"))
                 self.app.notify(
-                    f"Deleted '{name}'; launch default reset to Textual Dark",
+                    f"Deleted '{escape_markup(name)}'; launch default reset to Textual Dark",
                     severity="success",
                 )
             else:
                 self.app.notify(
-                    f"Deleted '{name}', but could not save the launch default; check the config file",
+                    f"Deleted '{escape_markup(name)}', but could not save the launch default; check the config file",
                     severity="error",
                 )
         elif was_active:
@@ -1189,10 +1196,10 @@ class SettingsThemeEditor(Vertical):
                 persist=False,
             )
             self.app.notify(
-                f"Deleted '{name}'; switched to your launch default", severity="success"
+                f"Deleted '{escape_markup(name)}'; switched to your launch default", severity="success"
             )
         else:
-            self.app.notify(f"Deleted theme '{name}'", severity="success")
+            self.app.notify(f"Deleted theme '{escape_markup(name)}'", severity="success")
         self.post_message(self.ThemesChanged())
 
     def rename_user_theme(self, old: str, new: str) -> bool:
@@ -1209,7 +1216,7 @@ class SettingsThemeEditor(Vertical):
         try:
             validate_filename(new)
         except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {exc}", severity="error")
+            self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
             return False
         if new == old:
             return True
@@ -1228,7 +1235,7 @@ class SettingsThemeEditor(Vertical):
             )
             return False
         if old_path is None:
-            self.app.notify(f"No saved custom theme named '{old}'", severity="warning")
+            self.app.notify(f"No saved custom theme named '{escape_markup(old)}'", severity="warning")
             return False
         shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
         new_path = self.custom_themes_path / f"{new}.toml"
@@ -1239,7 +1246,7 @@ class SettingsThemeEditor(Vertical):
             or new_path.exists()
             or new in self.app.available_themes
         ):
-            self.app.notify(f"Name taken: '{new}'", severity="warning")
+            self.app.notify(f"Name taken: '{escape_markup(new)}'", severity="warning")
             return False
 
         try:
@@ -1261,7 +1268,8 @@ class SettingsThemeEditor(Vertical):
             # TomlDecodeError is a ValueError; Theme(**args) raises TypeError.
             logger.error(f"Failed to rename theme '{old}': {self._failure_reason(exc)}")
             self.app.notify(
-                f"Failed to rename theme '{old}': {self._failure_reason(exc)}",
+                f"Failed to rename theme '{escape_markup(old)}': "
+                f"{escape_markup(self._failure_reason(exc))}",
                 severity="error",
             )
             return False
@@ -1279,10 +1287,10 @@ class SettingsThemeEditor(Vertical):
                 f"{self._failure_reason(exc)}"
             )
             self.app.notify(
-                f"Saved '{new}', but could not remove '{old}'; both files now exist",
+                f"Saved '{escape_markup(new)}', but could not remove '{escape_markup(old)}'; both files now exist",
                 severity="warning",
             )
-            self.post_message(self.ThemesChanged())
+            self.post_message(self.ThemesChanged(highlight=new))
             return True
 
         if old in (self._loaded_user_theme, self.current_theme_name):
@@ -1305,8 +1313,8 @@ class SettingsThemeEditor(Vertical):
                     "Could not save the launch default; check the config file",
                     severity="error",
                 )
-        self.post_message(self.ThemesChanged())
-        self.app.notify(f"Renamed '{old}' to '{new}'", severity="success")
+        self.post_message(self.ThemesChanged(highlight=new))
+        self.app.notify(f"Renamed '{escape_markup(old)}' to '{escape_markup(new)}'", severity="success")
         return True
 
     def export_theme(self, name: str) -> None:
@@ -1315,7 +1323,7 @@ class SettingsThemeEditor(Vertical):
             validate_filename(name)  # it names the file in ~/Downloads
             theme_path = self._user_theme_files().get(name)
             if theme_path is None:
-                self.app.notify(f"No saved custom theme named '{name}'", severity="warning")
+                self.app.notify(f"No saved custom theme named '{escape_markup(name)}'", severity="warning")
                 return
             with (
                 raw._scope(self, "theme_file", selected_read=theme_path) as operation,
@@ -1328,7 +1336,7 @@ class SettingsThemeEditor(Vertical):
         except (ValueError, OSError) as exc:  # TomlDecodeError is a ValueError
             reason = self._failure_reason(exc)
             logger.error(f"Failed to read theme '{name}' for export: {reason}")
-            self.app.notify(f"Failed to export theme '{name}': {reason}", severity="error")
+            self.app.notify(f"Failed to export theme '{escape_markup(name)}': {escape_markup(reason)}", severity="error")
             return
         self._export(name, theme_data)
 
@@ -1367,11 +1375,11 @@ class SettingsThemeEditor(Vertical):
                 finally:
                     raw._remove_temporary(operation, temporary)
 
-            self.app.notify(f"Theme exported to: {export_path}", severity="success")
+            self.app.notify(f"Theme exported to: {escape_markup(export_path)}", severity="success")
             self.post_message(self.Exported(export_path))
         except Exception as e:
             logger.error(f"Failed to export theme: {e}")
-            self.app.notify(f"Failed to export theme: {self._failure_reason(e)}", severity="error")
+            self.app.notify(f"Failed to export theme: {escape_markup(self._failure_reason(e))}", severity="error")
 
     def import_theme(self, source: str) -> str | None:
         """Import the theme file at ``source`` (a typed, pasted or dropped path).
@@ -1474,7 +1482,7 @@ class SettingsThemeEditor(Vertical):
         if name in ("textual-dark", "textual-light"):
             return "Cannot overwrite built-in themes"
         data: dict[str, Any] = {
-            "theme": {"name": name, "dark": bool(meta.get("dark", True))},
+            "theme": {"name": name, "dark": theme_file_dark(meta.get("dark", True))},
             "colors": dict(colors),
         }
         if variables := sanitize_theme_variables(raw_data.get("variables"), f"{name}.toml"):
