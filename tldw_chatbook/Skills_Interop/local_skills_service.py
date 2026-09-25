@@ -112,6 +112,8 @@ _TEXT_FIELD_LIMITS = {
     "allowed_tool": 128,
 }
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
+#: Record keys only the service assigns; never trusted from the index file.
+_SERVICE_ASSIGNED_KEYS = ("source", "overrides_builtin")
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 SKILL_FILE_READ_CAP_CHARS = 100_000
 
@@ -371,7 +373,15 @@ class LocalSkillsService:
         skills = payload.get("skills", {})
         if not isinstance(skills, dict):
             return {}
-        return {str(name): dict(record) for name, record in skills.items()}
+        records = {str(name): dict(record) for name, record in skills.items()}
+        for record in records.values():
+            # Service-assigned keys (TASK-32954): an index row can never claim
+            # to be a built-in, which would skip trust and redirect its reads
+            # to the package. Stripped here, the single choke point every
+            # raw-index reader shares; only _visible_records sets them.
+            for key in _SERVICE_ASSIGNED_KEYS:
+                record.pop(key, None)
+        return records
 
     def _save_index(self, records: dict[str, dict[str, Any]]) -> None:
         self.store_dir.mkdir(parents=True, exist_ok=True)
@@ -422,9 +432,6 @@ class LocalSkillsService:
             for name in builtin_skill_records(self._disabled_builtins())
         }
         for name, record in self._load_index().items():
-            # "source" is service-assigned; an index row can never claim to
-            # be a built-in (that would redirect its reads to the package).
-            record.pop("source", None)
             if name in BUILTIN_SKILL_DIGESTS:
                 record["overrides_builtin"] = True
             records[name] = record

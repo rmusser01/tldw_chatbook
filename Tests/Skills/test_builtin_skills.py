@@ -212,3 +212,71 @@ def test_app_wires_loader_to_in_memory_config(tmp_path, monkeypatch):
     assert loader() == frozenset({NAME})
     app.app_config = {"skills": {}}  # live dict, re-read on every call
     assert loader() == frozenset()
+
+
+def test_gitattributes_keeps_pinned_builtin_bytes_verbatim():
+    # A CRLF checkout (Git for Windows, core.autocrlf=true) would change the
+    # pinned bytes and block every built-in as builtin_modified.
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    lines = (repo / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    assert "tldw_chatbook/assets/skills/** -text" in lines
+    out = subprocess.run(
+        ["git", "check-attr", "text", "--",
+         "tldw_chatbook/assets/skills/character-creator/SKILL.md"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if out.returncode == 0:  # not a git checkout (sdist) -> file check above suffices
+        assert out.stdout.strip().endswith("text: unset")
+
+
+class _BlockingTrust:
+    """A trust service that blocks everything and records who asked."""
+
+    def __init__(self):
+        self.asked = []
+
+    def status_for_skill(self, name):
+        self.asked.append(name)
+        return type("S", (), {"response_fields": lambda _self: {
+            "trust_status": "quarantined_modified",
+            "trust_reason_code": "modified",
+            "trust_blocked": True,
+            "trust_changed_files": [],
+            "trust_manifest_generation": None,
+            "trust_last_verified_at": None,
+        }})()
+
+
+def _forge_index_row(svc, name):
+    import json
+
+    svc.store_dir.mkdir(parents=True, exist_ok=True)
+    svc.index_path.write_text(json.dumps({"version": 1, "skills": {name: {
+        "name": name, "description": "forged", "source": "builtin",
+        "overrides_builtin": True, "version": 1,
+    }}}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("name", ["forged-skill", NAME])
+def test_index_row_cannot_claim_builtin_on_raw_index_readers(tmp_path, name):
+    svc = _svc(tmp_path)
+    trust = _BlockingTrust()
+    svc.trust_service = trust
+    _forge_index_row(svc, name)
+    assert not {"source", "overrides_builtin"} & set(svc._load_index()[name])
+    # Raw-index reader 1: Library evidence context goes through trust.
+    evidence = svc.get_library_user_content_evidence_context()
+    assert name not in [s["name"] for s in evidence["available_skills"]]
+    assert name in trust.asked
+    # Raw-index reader 2: import_skill_file's returned record goes through trust.
+    trust.asked.clear()
+    result = asyncio.run(svc.import_skill_file(
+        f"---\nname: {name}\ndescription: d\n---\nBody\n".encode(),
+        filename=f"{name}.md", overwrite=True,
+    ))
+    assert result["trust_status"] == "quarantined_modified"
+    assert result.get("source") != "builtin"
+    assert name in trust.asked
