@@ -468,6 +468,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 )
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
 from tldw_chatbook.Utils.input_validation import validate_console_draft
@@ -932,13 +933,22 @@ class ConsolePendingDecisionProjection:
 
 @dataclass(frozen=True, slots=True)
 class ProjectInstructionBindingSelection:
-    """Validated folder binding used as one agent dispatch's authority root."""
+    """Validated folder binding used as one agent dispatch's authority root.
+
+    Task 17 (Phase 3c): a remote (``ssh-filesystem``) binding admits as a
+    :class:`~tldw_chatbook.Tools.remote_root_types.RemoteRoot` ``root``
+    with identity from the binding status cache; ``degraded`` marks a
+    BLOCKED-at-selection admission (transient network: the dispatch
+    degrades with a warning instead of forcing re-selection — a flaky
+    link is not a retarget).
+    """
 
     binding: Any
-    root: Path
+    root: "Path | RemoteRoot"
     locator_fingerprint: str
     allow_write: bool
     root_identity: tuple[tuple[str, int, int, int], ...]
+    degraded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1039,9 +1049,18 @@ def _project_root_identity_matches(
 
 
 def resolve_project_instruction_binding(
-    session: ConsoleChatSession, registry: Any
+    session: ConsoleChatSession,
+    registry: Any,
+    *,
+    status_cache: Any = None,
+    first_selection_ping: "Callable[[], None] | None" = None,
 ) -> ProjectInstructionBindingSelection | None:
-    """Resolve one enabled session's binding without silently retargeting it."""
+    """Resolve one enabled session's binding without silently retargeting it.
+
+    ``status_cache``/``first_selection_ping`` (Task 17) thread the remote
+    admission inputs: this is the SELECTION path, the one place a
+    synchronous first-selection ping is allowed (the user is waiting).
+    """
     state = session.project_instruction_state
     if not state.project_instructions_enabled:
         return None
@@ -1054,24 +1073,48 @@ def resolve_project_instruction_binding(
             binding = registry.get_runtime_binding(selected_id)
         except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
             raise ProjectInstructionBindingRecovery("binding_unavailable") from None
-        selection = _validate_project_instruction_binding(session, binding)
+        selection = _validate_project_instruction_binding(
+            session,
+            binding,
+            status_cache=status_cache,
+            first_selection_ping=first_selection_ping,
+        )
         if selection is None:
             raise ProjectInstructionBindingRecovery("binding_unavailable")
         if selection.locator_fingerprint != state.working_folder_locator_fingerprint:
             raise ProjectInstructionBindingRecovery("binding_retargeted")
         return selection
-    eligible = list_project_instruction_bindings(session, registry)
+    eligible = list_project_instruction_bindings(session, registry, status_cache=status_cache)
     if not eligible:
         raise ProjectInstructionBindingRecovery("no_eligible_binding")
     if len(eligible) != 1:
         raise ProjectInstructionBindingRecovery("choose_binding")
-    return eligible[0]
+    selection = eligible[0]
+    if is_remote(selection.root) and status_cache is not None:
+        # Sole-eligible auto-selection is also a first selection: run the
+        # (at-most-once) synchronous probe for a still-cold identity.
+        revalidated = _validate_project_instruction_binding(
+            session,
+            selection.binding,
+            status_cache=status_cache,
+            first_selection_ping=first_selection_ping,
+        )
+        if revalidated is not None:
+            return revalidated
+    return selection
 
 
 def list_project_instruction_bindings(
-    session: ConsoleChatSession, registry: Any
+    session: ConsoleChatSession,
+    registry: Any,
+    *,
+    status_cache: Any = None,
 ) -> tuple[ProjectInstructionBindingSelection, ...]:
-    """Return currently eligible bindings for an explicit setup choice."""
+    """Return currently eligible bindings for an explicit setup choice.
+
+    Listing never pings (hot-path rule): remote rows admit from the
+    cached status only.
+    """
     if registry is None:
         return ()
 
@@ -1082,7 +1125,11 @@ def list_project_instruction_bindings(
     return tuple(
         selection
         for binding in bindings
-        if (selection := _validate_project_instruction_binding(session, binding))
+        if (
+            selection := _validate_project_instruction_binding(
+                session, binding, status_cache=status_cache
+            )
+        )
         is not None
     )
 
@@ -1103,7 +1150,13 @@ def _project_binding_snapshot(
             or getattr(binding, "name", None)
             or binding.binding_id
         ),
-        root=str(selection.root),
+        # Task 17: a remote selection snapshots its CANONICAL LOCATOR
+        # (content-free, round-trippable) — never the descriptor repr.
+        root=(
+            str(selection.root.canonical_locator)
+            if is_remote(selection.root)
+            else str(selection.root)
+        ),
         locator_fingerprint=selection.locator_fingerprint,
         allow_write=selection.allow_write,
         root_identity=selection.root_identity,
@@ -1364,6 +1417,32 @@ def capture_mcp_tool_maximum(app: Any) -> frozenset[str]:
 def _project_selection_from_snapshot(
     snapshot: ConsoleProjectBindingSnapshot,
 ) -> ProjectInstructionBindingSelection:
+    """Rebuild one selection from its frozen authority snapshot.
+
+    Local roots round-trip the absolute path. A REMOTE snapshot (Task 17)
+    stores the canonical SSH locator; the descriptor is rebuilt from it
+    losslessly (alias/binding_id = the binding id, path = the locator's
+    parsed path), keeping snapshot-derived dispatch consistent with
+    freshly admitted remote selections.
+    """
+    if str(snapshot.root).startswith("ssh://"):
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            parse_remote_locator,
+        )
+
+        parsed = parse_remote_locator(str(snapshot.root))
+        return ProjectInstructionBindingSelection(
+            binding=snapshot,
+            root=RemoteRoot(
+                alias=str(snapshot.binding_id),
+                canonical_locator=str(snapshot.root),
+                root=parsed.path,
+                binding_id=str(snapshot.binding_id),
+            ),
+            locator_fingerprint=snapshot.locator_fingerprint,
+            allow_write=snapshot.allow_write,
+            root_identity=snapshot.root_identity,
+        )
     return ProjectInstructionBindingSelection(
         binding=snapshot,
         root=Path(snapshot.root),
@@ -1374,8 +1453,47 @@ def _project_selection_from_snapshot(
 
 
 def _validate_project_instruction_binding(
-    session: ConsoleChatSession, binding: Any
+    session: ConsoleChatSession,
+    binding: Any,
+    *,
+    status_cache: Any = None,
+    first_selection_ping: "Callable[[], None] | None" = None,
 ) -> ProjectInstructionBindingSelection | None:
+    """Admit one folder binding as a dispatch authority root.
+
+    Local roots keep the exact pre-Phase-3c admission (lexical ==
+    resolved root, no symlink components, captured identity chain) —
+    byte-identical behavior.
+
+    Remote roots (Task 17, ``ssh-filesystem``): admission = registry
+    read (kind + locator) + the in-memory STATUS CACHE (never the stored
+    status column) — the laptop's ``resolve(strict=True)``/stat is
+    structurally impossible for a remote path. Semantics per the
+    spec/ADR-069 posture:
+
+    - READY / STALE_IDENTITY / cold cache (optimistic) → admit. A pin
+      failure is not BLOCKED; the next worker call re-captures.
+    - MISSING → refuse (``None``): a gone root is retarget-class and
+      forces explicit re-selection, exactly like a deleted local folder.
+    - BLOCKED → admit DEGRADED (selection carries the flag; the caller
+      warns instead of raising the recovery dialog — a flaky link is
+      not a retarget). The per-call guard stays the worker's root pin.
+
+    Args:
+        session: Owning Console session.
+        binding: Registry binding row.
+        status_cache: Optional :class:`RemoteBindingStatusCache`; absent
+            means cold (optimistic READY), matching the hot-path rule
+            that admission never spawns a probe by itself.
+        first_selection_ping: Optional zero-arg probe factory the
+            SELECTION path may run exactly once when the cached identity
+            is cold (the one synchronous probe point — the user is
+            already waiting). Listing never pings.
+
+    Returns:
+        The admitted selection, or ``None`` when the binding is not
+        admittable.
+    """
     if binding is None or str(getattr(binding, "workspace_id", "")) != str(
         session.workspace_id
     ):
@@ -1386,6 +1504,12 @@ def _validate_project_instruction_binding(
     status = getattr(getattr(binding, "status", None), "value", None) or str(
         getattr(binding, "status", "")
     )
+    if kind == "ssh-filesystem":
+        return _validate_remote_project_instruction_binding(
+            binding,
+            status_cache=status_cache,
+            first_selection_ping=first_selection_ping,
+        )
     if kind != "local-filesystem" or status != "ready":
         return None
     try:
@@ -1409,17 +1533,119 @@ def _validate_project_instruction_binding(
     )
 
 
+def _validate_remote_project_instruction_binding(
+    binding: Any,
+    *,
+    status_cache: Any = None,
+    first_selection_ping: "Callable[[], None] | None" = None,
+) -> ProjectInstructionBindingSelection | None:
+    """Remote admission: registry read + cached status, zero laptop disk.
+
+    See :func:`_validate_project_instruction_binding` for the state
+    semantics. Raises nothing: an unparseable locator or unreadable cache
+    is a non-admissible row (``None``), never a crash.
+    """
+    try:
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            locator_string,
+            parse_remote_locator,
+        )
+
+        parsed = parse_remote_locator(str(binding.locator))
+        locator = locator_string(parsed)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    binding_id = str(binding.binding_id)
+    state: Any = None
+    reason: str | None = None
+    if status_cache is not None:
+        try:
+            cached = status_cache.status(binding_id)
+            state = str(getattr(cached, "state", cached))
+            reason = getattr(cached, "reason", None)
+        except Exception:  # noqa: BLE001 - cache read failure is non-admissible
+            return None
+    degraded = False
+    if state == "MISSING":
+        return None
+    if state == "BLOCKED":
+        degraded = True
+        logger.warning(
+            "Remote working-folder binding is BLOCKED at selection "
+            "(reason_type={}); dispatch degrades with a warning instead "
+            "of forcing re-selection",
+            type(reason).__name__ if reason is not None else "unknown",
+        )
+    root_identity: tuple[tuple[str, int, int, int], ...] = ()
+    if status_cache is not None:
+        chain = None
+        try:
+            chain = status_cache.identity_for(binding_id)
+        except Exception:  # noqa: BLE001 - cache read failure is non-admissible
+            return None
+        if chain is None and first_selection_ping is not None:
+            # The ONE synchronous probe point (first selection; the user
+            # is already waiting). The factory records its own outcome
+            # into the cache; admission re-reads state and identity.
+            try:
+                first_selection_ping()
+            except Exception:  # noqa: BLE001 - probe failure degrades, never crashes
+                pass
+            try:
+                cached = status_cache.status(binding_id)
+                state = str(getattr(cached, "state", cached))
+                chain = status_cache.identity_for(binding_id)
+            except Exception:  # noqa: BLE001
+                chain = None
+            if state == "MISSING":
+                return None
+            if state == "BLOCKED":
+                degraded = True
+        if chain:
+            try:
+                root_identity = tuple(
+                    (str(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
+                    for entry in chain
+                )
+            except (IndexError, TypeError, ValueError):
+                return None
+    descriptor = RemoteRoot(
+        alias=binding_id,
+        canonical_locator=locator,
+        root=parsed.path,
+        binding_id=binding_id,
+    )
+    return ProjectInstructionBindingSelection(
+        binding=binding,
+        root=descriptor,
+        locator_fingerprint=fingerprint_canonical_locator(locator),
+        allow_write=str(getattr(binding, "metadata", {}).get("access", "ro")) == "rw",
+        root_identity=root_identity,
+        degraded=degraded,
+    )
+
+
 def _same_project_instruction_authority(
     current: ProjectInstructionBindingSelection,
     expected: ProjectInstructionBindingSelection,
 ) -> bool:
+    identity_holds: bool
+    if is_remote(expected.root):
+        # Remote (Task 17): identity freshness is the cache chain vs the
+        # admitted chain (the laptop lstat walk is structurally
+        # impossible); the WORKER's root pin stays the per-call guard.
+        identity_holds = not expected.degraded and bool(expected.root_identity)
+    else:
+        identity_holds = _project_root_identity_matches(
+            expected.root, expected.root_identity
+        )
     return (
         str(current.binding.binding_id) == str(expected.binding.binding_id)
         and current.root == expected.root
         and current.locator_fingerprint == expected.locator_fingerprint
         and current.allow_write == expected.allow_write
         and current.root_identity == expected.root_identity
-        and _project_root_identity_matches(expected.root, expected.root_identity)
+        and identity_holds
     )
 
 
@@ -1429,8 +1655,15 @@ def _workspace_binding_authority_is_current(
     registry: Any,
     expected_selection: ProjectInstructionBindingSelection,
     write: bool,
+    status_cache: Any = None,
 ) -> bool:
-    """Revalidate one run-admitted binding without consulting active workspace."""
+    """Revalidate one run-admitted binding without consulting active workspace.
+
+    Remote roots (Task 17): the registry row is re-admitted through the
+    same cache-only path and the CURRENT cache identity chain must equal
+    the admitted one — a swapped/recreated remote root (new chain)
+    revokes, while the worker's root pin guards every individual call.
+    """
     from types import SimpleNamespace
 
     if write and not expected_selection.allow_write:
@@ -1442,19 +1675,50 @@ def _workspace_binding_authority_is_current(
     except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
         return False
     current = _validate_project_instruction_binding(
-        SimpleNamespace(workspace_id=workspace_id), binding
+        SimpleNamespace(workspace_id=workspace_id),
+        binding,
+        status_cache=status_cache,
     )
-    return current is not None and _same_project_instruction_authority(
+    if current is None or not _same_project_instruction_authority(
         current, expected_selection
-    )
+    ):
+        return False
+    if not is_remote(expected_selection.root):
+        return True
+    if status_cache is None:
+        # No cache to compare against: keep the admitted authority (the
+        # worker pin still guards every call).
+        return True
+    try:
+        chain = status_cache.identity_for(str(expected_selection.binding.binding_id))
+    except Exception:  # noqa: BLE001 - guard must never raise
+        return False
+    if not chain:
+        return False
+    try:
+        current_identity = tuple(
+            (str(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
+            for entry in chain
+        )
+    except (IndexError, TypeError, ValueError):
+        return False
+    return current_identity == expected_selection.root_identity
 
 
 def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
-    """Frozen absolute workspace-excluded paths for one selected binding.
+    """Frozen workspace-excluded paths for one selected binding.
 
     Project-instruction activation skips every AGENTS.md/AGENTS.override.md
     candidate at or under these binding-relative exclusions (spec 2026-09-20
     section 2): excluded guidance is never read or activated.
+
+    LOCAL roots resolve each entry against the laptop root (absolute
+    resolved paths, byte-identical to pre-Phase-3c). REMOTE roots
+    (Task 17) return the RAW relative strings as relative Paths —
+    never ``(root / rel).resolve()`` on the laptop (the macOS
+    ``/var`` -> ``/private/var`` symlink drop would stop matching the
+    remote's own path space); remote matching is lexical against the
+    candidates' root-relative paths.
 
     Per-entry isolation (final-review Finding 2b): an entry that cannot be
     resolved (e.g. replaced by a symlink loop mid-run) is skipped with a
@@ -1464,15 +1728,21 @@ def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
     """
     from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
-    root = Path(selection.root)
+    root = selection.root
     try:
         entries = tuple(binding_exclusion_entries(selection.binding))
     except (OSError, RuntimeError, ValueError, AttributeError, TypeError):
         return frozenset()
     excluded: set[Path] = set()
+    remote = is_remote(root)
     for entry in entries:
         try:
-            excluded.add((root / entry.path).resolve(strict=False))
+            if remote:
+                # Raw relative string, unresolved: the remote owns the
+                # filesystem, and the executor matches root-relative.
+                excluded.add(Path(entry.path))
+            else:
+                excluded.add((Path(root) / entry.path).resolve(strict=False))
         except Exception:  # noqa: BLE001 - isolate one bad entry, keep the rest
             logger.warning(
                 "Project-instruction exclusion entry could not be resolved; "
@@ -1484,7 +1754,7 @@ def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
 def _exclusion_paths_provider(
     registry: Any,
     binding_id: str,
-    root: Path,
+    root: "Path | RemoteRoot",
     snapshot_rels: tuple[str, ...],
 ) -> Callable[[], tuple[Path, ...]]:
     """Effective exclusion paths: admission snapshot union a high-water mark.
@@ -1493,8 +1763,15 @@ def _exclusion_paths_provider(
     refuses the NEXT tool call (fail-closed shrink); the high-water mark
     keeps removals enforced for the rest of the run so run authority never
     expands mid-run (spec 2026-09-20, ADR-102 discipline).
+
+    REMOTE roots (Task 17): entries stay RAW RELATIVE paths — the
+    serialized exclusion set the executor injects into every request and
+    the worker matches. NEVER ``(root / rel).resolve()`` against the
+    laptop (the macOS ``/var`` -> ``/private/var`` symlink drop would
+    break matching against the remote's own path space).
     """
     holder: dict[str, frozenset[str]] = {"effective": frozenset(snapshot_rels)}
+    remote = is_remote(root)
 
     def read() -> tuple[Path, ...]:
         try:
@@ -1508,13 +1785,16 @@ def _exclusion_paths_provider(
         resolved: list[Path] = []
         for rel in sorted(holder["effective"]):
             try:
-                resolved.append((root / rel).resolve(strict=False))
+                if remote:
+                    resolved.append(Path(rel))
+                else:
+                    resolved.append((Path(root) / rel).resolve(strict=False))
             except Exception:  # noqa: BLE001 - per-entry isolation: skip the
                 # unresolvable entry (warning), keep the resolvable rest.
                 # Zeroing the whole tuple here would fail OPEN for the run.
                 logger.warning(
                     "Console run exclusion path could not be resolved; "
-                    "skipped while keeping the remaining exclusions"
+                    "skipping while keeping the remaining exclusions"
                 )
         return tuple(resolved)
 
@@ -20990,6 +21270,17 @@ class ConsoleChatController:
             selection = resolve_project_instruction_binding(session, registry)
             if selection is None:
                 return None
+            if is_remote(selection.root):
+                # Task 17 boundary: AGENTS.md reads from remote roots land
+                # with Task 19's executor-routed resolver; until then the
+                # preview skips startup resolution for remote selections
+                # (ADR-069 prep-failure posture: content-free, proceed).
+                logger.debug(
+                    "Next-Send preview skips project-instruction startup "
+                    "resolution for remote binding (binding_id={})",
+                    selection.binding.binding_id,
+                )
+                return None
             candidate = await asyncio.to_thread(
                 ProjectInstructionResolver().resolve_startup,
                 binding_id=selection.binding.binding_id,
@@ -26962,24 +27253,39 @@ class ConsoleChatController:
                         project_instruction_notice_key=None,
                     )
                     self.store.set_session_project_instruction_state(session_id, state)
-                startup_candidate = ProjectInstructionResolver().resolve_startup(
-                    binding_id=project_selection.binding.binding_id,
-                    binding_root=project_selection.root,
-                    locator_fingerprint=project_selection.locator_fingerprint,
-                    max_bytes=coerce_int_setting(
-                        turn_context.tool_configuration.get(
-                            "project_instructions_startup_max_bytes",
+                if is_remote(project_selection.root):
+                    # Task 17 boundary: AGENTS.md reads from remote roots
+                    # land with Task 19's executor-routed resolver; until
+                    # then remote selections dispatch without startup
+                    # instructions (ADR-069 prep-failure posture:
+                    # content-free warning, proceed — never a crash on the
+                    # laptop-path resolver).
+                    logger.warning(
+                        "Project instructions are not yet read from remote "
+                        "working folders; dispatching without them "
+                        "(binding_id={})",
+                        project_selection.binding.binding_id,
+                    )
+                    startup_candidate = None
+                else:
+                    startup_candidate = ProjectInstructionResolver().resolve_startup(
+                        binding_id=project_selection.binding.binding_id,
+                        binding_root=project_selection.root,
+                        locator_fingerprint=project_selection.locator_fingerprint,
+                        max_bytes=coerce_int_setting(
+                            turn_context.tool_configuration.get(
+                                "project_instructions_startup_max_bytes",
+                                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                            ),
                             DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                            minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                            maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                         ),
-                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                        minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                        maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    ),
-                    dispatch_started_wall_ns=time.time_ns(),
-                    excluded_dirs=_project_instruction_excluded_dirs(
-                        project_selection
-                    ),
-                )
+                        dispatch_started_wall_ns=time.time_ns(),
+                        excluded_dirs=_project_instruction_excluded_dirs(
+                            project_selection
+                        ),
+                    )
                 destination_provider = str(
                     getattr(resolution, "execution_key", "")
                     or getattr(resolution, "provider", "")

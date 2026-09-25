@@ -65,13 +65,63 @@ class _PinnedOperationRequest(Protocol):
     arguments: dict[str, Any]
 
 
+def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
+    """Map the worker-side remote-home denylist into root-relative space.
+
+    ``REMOTE_SENSITIVE_PATHS`` (``Tools/remote_sensitive_paths.py``) is
+    the set of REMOTE-HOME-relative subtrees the pinned worker must never
+    expose regardless of which root a binding pins. This module is shared
+    by the LOCAL pinned worker and the flattened remote bundle; the
+    denylist NAME exists only in the bundle's flat namespace (Task 8
+    embeds the data below the dispatch section), so the live local worker
+    resolves it to ``()`` through ``globals().get`` — byte-identical
+    local behavior — while the bundle picks the tuple up at call time.
+
+    Mapping rule (Task 17, ADR-174 floor): each home-relative entry is
+    joined onto the resolved home directory, then re-expressed relative
+    to the pinned root (``Path('.')`` after the root pin's chdir). An
+    entry outside the pinned root maps to nothing — the worker is root-
+    confined, so it is unreachable — and a root ABOVE (or at) the remote
+    home maps every entry into a 'subtree' refusal the existing matcher
+    enforces for reads, writes, and enumeration. An unresolvable home
+    degrades to ``()``: the request-carried exclusions still enforce, and
+    a missing ``HOME`` must not crash unrelated operations.
+    """
+    entries = globals().get("REMOTE_SENSITIVE_PATHS", ())
+    if not entries:
+        return ()
+    try:
+        home = Path.home().resolve()
+        root = Path(".").resolve()
+        relative_root = root.relative_to(home)
+    except (RuntimeError, OSError, ValueError):
+        return ()
+    return tuple(
+        SensitiveExclusion("subtree", (relative_root / entry).as_posix())
+        for entry in entries
+    )
+
+
 def execute_pinned_operation(
     request: _PinnedOperationRequest,
     root: PinnedWorkspaceRoot,
 ) -> str:
     """Execute one supported request relative to ``root`` or refuse it."""
     if request.operation == "stat_path":
-        return _stat_relative_path(_request_relative_path(request, root))
+        # ``stat_path``'s wire schema carries no exclusions field, so the
+        # serialized binding exclusions are refused PARENT-side (the
+        # remote builder's lexical admission); the worker-side denylist
+        # applies here (ADR-174: excluded/sensitive paths are fully
+        # invisible — a stat must never confirm existence).
+        relative = _request_relative_path(request, root)
+        denylist = _remote_home_denylist_exclusions()
+        if denylist and not _relative_target_is_safe(
+            relative, Path("."), denylist, is_directory=True
+        ):
+            raise WorkspaceToolDispatchError(
+                "invalid_request", "workspace path is invalid"
+            )
+        return _stat_relative_path(relative)
     if request.operation == "fs_write":
         return _write_relative_file(
             _request_mutation_path(request, root),
@@ -208,11 +258,19 @@ def _request_relative_path(
 def _request_exclusions(
     request: _PinnedOperationRequest, field: str
 ) -> tuple[SensitiveExclusion, ...]:
-    """Decode the parent's fixed bounded exclusions without filesystem discovery."""
+    """Decode the parent's fixed bounded exclusions without filesystem discovery.
+
+    Task 17: the worker-side remote-home denylist joins the request's
+    serialized exclusions here — the single decode point every read,
+    write, patch, and git consumer passes through — so ``REMOTE_SENSITIVE_PATHS``
+    is enforced on every operation even when the parent serialized none
+    (the local pinned worker's denylist contribution is ``()``, keeping
+    its behavior byte-identical).
+    """
     return tuple(
         SensitiveExclusion(item["kind"], item["value"])
         for item in request.arguments[field]
-    )
+    ) + _remote_home_denylist_exclusions()
 
 
 def _request_mutation_path(

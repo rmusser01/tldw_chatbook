@@ -4802,32 +4802,52 @@ def test_path_targets_preflight_refuses_remote_root_loudly(
     assert "remote root reached laptop-disk path" in str(caught.value)
 
 
-def test_remote_root_dispatch_fails_loud_at_the_cas_redaction_boundary(
+def test_remote_root_dispatch_completes_with_lexical_redaction(
     tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
 ):
+    """Task 17 (Phase 3c): the CAS/redaction boundary wall is GONE.
+
+    Pre-Task-17 this pinned the loud refusal at the redaction unwrap; the
+    migrated contract dispatches through the authority's executor and
+    redacts LEXICALLY against the RemoteRoot's locator spellings — with
+    the laptop-disk tripwire still armed (zero laptop IO, ever).
+    """
+    executor = RecordingWorkspaceExecutor(
+        result="1\tsee devbox:/srv/www/app.conf"
+    )
     provider = make_provider(
-        root=tmp_path, admitted_roots=(_remote_authority(),)
+        root=tmp_path,
+        admitted_roots=(_remote_authority(executor=executor),),
     )
 
-    with pytest.raises((TypeError, NotImplementedError)) as caught:
-        provider.invoke("local:fs_read", {"path": "notes.txt"})
+    result = provider.invoke("local:fs_read", {"path": "notes.txt"})
 
-    assert "remote root reached laptop-disk path" in str(caught.value)
+    assert result.ok, result.error
+    assert executor.calls == [("fs_read", {"path": "notes.txt"}, "read")]
+    assert "/srv/www" not in result.content
+    assert "devbox:/srv/www" not in result.content
 
 
-def test_remote_root_write_dispatch_fails_loud_at_the_cas_boundary(
+def test_remote_root_write_dispatch_routes_through_the_executor(
     tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
 ):
+    """Task 17 (Phase 3c): the write CAS boundary wall is GONE too — a
+    remote write dispatches through the authority's executor (the ledger
+    re-stamp comes from the worker response / content argument, never a
+    laptop hash), with the laptop-disk tripwire still armed."""
+    executor = RecordingWorkspaceExecutor()
     provider = make_provider(
-        root=tmp_path, admitted_roots=(_remote_authority(),)
+        root=tmp_path,
+        admitted_roots=(_remote_authority(executor=executor),),
     )
 
-    with pytest.raises((TypeError, NotImplementedError)) as caught:
-        provider.invoke(
-            "local:fs_write", {"path": "notes.txt", "content": "payload"}
-        )
+    result = provider.invoke(
+        "local:fs_write", {"path": "notes.txt", "content": "payload"}
+    )
 
-    assert "remote root reached laptop-disk path" in str(caught.value)
+    assert result.ok, result.error
+    assert executor.calls[0][0] == "fs_write"
+    assert executor.calls[0][1]["path"] == "notes.txt"
 
 
 def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(

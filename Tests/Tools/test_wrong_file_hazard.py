@@ -172,8 +172,14 @@ class _HashSpy:
         monkeypatch.setattr(local_tool_provider, "_hash_file", spying_hash)
 
 
-def _loopback_executor(standin: Path) -> RemoteWorkspaceToolExecutor:
-    """A loopback executor pinned to the stand-in root's real identity."""
+def _loopback_executor(
+    standin: Path, *, exclusions=None
+) -> RemoteWorkspaceToolExecutor:
+    """A loopback executor pinned to the stand-in root's real identity.
+
+    ``exclusions`` (Task 17) attaches the binding's serialized exclusion
+    source so the executor's injection seam carries them on every op.
+    """
     prober = RemoteWorkspaceToolExecutor(
         standin,
         root_locator=str(standin),
@@ -184,10 +190,14 @@ def _loopback_executor(standin: Path) -> RemoteWorkspaceToolExecutor:
         "identity_chain": payload["identity_chain"],
         "canonical_path": payload["canonical_path"],
     }
+    kwargs = {}
+    if exclusions is not None:
+        kwargs["sensitive_exclusions"] = exclusions
     return RemoteWorkspaceToolExecutor(
         standin,
         root_locator=str(standin),
         identity_chain_source=lambda: chain,
+        **kwargs,
     )
 
 
@@ -750,3 +760,242 @@ def test_remote_ledger_key_is_lexical_and_confined():
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 17 (Phase 3c): invoke-level remote dispatch -- carried obligations.
+# Result redaction no longer walls remote authorities; the CAS chain
+# (read-stamp -> write-precondition) works end-to-end through the
+# provider's own invoke(); the remote "now" probe carries the binding's
+# real serialized exclusions instead of a hardcoded empty list.
+# ---------------------------------------------------------------------------
+
+
+class _ResultTextExecutor:
+    """Adapt the transport executor's wire-dict return to the provider's
+    ``str`` call surface (the spec handlers feed the returned value
+    straight into result bounding).
+
+    Task 18's composition owns the production form of this adapter; the
+    invoke-level obligation here builds the minimal equivalent: the
+    result frame's ``result`` text, failures raised verbatim.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        response = self._inner.execute(operation, arguments, intent=intent)
+        return response["result"] or ""
+
+    def ping(self):
+        return self._inner.ping()
+
+
+def _invoke_hazard(tmp_path, monkeypatch, *, exclusions=None):
+    """The wrong-file scenario assembled for provider-level invoke().
+
+    Same premise as ``_hazard`` plus two Task 17 pieces: the executor
+    carries the binding's serialized exclusions (the ssh transport's
+    injection seam), and the provider's resolver allows the call so
+    ``invoke()`` reaches dispatch without an approval detour.
+    """
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    standin = tmp_path / "remote-fs"
+    standin.mkdir()
+    (standin / "doc.txt").write_text(REMOTE_BODY, encoding="utf-8")
+    locator_uri = "ssh://devbox" + str(tmp_path / "w")
+    (standin / "leaky.txt").write_text(
+        f"see {locator_uri}/etc/secret\n", encoding="utf-8"
+    )
+
+    laptop_root = tmp_path / "w"
+    laptop_root.mkdir()
+    (laptop_root / "doc.txt").write_text(LAPTOP_BODY, encoding="utf-8")
+
+    descriptor = RemoteRoot(
+        alias="w",
+        canonical_locator=locator_uri,
+        root=PurePosixPath(str(laptop_root)),
+        binding_id="binding-1",
+    )
+    source = (
+        exclusions
+        if exclusions is not None
+        else (lambda: (SensitiveExclusion("subtree", "standin-secrets"),))
+    )
+    executor = _loopback_executor(standin, exclusions=source)
+    base = tmp_path / "unrelated-base"
+    base.mkdir()
+    provider = LocalToolProvider(
+        workspace_root=base,
+        admitted_roots=(
+            RunAdmittedWorkspaceRoot(
+                workspace_id="workspace-1",
+                binding_id="binding-1",
+                alias="w",
+                root=descriptor,
+                locator_fingerprint="fingerprint-w",
+                root_identity=((str(descriptor.root), 1, 2, 0o40755),),
+                allow_write=True,
+                guard=lambda _write: True,
+                workspace_executor=_ResultTextExecutor(executor),
+            ),
+        ),
+        resolve_state=lambda hub: EffectiveToolState(
+            state="allow", origin="test"
+        ),
+    )
+    return SimpleNamespace(
+        standin=standin,
+        laptop_root=laptop_root,
+        descriptor=descriptor,
+        executor=executor,
+        provider=provider,
+        locator_uri=locator_uri,
+    )
+
+
+def test_invoke_level_remote_fs_read_stamps_ledger_from_worker(tmp_path, monkeypatch):
+    """Carried obligation (a): a REAL provider.invoke() fs_read through a
+    remote authority + loopback executor -- redaction no longer walls
+    remote dispatch, the content is the worker's (never the laptop
+    decoy), and the ledger stamp is the worker-reported digest."""
+    hazard = _invoke_hazard(tmp_path, monkeypatch)
+
+    with use_run_id(RUN):
+        result = hazard.provider.invoke("local:fs_read", {"path": "doc.txt"})
+
+    assert result.ok, result.error
+    assert "REMOTE server bytes" in result.content
+    assert LAPTOP_BODY not in result.content
+    key = local_tool_provider._remote_ledger_key(
+        hazard.descriptor, "doc.txt", intent="read"
+    )
+    with use_run_id(RUN):
+        stamp = hazard.provider._read_ledger.stamp_for(RUN, key)
+    assert stamp is not None
+    assert stamp.sha256 == REMOTE_DIGEST
+    assert stamp.sha256 != LAPTOP_DIGEST
+
+
+def test_invoke_level_remote_write_cas_end_to_end(tmp_path, monkeypatch):
+    """Carried obligation (a), second half: invoke-level write CAS. The
+    read stamps the ledger from the worker; a CALLER-supplied wrong
+    precondition surfaces the worker's typed refusal; an out-of-band
+    change trips the provider's own injected guard (armed from the
+    worker-stamped ledger) into the stale-refusal; a matching write
+    lands on the STAND-IN filesystem only."""
+    hazard = _invoke_hazard(tmp_path, monkeypatch)
+
+    with use_run_id(RUN):
+        read = hazard.provider.invoke("local:fs_read", {"path": "doc.txt"})
+        assert read.ok, read.error
+        wrong_precondition = hazard.provider.invoke(
+            "local:fs_write",
+            {
+                "path": "doc.txt",
+                "content": "attacker bytes\n",
+                "expected_sha256": LAPTOP_DIGEST,
+            },
+        )
+        # Caller-supplied precondition: the worker's typed refusal comes
+        # back as the tool error (the provider's relabel applies to its
+        # OWN injected guard below).
+        assert not wrong_precondition.ok
+        assert "precondition failed" in (wrong_precondition.error or "")
+
+    assert (hazard.standin / "doc.txt").read_text(encoding="utf-8") == REMOTE_BODY
+    assert (hazard.laptop_root / "doc.txt").read_text(encoding="utf-8") == LAPTOP_BODY
+
+    # Out-of-band remote mutation: the next invoke-level write must trip
+    # the provider's stale guard (its ledger stamp is the worker's read
+    # digest, its "now" probe reports the changed file).
+    (hazard.standin / "doc.txt").write_text("SOMEONE ELSE WROTE\n", encoding="utf-8")
+    with use_run_id(RUN):
+        stale = hazard.provider.invoke(
+            "local:fs_write",
+            {"path": "doc.txt", "content": "attacker bytes\n"},
+        )
+        assert stale.outcome == "blocked", stale
+    assert (hazard.standin / "doc.txt").read_text(encoding="utf-8") == (
+        "SOMEONE ELSE WROTE\n"
+    )
+
+    with use_run_id(RUN):
+        reread = hazard.provider.invoke("local:fs_read", {"path": "doc.txt"})
+        assert reread.ok, reread.error
+        applied = hazard.provider.invoke(
+            "local:fs_write", {"path": "doc.txt", "content": "REMOTE v2\n"}
+        )
+        assert applied.ok, applied.error
+
+    assert (hazard.standin / "doc.txt").read_text(encoding="utf-8") == "REMOTE v2\n"
+    assert (hazard.laptop_root / "doc.txt").read_text(encoding="utf-8") == LAPTOP_BODY
+
+
+def test_invoke_level_remote_result_redacts_locator_lexically(tmp_path, monkeypatch):
+    """Task 17 redaction: for a RemoteRoot the provider redacts by LEXICAL
+    match against the descriptor's locator forms -- no laptop disk. The
+    worker result carries the URI; the model never sees it."""
+    hazard = _invoke_hazard(tmp_path, monkeypatch)
+
+    with use_run_id(RUN):
+        result = hazard.provider.invoke("local:fs_read", {"path": "leaky.txt"})
+
+    assert result.ok, result.error
+    assert hazard.locator_uri not in result.content
+
+
+def test_remote_now_stamp_carries_the_bindings_real_exclusions(tmp_path, monkeypatch):
+    """Carried obligation (b): the CAS probe no longer hardcodes an empty
+    exclusion list. An EXCLUDED-but-existing remote target probes as
+    refused (absent), and a clean target still reports its real stamps --
+    both through the executor's injection seam."""
+    hazard = _invoke_hazard(tmp_path, monkeypatch)
+    (hazard.standin / "standin-secrets").mkdir()
+    (hazard.standin / "standin-secrets" / "kv.txt").write_text(
+        "hidden=1\n", encoding="utf-8"
+    )
+
+    with use_run_id(RUN):
+        excluded_now = hazard.provider._remote_now_stamp(
+            hazard.executor, "standin-secrets/kv.txt"
+        )
+        clean_now = hazard.provider._remote_now_stamp(hazard.executor, "doc.txt")
+
+    # The excluded target is invisible to the probe: the worker's refusal
+    # ("file not found" for excluded paths -- ADR-174 full invisibility)
+    # classifies as ABSENT, never as the file's real stamps.
+    assert excluded_now is None
+    assert clean_now is not None
+    assert clean_now[0] == REMOTE_DIGEST
+
+
+def test_redact_root_locator_handles_remote_roots_lexically():
+    """Unit pin: ``redact_root_locator`` accepts a RemoteRoot and strips
+    every locator spelling (canonical locator, root path, display URI)
+    without touching the filesystem."""
+    from tldw_chatbook.Agents.tool_catalog import redact_root_locator
+    from tldw_chatbook.Tools.remote_root_types import display_uri
+
+    descriptor = RemoteRoot(
+        alias="w",
+        canonical_locator="ssh://devbox/srv/www",
+        root=PurePosixPath("/srv/www"),
+        binding_id="b",
+    )
+    for form in (
+        "ssh://devbox/srv/www",  # canonical locator
+        "/srv/www",  # remote root path
+        display_uri(descriptor),  # ssh:// display form
+    ):
+        text = f"path {form}/etc/app.conf under root {form}"
+        redacted = redact_root_locator(text, descriptor)
+        assert form not in redacted, form
+    # Container recursion keeps working for remote roots.
+    payload = {"note": ["see ssh://devbox/srv/www/x"], "n": 1}
+    redacted = redact_root_locator(payload, descriptor)
+    assert "ssh://devbox/srv/www" not in str(redacted)

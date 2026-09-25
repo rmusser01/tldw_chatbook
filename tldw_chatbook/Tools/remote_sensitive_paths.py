@@ -10,9 +10,14 @@ machinery the bundle must not carry. This list is the remote-side floor.
 
 The worker bundle embeds this tuple verbatim (rendered by
 ``Tools/build_remote_worker_bundle.py`` from this module — extract, not
-copy-paste), so the data has exactly one definition site. Enforcement
-wiring lands with the remote binding tasks; this module ships the data
-and its embed.
+copy-paste), so the data has exactly one definition site. Task 17
+(Phase 3c) wires its enforcement: the bundle's dispatch section resolves
+the name through ``workspace_tool_dispatch._remote_home_denylist_exclusions``
+(``globals().get`` — the LOCAL pinned worker sees ``()`` and stays
+byte-identical) and joins the mapped subtrees into every operation's
+exclusion set, so reads/writes/stat refuse and list/glob/grep omit
+``~/.ssh`` & friends whenever the pinned root sits under the worker
+host's home.
 
 Entries are ``PurePosixPath``-form relative strings: remote targets are
 POSIX hosts reached over SSH, and matching joins them onto the resolved

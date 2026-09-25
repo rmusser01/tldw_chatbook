@@ -2869,3 +2869,125 @@ def test_local_root_request_is_byte_identical_to_plain_path_request(
     assert plain.to_bytes().replace(
         plain.operation_id.encode(), b"OP"
     ) == wrapped.to_bytes().replace(wrapped.operation_id.encode(), b"OP")
+
+
+# -- Phase 3c (task 17): fail-closed exclusions, _call_context, stat guard ----
+
+
+def test_remote_serialized_exclusions_fail_closed_on_provider_error() -> None:
+    """A throwing exclusions provider must REFUSE, never degrade to [].
+
+    The Phase 3a builder swallowed provider exceptions into an empty
+    list -- silent fail-open: one broken provider call un-excluded every
+    sensitive subtree for that request. Phase 3c pins the closed choice
+    (refuse the operation): deny-all-write was considered and declined
+    because reads would still disclose excluded content, and ADR-174
+    makes exclusions fully invisible.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    def broken() -> tuple[SensitiveExclusion, ...]:
+        raise RuntimeError("exclusion provider exploded")
+
+    executor = _remote_executor(remote_sensitive_exclusions=broken)
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_read", {"path": "notes.txt"}, intent="read")
+
+    assert caught.value.code == "invalid_request"
+
+
+def test_remote_exclusions_serialize_raw_relative_without_laptop_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """macOS symlink hazard: the /var -> /private/var resolve drop.
+
+    A remote root spelled ``/var/www/site`` must ride the request
+    verbatim, and exclusions must serialize as RAW relative strings --
+    never ``Path.resolve()``d against the laptop (where ``/var/...``
+    would become ``/private/var/...`` and stop matching the remote's
+    own path space).
+    """
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    def blow_up(self: Path, *_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError(
+            "remote request building must never resolve against the laptop"
+        )
+
+    monkeypatch.setattr(Path, "resolve", blow_up)
+    root = RemoteRoot(
+        alias="site",
+        canonical_locator="ssh://devbox/var/www/site",
+        root="/var/www/site",
+        binding_id="binding-var",
+    )
+    executor = WorkspaceToolExecutor(
+        root,
+        remote_identity_source=lambda: [
+            ["/var/www/site", 99, 7, 16877],
+            ["/var/www", 98, 6, 16877],
+        ],
+        remote_sensitive_exclusions=_remote_exclusions,
+    )
+
+    request = executor._build_request(
+        "fs_read", {"path": "notes.txt"}, intent="read"
+    )
+
+    assert str(request.root_locator) == "/var/www/site"
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"},
+        {"kind": "name", "value": ".env"},
+    ]
+
+
+def test_remote_constructor_rejects_laptop_exclusion_paths() -> None:
+    """``user_exclusion_paths`` classifies entries with laptop stats.
+
+    A remote root must never classify exclusions against the laptop's
+    disk (``_call_context``'s ``path.is_file()``); remote exclusions
+    arrive pre-classified as ``SensitiveExclusion`` entries through
+    ``remote_sensitive_exclusions``.
+    """
+    with pytest.raises(ValueError, match="remote_sensitive_exclusions"):
+        WorkspaceToolExecutor(
+            _remote_root(),
+            remote_identity_source=_remote_chain,
+            user_exclusion_paths=lambda: (Path("secrets"),),
+        )
+
+
+def test_remote_call_context_fails_loud_instead_of_stating_laptop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _remote_executor()
+
+    def blow_up(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("remote _call_context must never stat the laptop")
+
+    monkeypatch.setattr(Path, "is_file", blow_up)
+    with pytest.raises(RuntimeError, match="remote root"):
+        executor._call_context()
+
+
+def test_remote_stat_path_refuses_lexically_excluded_target() -> None:
+    """``stat_path`` cannot carry exclusions on the wire (schema has no
+    field for it), so the remote builder refuses lexically -- the same
+    admission the LOCAL builder gets from ``resolve_workspace_path``'s
+    denylist context."""
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("stat_path", {"path": "secrets/kv.txt"}, intent="read")
+
+    assert caught.value.code == "invalid_request"
+
+
+def test_remote_stat_path_admits_unexcluded_target() -> None:
+    executor = _remote_executor()
+
+    request = executor._build_request("stat_path", {"path": "ok.txt"}, intent="read")
+
+    assert request.arguments["path"] == "ok.txt"
+

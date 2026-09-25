@@ -520,8 +520,11 @@ def _denylist_section() -> str:
         "# Remote denylist (embedded from Tools/remote_sensitive_paths.py)\n"
         "# ---------------------------------------------------------------------------\n"
         "#: Remote-home-relative paths the worker must never read, list, or\n"
-        "#: write, regardless of the pinned root. Enforcement wiring lands with\n"
-        "#: the remote binding tasks; this task ships the data and its embed.\n"
+        "#: write, regardless of the pinned root. Enforced (Task 17) by the\n"
+        "#: dispatch section above: _remote_home_denylist_exclusions maps\n"
+        "#: these onto the pinned root and joins them into every operation's\n"
+        "#: exclusion set. The local pinned worker resolves no such name and\n"
+        "#: keeps its byte-identical behavior.\n"
         f"REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (\n{entries})\n"
     )
 

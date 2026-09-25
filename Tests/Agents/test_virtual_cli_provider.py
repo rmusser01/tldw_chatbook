@@ -1066,14 +1066,19 @@ def test_virtual_cli_remote_authority_with_executor_is_executor_routed(
 ):
     """With an executor in the slot the registry never resolves the root.
 
-    The remote registry stores the descriptor unresolved (no laptop
-    ``Path.resolve()``), dispatch projects onto the executor's closed
-    protocol, and the un-migrated result-redaction site fails loud
-    instead of silently mis-redacting against a descriptor.
+    Task 15's conclusion, recorded and pinned (Task 17, Phase 3c): the
+    virtual CLI is executor-routed -- the per-alias registry stores the
+    RemoteRoot descriptor unresolved (no laptop ``Path.resolve()``) and
+    dispatch projects onto the executor's closed protocol -- so result
+    redaction is pure LEXICAL stripping against the descriptor's locator
+    forms, never laptop-disk work. The pre-Task-17 loud refusal is gone:
+    remote dispatch completes and the locator never reaches the model.
     """
     import builtins
 
-    executor = RecordingWorkspaceExecutor()
+    executor = RecordingWorkspaceExecutor(
+        result="1\tsee ssh://devbox/srv/www/app.conf"
+    )
     provider = VirtualCliProvider(
         workspace_root=tmp_path,
         resolve_state=lambda _hub: ALLOW,
@@ -1108,7 +1113,35 @@ def test_virtual_cli_remote_authority_with_executor_is_executor_routed(
 
     # Dispatch DID route through the remote-slot executor...
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
-    # ...and the un-migrated result-redaction site refused loud (no
-    # silent laptop IO, no silently mis-redacted success).
+    # ...and Task 17's lexical redaction completes the flow: success with
+    # every locator spelling stripped (canonical locator / remote path /
+    # display URI), never the loud pre-migration refusal.
+    assert result.ok, result.error
+    assert "ssh://devbox/srv/www" not in (result.content or "")
+    assert "/srv/www" not in (result.content or "")
+
+
+def test_virtual_cli_remote_error_path_redacts_locator_lexically(tmp_path):
+    """The error-path sibling: a failing remote virtual-CLI call redacts
+    lexically too (the pre-Task-17 error path returned None = no
+    stripping, which was safe but inconsistent with local roots)."""
+    executor = RecordingWorkspaceExecutor(
+        error="tool_failure",
+        error_message="boom at ssh://devbox/srv/www/app.conf",
+    )
+    provider = VirtualCliProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _hub: ALLOW,
+        local_tools_enabled=lambda: True,
+        kill_switch=lambda: False,
+        workspace_executor=RecordingWorkspaceExecutor(),
+        admitted_roots=(_remote_cli_authority(executor),),
+    )
+
+    result = provider.invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."], "root_alias": "binding-remote"},
+    )
+
     assert not result.ok
-    assert "remote root reached laptop-disk path" in (result.error or "")
+    assert "ssh://devbox/srv/www" not in (result.error or "")

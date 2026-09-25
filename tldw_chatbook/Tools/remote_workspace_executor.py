@@ -115,6 +115,28 @@ _PING_PROBE_IDENTITY: dict[str, Any] = {
 
 _RESPONSE_STAMP_TAIL = re.compile(r"\nsha256: ([0-9a-f]{64})\nsize: ([0-9]+)\Z")
 
+#: Operations whose wire schema accepts ``sensitive_exclusions`` (the
+#: closed argument table in ``workspace_tool_protocol`` /
+#: ``workspace_wire_decode``): the executor's Task 17 injection seam adds
+#: the binding's serialized exclusions to exactly these — mirroring the
+#: remote-mode ``WorkspaceToolExecutor._build_remote_request`` rules.
+_EXCLUSION_CARRYING_OPERATIONS = frozenset(
+    {
+        "fs_list",
+        "fs_read",
+        "fs_glob",
+        "fs_grep",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }
+)
+
 _PING_RESULT_KEYS = frozenset(
     {"identity_chain", "canonical_path", "python_version", "bundle_sha256"}
 )
@@ -427,6 +449,7 @@ class RemoteWorkspaceToolExecutor:
         root_locator: str,
         identity_chain_source: Callable[[], Mapping[str, Any]],
         budget_seconds: float = _DEFAULT_BUDGET_SECONDS,
+        sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
     ) -> None:
         """Configure one executor around one (loopback) workspace root.
 
@@ -440,11 +463,22 @@ class RemoteWorkspaceToolExecutor:
                 captured identities pin every non-ping request — over
                 ssh this is exactly "the last ping's answer".
             budget_seconds: Per-exchange deadline for the spawn.
+            sensitive_exclusions: Task 17's binding-exclusion source:
+                zero-arg callable returning already-relative
+                :class:`~tldw_chatbook.Utils.sensitive_paths.SensitiveExclusion`
+                entries. The model-facing spec handlers call
+                ``execute(op, {path, ...})`` verbatim, so the executor
+                injects these into the wire args for every operation whose
+                schema carries ``sensitive_exclusions`` — caller-supplied
+                values always win, and a source that RAISES refuses the
+                call (fail closed: indeterminate exclusions never degrade
+                to an empty list).
         """
         self._root = Path(root)
         self._root_locator = root_locator
         self._identity_chain_source = identity_chain_source
         self._budget_seconds = budget_seconds
+        self._sensitive_exclusions = sensitive_exclusions
         #: SSH transport mode (Task 14); ``None`` keeps the loopback
         #: behaviour Tasks 9/12 pinned.
         self._ssh: _SshModeConfig | None = None
@@ -465,6 +499,7 @@ class RemoteWorkspaceToolExecutor:
         budget_seconds: float = WORKSPACE_HELPER_TIMEOUT_SECONDS,
         max_concurrent_calls: int | None = None,
         recovery_probes: bool = True,
+        sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
     ) -> "RemoteWorkspaceToolExecutor":
         """Build the executor that drives one remote binding over ssh.
 
@@ -533,6 +568,7 @@ class RemoteWorkspaceToolExecutor:
             root_locator=str(loc.path),
             identity_chain_source=_ssh_identity_source_stub,
             budget_seconds=budget_seconds,
+            sensitive_exclusions=sensitive_exclusions,
         )
         executor._ssh = _SshModeConfig(
             loc=loc,
@@ -661,6 +697,35 @@ class RemoteWorkspaceToolExecutor:
             spawn=self._spawn_worker,
         )
 
+    def _inject_sensitive_exclusions(
+        self, tool: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Add the binding's serialized exclusions to one op's wire args.
+
+        Fail-closed (Task 17): an exclusions source that raises means the
+        binding's exclusion state is INDETERMINATE — the call is refused
+        (``invalid_request``), never degraded to an empty list (which
+        would silently un-exclude every sensitive subtree for that call).
+        """
+        if tool not in _EXCLUSION_CARRYING_OPERATIONS:
+            return args
+        if "sensitive_exclusions" in args:
+            return args  # caller-supplied set wins (e.g. the CAS probe's)
+        if self._sensitive_exclusions is None:
+            return {**args, "sensitive_exclusions": []}
+        try:
+            entries = tuple(self._sensitive_exclusions())
+        except Exception:  # noqa: BLE001 - indeterminate exclusions refuse
+            raise RemoteWorkspaceExecutionError(
+                "invalid_request", admitted=False
+            ) from None
+        return {
+            **args,
+            "sensitive_exclusions": [
+                {"kind": entry.kind, "value": entry.value} for entry in entries
+            ],
+        }
+
     def _build_request(
         self,
         tool: str,
@@ -675,8 +740,17 @@ class RemoteWorkspaceToolExecutor:
         ``timeout_seconds`` is the budget the worker's watchdog arms
         from; ssh mode passes the remaining budget so the server-side
         clock starts only after connect and transfer.
+
+        Task 17 exclusion injection: the wire schema REQUIRES
+        ``sensitive_exclusions`` on every file/git operation, while the
+        model-facing spec handlers pass bare tool args (``{path}``) —
+        the executor injects the binding's serialized exclusions for
+        exactly the ops whose schema carries the field. Caller-supplied
+        values win (the CAS probe's explicit set is never widened), and
+        a source that raises refuses the call fail-closed.
         """
         try:
+            args = self._inject_sensitive_exclusions(tool, args)
             if chain is None:
                 # First-contact ping: identity fields are schema filler —
                 # the worker captures fresh and never compares them.

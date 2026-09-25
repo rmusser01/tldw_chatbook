@@ -17,7 +17,10 @@ from tldw_chatbook.STT.executor_process_tree import (
     ProcessContainmentError,
     WorkerContainmentIdentity,
 )
-from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
+from tldw_chatbook.Tools.local_tool_impls import (
+    _is_relative_sensitive_path,
+    resolve_workspace_path,
+)
 from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
 from tldw_chatbook.Tools.remote_root_types import (
     AdmittedRoot,
@@ -158,6 +161,20 @@ class WorkspaceToolExecutor:
                 )
             if not callable(remote_identity_source):
                 raise ValueError("remote_identity_source must be callable")
+            if user_exclusion_paths is not None:
+                # Task 17: ``user_exclusion_paths`` classifies entries with
+                # LAPTOP stats (``_call_context``'s ``path.is_file()``) --
+                # exactly the silent laptop IO Phase 3 forbids for remote
+                # roots. Remote exclusions arrive pre-classified as
+                # ``SensitiveExclusion`` entries through
+                # ``remote_sensitive_exclusions`` (file-vs-dir is decided by
+                # the stored binding kind; a worker stat is available
+                # through the existing ``stat_path`` wire op where a caller
+                # genuinely needs one -- no new op was added).
+                raise ValueError(
+                    "remote roots classify exclusions worker-side: pass "
+                    "remote_sensitive_exclusions, not user_exclusion_paths"
+                )
             # No validate_path, no capture_directory_chain, no laptop stat:
             # the descriptor is pure data and identity is cache-owned.
             self._remote_root: RemoteRoot | None = workspace_root
@@ -186,7 +203,25 @@ class WorkspaceToolExecutor:
         self._user_exclusion_paths = user_exclusion_paths
 
     def _call_context(self) -> SensitivePathContext:
-        """Per-call deny context: base denylist merged with user exclusions."""
+        """Per-call deny context: base denylist merged with user exclusions.
+
+        LOCAL roots only. A remote root must never reach this method: the
+        file-vs-dir classification of user exclusions is a ``path.is_file()``
+        stat, and for a remote binding that stat would hit the LAPTOP's
+        same-named path -- the exact wrong-file hazard Phase 3 closes.
+        Task 17's answer to "how does a remote root answer is_file": it
+        doesn't need to (binding exclusions arrive pre-classified as
+        ``SensitiveExclusion`` entries), and a caller that genuinely needs
+        a remote stat uses the EXISTING ``stat_path`` wire op (schema,
+        both decoders, and corpus already shipped in Tasks 8-13) through
+        the ssh/loopback transport executor -- no new op was added.
+        """
+        if self._remote_root is not None:
+            raise RuntimeError(
+                "remote root reached laptop-disk path: _call_context "
+                "exclusion classification (remote exclusions ride the "
+                "request as serialized SensitiveExclusion entries)"
+            )
         base = resolve_sensitive_context()
         if self._user_exclusion_paths is None:
             return base
@@ -553,22 +588,41 @@ class WorkspaceToolExecutor:
         except (DirectoryIdentityError, WorkspaceProtocolError, OSError, ValueError):
             raise WorkspaceToolExecutionError("invalid_request") from None
 
+    def _remote_exclusion_entries(self) -> tuple[SensitiveExclusion, ...]:
+        """The caller-supplied relative exclusion entries, fail-closed.
+
+        Shared by the wire serializer and the lexical ``stat_path``
+        admission: a provider that raises means the exclusion state is
+        INDETERMINATE, and the only closed outcome is refusing the
+        operation (never an empty list -- see
+        :meth:`_remote_serialized_exclusions`).
+        """
+        if self._remote_sensitive_exclusions is None:
+            return ()
+        try:
+            return tuple(self._remote_sensitive_exclusions())
+        except Exception:  # noqa: BLE001 - indeterminate exclusions refuse the call
+            raise WorkspaceToolExecutionError("invalid_request") from None
+
     def _remote_serialized_exclusions(self) -> list[dict[str, str]]:
-        """Serialize caller-supplied relative exclusions verbatim.
+        """Serialize caller-supplied relative exclusions verbatim, fail-closed.
 
         The remote builder NEVER resolves exclusions against the laptop's
         filesystem (``_parent_read_exclusions``' laptop walk is
         local-only): the caller hands in already-relative
-        :class:`SensitiveExclusion` entries -- Task 17 routes the binding's
-        stored relative paths here -- and they ride the request as-is for
+        :class:`SensitiveExclusion` entries -- the binding's stored
+        relative paths (Task 17) -- and they ride the request as-is for
         worker-side matching.
+
+        Task 17 fail-closed choice: an exclusions provider that raises
+        REFUSES the operation (``invalid_request``). Degrading to ``[]``
+        -- the pre-Task-17 behavior -- silently un-excluded every
+        sensitive subtree for that one request; deny-all-write was
+        considered and declined because reads would still disclose
+        excluded content, and ADR-174 makes exclusions fully invisible.
         """
-        if self._remote_sensitive_exclusions is None:
-            return []
-        try:
-            return _serialize_exclusions(tuple(self._remote_sensitive_exclusions()))
-        except Exception:  # noqa: BLE001 - a failed provider degrades to none
-            return []
+        entries = self._remote_exclusion_entries()
+        return _serialize_exclusions(entries) if entries else []
 
     def _build_remote_request(
         self,
@@ -614,7 +668,21 @@ class WorkspaceToolExecutor:
             if operation == "stat_path" and type(arguments) is dict:
                 raw_path = arguments.get("path")
                 if type(raw_path) is str:
-                    normalized["path"] = _normalize_remote_relative_path(raw_path)
+                    stat_path_value = _normalize_remote_relative_path(raw_path)
+                    normalized["path"] = stat_path_value
+                    # ADR-174 (fully invisible): the stat_path wire schema
+                    # carries no exclusions field, so the serialized binding
+                    # exclusions refuse LEXICALLY here -- the parent-side
+                    # mirror of the local builder's resolve-with-context
+                    # admission for stat. The worker-side denylist covers
+                    # the remote-home floor in dispatch.
+                    entries = self._remote_exclusion_entries()
+                    if entries and _is_relative_sensitive_path(
+                        PurePosixPath(stat_path_value),
+                        entries,
+                        is_directory=True,
+                    ):
+                        raise ValueError("invalid workspace path")
             if operation in _GIT_OPERATIONS and type(arguments) is dict:
                 normalized["sensitive_exclusions"] = exclusions
                 raw_path = arguments.get("path")

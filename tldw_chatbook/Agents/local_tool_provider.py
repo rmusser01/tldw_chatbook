@@ -651,7 +651,7 @@ def _workspace_execution_error_reason(
 def _workspace_execution_error_result(
     error: WorkspaceToolExecutionError,
     *,
-    redaction_root: Path | None,
+    redaction_root: "Path | RemoteRoot | None",
 ) -> ToolResult:
     """Translate one validated executor failure without a direct-core fallback."""
     reason = _workspace_execution_error_reason(error)
@@ -1967,15 +1967,22 @@ class LocalToolProvider:
                         dispatch_started=False,
                         provider_terminal=LocalProviderTerminal.NOT_STARTED,
                     )
-                # Phase 3a type boundary: redaction strips the laptop root
-                # locator from results/paths. Task 17 (Phase 3c) migrates
-                # redaction to the RemoteRoot URI form; until then a
-                # remote root fails loud instead of leaking or mis-stripping.
-                redaction_root = (
-                    local_root_path(authority.root, site="result redaction")
-                    if authority is not None
-                    else self._result_redaction_root
-                )
+                # Phase 3c (Task 17): redaction strips the authority's root
+                # locator from results/paths. A local root unwraps to its
+                # Path (byte-identical); a RemoteRoot redacts LEXICALLY
+                # against the descriptor's locator spellings (canonical
+                # locator / remote path / display URI) — no laptop disk,
+                # no wall.
+                if authority is None:
+                    redaction_root: "Path | RemoteRoot | None" = (
+                        self._result_redaction_root
+                    )
+                elif isinstance(authority.root, RemoteRoot):
+                    redaction_root = authority.root
+                else:
+                    redaction_root = local_root_path(
+                        authority.root, site="result redaction"
+                    )
                 if automatic_work is not None:
                     try:
                         automatic_work.check()
@@ -2812,7 +2819,13 @@ class LocalToolProvider:
         -> ``None`` (absent); anything else -> :data:`_UNKNOWN_NOW` (the
         caller treats the target as not stale -- the handler will
         surface the real error). The probe's response never reaches the
-        model, so its empty exclusion set discloses nothing.
+        model, so it discloses nothing.
+
+        Task 17 (carried obligation): the probe carries the binding's
+        REAL serialized exclusions -- the executor's injection seam adds
+        them to the bare probe args (an excluded target refuses
+        worker-side with the same "file not found" invisibility text,
+        classifying as ABSENT rather than reporting its stamps).
         """
         from tldw_chatbook.Tools.remote_workspace_executor import (
             parse_fs_read_stamps,
@@ -2823,10 +2836,9 @@ class LocalToolProvider:
         try:
             response = executor.execute(
                 "fs_read",
-                # The remote transport executor serializes arguments
-                # verbatim, so the worker-required exclusion field rides
-                # the probe explicitly (empty: see docstring).
-                {"path": shown, "sensitive_exclusions": []},
+                # Bare args on purpose: the transport executor injects
+                # the binding's serialized exclusions (fail-closed).
+                {"path": shown},
                 intent="read",
             )
         except Exception as exc:  # noqa: BLE001 - unclassifiable, fail open

@@ -580,6 +580,48 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
     return candidate
 
 
+def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
+    """Vet one SSH-binding exclusion path LEXICALLY (Task 17, Phase 3c).
+
+    The remote host owns the filesystem, so the laptop resolve/stat in
+    :func:`_validated_exclusion_relative` is structurally impossible:
+    validation reduces to what is decidable from the stored locator —
+    the same relative-text rules (empty/home-relative/absolute/parent-
+    escaping refused) plus a lexical root check against the locator's
+    path component (``.`` names the root; users remove the binding
+    instead).
+
+    Documented choice: NO ping-style validation call at edit time (a
+    probe was considered and declined — add-binding's advisory probe
+    keeps setup offline-safe, and exclusions must match that posture).
+    Real validation is worker-side at apply time: the exclusion rides
+    every request as a serialized relative string and the worker's
+    matcher refuses reads/writes/enumeration under it.
+    """
+    raw = str(path).strip()
+    candidate = PurePosixPath(raw)
+    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+        raise WorkspaceRegistryServiceError(
+            "Exclusion path must be relative to the binding root."
+        )
+    try:
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            RemoteLocatorError,
+            parse_remote_locator,
+        )
+
+        root = parse_remote_locator(str(binding.locator)).path
+    except (RemoteLocatorError, ValueError, TypeError) as exc:
+        raise WorkspaceRegistryServiceError(
+            "Binding root is not resolvable."
+        ) from exc
+    if candidate == PurePosixPath(".") or root == root / candidate:
+        raise WorkspaceRegistryServiceError(
+            "Exclude specific paths; remove the binding to exclude the whole root."
+        )
+    return candidate
+
+
 class LocalWorkspaceRegistryService:
     """SQLite-backed local workspace registry."""
 
@@ -2810,6 +2852,17 @@ class LocalWorkspaceRegistryService:
         pre-excluding build output), rejects case-insensitive duplicates,
         and persists via binding metadata so the live run is untouched.
 
+        Task 17 (Phase 3c): SSH-filesystem bindings learn exclusions too.
+        The laptop resolve/stat is structurally impossible for a remote
+        root, so validation is LEXICAL and the entry stores the RAW
+        relative string with kind ``"directory"`` — the worker-side
+        matcher applies subtree semantics, which covers not-yet-existing
+        targets and files alike (a remote stat was considered to infer
+        file/dir and declined: it would make the edit depend on the
+        remote being reachable, and add-binding's own probe is advisory
+        for exactly that reason). Validation beyond the lexical rules is
+        worker-side at apply time.
+
         Args:
             workspace_id: Owning workspace of the folder binding.
             binding_id: Folder binding whose metadata gains the exclusion.
@@ -2821,15 +2874,26 @@ class LocalWorkspaceRegistryService:
 
         Raises:
             WorkspaceRegistryServiceError: If the binding is unknown, not a
-                local-filesystem binding of this workspace, the path is
-                invalid (empty/absolute/home-relative/parent-escaping/root
-                itself/unresolvable or symlink-escaping), duplicates an
-                existing exclusion case-insensitively, or the per-binding
-                cap (200) is reached.
+                local-filesystem or ssh-filesystem binding of this
+                workspace, the path is invalid (empty/absolute/home-
+                relative/parent-escaping/root itself/unresolvable or
+                symlink-escaping), duplicates an existing exclusion
+                case-insensitively, or the per-binding cap (200) is reached.
         """
         with _BINDING_EXCLUSION_EDIT_LOCK:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
-            relative = _validated_exclusion_relative(binding, path)
+            if str(binding.binding_kind) in (
+                "ssh-filesystem",
+                str(RuntimeBindingKind.SSH_FILESYSTEM),
+            ):
+                relative = _validated_remote_exclusion_relative(binding, path)
+                kind = "directory"
+            else:
+                relative = _validated_exclusion_relative(binding, path)
+                absolute = Path(str(binding.locator)) / relative
+                kind = (
+                    "directory" if not absolute.exists() or absolute.is_dir() else "file"
+                )
             key = relative.as_posix().casefold()
             entries = list(binding_exclusion_entries(binding))
             if any(entry.path.casefold() == key for entry in entries):
@@ -2838,8 +2902,6 @@ class LocalWorkspaceRegistryService:
                 raise WorkspaceRegistryServiceError(
                     f"Exclusion limit reached ({_MAX_BINDING_EXCLUSIONS})."
                 )
-            absolute = Path(str(binding.locator)) / relative
-            kind = "directory" if not absolute.exists() or absolute.is_dir() else "file"
             entries.append(
                 BindingExclusion(path=relative.as_posix(), kind=kind, added_at=self._now_factory())
             )
@@ -2894,7 +2956,15 @@ class LocalWorkspaceRegistryService:
         if (
             binding is None
             or str(binding.workspace_id) != str(workspace_id)
-            or str(binding.binding_kind) != str(RuntimeBindingKind.LOCAL_FILESYSTEM)
+            or str(binding.binding_kind)
+            not in (
+                "local-filesystem",
+                str(RuntimeBindingKind.LOCAL_FILESYSTEM),
+                # Task 17: exclusions apply to SSH bindings as raw
+                # relative strings, validated worker-side at apply time.
+                "ssh-filesystem",
+                str(RuntimeBindingKind.SSH_FILESYSTEM),
+            )
         ):
             raise WorkspaceRegistryServiceError(
                 "Folder binding not found in this workspace."

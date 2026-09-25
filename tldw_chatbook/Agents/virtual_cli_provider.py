@@ -345,21 +345,29 @@ class VirtualCliProvider:
 
     def _error_redaction_root(
         self, authority: RunAdmittedWorkspaceRoot | None
-    ) -> Path | None:
+    ) -> "Path | RemoteRoot | None":
         """Error-path redaction root: same as success, but never re-raises.
 
         Local roots get exactly the root the success path redacts against
-        (unchanged behavior). A REMOTE root returns ``None``: the success
-        path's loud unwrap already refused remote dispatch, and
-        re-raising from inside an ``except`` block would mask that
-        failure with a generic refusal -- error text carries no laptop
-        locator to strip anyway (a remote locator is not a laptop secret).
+        (unchanged behavior). A REMOTE root is returned AS the descriptor:
+        Task 17 made redaction lexical, so the error path strips the
+        descriptor's locator spellings the same way (the pre-Task-17
+        ``None`` return was safe but inconsistent, and the success path
+        no longer refuses remote dispatch).
         """
-        if authority is None:
-            return self._result_redaction_root
-        if is_remote(authority.root):
+        try:
+            if authority is None:
+                return self._result_redaction_root
+            if is_remote(authority.root):
+                return authority.root
+            return local_root_path(
+                authority.root, site="virtual-CLI result redaction"
+            )
+        except TypeError:
+            # The loud laptop-disk unwrap (a local path that cannot be
+            # resolved) must not mask the original failure from inside
+            # an ``except`` block.
             return None
-        return local_root_path(authority.root, site="virtual-CLI result redaction")
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
         if call.name != VIRTUAL_CLI_TOOL_NAME:
@@ -520,17 +528,24 @@ class VirtualCliProvider:
                     else self._registries_by_alias[authority.alias]
                 )
                 content = registry.execute(command, argv)
-                # Phase 3a boundary: unwrap the authority root for
-                # redaction -- a RemoteRoot raises loud here (Task 17,
-                # Phase 3c migrates redaction to the URI form) instead of
-                # reaching redact_root_locator's Path-only surface.
-                redaction_root = (
-                    self._result_redaction_root
-                    if authority is None
-                    else local_root_path(
+                # Phase 3c (Task 17), recording Task 15's conclusion: the
+                # virtual CLI is executor-routed for remote roots (the
+                # per-alias registry stores the descriptor unresolved and
+                # projects onto the executor's closed protocol), so result
+                # redaction is LEXICAL -- a RemoteRoot strips its locator
+                # spellings (canonical locator / remote path / display
+                # URI) through redact_root_locator without any laptop
+                # disk; the pre-Task-17 loud refusal is retired.
+                if authority is None:
+                    redaction_root: "Path | RemoteRoot | None" = (
+                        self._result_redaction_root
+                    )
+                elif is_remote(authority.root):
+                    redaction_root = authority.root
+                else:
+                    redaction_root = local_root_path(
                         authority.root, site="virtual-CLI result redaction"
                     )
-                )
                 content = redact_root_locator(content, redaction_root)
                 return ToolResult(ok=True, content=_sanitize_result(content))
             except WorkspaceToolExecutionError as exc:
