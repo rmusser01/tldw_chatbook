@@ -48,6 +48,12 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.character_avatar import (
+    AVATAR_IMAGE_SUFFIX_COPY as PERSONAS_AVATAR_IMAGE_SUFFIX_COPY,
+    AVATAR_IMAGE_SUFFIXES as PERSONAS_AVATAR_IMAGE_SUFFIXES,
+    AVATAR_MAX_BYTES as PERSONAS_AVATAR_MAX_BYTES,
+    AVATAR_MAX_SIZE_COPY as PERSONAS_AVATAR_MAX_SIZE_COPY,
+)
 from ...Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
     canonical_visual_identity_reactions,
@@ -487,10 +493,6 @@ _LIBRARY_SORT_LABELS: dict[str, str] = {
     "modified_desc": "Recent edit",
     "created_desc": "Recent add",
 }
-PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
-PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
-PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
-PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 # TASK-32806.6: the two importers above cap at 10 MB before reading;
