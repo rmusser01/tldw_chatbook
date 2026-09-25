@@ -5,6 +5,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 from textual.app import App
 from textual.worker import WorkerFailed
 
@@ -20,6 +21,14 @@ from tldw_chatbook.Widgets.Chat_Widgets.worktree_recovery_dialog import _Recover
     [("database", False), ("database", True), ("submission", False)],
 )
 async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale_view):
+    """A selected failure leaves the app alive and the recovery owner settled.
+
+    Args:
+        monkeypatch: Replaces only the selected failure boundary.
+        tmp_path: Isolated path for the manual recovery database.
+        failure: Database-open or executor-submission failure to inject.
+        stale_view: Whether the originating Console view has been replaced.
+    """
     intent = SimpleNamespace(persisted_conversation_id="conversation")
     controller = SimpleNamespace(
         store=SimpleNamespace(active_session_id="session"),
@@ -76,12 +85,26 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
 
         monkeypatch.setattr(loop, "run_in_executor", reject_recovery_submission)
     notifications = []
+    diagnostics = []
+    log_sink = logger.add(
+        lambda message: diagnostics.append(str(message)),
+        format="{message}",
+        level="WARNING",
+    )
 
     class RecoveryApp(App):
+        """Minimal mounted owner for the real recovery picker."""
+
         def _console_runtime(self):
             return runtime
 
         def notify(self, message, **kwargs):
+            """Record the bounded notification without rendering a toast.
+
+            Args:
+                message: User-visible recovery outcome.
+                **kwargs: Optional Textual notification arguments.
+            """
             notifications.append(message)
 
     app = RecoveryApp()
@@ -108,6 +131,14 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
         assert helper.receipts["conversation"].reason_code == "recovery_failed"
         assert not capacity.snapshot().executions
         assert not engine_entries, "failed admission must not attempt a Git effect"
+        failure_logs = [
+            line for line in diagnostics if "agent_worktree_recovery_failed:" in line
+        ]
+        assert len(failure_logs) == 1
+        assert (
+            "OperationalError" if failure == "database" else "RuntimeError"
+        ) in failure_logs[0]
+        assert "injected" not in failure_logs[0]
         assert caught is None, f"Textual terminated the app: {caught!r}"
         assert notifications == (
             []
@@ -117,3 +148,4 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
     finally:
         await helper.close()
         capacity.close()
+        logger.remove(log_sink)
