@@ -270,3 +270,152 @@ async def test_export_theme_writes_saved_file_data(request, tmp_path, monkeypatc
         exported = toml.load(tmp_path / "Downloads" / "mine_theme.toml")
         assert exported["colors"] == MINE
         assert exported["theme"]["name"] == "mine"
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1 (review items 1-5, rulings R12/R13/R15/R16).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_unconstructible_file_writes_nothing(request, tmp_path, config_writes):
+    """Review item 1: a file create_theme_from_dict rejects (no primary, an
+    unknown colour key) fails the rename before anything is written."""
+    path = tmp_path / "broken.toml"
+    with path.open("w", encoding="utf-8") as f:
+        toml.dump({"theme": {"name": "broken", "dark": True}, "colors": {"bogus": "#000000"}}, f)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        app.notify.reset_mock()
+        before = app.themes_changed
+        assert editor.rename_user_theme("broken", "fixed") is False
+        await pilot.pause()
+        assert path.exists()
+        assert not (tmp_path / "fixed.toml").exists()
+        assert not (tmp_path / "fixed.toml.tmp").exists()
+        assert app.notify.call_args.kwargs.get("severity") == "error"
+        assert app.themes_changed == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_and_export_resolve_by_theme_name_not_stem(
+    request, tmp_path, monkeypatch, config_writes
+):
+    """R12: a.toml whose [theme].name is b is deleted/exported as b."""
+    path = _write(tmp_path, "a", name="b")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    _launch_default(monkeypatch, "textual-dark")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("b")
+        await pilot.pause()
+        assert toml.load(tmp_path / "Downloads" / "b_theme.toml")["colors"] == MINE
+
+        await _confirm_delete(pilot, app, editor, "b")
+        assert not path.exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_resolves_by_theme_name_not_stem(
+    request, tmp_path, monkeypatch, config_writes
+):
+    path = _write(tmp_path, "a", name="b")
+    _launch_default(monkeypatch, "textual-dark")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.rename_user_theme("b", "c") is True
+        assert not path.exists()
+        assert toml.load(tmp_path / "c.toml")["theme"]["name"] == "c"
+        assert editor.list_user_theme_names() == {"c"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_of_loaded_theme_moves_the_editor_too(
+    request, tmp_path, monkeypatch, config_writes
+):
+    """R13: after renaming the loaded theme, Save writes the new file and
+    does not recreate the old one."""
+    from textual.widgets import Input
+
+    _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "textual-dark")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.load_user_theme("mine")
+        await pilot.pause()
+        assert editor.rename_user_theme("mine", "ours") is True
+        await pilot.pause()
+        assert editor.current_theme_name == "ours"
+        assert editor.query_one("#settings-theme-name", Input).value == "ours"
+        assert editor._loaded_user_theme == "ours"
+
+        editor.color_inputs["primary"].value = "#445566"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert not (tmp_path / "mine.toml").exists()
+        assert toml.load(tmp_path / "ours.toml")["colors"]["primary"].upper() == "#445566"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_list_raises_when_pause_starts_mid_scan(request, tmp_path, monkeypatch):
+    """R15: a pause raised by a per-file read escapes; no partial set."""
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+
+        def paused(*_a, **_k):
+            raise RecoveryRequired("x")
+
+        monkeypatch.setattr(raw_participants, "_file", paused)
+        with pytest.raises(RecoveryRequired):
+            editor.list_user_theme_names()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_file_errors_do_not_leak_paths_into_notices(
+    request, tmp_path, monkeypatch, config_writes
+):
+    """R16: a read failure's notice carries no filesystem path."""
+    _write(tmp_path, "mine")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.list_user_theme_names()  # resolve before the reads start failing
+        real_scope = raw_participants._scope
+
+        def missing(source, route, **kwargs):
+            if route == "theme_file" and not kwargs.get("writing"):
+                raise FileNotFoundError(2, "No such file or directory", str(tmp_path / "mine.toml"))
+            return real_scope(source, route, **kwargs)
+
+        monkeypatch.setattr(raw_participants, "_scope", missing)
+        for action in (
+            lambda: editor.rename_user_theme("mine", "ours"),
+            lambda: editor.export_theme("mine"),
+        ):
+            app.notify.reset_mock()
+            action()
+            await pilot.pause()
+            message = app.notify.call_args.args[0]
+            assert str(tmp_path) not in message, message
+            assert "mine" in message
