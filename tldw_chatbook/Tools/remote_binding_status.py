@@ -54,6 +54,7 @@ __all__ = [
     "BindingState",
     "CachedStatus",
     "NO_FLIP_TRANSPORT_KINDS",
+    "cached_status_display",
     "PROBE_BLOCKED",
     "PROBE_MISSING",
     "PROBE_OP_FAILED",
@@ -225,6 +226,41 @@ def set_remote_binding_status_cache(
     global _APP_STATUS_CACHE
     with _APP_STATUS_CACHE_LOCK:
         _APP_STATUS_CACHE = cache
+
+
+def cached_status_display(
+    binding_id: str, cache: "RemoteBindingStatusCache | None" = None
+) -> str:
+    """One binding's cached state as the UI live-status word (pure read).
+
+    The Task 20 display vocabulary, one place so Settings rows, the
+    Console working-folder picker, and the Alt+W switcher cannot drift:
+
+    - ``READY`` (including the optimistic cold start) → ``"ready"``
+    - ``BLOCKED`` → ``"unreachable ({reason})"`` — the transport-class
+      bucket; the bounded reason string already names the specific
+      failure ("unreachable or auth failed", "host lacks python3",
+      "python ≥ 3.10 required (found 3.8.5)", ...)
+    - ``MISSING`` → ``"missing on host"``
+    - ``STALE_IDENTITY`` → ``"identity stale"``
+
+    Never raises and never probes: an unreadable cache degrades to the
+    optimistic ``"ready"``.
+    """
+    try:
+        active = cache if cache is not None else get_remote_binding_status_cache()
+        cached = active.status(binding_id)
+        state = str(getattr(cached, "state", "") or BindingState.READY)
+    except Exception:  # noqa: BLE001 - display-only, degrade optimistically
+        return "ready"
+    if state == str(BindingState.BLOCKED):
+        reason = str(getattr(cached, "reason", "") or "").strip()
+        return f"unreachable ({reason})" if reason else "unreachable"
+    if state == str(BindingState.MISSING):
+        return "missing on host"
+    if state == str(BindingState.STALE_IDENTITY):
+        return "identity stale"
+    return "ready"
 
 
 class RemoteBindingStatusCache:

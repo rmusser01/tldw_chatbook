@@ -5241,6 +5241,28 @@ class ConsoleSessionController:
         if session is not None:
             self._request_console_project_instruction_display_refresh(session.id)
 
+    @staticmethod
+    def _project_instruction_binding_label(selection: Any, index: int) -> str:
+        """One picker label: the binding's own name plus, for SSH roots,
+        a live cache-status chip (Task 20 — listing/labeling only; the
+        selection flow itself is untouched)."""
+        from ...Tools.remote_binding_status import cached_status_display
+
+        binding = getattr(selection, "binding", None)
+        label = str(
+            getattr(binding, "display_name", "")
+            or getattr(binding, "label", "")
+            or f"Folder {index + 1}"
+        )
+        kind = (
+            getattr(getattr(binding, "binding_kind", None), "value", None)
+            or str(getattr(binding, "binding_kind", ""))
+        )
+        if kind == "ssh-filesystem":
+            binding_id = str(getattr(binding, "binding_id", "") or "")
+            label = f"{label} · ssh: {cached_status_display(binding_id)}"
+        return label
+
     async def _select_project_instruction_binding(
         self,
         session_id: str,
@@ -5260,11 +5282,7 @@ class ConsoleSessionController:
         options = tuple(
             ProjectInstructionBindingOption(
                 binding_id=str(selection.binding.binding_id),
-                label=str(
-                    getattr(selection.binding, "display_name", "")
-                    or getattr(selection.binding, "label", "")
-                    or f"Folder {index + 1}"
-                ),
+                label=self._project_instruction_binding_label(selection, index),
                 eligible=True,
             )
             for index, selection in enumerate(selections)

@@ -311,6 +311,65 @@ class _WorkspaceFilesVisitService:
         self._toggles.set_exclusion(binding_id, relative_path, excluded)
 
 
+#: Alt+W switcher chip severity (Task 20): BLOCKED outranks MISSING
+#: outranks STALE_IDENTITY; READY/cold carries no chip (healthy rows stay
+#: uncluttered -- the chip exists to warn before switching).
+_SSH_CHIP_SEVERITY = {"BLOCKED": 3, "MISSING": 2, "STALE_IDENTITY": 1}
+
+
+def _console_workspace_ssh_status_chips(
+    registry: Any, workspaces: Sequence[Any]
+) -> dict[str, str]:
+    """One worst-binding SSH status chip per workspace row (Task 20).
+
+    Reads the process-wide remote-binding status cache only (never
+    probes); returns ``{workspace_id: "ssh: <display word>"}`` for every
+    workspace owning at least one DEGRADED ssh binding, worst state
+    first. Healthy or ssh-less workspaces are omitted. Guarded end to
+    end: any failure is a silent omit, never a broken switcher.
+    """
+    from tldw_chatbook.Tools.remote_binding_status import (
+        cached_status_display,
+        get_remote_binding_status_cache,
+    )
+
+    chips: dict[str, str] = {}
+    try:
+        list_ssh = getattr(registry, "list_ssh_bindings", None)
+        if not callable(list_ssh):
+            return chips
+        cache = get_remote_binding_status_cache()
+        for workspace in workspaces:
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "")
+            if not workspace_id:
+                continue
+            try:
+                bindings = tuple(list_ssh(workspace_id))
+            except Exception:  # noqa: BLE001 - display-only
+                continue
+            worst_state = ""
+            worst_display = ""
+            for binding in bindings:
+                binding_id = str(getattr(binding, "binding_id", "") or "")
+                if not binding_id:
+                    continue
+                try:
+                    state = str(cache.status(binding_id).state)
+                    display = cached_status_display(binding_id, cache)
+                except Exception:  # noqa: BLE001 - display-only
+                    continue
+                if _SSH_CHIP_SEVERITY.get(state, 0) > _SSH_CHIP_SEVERITY.get(
+                    worst_state, 0
+                ):
+                    worst_state = state
+                    worst_display = display
+            if worst_state:
+                chips[workspace_id] = f"ssh: {worst_display}"
+    except Exception:  # noqa: BLE001 - display-only, degrade silently
+        return {}
+    return chips
+
+
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
     """Fold the "no explicit workspace" sentinels onto one identity.
 
@@ -4645,6 +4704,16 @@ class ConsoleWorkspaceController:
                 active_workspace.workspace_id if active_workspace is not None else None
             )
 
+            # Task 20: per-binding SSH status chips (worst state per
+            # workspace row) read from the status cache OFF the UI loop --
+            # the same discipline as the workspace fetch above.
+            try:
+                ssh_status_chips = await asyncio.to_thread(
+                    _console_workspace_ssh_status_chips, registry_service, workspaces
+                )
+            except Exception:  # noqa: BLE001 - display-only, degrade silently
+                ssh_status_chips = {}
+
             def _switch_to(workspace_id: str) -> None:
                 self._switch_console_workspace(workspace_id)
 
@@ -4670,6 +4739,7 @@ class ConsoleWorkspaceController:
                     workspaces=workspaces,
                     active_workspace_id=active_workspace_id,
                     show_archived=show_archived,
+                    ssh_status_chips=ssh_status_chips,
                 ),
                 callback=_apply_workspace_switch,
             )
