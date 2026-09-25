@@ -49,7 +49,7 @@ Approach A. New units, each with one job:
 | Unit | File | Job | Depends on |
 |---|---|---|---|
 | `theme_catalog` | `tldw_chatbook/css/Themes/theme_catalog.py` | Pure function `build_catalog(app_themes, user_dir, active, launch_default) -> list[ThemeEntry]`. `ThemeEntry` is a frozen dataclass with `id`, `display_name`, `origin` (`"yours"`, `"shipped"` or `"textual"`), `dark`, `strip` (7 hex colours), `is_active`, `is_launch_default`, `overrides_shipped`, and `error` (set for an unreadable file). Also provides `is_catalog_theme(name)`, replacing the scattered built-in checks in the editor. | `ALL_THEMES`, `textual.theme.BUILTIN_THEMES`, `load_user_themes` |
-| `use_theme` | same module | `use_theme(app, name, *, persist: bool) -> str | None`. Sets `app.theme`. When `persist` is set it writes `general.default_theme` to disk **and** updates the in-memory app config, which is what `handle_theme_launch_default_changed` (`settings_screen.py:24102`) does today. The palette's `switch_theme` currently writes only to disk. Returns the previous theme so the caller can offer Revert. | config |
+| `use_theme` | same module | `use_theme(app, name, *, persist: bool) -> ThemeChange`. Sets `app.theme`. When `persist` is set it writes `general.default_theme` to disk **and** updates the in-memory `app.app_config` dict, which the Settings screen's `_app_config_update_target()` also returns, which is what `handle_theme_launch_default_changed` (`settings_screen.py:24102`) does today. The palette's `switch_theme` currently writes only to disk. Returns a `ThemeChange(previous_active, previous_launch_default)` so Revert can restore **both**. Reverting a Use that followed a Try must not save the tried theme as the launch default. | config |
 | `ThemePicker` | `tldw_chatbook/Widgets/settings_theme_picker.py` | Filter `Input`, grouped `OptionList`, preview card and action chips. Posts `EditRequested(name, mode)`. | catalog, `use_theme` |
 | `ThemePane` | same file | `ContentSwitcher` holding `ThemePicker` and `SettingsThemeEditor`. Routes Clone, New and Edit to the editor, and Back and Save to the picker. | both |
 | `SettingsThemeEditor` | existing file | Keeps the palette, presets, live preview and Generate. **Loses** the tree, the library buttons and "Set as launch default". **Gains** Save as and "Back to themes". | catalog |
@@ -75,7 +75,8 @@ Changes elsewhere:
 - The `›` cursor glyph and the marker words carry the state. The colour strip is decorative.
 - The strip is drawn as styled segments inside the row's text, not one widget per swatch.
 - The groups are YOUR THEMES, SHIPPED and TEXTUAL, as disabled `OptionList` headers. While filtering, each header shows a count.
-- A file in your themes folder with the same name as a shipped theme is listed under Yours, marked "overrides shipped". This matches startup, where user themes register after `ALL_THEMES` (`app.py:15873`). The shipped theme is not listed separately.
+- A file in your themes folder with the same name as a shipped or Textual theme is listed under Yours, marked "overrides shipped" or "overrides Textual". This matches startup, where user themes register after `ALL_THEMES` (`app.py:15873`). The theme it overrides is not listed separately.
+- Display names are de-duplicated in the catalog, the single owner of the " · id" suffix from TASK-32945. The picker and Appearance both read that result.
 
 **Filter.** Case-insensitive substring match on the display name and the id. The list starts with the active theme highlighted.
 
@@ -85,7 +86,7 @@ Changes elsewhere:
 |---|---|---|
 | typing | filter | narrows the list |
 | ↓ or Enter | filter | moves into the list |
-| ↑ | first list row | moves back to the filter |
+| ↑ | first list row | moves back to the filter. `OptionList` wraps around at the ends (Textual 8.2.8 `find_next_enabled`; verified), so the picker handles ↑ on the first enabled row before the list does. |
 | Enter | list | **Use** |
 | `t` | list | **Try** |
 | `c` | list | Clone |
@@ -97,11 +98,11 @@ Changes elsewhere:
 
 `/` is **not** rebound. It stays as Settings search (`settings_screen.py:31859`).
 
-**Use.** Calls `use_theme(persist=True)`. The toast reads "Apricot is now your theme (was: Nord)". The picker shows a `[ Revert to Nord ]` chip for the rest of the session; Revert calls `use_theme(persist=True)` with the previous name.
+**Use.** Calls `use_theme(persist=True)`. The toast reads "Apricot is now your theme (was: Nord)". The picker shows a `[ Revert to Nord ]` chip for the rest of the session; Revert restores the previous active theme and the previous launch default from the `ThemeChange`.
 
-**Try.** Calls `use_theme(persist=False)` and shows the same Revert chip. It does not change the launch default.
+**Try.** Calls `use_theme(persist=False)` and shows the same Revert chip. It does not change the launch default, and its toast says "for this session". The Revert chip exists only in the picker. If you leave Settings, the tried theme stays until you relaunch.
 
-**Markers stay live.** The picker watches the app's theme change signal, so a change from the palette, Appearance or anywhere else updates the markers while the picker is open.
+**Markers stay live.** The picker subscribes to `app.theme_changed_signal` (it exists in Textual 8.2.8), so a change from the palette, Appearance or anywhere else updates the markers while the picker is open.
 
 ## 6. Editor (behind Clone, New and Edit)
 
@@ -115,7 +116,7 @@ Changes elsewhere:
 
 **Back to themes, Esc, or switching category with unsaved edits.** Shows the Stay / Discard / Save prompt from TASK-32941. A category switch rebuilds the detail pane (`settings_screen.py:3729`), so returning to Theme always opens the picker, never the editor.
 
-**Carried-colour check.** TASK-32940 carries a shipped theme's extra colours into clones. They are not recomputed when the clone is recoloured. On Save and Try, each carried text colour (`text-*`, `footer-key-foreground`, `input-selection-*`) is checked against the edited background. Any below 4.5:1 is dropped, so the theme falls back to the colour Textual derives.
+**Carried-colour check.** TASK-32940 carries a shipped theme's extra colours into clones. They are not recomputed when the clone is recoloured. On Save and Try, each carried **text** colour is checked against the surface it is drawn on: `text-*` against `background`, and `footer-key-foreground` against the footer surface. Background-type variables such as `input-selection-background` are not text and are not checked. Any below 4.5:1 is dropped, so the theme falls back to the colour Textual derives.
 
 ## 7. Actions on your own themes
 
@@ -129,12 +130,12 @@ All of these go through `raw._scope` and the backup participant, as Save and Del
 4. If the theme was active, set `app.theme` to the new name. If it was the launch default, rewrite the config.
 5. If the old name overrode a shipped theme, that shipped theme appears again.
 
-**Delete of the active theme.** The app switches to the launch default. If the deleted theme *was* the launch default, the app switches to `textual-dark` and the config is rewritten. The toast states what happened. This fixes the editor/app disagreement the critique found.
+**Delete of the active theme.** The theme is unregistered (`app.unregister_theme`), then the app switches to the launch default. If the deleted theme *was* the launch default, the app switches to `textual-dark` and the config is rewritten. The toast states what happened. This fixes the editor/app disagreement the critique found.
 
 **Import** (PR 3).
 
 - A dialog accepts a typed or pasted path. A terminal file-drop arrives as a pasted path (TASK-216).
-- Checks: `path_validation`, `.toml` only, at most 64 KB, parsed with `toml`, hex colours validated, `[variables]` accepted. Nothing in the file is executed.
+- Checks: `path_validation`, `.toml` only, at most 64 KB, parsed with `toml`, hex colours validated. `[variables]` is accepted only when each name matches `^[a-z0-9-]+$` and each value parses as a colour; any other entry is dropped with a warning. The same rule applies when `load_user_themes` reads files at startup, because a hand-edited file is equally untrusted. Nothing in the file is executed.
 - On success the file is copied into your themes folder (asking before overwriting) and registered.
 - On failure the message names the problem, for example "missing [colors].primary" or "background: 'blue' is not #RRGGBB".
 
@@ -144,7 +145,7 @@ All of these go through `raw._scope` and the backup participant, as Save and Del
 
 A read-only line: `Theme · Apricot (launch default) · active: Apricot` followed by `[ Open Theme ]`, which opens the Theme category with the launch default highlighted.
 
-This removes `#settings-appearance-theme`, its entry in the Appearance draft (`default_theme` in the values, originals and dirty keys), and the draft-rebase half of `handle_theme_launch_default_changed`. Its in-memory config update moves into `use_theme`, so every caller gets it.
+This removes `#settings-appearance-theme`, its entry in the Appearance draft (`default_theme` in the values, originals and dirty keys), and the draft-rebase half of `handle_theme_launch_default_changed`. `default_theme` is dropped from the Appearance draft keys and validation list (`settings_screen.py:9444`), so Appearance's Save can never write a stale theme. Its in-memory config update moves into `use_theme`, so every caller gets it.
 
 Settings search keeps a "theme" entry, and it now lands on the picker.
 
