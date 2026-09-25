@@ -10,7 +10,7 @@ error rules over its output.
 """
 
 import shlex
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from pathlib import PurePosixPath
 
 import pytest
@@ -120,7 +120,7 @@ def test_canonicalize_lowercases_hostname_only(tmp_path):
 
 def test_canonical_target_is_frozen():
     target = CanonicalTarget(hostname="h.example.com", port=22, user=None)
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         target.port = 23  # type: ignore[misc]
 
 
@@ -129,7 +129,9 @@ def test_canonical_target_is_frozen():
 
 def test_canonicalize_failing_ssh_g_raises_without_echoing_output(tmp_path):
     ssh, _ = _fake_ssh(tmp_path, output="hostname secrets.example.com\n", exit_code=255)
-    with pytest.raises(RemoteLocatorError, match="ssh -G") as excinfo:
+    # Branch-specific match: the nonzero-exit branch ("exited with
+    # status"), not just any RemoteLocatorError mentioning ssh -G.
+    with pytest.raises(RemoteLocatorError, match="exited with status") as excinfo:
         canonicalize_locator(
             parse_remote_locator("ssh://devbox/srv/app"), ssh_bin=str(ssh)
         )
@@ -164,14 +166,17 @@ def test_canonicalize_non_numeric_port_raises(tmp_path):
 def test_canonicalize_timeout_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(remote_binding_locator, "_SSH_G_TIMEOUT_SECONDS", 0.2)
     ssh, _ = _fake_ssh(tmp_path, delay=5)
-    with pytest.raises(RemoteLocatorError, match="ssh -G"):
+    # Branch-specific match: the timeout branch ("timed out"), so losing
+    # the timeout= argument cannot silently pass this test.
+    with pytest.raises(RemoteLocatorError, match="timed out"):
         canonicalize_locator(
             parse_remote_locator("ssh://devbox/srv/app"), ssh_bin=str(ssh)
         )
 
 
 def test_canonicalize_unrunnable_ssh_bin_raises(tmp_path):
-    with pytest.raises(RemoteLocatorError, match="ssh -G"):
+    # Branch-specific match: the OSError branch ("could not be run").
+    with pytest.raises(RemoteLocatorError, match="could not be run"):
         canonicalize_locator(
             parse_remote_locator("ssh://devbox/srv/app"),
             ssh_bin=str(tmp_path / "no-such-ssh"),

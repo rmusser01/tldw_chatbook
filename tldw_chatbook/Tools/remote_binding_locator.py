@@ -424,9 +424,9 @@ def canonical_fingerprint(target: CanonicalTarget, path: PurePosixPath) -> str:
     hostname is lowercased here — :func:`canonicalize_locator` already
     lowercases it, and the defensive repeat keeps hand-built targets
     honest — while the user is hashed verbatim because ssh treats
-    usernames case-sensitively. The port follows ``sha256_fingerprint``'s
-    rule (an int as-is; a ``None`` would serialize as the SSH default
-    22) and the path is normalized by the underlying hash.
+    usernames case-sensitively. The port is an int by
+    :class:`CanonicalTarget`'s contract and passes through unchanged;
+    the path is normalized by the underlying hash.
 
     Args:
         target: The ``ssh -G``-resolved symbolic identity.
