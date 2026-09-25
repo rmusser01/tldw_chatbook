@@ -1615,7 +1615,8 @@ async def test_video_gen_filter_exposes_category_and_enter_opens_existing_panel(
         assert category_button.display
 
         await pilot.press("enter")
-        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+        # TASK-32926: wait for the off-thread config load, not just the panel.
+        await _wait_for_selector(screen, pilot, "#settings-videogen-default_backend")
 
         text = _visible_text(screen)
         assert "ComfyUI (local server)" in text
@@ -1635,7 +1636,8 @@ async def test_invalid_video_gen_draft_never_invokes_save_worker():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.VIDEO_GENERATION.value)
-        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+        # TASK-32926: wait for the off-thread config load, not just the panel.
+        await _wait_for_selector(screen, pilot, "#settings-videogen-default_backend")
         draft = SettingsDraft(category=SettingsCategoryId.VIDEO_GENERATION)
         draft.set_value("retention_ttl_hours", None, 0)
         screen._settings_drafts[SettingsCategoryId.VIDEO_GENERATION] = draft

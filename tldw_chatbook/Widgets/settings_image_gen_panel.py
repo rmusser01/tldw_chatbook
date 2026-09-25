@@ -22,8 +22,9 @@ placeholder (see that helper's docstring for the full set-vs-default-blur
 story). Secrets are never echoed -- the input is always empty (or the
 user's own not-yet-saved paste this session, via ``overlay``); a source
 line next to it reports where the *effective* secret came from
-(``ImageGenBackendRow.key_source``, or ``key_source_after_clear()`` when
-the field was cleared this session), reusing the exact three/four display
+(``ImageGenBackendRow.key_source``, or the screen-supplied
+``cleared_key_sources`` -- ``key_source_after_clear()`` resolved off the UI
+thread -- when the field was cleared this session), reusing the exact three/four display
 strings the design spec pins: ``"env: <VAR>"``, ``"local config key
 saved"``, ``"keyring"``, ``"missing"``. SwarmUI's ``swarm_token`` is
 optional for local installs, so its ``"missing"`` state renders with a
@@ -62,20 +63,8 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     ImageGenBackendRow,
     build_backend_rows,
     effective_placeholder,
-    key_source_after_clear,
     load_user_image_generation_table,
 )
-
-
-def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
-    """Load image-generation configuration only when this panel composes."""
-
-    from tldw_chatbook.Image_Generation.config import (
-        get_image_generation_config as load,
-    )
-
-    return load(*args, **kwargs)
-
 
 # Generation-defaults scalar fields, in display order. `context_llm_enabled`
 # is rendered separately as a Checkbox (booleans have no placeholder analog).
@@ -102,6 +91,8 @@ def _key_source_line(key_source: str) -> str:
         return f"env: {key_source.split(':', 1)[1]}"
     if key_source == "keyring":
         return "keyring"
+    if key_source == "checking":
+        return "checking…"
     return "missing"
 
 
@@ -154,16 +145,31 @@ class ImageGenSettingsPanel(Vertical):
         self,
         *args: Any,
         overlay: Mapping[str, Any] | None = None,
+        config: Any = None,
+        cleared_key_sources: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        # TASK-32926: the effective config resolves backend secrets through
+        # the OS keyring (seconds on Linux), so the screen loads it -- and
+        # the after-Clear key sources for ``cleared::`` overlay keys -- on a
+        # worker and hands them in. ``None`` renders a pending placeholder.
+        self.config: Any = config
+        self.cleared_key_sources: Mapping[str, str] = cleared_key_sources or {}
         # See module docstring's "overlay" section. Mutable so a caller can
         # update it in place before calling `recompose()` (e.g. clearing it
         # to `{}` right after a successful save/revert).
         self.overlay: Mapping[str, Any] = overlay or {}
 
     def compose(self) -> ComposeResult:
-        cfg = get_image_generation_config(reload=True)
+        if self.config is None:
+            yield Static(
+                "Loading Image Gen settings…",
+                id="settings-imagegen-loading",
+                classes="settings-imagegen-hint",
+            )
+            return
+        cfg = self.config
         # Display-only, UNMERGED with config.py's baked default template --
         # see load_user_image_generation_table()'s docstring. Using the
         # merged SettingsConfigAdapter().load() config here would make an
@@ -244,7 +250,7 @@ class ImageGenSettingsPanel(Vertical):
                         if spec.kind == "secret":
                             cleared_key = f"cleared::{backend_id}::{spec.toml_key}"
                             key_source = (
-                                key_source_after_clear(backend_id)
+                                self.cleared_key_sources.get(backend_id, "checking")
                                 if cleared_key in overlay
                                 else row.key_source
                             )
