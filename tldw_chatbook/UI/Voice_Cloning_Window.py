@@ -528,13 +528,12 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
                             create_kwargs["reference_text"] = profile_data.get(
                                 "reference_text", ""
                             )
-                        success, message = manager.create_profile(**create_kwargs)
-
-                        if success:
-                            self.notify(message, severity="information")
-                            self._load_profiles()
-                        else:
-                            self.notify(message, severity="error")
+                        # Creation probes/decodes the clip and copies it:
+                        # keep that file I/O off the UI thread.
+                        self._spawn_action(
+                            self._create_profile_off_thread(manager, create_kwargs),
+                            "voice_cloning_create_profile",
+                        )
 
                 # Push the profile dialog
                 dialog = VoiceProfileDialog(
@@ -668,6 +667,24 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         file_open.on_file_selected = handle_import_selection
         self.app.push_screen(file_open)
 
+    async def _create_profile_off_thread(
+        self, manager: VoiceManagerBase, create_kwargs: Dict[str, Any]
+    ) -> None:
+        """Create a profile on a worker thread, then report on the UI thread.
+
+        Args:
+            manager: The current backend's voice manager.
+            create_kwargs: Keyword arguments for ``manager.create_profile``.
+        """
+        success, message = await asyncio.to_thread(
+            manager.create_profile, **create_kwargs
+        )
+        if success:
+            self.notify(message, severity="information")
+            self._load_profiles()
+        else:
+            self.notify(message, severity="error")
+
     async def _test_generate_voice(self) -> None:
         """Generate test audio with selected profile"""
         test_profile = self.query_one("#test-profile-select", Select).value
@@ -697,7 +714,13 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
 
         # Post TTS generation event
         # The actual generation will be handled by the STTS event handler
-        provider = "higgs" if self.current_backend == "higgs" else "chatterbox"
+        # Each cloning backend synthesizes its own profiles; OmniVoice's need
+        # its transcript-aware loader, never Chatterbox's.
+        provider = (
+            self.current_backend
+            if self.current_backend in {"higgs", "chatterbox", "omnivoice"}
+            else "chatterbox"
+        )
 
         # For profile-based voices, format as "profile:name"
         voice = f"profile:{test_profile}"

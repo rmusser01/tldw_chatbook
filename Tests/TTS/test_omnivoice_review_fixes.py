@@ -397,3 +397,69 @@ def test_admission_rejects_out_of_range_omnivoice_options(bad) -> None:
 
     with pytest.raises(TTSEffectiveResolutionError):
         _validated_options("omnivoice", bad, None)
+
+
+# --- Qodo review (PR #2825): paths + optional deps -----------------------------
+
+
+def test_configured_root_with_nul_is_model_invalid() -> None:
+    from tldw_chatbook.TTS.backends.omnivoice import resolve_model_root
+
+    with pytest.raises(TTSOperationError) as err:
+        resolve_model_root({"OMNIVOICE_MODEL_ROOT": "bad\x00root"}, managed=None)
+    assert err.value.code == "model_invalid"
+
+
+@pytest.mark.parametrize("reference", ["bad\x00ref.wav", "/definitely/missing/ref.wav"])
+def test_reference_path_is_validated_and_not_echoed(reference: str) -> None:
+    backend = omnivoice_module.OmniVoiceOnnxTTSBackend({})
+    with pytest.raises(TTSOperationError) as err:
+        backend._encode_reference(reference)
+    assert err.value.code == "request_invalid"
+    assert "missing" not in str(err.value)  # no raw path in the user message
+
+
+async def test_dependency_check_goes_through_optional_deps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked: list[tuple[str, str]] = []
+
+    def fake_check(module: str, feature: str | None = None) -> bool:
+        checked.append((module, feature))
+        return module != "tokenizers"
+
+    monkeypatch.setattr(omnivoice_module, "check_dependency", fake_check)
+    backend = omnivoice_module.OmniVoiceOnnxTTSBackend({})
+    with pytest.raises(TTSOperationError) as err:
+        await backend.initialize()
+    assert err.value.code == "dependency_missing"
+    assert checked == [
+        ("onnxruntime", "omnivoice_tts"),
+        ("tokenizers", "omnivoice_tts"),
+    ]
+
+
+def test_legacy_playground_path_routes_omnivoice_to_its_backend() -> None:
+    """The Voice Cloning test button uses the legacy playground path, which
+    derived an internal id of "default" for omnivoice (no such backend)."""
+    from uuid import uuid4
+
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+        STTSEventHandler,
+    )
+    from tldw_chatbook.TTS import STTSPlaygroundRequest
+
+    request = STTSPlaygroundRequest(
+        operation_id=str(uuid4()),
+        provider_id="omnivoice",
+        model_id="default",
+        text="hello",
+        voice_id="profile:narrator",
+        response_format="wav",
+        speed=1.0,
+        options={"source": "voice_cloning_test"},
+    )
+    assert (
+        STTSEventHandler._legacy_internal_model_id(request, dict(request.options))
+        == "local_omnivoice_default"
+    )

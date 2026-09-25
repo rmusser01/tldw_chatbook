@@ -40,6 +40,8 @@ from tldw_chatbook.TTS.omnivoice_sampler import (
     run_diffusion_sampling,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.optional_deps import check_dependency, require_dependency
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 _SAMPLE_RATE = 24_000
 _FRAME_RATE = 75  # one codec frame = 320 samples at 24 kHz
@@ -105,16 +107,48 @@ class OmniVoiceNotConfiguredError(TTSOperationError):
 #
 # Resolution
 #
-def _dependency_available() -> bool:
-    """Engine-level truth: both optional runtimes import. (The optional-deps
-    feature key ``omnivoice_tts`` declares the same pair.)"""
-    try:
-        import onnxruntime  # noqa: F401
-        import tokenizers  # noqa: F401
+_OPTIONAL_FEATURE = "omnivoice_tts"
 
-        return True
-    except ImportError:
-        return False
+
+def _dependency_available() -> bool:
+    """Return whether both optional runtimes import.
+
+    Checked through ``optional_deps`` under the ``omnivoice_tts`` feature key
+    so the result lands in the shared dependency registry.
+
+    Returns:
+        True when ``onnxruntime`` and ``tokenizers`` are both importable.
+    """
+    return check_dependency("onnxruntime", _OPTIONAL_FEATURE) and check_dependency(
+        "tokenizers", _OPTIONAL_FEATURE
+    )
+
+
+def _onnxruntime() -> Any:
+    """Return the ``onnxruntime`` module via ``optional_deps``.
+
+    Raises:
+        ImportError: The ``omnivoice_tts`` extra is not installed.
+    """
+    return require_dependency("onnxruntime", _OPTIONAL_FEATURE)
+
+
+def _validated_local_path(value: Any, *, require_exists: bool) -> Path:
+    """Normalize a configured or request-supplied path through path_validation.
+
+    Args:
+        value: The raw path (``~`` is expanded).
+        require_exists: Whether the path must already exist.
+
+    Returns:
+        The validated path.
+
+    Raises:
+        ValueError: The path is malformed (NUL, traversal pattern) or missing.
+    """
+    return validate_path_simple(
+        Path(str(value)).expanduser(), require_exists=require_exists
+    )
 
 
 def resolve_model_root(
@@ -137,7 +171,13 @@ def resolve_model_root(
     """
     explicit = config.get("OMNIVOICE_MODEL_ROOT")
     if explicit:
-        root = Path(explicit).expanduser()
+        try:
+            root = _validated_local_path(explicit, require_exists=False)
+        except ValueError:
+            raise OmniVoiceModelError(
+                "omnivoice: model_invalid — the configured model root is not a "
+                "valid local path"
+            ) from None
         _validate_layout(root)
         return root
     if managed is not None:
@@ -963,8 +1003,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     def _session_options(self) -> Any:
         """SessionOptions with the configured intra-op thread count."""
-        import onnxruntime as ort
-
+        ort = _onnxruntime()
         options = ort.SessionOptions()
         threads = int(self.config.get("OMNIVOICE_INTRA_OP_THREADS", 0) or 0)
         if threads > 0:
@@ -973,8 +1012,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     def _create_lm_runner(self) -> Any:
         """Create the LM ORT session wrapped as an LMBatchRunner."""
-        import onnxruntime as ort
-
+        ort = _onnxruntime()
         session = ort.InferenceSession(
             str(self._root / "omnivoice_lm_int8_hq" / "model.onnx"),
             sess_options=self._session_options(),
@@ -984,8 +1022,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     def _create_decoder_session(self) -> Any:
         """Create the decoder ORT session wrapped as a codes runner."""
-        import onnxruntime as ort
-
+        ort = _onnxruntime()
         session = ort.InferenceSession(
             str(self._root / "audio_tokenizer_decoder_int8" / "model.onnx"),
             sess_options=self._session_options(),
@@ -995,8 +1032,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     def _create_encoder_session(self) -> Any:
         """Create the encoder ORT session wrapped as a waveform runner."""
-        import onnxruntime as ort
-
+        ort = _onnxruntime()
         session = ort.InferenceSession(
             str(self._root / "audio_tokenizer_encoder_int8" / "model.onnx"),
             sess_options=self._session_options(),
@@ -1006,9 +1042,8 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
 
     def _load_tokenizer(self, path: Path) -> Any:
         """Load tokenizer.json via the ``tokenizers`` library (no transformers)."""
-        from tokenizers import Tokenizer
-
-        return Tokenizer.from_file(str(path))
+        tokenizers = require_dependency("tokenizers", _OPTIONAL_FEATURE)
+        return tokenizers.Tokenizer.from_file(str(path))
 
     # -- reference encoding -------------------------------------------
 
@@ -1057,11 +1092,17 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         0.1 RMS up to it, enforce the maximum duration, trim to a whole
         number of codec frames, and run the encoder session.
         """
-        path = Path(reference_audio).expanduser()
-        if not path.is_file():
+        try:
+            path = _validated_local_path(reference_audio, require_exists=True)
+        except ValueError:
+            path = None
+        if path is None or not path.is_file():
             raise TTSOperationError(
                 code="request_invalid",
-                message=f"omnivoice: request_invalid — reference audio not found: {path}",
+                message=(
+                    "omnivoice: request_invalid — reference audio is not a "
+                    "readable local file"
+                ),
                 retryable=False,
                 operation_id=_OPERATION_ID,
             )

@@ -1321,7 +1321,7 @@ class STTSEventHandler:
             speed=snapshot.speed,
         )
         options = dict(snapshot.options)
-        if snapshot.provider_id in {"chatterbox", "higgs"} and options:
+        if snapshot.provider_id in {"chatterbox", "higgs", "omnivoice"} and options:
             request.extra_params = options
 
         internal_model_id = self._legacy_internal_model_id(snapshot, options)
@@ -1586,6 +1586,8 @@ class STTSEventHandler:
             return "local_chatterbox_default"
         if provider_id == "higgs":
             return "local_higgs_v2"
+        if provider_id == "omnivoice":
+            return "local_omnivoice_default"
         if provider_id == "alltalk":
             return f"alltalk_{snapshot.model_id}"
         return snapshot.model_id

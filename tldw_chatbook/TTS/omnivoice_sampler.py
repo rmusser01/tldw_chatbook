@@ -30,7 +30,19 @@ class LMBatchRunner(Protocol):
 
     def run(
         self, input_ids: np.ndarray, audio_mask: np.ndarray, attention_mask: np.ndarray
-    ) -> np.ndarray: ...  # -> (B, 8, S, 1025) float32
+    ) -> np.ndarray:
+        """Run one forward pass over the conditional + unconditional batch.
+
+        Args:
+            input_ids: ``(B, 8, S)`` int64 token/codec ids.
+            audio_mask: ``(B, 8, S)`` bool; True over audio (reference and
+                target) positions. Adapters may collapse the codebook axis.
+            attention_mask: ``(B, 1, S, S)`` bool attention mask.
+
+        Returns:
+            ``(B, 8, S, 1025)`` float32 logits.
+        """
+        ...
 
 
 @dataclass(frozen=True)

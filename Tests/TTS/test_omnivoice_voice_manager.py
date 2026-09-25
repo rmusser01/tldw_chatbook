@@ -10,6 +10,8 @@ import time
 import wave
 from datetime import datetime
 from pathlib import Path
+import shutil
+from typing import Optional
 
 import pytest
 
@@ -319,9 +321,12 @@ def test_overwrite_import_drops_stale_reference_clip(tmp_path: Path) -> None:
     ok, msg = mgr.create_profile("swap", str(tmp_path / "ref.wav"), reference_text="hi")
     assert ok, msg
 
+    sf = pytest.importorskip("soundfile")
+    import numpy as np
+
     package = tmp_path / "omnivoice_voice_swap"
     package.mkdir()
-    (package / "reference.flac").write_bytes(b"not-really-flac")
+    sf.write(str(package / "reference.flac"), np.zeros(24000, dtype=np.float32), 24000)
     (package / "profile.json").write_text(
         json.dumps({"reference_audio": "reference.flac", "reference_text": "new words"})
     )
@@ -331,3 +336,73 @@ def test_overwrite_import_drops_stale_reference_clip(tmp_path: Path) -> None:
     profile_dir = tmp_path / "voices" / "swap"
     assert sorted(p.name for p in profile_dir.glob("reference.*")) == ["reference.flac"]
     assert mgr.get_reference_audio_path("swap") == profile_dir / "reference.flac"
+
+
+# --- Qodo review (PR #2825) -----------------------------------------------------
+
+
+def _package(tmp_path: Path, clip: Optional[Path], *, transcript: str = "hi there") -> Path:
+    package = tmp_path / "omnivoice_voice_pkg"
+    package.mkdir()
+    payload = {"reference_text": transcript}
+    if clip is not None:
+        shutil.copy2(clip, package / clip.name)
+        payload["reference_audio"] = clip.name
+    (package / "profile.json").write_text(json.dumps(payload))
+    return package
+
+
+def test_import_requires_a_reference_clip(tmp_path: Path) -> None:
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+    ok, msg = mgr.import_profile(str(_package(tmp_path, None)))
+    assert not ok and "reference_audio" in msg
+    assert not (tmp_path / "voices" / "pkg").exists()
+
+
+def test_import_applies_create_clip_validation(tmp_path: Path) -> None:
+    """Imports once skipped the format/frames/duration checks create applies."""
+    long_clip = tmp_path / "long.wav"
+    _write_wav(long_clip, seconds=3.0)
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices", max_reference_duration=1.0)
+    ok, msg = mgr.import_profile(str(_package(tmp_path, long_clip)))
+    assert not ok and "exceeds" in msg
+    assert list((tmp_path / "voices").glob("*")) == []
+
+    empty_clip = tmp_path / "empty.wav"
+    _write_wav(empty_clip, seconds=0.0)
+    (tmp_path / "omnivoice_voice_pkg").rename(tmp_path / "old_pkg")
+    ok, msg = OmniVoiceVoiceManager(tmp_path / "voices").import_profile(
+        str(_package(tmp_path, empty_clip))
+    )
+    assert not ok and "no audio frames" in msg
+
+
+def test_failed_copy_leaves_nothing_so_a_retry_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_wav(tmp_path / "ref.wav")
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+
+    def failing_copy(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(omnivoice_vm_module.shutil, "copy2", failing_copy)
+    ok, _msg = mgr.create_profile("retry", str(tmp_path / "ref.wav"), reference_text="hi")
+    assert not ok
+    assert not (tmp_path / "voices" / "retry").exists()
+
+    monkeypatch.undo()
+    ok, msg = mgr.create_profile("retry", str(tmp_path / "ref.wav"), reference_text="hi")
+    assert ok, msg
+
+
+def test_user_paths_go_through_path_validation(tmp_path: Path) -> None:
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+    ok, msg = mgr.create_profile("nul", "bad\x00path.wav", reference_text="hi")
+    assert not ok and "not a valid local file" in msg
+    ok, _msg = mgr.import_profile("bad\x00dir")
+    assert not ok
+    _write_wav(tmp_path / "ref.wav")
+    assert mgr.create_profile("ok", str(tmp_path / "ref.wav"), reference_text="hi")[0]
+    ok, msg = mgr.export_profile("ok", "bad\x00out")
+    assert not ok and "not a valid local path" in msg

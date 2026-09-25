@@ -18,6 +18,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -39,6 +40,13 @@ def combine_text(text: str, ref_text: str = "") -> str:
     3. Replace fullwidth Chinese parentheses with ASCII ones.
     4. Collapse runs of spaces/tabs into a single space.
     5. Remove whitespace adjacent to CJK ideographs.
+
+    Args:
+        text: The target text to synthesize.
+        ref_text: The reference clip's transcript when cloning, else ``""``.
+
+    Returns:
+        The single normalized text segment the prompt encodes.
     """
     if ref_text:
         full = ref_text.strip() + " " + text.strip()
@@ -58,6 +66,14 @@ def build_style_text(
 
     ``<|denoise|>`` is only emitted when reference audio is present, mirroring
     upstream's ``denoise and ref_audio_tokens is not None``.
+
+    Args:
+        lang: Language id, or ``None`` for language-agnostic mode.
+        instruct: Optional voice-design instruction.
+        has_reference: Whether reference audio codes follow in the prompt.
+
+    Returns:
+        The style-token string (``<|lang_start|>…`` / ``<|instruct_start|>…``).
     """
     parts: list[str] = []
     if has_reference:
@@ -280,6 +296,15 @@ def estimate_target_frames(
     Port of upstream ``OmniVoice._estimate_target_tokens``: fall back to the
     built-in anchor when no usable reference is given, estimate by weight
     ratio, boost short estimates with a power curve, then divide by ``speed``.
+
+    Args:
+        text: The target text.
+        ref_text: The reference transcript, when cloning.
+        ref_frames: Number of reference codec frames, when cloning.
+        speed: Speaking-rate multiplier (> 1 is faster, so fewer frames).
+
+    Returns:
+        The estimated number of target frames (at least 1).
     """
     if not ref_text or ref_frames <= 0:
         ref_text, ref_frames = _DEFAULT_REF_TEXT, _DEFAULT_REF_FRAMES
@@ -292,7 +317,19 @@ def estimate_target_frames(
 # --- prompt assembly -----------------------------------------------------------
 
 
-def _encode_ids(tokenizer, text: str) -> list[int]:
+class PromptTokenizer(Protocol):
+    """The tokenizer surface prompt construction needs.
+
+    ``tokenizers.Tokenizer`` satisfies it (``encode`` returns an ``Encoding``
+    exposing ``.ids``); test fakes may return ``list[int]`` directly.
+    """
+
+    def encode(self, sequence: str, add_special_tokens: bool = ...) -> Any:
+        """Encode ``sequence``; return ids or an object with ``.ids``."""
+        ...
+
+
+def _encode_ids(tokenizer: PromptTokenizer, text: str) -> list[int]:
     """Token ids for ``text``; unwraps a ``tokenizers.Encoding`` to ``.ids``."""
     encoded = tokenizer.encode(text, add_special_tokens=False)
     return list(getattr(encoded, "ids", encoded))
@@ -319,7 +356,7 @@ class OmniVoicePromptInputs:
 
 
 def build_prompt_inputs(
-    tokenizer,
+    tokenizer: PromptTokenizer,
     *,
     text: str,
     ref_text: str = "",
@@ -335,6 +372,19 @@ def build_prompt_inputs(
     any object whose ``encode(text, add_special_tokens=False)`` returns token
     ids — either a ``list[int]`` or an object with ``.ids`` (the
     ``tokenizers`` library's ``Tokenizer`` returns an ``Encoding``).
+
+    Args:
+        tokenizer: Text tokenizer (see :class:`PromptTokenizer`).
+        text: The target text to synthesize.
+        ref_text: The reference transcript when cloning, else ``""``.
+        lang: Language id, or ``None`` for language-agnostic mode.
+        instruct: Optional voice-design instruction.
+        ref_codes: ``(num_codebooks, T_ref)`` reference codes when cloning.
+        target_len: Number of target audio frames to generate.
+        num_codebooks: Codebook rows in the prompt.
+
+    Returns:
+        The ``input_ids``/``audio_mask`` arrays and segment lengths.
 
     Raises:
         ValueError: If ``ref_codes`` shape does not match ``num_codebooks``.

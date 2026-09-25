@@ -2417,7 +2417,7 @@
     },
     {
       "call_count": 16,
-      "diagnostic_digest": "7c99edd2c45f1ee26b51",
+      "diagnostic_digest": "f107e42803d7399e2359",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/omnivoice_voice_manager.py",
       "reason": "remaining Chatbook production diagnostic owner"
