@@ -1071,6 +1071,7 @@ rail-scoped; Appearance labels Textual themes "(Textual)" and only file-backed
 themes "(saved)"; the Theme tree's Built-in group lists all Textual themes;
 the invalid-colour swatch reads "Invalid — use #RRGGBB". Pinned by pilot tests,
 not driven live.*
+
 *Verified against `fix/theme-contrast` @ dev 6ddc582839 — 2026-09-24
 (task-32947): Theme card chips, swatch frames and the Dark-theme off glyph
 measured from painted cells at 190x55 under textual-dark, textual-light,
