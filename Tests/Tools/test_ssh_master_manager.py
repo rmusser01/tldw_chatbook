@@ -18,19 +18,40 @@ failure-triggered restart, ``-O exit`` on quit, and the sun_path budget.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
+from loguru import logger
 
+from tldw_chatbook.Tools import remote_workspace_transport as transport
 from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
 from tldw_chatbook.Tools.remote_workspace_transport import (
     PERCENT_C_EXPANSION_LENGTH,
     SUN_PATH_LIMIT,
     SshMasterManager,
 )
+
+
+def _short_state_dir() -> Path:
+    """A unique state dir whose primary ``<dir>/cs/%C`` fits sun_path.
+
+    pytest's ``tmp_path`` does NOT qualify (on macOS it is already longer
+    than the whole 104-byte budget), so a fixture state dir under it
+    would silently exercise the sun_path fallback instead of the primary
+    layout these tests pin. Short and unique, removed by the fixture.
+    """
+    return Path(f"/tmp/tldw-cs-test-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+
+
+def _fallback_control_dir() -> Path:
+    """The production short-dir fallback (mirrors the module template)."""
+    return Path(transport._FALLBACK_CONTROL_DIR.format(uid=os.getuid()))
 
 # The fake ssh, verbatim. Written without a module docstring so the outer
 # Python triple-quoted string does not need escaping gymnastics.
@@ -95,7 +116,16 @@ class FakeSsh:
         monkeypatch.setenv("FAKE_SSH_LOG", str(self.log_path))
         for stale in ("FAKE_SSH_CHECK_RC", "FAKE_SSH_SPAWN_FAIL"):
             monkeypatch.delenv(stale, raising=False)
-        self.state_dir = tmp_path / "long" / "app-state"
+        self.state_dir = _short_state_dir()
+        # Guard the fixture itself: if this dir ever renders at/past the
+        # budget, every "primary path" test below silently tests the
+        # fallback instead.
+        rendered = (
+            len((self.state_dir / "cs").as_posix())
+            + 1
+            + PERCENT_C_EXPANSION_LENGTH
+        )
+        assert rendered < SUN_PATH_LIMIT, self.state_dir
 
     def invocations(self) -> list[list[str]]:
         """One argv list per logged invocation."""
@@ -133,8 +163,10 @@ _LOC = parse_remote_locator(_LOCATOR)
 
 
 @pytest.fixture()
-def fake_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeSsh:
-    return FakeSsh(tmp_path, monkeypatch)
+def fake_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake = FakeSsh(tmp_path, monkeypatch)
+    yield fake
+    shutil.rmtree(fake.state_dir, ignore_errors=True)
 
 
 def _manager(fake: FakeSsh, **kwargs: Any) -> SshMasterManager:
@@ -195,10 +227,9 @@ def test_rendered_control_path_fits_sun_path_for_realistic_state_dirs() -> None:
     tldw_cli/<user>, fallback ~/.tldw_cli-data/<user>) with plausible
     usernames. This pins the two layout choices the budget depends on: the
     two-character subdir name and the 40-character %C expansion. The
-    arithmetic leaves 60 bytes for the whole state dir — usernames longer
-    than ~17 characters on the conventional root overflow, which surfaces
-    as a logged master-spawn failure (calls fall back), never as a broken
-    argv.
+    arithmetic leaves 60 bytes for the whole state dir — anything longer
+    (a worktree scratch profile, a deep home) overflows and takes the
+    short-dir fallback pinned below, never a broken argv.
     """
     from tldw_chatbook.Tools.remote_workspace_transport import _CONTROL_DIR_NAME
 
@@ -219,6 +250,97 @@ def test_rendered_control_path_fits_sun_path_for_realistic_state_dirs() -> None:
         assert len(rendered) < SUN_PATH_LIMIT, (
             f"rendered ControlPath {rendered!r} is {len(rendered)} bytes"
         )
+
+
+# ---------------------------------------------------------------------------
+# control dir: sun_path fallback (UAT defect)
+# ---------------------------------------------------------------------------
+
+
+def test_long_state_dir_falls_back_to_short_tmp_dir(
+    fake_ssh: FakeSsh, tmp_path: Path
+) -> None:
+    """UAT defect: a data dir whose ``<dir>/cs/%C`` renders >= 104 bytes
+    must never reach ssh — real ssh refuses the socket ("ControlPath too
+    long ... >= 104 bytes") for BOTH the master and the per-call direct
+    fallback, degrading the whole binding to "unreachable or auth
+    failed". The manager steps down to the short ``/tmp/tldw-cs-<uid>``
+    dir, visibly (one INFO naming sun_path).
+    """
+    long_state = tmp_path / ("x" * 64) / ("y" * 24)
+    primary = long_state / "cs"
+    assert (
+        len(primary.as_posix()) + 1 + PERCENT_C_EXPANSION_LENGTH
+    ) >= SUN_PATH_LIMIT, "fixture must actually overflow the budget"
+    infos: list[str] = []
+    handler = logger.add(lambda message: infos.append(str(message)), level="INFO")
+
+    try:
+        manager = _manager(fake_ssh, state_dir=long_state)
+        control_dir = manager.control_path_for(_LOC)
+        manager.control_path_for(_LOC)  # resolution happens once
+        # Capture on-disk facts before the cleanup below removes them.
+        assert control_dir == _fallback_control_dir()
+        assert control_dir.exists()
+        mode = control_dir.stat().st_mode & 0o777
+        rendered = f"{control_dir.as_posix()}/{'f' * PERCENT_C_EXPANSION_LENGTH}"
+    finally:
+        logger.remove(handler)
+        shutil.rmtree(_fallback_control_dir(), ignore_errors=True)
+
+    assert mode == 0o700, f"fallback dir mode is {oct(mode)}, expected 0o700"
+    # The overflowing primary was never created.
+    assert not primary.exists()
+    # Visible degradation: exactly one INFO naming sun_path.
+    assert len([m for m in infos if "sun_path" in m]) == 1, infos
+    # And the fallback's rendered socket fits the real %C expansion.
+    assert len(rendered) < SUN_PATH_LIMIT
+
+
+def test_fallback_dir_fits_sun_path_for_realistic_uids() -> None:
+    """The fallback template's whole job is bytes: pin the module's
+    template under the limit with the real 40-char %C expansion."""
+    for uid in (0, 501, 12345, 2**31 - 1, 2**32 - 2):
+        fallback = Path(transport._FALLBACK_CONTROL_DIR.format(uid=uid))
+        rendered = f"{fallback.as_posix()}/{'c' * PERCENT_C_EXPANSION_LENGTH}"
+        assert len(rendered) < SUN_PATH_LIMIT, rendered
+
+
+def test_pathological_fallback_disables_mux(
+    fake_ssh: FakeSsh, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When even the fallback cannot fit (pathological), the manager
+    behaves exactly as ``enabled=False``: no ControlPath options, no
+    spawns, one warning — never an argv ssh would refuse.
+    """
+    monkeypatch.setattr(
+        transport,
+        "_FALLBACK_CONTROL_DIR",
+        "/tmp/" + "p" * 100 + "-{uid}",
+    )
+    long_state = tmp_path / ("x" * 64)
+    warnings: list[str] = []
+    handler = logger.add(
+        lambda message: warnings.append(str(message)), level="WARNING"
+    )
+
+    try:
+        manager = _manager(fake_ssh, state_dir=long_state)
+        assert manager.control_path_for(_LOC) is None
+        assert manager.control_path_for(_LOC) is None  # warned once, stayed off
+        manager.ensure_master(_LOC)
+        assert manager.restart_if_dead(_LOC) is False
+    finally:
+        logger.remove(handler)
+
+    assert fake_ssh.invocations() == []
+    assert manager.client_options(_LOC) == [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=3",
+    ]
+    assert len([w for w in warnings if "sun_path" in w]) == 1, warnings
 
 
 # ---------------------------------------------------------------------------

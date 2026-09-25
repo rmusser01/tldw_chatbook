@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
+import uuid
 import zlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,10 +236,17 @@ _REFUSAL_FRAME = json.dumps(
 
 #: The request payload is opaque to the transport; any bytes will do.
 _REQUEST = (
-    '{"version":1,"operation_id":"cafe1234","operation":"ping"}'
-).encode("utf-8")
+    b'{"version":1,"operation_id":"cafe1234","operation":"ping"}'
+)
 
 _LOCATOR = "ssh://ops@build-box.internal:2222/srv/work/workspace"
+
+
+def _short_state_dir() -> Path:
+    """Unique SHORT state dir: pytest's ``tmp_path`` alone exceeds the
+    ControlPath sun_path budget, which would route these managers onto
+    the manager's /tmp fallback instead of the primary layout."""
+    return Path(f"/tmp/tldw-cs-test-{os.getpid()}-{uuid.uuid4().hex[:8]}")
 _LOC = parse_remote_locator(_LOCATOR)
 
 #: Marker-arrival timing shared by the fast deadline tests (budget +
@@ -256,7 +265,7 @@ class FakeSsh:
         self.log_path = tmp_path / "ssh-invocations.log"
         self.stdin_capture = tmp_path / "call-stdin.bin"
         self.pid_file = tmp_path / "fake-ssh.pid"
-        self.state_dir = tmp_path / "app-state"
+        self.state_dir = _short_state_dir()
         monkeypatch.setenv("FAKE_SSH_LOG", str(self.log_path))
         monkeypatch.setenv("FAKE_SSH_STDIN_CAPTURE", str(self.stdin_capture))
         monkeypatch.setenv("FAKE_SSH_PID_FILE", str(self.pid_file))
@@ -305,7 +314,7 @@ class FakeSsh:
 @pytest.fixture()
 def env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> SimpleNamespace:
+):
     fake = FakeSsh(tmp_path, monkeypatch)
     manager = SshMasterManager(
         ssh_bin=str(fake.bin),
@@ -321,9 +330,10 @@ def env(
         merged.update(kwargs)
         return transport.call(_LOC, _REQUEST, **merged)
 
-    return SimpleNamespace(
+    yield SimpleNamespace(
         fake=fake, manager=manager, transport=transport, call=call
     )
+    shutil.rmtree(fake.state_dir, ignore_errors=True)
 
 
 def _call_argv(fake: FakeSsh) -> list[str]:

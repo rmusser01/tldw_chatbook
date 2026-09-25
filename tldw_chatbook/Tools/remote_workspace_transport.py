@@ -31,15 +31,26 @@ The rules this module exists to enforce:
   per host and failure-tolerant; ``ControlPersist`` remains the crash
   backstop.
 
-The mux directory is a short ``0700`` dir under the app-state dir (default
-``<state>/cs/``). The ControlPath handed to ssh is ``<dir>/%C`` — OpenSSH
-expands ``%C`` itself to a 40-character hash of the connection endpoints,
-giving every host key its own socket file in the shared dir while keeping
-every argv free of component-derived filenames (a validated host charset
-still admits ``..``, so building filenames from locator parts would be a
-path traversal). The layout keeps the FULL rendered path under macOS's
-104-byte ``sun_path`` limit for realistic state dirs: ``%C`` alone is 40
-characters, so the budget is ``len(state_dir) + len("/cs/") + 40 < 104``.
+The mux directory is a short ``0700`` dir: ``<state>/cs/`` by default,
+or — when the state dir is so long that the rendered socket path would
+reach ssh's ``sun_path`` budget (a worktree scratch profile does) — a
+short ``/tmp/tldw-cs-<uid>`` fallback (INFO-logged once). Real ssh
+refuses an oversized ControlPath ("ControlPath too long ... >= 104
+bytes") for BOTH the master and the per-call direct fallback, which
+would degrade the whole binding to a misleading "unreachable or auth
+failed"; the fallback keeps the rendered path small regardless of data
+dir length. If even the fallback cannot fit (pathological),
+multiplexing is off for the manager's lifetime: per-call direct
+connections, exactly as ``enabled=False``. The ControlPath handed to
+ssh is ``<dir>/%C`` — OpenSSH expands ``%C`` itself to a 40-character
+hash of the connection endpoints, giving every host key its own socket
+file in the shared dir while keeping every argv free of
+component-derived filenames (a validated host charset still admits
+``..``, so building filenames from locator parts would be a path
+traversal). The rendered socket path is kept under macOS's 104-byte
+``sun_path`` limit: ``%C`` alone is 40 characters, so the primary
+budget is ``len(state_dir) + len("/cs/") + 40 < 100`` (margin under
+104).
 
 argv construction is always :func:`build_ssh_argv` from the parsed
 :class:`RemoteLocator` parts — ``[-p port] [-l user] -- host`` — never from
@@ -123,6 +134,28 @@ PERCENT_C_EXPANSION_LENGTH = 40
 #: character subtracted from the state-dir budget above; see module
 #: docstring. Do not lengthen without re-checking the budget.
 _CONTROL_DIR_NAME = "cs"
+
+#: Rendered socket paths at or beyond this many bytes step down to the
+#: fallback (or to no mux at all): macOS rejects at 104 including the
+#: NUL, and the margin keeps ssh's own handling of the expansion safely
+#: inside the budget. UAT: a worktree-length data dir renders ``>= 104``
+#: and real ssh refuses the socket for both master and direct fallback.
+_CONTROL_PATH_RENDER_LIMIT = SUN_PATH_LIMIT - 4  # 100
+
+#: Short fallback control dir when the app-state dir cannot fit the
+#: budget. Hardcoded short — the whole point is bytes. POSIX-only by
+#: construction (mux never runs on Windows; ``enable_multiplexing`` is
+#: off there, so this is never formatted).
+_FALLBACK_CONTROL_DIR = "/tmp/tldw-cs-{uid}"
+
+
+def _rendered_socket_length(directory: Path) -> int:
+    """Bytes in the socket path ssh renders for ``<directory>/%C``.
+
+    ``%C`` always expands to :data:`PERCENT_C_EXPANSION_LENGTH` hex
+    characters; ssh does the expanding, this does the budgeting.
+    """
+    return len(directory.as_posix()) + 1 + PERCENT_C_EXPANSION_LENGTH
 
 # Keepalive cadence for the master only (spec values).
 _SERVER_ALIVE_INTERVAL = 15
@@ -233,6 +266,10 @@ class SshMasterManager:
             tuple[str | None, str, int | None], RemoteLocator
         ] = {}
         self._control_dir: Path | None = None
+        #: Terminal degradation: no usable control dir fits sun_path, so
+        #: no masters and no ControlPath options for this manager's
+        #: lifetime (set once, inside the registry lock).
+        self._mux_unusable = False
 
     @property
     def ssh_bin(self) -> str:
@@ -246,13 +283,23 @@ class SshMasterManager:
 
     # -- control dir -----------------------------------------------------
 
-    def control_path_for(self, loc: RemoteLocator) -> Path:
+    def control_path_for(self, loc: RemoteLocator) -> Path | None:
         """Return the 0700 control-socket directory for ``loc`` (created).
 
         The directory is shared by every host key: per-host discrimination
         is ssh's job (the ``%C`` token in the option value expands per
         connection identity), which also keeps locator components out of
         filesystem paths.
+
+        The primary location is ``<state>/cs/``. When that directory
+        renders a socket path at or beyond the sun_path budget (a long
+        data dir — e.g. a worktree scratch profile — makes real ssh
+        refuse the socket for both the master and the per-call direct
+        fallback), a short ``/tmp/tldw-cs-<uid>`` dir is used instead
+        (INFO, once). When even the fallback cannot fit (pathological),
+        the manager degrades to no-ControlPath behaviour for its
+        lifetime (WARNING, once) — per-call direct connections, exactly
+        as ``enabled=False``.
 
         Args:
             loc: A validated locator (the option value handed to ssh is
@@ -261,23 +308,62 @@ class SshMasterManager:
                 about who calls it).
 
         Returns:
-            The created directory, mode 0700, under the app-state dir.
+            The created directory, mode 0700 — or ``None`` when no
+            usable directory exists (no mux: callers must omit
+            ControlPath options entirely).
         """
         with self._registry_lock:
-            if self._control_dir is None:
-                base = self._state_dir
-                if base is None:
-                    from tldw_chatbook.config import get_user_data_dir
-
-                    base = get_user_data_dir()
-                directory = base / _CONTROL_DIR_NAME
-                _ensure_private_dir(directory)
-                self._control_dir = directory
+            if self._control_dir is None and not self._mux_unusable:
+                self._control_dir = self._resolve_control_dir()
             return self._control_dir
 
-    def _control_path_option(self, loc: RemoteLocator) -> str:
-        """The ``ControlPath=<dir>/%C`` option value; ssh expands ``%C``."""
-        return f"ControlPath={self.control_path_for(loc).as_posix()}/%C"
+    def _resolve_control_dir(self) -> Path | None:
+        """Pick (and create) the control dir once; ``None`` when none fits.
+
+        Runs under the registry lock. ``/tmp`` on POSIX only — Windows
+        never multiplexes, so this path is unreachable there.
+        """
+        base = self._state_dir
+        if base is None:
+            from tldw_chatbook.config import get_user_data_dir
+
+            base = get_user_data_dir()
+        primary = base / _CONTROL_DIR_NAME
+        if _rendered_socket_length(primary) < _CONTROL_PATH_RENDER_LIMIT:
+            _ensure_private_dir(primary)
+            return primary
+        fallback = Path(_FALLBACK_CONTROL_DIR.format(uid=os.getuid()))
+        if _rendered_socket_length(fallback) < _CONTROL_PATH_RENDER_LIMIT:
+            logger.info(
+                f"mux control dir {primary} exceeds the {SUN_PATH_LIMIT}-byte "
+                f"sun_path limit once ssh expands %C; "
+                f"using short fallback {fallback}"
+            )
+            _ensure_private_dir(fallback)
+            return fallback
+        logger.warning(
+            f"no usable SSH control dir: both {primary} and {fallback} "
+            f"render >= {_CONTROL_PATH_RENDER_LIMIT} bytes against the "
+            f"{SUN_PATH_LIMIT}-byte sun_path limit; multiplexing "
+            "disabled for this session (per-call direct connections)"
+        )
+        self._mux_unusable = True
+        return None
+
+    def _control_path_option(self, loc: RemoteLocator) -> str | None:
+        """The ``ControlPath=<dir>/%C`` option value; ssh expands ``%C``.
+
+        ``None`` when there is no shared connection to name (mux
+        disabled, or no usable control dir): callers must omit the
+        option entirely rather than hand ssh a socket path it will
+        refuse.
+        """
+        if not self._enabled:
+            return None
+        directory = self.control_path_for(loc)
+        if directory is None:
+            return None
+        return f"ControlPath={directory.as_posix()}/%C"
 
     def _lock_for(
         self, key: tuple[str | None, str, int | None]
@@ -297,9 +383,9 @@ class SshMasterManager:
         Deliberately NO ``ServerAlive*`` and NO ``ControlPersist``: the
         master owns the connection's keepalive and lifetime; a client only
         multiplexes it (see module docstring). When multiplexing is
-        disabled there is no shared connection to name, so no
-        ``ControlPath``/``ControlMaster`` options at all — per-call direct
-        connections.
+        disabled — or no usable control dir fits sun_path — there is no
+        shared connection to name, so no ``ControlPath``/``ControlMaster``
+        options at all: per-call direct connections.
 
         Args:
             loc: A validated locator.
@@ -313,12 +399,13 @@ class SshMasterManager:
             "-o",
             f"ConnectTimeout={self._connect_timeout_s}",
         ]
-        if self._enabled:
+        control_path = self._control_path_option(loc)
+        if control_path is not None:
             options += [
                 "-o",
                 "ControlMaster=no",
                 "-o",
-                self._control_path_option(loc),
+                control_path,
             ]
         return options
 
@@ -354,6 +441,10 @@ class SshMasterManager:
                     f"control dir for {loc.host} is unavailable: {exc!r}"
                 )
                 return
+            if control_dir is None:
+                # No dir fits sun_path (logged at resolution): no masters,
+                # no ControlPath — per-call direct connections.
+                return
             self._registrations.setdefault(key, loc)
             known = self._sockets.get(key)
             if known is not None:
@@ -385,6 +476,8 @@ class SshMasterManager:
         """
         if not self._enabled:
             return False
+        if self.control_path_for(loc) is None:
+            return False  # sun_path-degraded: no mux to restart
         key = _host_key(loc)
         with self._lock_for(key):
             if self._master_alive(loc):
@@ -415,26 +508,24 @@ class SshMasterManager:
             loc = self._snapshot_locator(key)
             if loc is None:
                 continue
-            try:
-                argv = [
-                    self._ssh_bin,
-                    *build_ssh_argv(
-                        loc,
-                        ["-O", "exit", "-o", self._control_path_option(loc)],
-                        [],
-                    ),
-                ]
-                subprocess.run(
-                    argv,
-                    capture_output=True,
-                    timeout=_EXIT_TIMEOUT_SECONDS,
-                    check=False,
-                )
-            except (subprocess.TimeoutExpired, OSError) as exc:
-                logger.warning(
-                    f"ssh -O exit for {key!r} failed: {exc!r}; "
-                    "ControlPersist will expire the master"
-                )
+            option = self._control_path_option(loc)
+            if option is not None:
+                try:
+                    argv = [
+                        self._ssh_bin,
+                        *build_ssh_argv(loc, ["-O", "exit", "-o", option], []),
+                    ]
+                    subprocess.run(
+                        argv,
+                        capture_output=True,
+                        timeout=_EXIT_TIMEOUT_SECONDS,
+                        check=False,
+                    )
+                except (subprocess.TimeoutExpired, OSError) as exc:
+                    logger.warning(
+                        f"ssh -O exit for {key!r} failed: {exc!r}; "
+                        "ControlPersist will expire the master"
+                    )
             socket = sockets.get(key)
             if socket is not None:
                 _unlink_quietly(socket)
@@ -461,11 +552,12 @@ class SshMasterManager:
         caller's next act is a fresh spawn, and a wedged binary must not
         wedge the send path with it.
         """
+        option = self._control_path_option(loc)
+        if option is None:
+            return False  # no shared connection to check
         argv = [
             self._ssh_bin,
-            *build_ssh_argv(
-                loc, ["-O", "check", "-o", self._control_path_option(loc)], []
-            ),
+            *build_ssh_argv(loc, ["-O", "check", "-o", option], []),
         ]
         try:
             completed = subprocess.run(
@@ -497,11 +589,14 @@ class SshMasterManager:
         never appears simply leaves the key unlearned: the next
         ``ensure_master`` re-checks and retries.
         """
+        option = self._control_path_option(loc)
+        if option is None:  # pragma: no cover - caller resolved a live dir
+            return
         before = self._dir_names(control_dir)
         options = [
             "-MNf",
             "-o",
-            self._control_path_option(loc),
+            option,
             "-o",
             f"ControlPersist={self._control_persist}",
             "-o",

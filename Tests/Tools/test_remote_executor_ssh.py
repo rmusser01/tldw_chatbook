@@ -42,6 +42,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 import zlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -166,6 +167,13 @@ def _workspace(tmp_path: Path) -> Path:
     return root
 
 
+def _short_state_dir() -> Path:
+    """Unique SHORT state dir: pytest's ``tmp_path`` alone exceeds the
+    ControlPath sun_path budget, which would route these managers onto
+    the manager's /tmp fallback instead of the primary layout."""
+    return Path(f"/tmp/tldw-cs-test-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+
+
 class FakeSsh:
     """Writes and installs the fake binary; parses its invocation log."""
 
@@ -187,7 +195,7 @@ class FakeSsh:
         self.log_path = tmp_path / "ssh-invocations.log"
         self.stdin_capture = tmp_path / "call-stdin.bin"
         self.pid_file = tmp_path / "fake-ssh.pid"
-        self.state_dir = tmp_path / "app-state"
+        self.state_dir = _short_state_dir()
         self.counter = tmp_path / "concurrency.count"
         monkeypatch.setenv("FAKE_SSH_LOG", str(self.log_path))
         monkeypatch.setenv("FAKE_SSH_PID_FILE", str(self.pid_file))
@@ -247,7 +255,13 @@ class FakeSsh:
 
 
 @pytest.fixture()
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+def env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+):
+    # addfinalizer (not yield) so the short /tmp state dir is removed
+    # even on failure without disturbing the fixture's return shape.
     _bundle, compressed, bootstrap = _bundle_payload()
     fake = FakeSsh(
         tmp_path,
@@ -282,6 +296,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     def read(executor: RemoteWorkspaceToolExecutor) -> dict[str, Any]:
         return executor.execute("fs_read", dict(_READ_ARGS), intent="read")
 
+    request.addfinalizer(lambda: shutil.rmtree(fake.state_dir, ignore_errors=True))
     return SimpleNamespace(
         fake=fake,
         workspace=workspace,
@@ -585,13 +600,16 @@ def test_recovery_probe_rearms_after_the_debounce_window(
 
     executor.ping = probe  # type: ignore[method-assign]
 
-    executor.maybe_schedule_recovery_probe()
-    assert fired.wait(2.0)
-    time.sleep(0.3)  # past the 0.05s window
-    fired.clear()
-    executor.maybe_schedule_recovery_probe()
-    assert fired.wait(2.0)
-    assert len(calls) == 2
+    try:
+        executor.maybe_schedule_recovery_probe()
+        assert fired.wait(2.0)
+        time.sleep(0.3)  # past the 0.05s window
+        fired.clear()
+        executor.maybe_schedule_recovery_probe()
+        assert fired.wait(2.0)
+        assert len(calls) == 2
+    finally:
+        shutil.rmtree(fake.state_dir, ignore_errors=True)
 
 
 def test_for_ssh_reads_max_concurrent_calls_from_config(
