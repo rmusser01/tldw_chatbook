@@ -19,7 +19,9 @@ taxonomy:
   invocation log) — and NO retry of the failed call.
 
 Also pinned: the spawn argv layout (manager client options, then argv
-rebuilt from parsed parts, then ``python -I -c <bootstrap>``),
+rebuilt from parsed parts, then ``python -I -c '<bootstrap>'`` with the
+interpreter and bootstrap ``shlex.quote``-d for the remote login shell
+— every per-call scenario runs through the fake's sh flattening),
 ``start_new_session=True`` (the deadline kill's own process group), the
 bootstrap's N matching the compressed bundle length on stdin, the
 completion deadline anchored to the marker's ARRIVAL (not spawn), and
@@ -91,6 +93,42 @@ for arg in "$@"; do
     exit 0
   fi
 done
+
+# -- remote-command flattening (real-ssh fidelity) --------------------------
+# OpenSSH joins the post-`--` argv after the host with spaces into ONE
+# string the remote user's login shell re-parses; this fake reconstructs
+# that flattening and EXECUTES the joined command through sh (stdin
+# closed) before playing any scenario, so the bootstrap only survives
+# when the transport shell-quoted it for the remote shell: mis-quoted,
+# its parens are a sh syntax error BEFORE any interpreter runs (the UAT
+# defect — argv-preserving fakes cannot see it); correctly quoted, the
+# interpreter starts and merely fails on the empty stdin read.
+after_dd=0
+skipped_host=0
+remote_args=()
+for arg in "$@"; do
+  if [ "$after_dd" -eq 0 ]; then
+    if [ "$arg" = "--" ]; then
+      after_dd=1
+    fi
+    continue
+  fi
+  if [ "$skipped_host" -eq 0 ]; then
+    skipped_host=1
+    continue
+  fi
+  remote_args+=("$arg")
+done
+if [ "${#remote_args[@]}" -gt 0 ]; then
+  probe_err="$(sh -c "${remote_args[*]}" </dev/null 2>&1 >/dev/null)"
+  case "$probe_err" in
+    *yntax\ error*)
+      printf '%s\n' "$probe_err" >&2
+      printf 'fake-ssh: remote command was not shell-quoted for the login shell\n' >&2
+      exit 2
+      ;;
+  esac
+fi
 
 # -- per-call scenarios -----------------------------------------------------
 MAGIC="TLDW-REMOTE-0001"
@@ -447,6 +485,40 @@ def test_call_argv_layout_and_bootstrap_match_compressed_bundle(
     bundle, _compressed, _bootstrap = _bundle_payload()
     assert zlib.decompress(captured[:n]) == bundle
     assert captured[n:] == _REQUEST
+
+
+def test_call_argv_shell_quotes_interpreter_and_bootstrap(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ssh flattens the remote argv through the login shell (UAT finding).
+
+    OpenSSH joins the post-``--`` elements with spaces into ONE string
+    the remote user's login shell re-parses, so the bootstrap's parens
+    and ``;`` must arrive single-quoted or the worker never starts on a
+    real server (zsh glob error / bash command split). The interpreter
+    and bootstrap argv elements must be exactly ``shlex.quote``'s
+    rendering — the bootstrap wrapped in single quotes — and because the
+    fake now executes the flattened command through ``sh``, this suite
+    also proves the quoted bootstrap survives real shell re-parsing.
+    """
+    import shlex
+
+    monkeypatch.setenv("FAKE_SSH_MODE", "exit-only")
+
+    env.call(python="python3.11")
+
+    argv = _call_argv(env.fake)
+    tail = argv[argv.index("--") + 1 :]
+    assert len(tail) == 5, tail  # host, python, -I, -c, bootstrap
+    assert tail[1] == shlex.quote("python3.11"), tail
+    assert tail[2:4] == ["-I", "-c"], tail
+    bootstrap_arg = tail[4]
+    _bundle, _compressed, bootstrap = _bundle_payload()
+    assert bootstrap_arg == shlex.quote(bootstrap), bootstrap_arg[:80]
+    # Single-quote wrapped (the bootstrap's charset guarantees quoting
+    # is exact — no embedded single quotes needing shell escapes).
+    assert bootstrap_arg.startswith("'") and bootstrap_arg.endswith("'")
+    assert "'" not in bootstrap
 
 
 def test_call_spawns_in_own_session_with_piped_std_streams(

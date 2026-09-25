@@ -64,6 +64,7 @@ import json
 import os
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import subprocess
@@ -1076,6 +1077,32 @@ def _watch_exchange(
     )
 
 
+def _remote_command(python: str, bootstrap: str) -> list[str]:
+    """Shell-quote the worker invocation for the REMOTE login shell.
+
+    OpenSSH joins the remote-command argv elements with spaces into ONE
+    string executed by the remote user's login shell — without
+    re-quoting, the bootstrap's ``exec(compile(...))`` parens die as a
+    zsh glob error and its ``;`` splits into separate bash commands (the
+    UAT release-blocking finding: argv-preserving fakes never see the
+    flattening, a real sshd does). :func:`shlex.quote` is exact here:
+    the bootstrap's pinned charset contains no single quotes, and bare
+    interpreter names/paths (``python3``, ``/usr/bin/python3``) quote to
+    themselves, so the remote shell re-parses the joined string back
+    into exactly ``<python> -I -c <bootstrap>``.
+
+    Args:
+        python: The binding-configured interpreter (already validated
+            as a bare name/path by the caller).
+        bootstrap: The fixed worker bootstrap with N embedded.
+
+    Returns:
+        The remote-command argv elements, each safe for space-joining
+        and login-shell re-parsing.
+    """
+    return [shlex.quote(python), "-I", "-c", shlex.quote(bootstrap)]
+
+
 class RemoteWorkspaceTransport:
     """Executes one worker-bundle exchange per ssh call.
 
@@ -1141,7 +1168,10 @@ class RemoteWorkspaceTransport:
                 deadlines; the same value the executor sends as the
                 request's remaining budget.
             python: Remote interpreter invoked as
-                ``<python> -I -c <bootstrap>`` (binding-configured).
+                ``<python> -I -c <bootstrap>`` (binding-configured);
+                both are shell-quoted at spawn for the remote login
+                shell, which re-parses the space-joined command ssh
+                delivers.
 
         Returns:
             A :class:`RemoteCallResult` — never an exception for a
@@ -1174,7 +1204,7 @@ class RemoteWorkspaceTransport:
         argv = [
             self._manager.ssh_bin,
             *self._manager.client_options(loc),
-            *build_ssh_argv(loc, [], [python, "-I", "-c", bootstrap]),
+            *build_ssh_argv(loc, [], _remote_command(python, bootstrap)),
         ]
         try:
             proc = subprocess.Popen(

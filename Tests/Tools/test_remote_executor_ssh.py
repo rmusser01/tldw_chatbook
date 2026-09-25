@@ -1,10 +1,13 @@
 """SSH-mode executor wiring: the fake-ssh integration suite (Phase 2e, Task 14).
 
 Every test drives ``RemoteWorkspaceToolExecutor.for_ssh`` against a fake
-``ssh`` (a generated bash script) whose per-call path runs the REAL
-committed bundle — the fake ignores the remote command it was handed and
-execs ``<python> -I -c '<bootstrap>'`` locally with stdin passthrough,
-so the "remote worker" is the true artifact: bootstrap, decompress,
+``ssh`` (a bash script) whose per-call path runs the REAL committed
+bundle — the fake reconstructs the remote command the way real ssh
+delivers it: the post-``--`` argv after the host is joined with spaces
+into ONE string and executed via ``sh -c`` with stdin passthrough (the
+UAT flattening — an unquoted bootstrap is a shell syntax error before
+any interpreter starts). The "remote worker" is therefore the true
+artifact AND the true argument delivery: bootstrap, decompress,
 exec, magic-prefixed frames, two-frame contract, ping identity capture,
 and the two-tier watchdog all execute exactly as they would on a host.
 
@@ -60,16 +63,18 @@ from tldw_chatbook.Tools.remote_workspace_executor import (
     RemoteWorkspaceExecutionError,
     RemoteWorkspaceToolExecutor,
     _bundle_payload,
-    bootstrap_source,
     parse_fs_read_stamps,
 )
 from tldw_chatbook.Tools.remote_workspace_transport import SshMasterManager
 
-#: The fake ssh, generated per test with the real interpreter and the
-#: real bootstrap (N baked) substituted for the ``@@`` tokens. The
-#: bootstrap's charset excludes every shell-active character (no quote,
-#: dollar, backtick, bang, glob, control), so embedding it in single
-#: quotes is exactly as safe as the real ssh command line.
+#: The fake ssh, generated per test. The per-call path reconstructs
+#: ssh's remote-command flattening from its OWN argv (join the
+#: post-``--`` elements after the host with spaces, execute via
+#: ``sh -c``), so the worker starts only when the transport shell-quoted
+#: the bootstrap for the remote login shell — the baked-in
+#: ``@@PYTHON@@ -I -c '@@BOOTSTRAP@@'`` exec this script used to perform
+#: bypassed argument delivery entirely, which is exactly why every
+#: suite stayed green while real servers broke (UAT finding).
 _FAKE_SSH_TEMPLATE = r"""#!/bin/bash
 # Fake ssh for the Task 14 executor suite: the remote host is this laptop.
 log="${FAKE_SSH_LOG:-}"
@@ -116,7 +121,31 @@ for arg in "$@"; do
   fi
 done
 
-# -- per-call: run the REAL bundle -------------------------------------------
+# -- per-call: flatten + run the command ssh would have delivered -------------
+# Real ssh joins the post-`--` argv after the host with spaces into ONE
+# string the remote user's login shell re-parses; this fake joins the
+# same elements and hands the string to sh, with stdin passthrough.
+after_dd=0
+skipped_host=0
+remote_args=()
+for arg in "$@"; do
+  if [ "$after_dd" -eq 0 ]; then
+    if [ "$arg" = "--" ]; then
+      after_dd=1
+    fi
+    continue
+  fi
+  if [ "$skipped_host" -eq 0 ]; then
+    skipped_host=1
+    continue
+  fi
+  remote_args+=("$arg")
+done
+if [ "${#remote_args[@]}" -eq 0 ]; then
+  exit 0
+fi
+remote_cmd="${remote_args[*]}"
+
 if [ -n "${FAKE_SSH_PID_FILE:-}" ]; then
   echo $$ > "$FAKE_SSH_PID_FILE"
 fi
@@ -140,9 +169,9 @@ counter="${FAKE_SSH_CONCURRENCY_COUNTER:-}"
 if [ -n "$counter" ]; then
   bump 1
   if [ -n "${FAKE_SSH_STDIN_CAPTURE:-}" ]; then
-    tee "${FAKE_SSH_STDIN_CAPTURE}" | '@@PYTHON@@' -I -c '@@BOOTSTRAP@@'
+    tee "${FAKE_SSH_STDIN_CAPTURE}" | sh -c "$remote_cmd"
   else
-    '@@PYTHON@@' -I -c '@@BOOTSTRAP@@'
+    sh -c "$remote_cmd"
   fi
   rc=$?
   bump -1
@@ -150,10 +179,10 @@ if [ -n "$counter" ]; then
 fi
 
 if [ -n "${FAKE_SSH_STDIN_CAPTURE:-}" ]; then
-  tee "${FAKE_SSH_STDIN_CAPTURE}" | '@@PYTHON@@' -I -c '@@BOOTSTRAP@@'
+  tee "${FAKE_SSH_STDIN_CAPTURE}" | sh -c "$remote_cmd"
   exit $?
 fi
-exec '@@PYTHON@@' -I -c '@@BOOTSTRAP@@'
+exec sh -c "$remote_cmd"
 """
 
 _READ_ARGS = {"path": "alpha.txt", "sensitive_exclusions": []}
@@ -178,17 +207,9 @@ class FakeSsh:
     """Writes and installs the fake binary; parses its invocation log."""
 
     def __init__(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        *,
-        python: str,
-        bootstrap: str,
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        assert "'" not in python and "'" not in bootstrap
-        script = _FAKE_SSH_TEMPLATE.replace("@@PYTHON@@", python).replace(
-            "@@BOOTSTRAP@@", bootstrap
-        )
+        script = _FAKE_SSH_TEMPLATE
         self.bin = tmp_path / "fake-ssh"
         self.bin.write_text(script, encoding="utf-8")
         self.bin.chmod(0o755)
@@ -262,13 +283,8 @@ def env(
 ):
     # addfinalizer (not yield) so the short /tmp state dir is removed
     # even on failure without disturbing the fixture's return shape.
-    _bundle, compressed, bootstrap = _bundle_payload()
-    fake = FakeSsh(
-        tmp_path,
-        monkeypatch,
-        python=sys.executable,
-        bootstrap=bootstrap_source(len(compressed)),
-    )
+    _bundle, compressed, _bootstrap = _bundle_payload()
+    fake = FakeSsh(tmp_path, monkeypatch)
     workspace = _workspace(tmp_path)
     loc = parse_remote_locator(f"ssh://fake-host{workspace}")
     cache = RemoteBindingStatusCache()
@@ -283,12 +299,16 @@ def env(
         # config load, which is not reliable inside an arbitrary test
         # process (same posture as the master-manager suite); the one
         # test that exercises the read stubs the accessor and passes
-        # ``max_concurrent_calls=None`` explicitly.
+        # ``max_concurrent_calls=None`` explicitly. The interpreter is
+        # the venv python: the fake runs whatever the transport sends,
+        # and macOS's /usr/bin/python3 (3.9) would trip the bootstrap's
+        # own version gate before any wiring under test executes.
         merged = {
             "cache": cache,
             "masters": masters,
             "recovery_probes": False,
             "max_concurrent_calls": 8,
+            "python": sys.executable,
         }
         merged.update(kwargs)
         return RemoteWorkspaceToolExecutor.for_ssh(loc, binding_id, **merged)
@@ -573,10 +593,7 @@ def test_recovery_probe_dispatch_is_fire_and_forget_and_debounced(
 def test_recovery_probe_rearms_after_the_debounce_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _bundle, compressed, bootstrap = _bundle_payload()
-    fake = FakeSsh(
-        tmp_path, monkeypatch, python=sys.executable, bootstrap=bootstrap
-    )
+    fake = FakeSsh(tmp_path, monkeypatch)
     workspace = _workspace(tmp_path)
     loc = parse_remote_locator(f"ssh://fake-host{workspace}")
     cache = RemoteBindingStatusCache(probe_debounce_s=0.05)
