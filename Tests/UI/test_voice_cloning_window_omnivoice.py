@@ -41,7 +41,12 @@ def _write_wav(path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_backend_select_offers_omnivoice_and_defaults_to_higgs() -> None:
+async def test_backend_select_offers_omnivoice_and_defaults_to_higgs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_gate(
+        monkeypatch, tmp_path, _local_availability(higgs=True, omnivoice=True)
+    )
     app = _WindowApp()
     async with app.run_test(size=(200, 60)):
         backend_select = app.query_one("#backend-select", Select)
@@ -91,3 +96,82 @@ async def test_profile_dialog_omits_reference_text_by_default() -> None:
     app = _DialogApp(request_reference_text=False)
     async with app.run_test(size=(100, 40)):
         assert not app.query("#reference-text-input")
+
+
+# --- the dependency gate asks about cloning backends, not Kokoro ----------------
+
+
+def _local_availability(**available: bool):
+    from tldw_chatbook.UI.Speech.speech_runtime_status import (
+        SpeechLocalDependencyAvailability,
+    )
+
+    flags = {"stt": False, "kokoro": False, "chatterbox": False, "higgs": False}
+    flags.update(available)
+    return SpeechLocalDependencyAvailability(
+        **{key: value for key, value in flags.items() if key != "omnivoice"},
+        omnivoice=available.get("omnivoice", False),
+    )
+
+
+def _patch_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, availability) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status."
+        "speech_local_dependency_availability",
+        lambda **_kwargs: availability,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Voice_Cloning_Window.get_cli_setting",
+        lambda section, key, default=None: str(tmp_path / section)
+        if key == "voice_samples_dir"
+        else default,
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_alert_when_a_cloning_backend_is_installed_without_kokoro(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """UAT: the window demanded kokoro-onnx + pyaudio (Kokoro's local TTS),
+    which no cloning backend uses, even with OmniVoice fully installed."""
+    from tldw_chatbook.Utils.widget_helpers import FeatureNotAvailableDialog
+
+    _patch_gate(monkeypatch, tmp_path, _local_availability(omnivoice=True))
+    app = _WindowApp()
+    async with app.run_test(size=(200, 60)) as pilot:
+        await pilot.pause(0.3)
+        assert not app.query(FeatureNotAvailableDialog)
+
+
+@pytest.mark.asyncio
+async def test_alert_names_cloning_backends_when_none_is_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Static
+
+    from tldw_chatbook.Utils.widget_helpers import FeatureNotAvailableDialog
+
+    _patch_gate(monkeypatch, tmp_path, _local_availability(kokoro=True))
+    app = _WindowApp()
+    async with app.run_test(size=(200, 60)) as pilot:
+        await pilot.pause(0.3)
+        dialogs = app.query(FeatureNotAvailableDialog)
+        assert len(dialogs) == 1
+        text = " ".join(str(item.renderable) for item in dialogs.first().query(Static))
+        assert "Voice Cloning" in text
+        assert "omnivoice_tts" in text
+        assert "kokoro" not in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_defaults_to_an_installed_backend_when_higgs_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An OmniVoice-only install must not open on the uninstalled Higgs."""
+    _patch_gate(monkeypatch, tmp_path, _local_availability(omnivoice=True))
+    app = _WindowApp()
+    async with app.run_test(size=(200, 60)) as pilot:
+        await pilot.pause(0.3)
+        window = app.query_one(VoiceCloningWindow)
+        assert app.query_one("#backend-select", Select).value == "omnivoice"
+        assert window.current_backend == "omnivoice"

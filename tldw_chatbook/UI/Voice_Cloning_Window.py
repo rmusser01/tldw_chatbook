@@ -270,14 +270,33 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
 
     async def on_mount(self) -> None:
         """Initialize the window on mount"""
-        # Check if TTS dependencies are available
-        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        # Warn only when no cloning backend is installed. This used to test
+        # `tts_processing` (Kokoro + pyaudio), which no cloning backend uses,
+        # so the window blocked OmniVoice/Higgs/Chatterbox users with a
+        # "Text-to-Speech not available" alert for packages they don't need.
+        from .Lab_Modules.lab_speech_status import speech_local_dependency_availability
 
-        if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
-            from ..Utils.widget_helpers import alert_tts_not_available
+        local = speech_local_dependency_availability(refresh=True)
+        if not (local.omnivoice or local.higgs or local.chatterbox):
+            from ..Utils.widget_helpers import alert_voice_cloning_not_available
 
             # Show alert after a short delay to ensure UI is ready
-            self.set_timer(0.1, lambda: alert_tts_not_available(self))
+            self.set_timer(0.1, lambda: alert_voice_cloning_not_available(self))
+        else:
+            # Open on a backend that can actually clone here: Higgs stays the
+            # default when installed, otherwise the first installed one.
+            installed = [
+                backend
+                for backend, available in (
+                    ("higgs", local.higgs),
+                    ("omnivoice", local.omnivoice),
+                    ("chatterbox", local.chatterbox),
+                )
+                if available
+            ]
+            if installed[0] != self.current_backend:
+                self.current_backend = installed[0]
+                self.query_one("#backend-select", Select).value = installed[0]
 
         # Initialize backend managers
         await self._initialize_backends()
