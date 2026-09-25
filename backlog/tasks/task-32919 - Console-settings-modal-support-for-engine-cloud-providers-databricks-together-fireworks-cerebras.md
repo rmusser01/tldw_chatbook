@@ -3,11 +3,11 @@ id: TASK-32919
 title: >-
   Console settings-modal support for engine cloud providers
   (databricks/together/fireworks/cerebras)
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-25 01:47'
-updated_date: '2026-09-25 02:33'
+updated_date: '2026-09-25 02:39'
 labels: []
 dependencies: []
 ---
@@ -29,7 +29,7 @@ Close the pinned gap from task-32918: the four engine-driven cloud keys are disp
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented: 4 keys added to CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS; shared-catalog display names; modal collects databricks workspace URL via PROVIDERS_REQUIRING_BASE_URL_KEYS; blocker-chain endpoint_missing branch + picker MAX_RESULTS 30->40 fixes. Suites green modulo byte-identical pre-existing env failures (stash-evidenced at 9b8a635bdb). Pending review.
+Implemented: four engine cloud keys first-class in the settings modal (29->33 keys); endpoint_missing blocker branch (databricks credentialed-but-URL-less crash the wiring exposed); picker MAX_RESULTS 30->40 (built-in universe no longer truncated). Parity gap emptied with invariant intact. Review clean; canonical battery 615/0 at 28bfa05bb8. Commits: 28bfa05bb8.
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Plan (the how)
