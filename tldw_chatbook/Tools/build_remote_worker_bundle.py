@@ -382,13 +382,13 @@ _IO_ADAPTER_SOURCE = '''
 # Bundle IO adapter (builder-emitted; the LOCAL worker has no counterpart)
 # ---------------------------------------------------------------------------
 
-#: The response magic (15 bytes as ruled — the ruling's "exactly 16" and
-#: its literal disagree; the literal is the interop contract Task 11
-#: mirrors). Prefixed to every response frame this bundle emits so stdout
-#: noise on a shared remote channel can never be mistaken for a response
-#: frame. The LOCAL pinned worker does NOT add this prefix: its pipe has
-#: no noise source. This is the single definition site.
-RESPONSE_MAGIC = b"TLDW-REMOTE-01!"
+#: The response magic: exactly 16 bytes (controller ruling; the earlier
+#: 15-byte literal was a miscount). Prefixed to every response frame this
+#: bundle emits so stdout noise on a shared remote channel can never be
+#: mistaken for a response frame. The LOCAL pinned worker does NOT add
+#: this prefix: its pipe has no noise source. This is the single
+#: definition site; transport tests (Task 11) mirror the literal.
+RESPONSE_MAGIC = b"TLDW-REMOTE-0001"
 
 
 def split_magic(raw: bytes) -> tuple[bool, bytes]:

@@ -45,10 +45,9 @@ from tldw_chatbook.Tools.remote_sensitive_paths import REMOTE_SENSITIVE_PATHS
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLE_PATH = _REPOSITORY_ROOT / "tldw_chatbook" / "Tools" / "remote_worker_bundle.py"
 
-#: Ruling 1: defined once in the bundle's IO adapter. The ruled literal is
-#: 15 bytes despite the ruling's "exactly 16 bytes" phrasing (see the note
-#: in test_bundle_entry_surface); the literal is the interop contract.
-_EXPECTED_RESPONSE_MAGIC = b"TLDW-REMOTE-01!"
+#: Ruling 1 (corrected): exactly 16 bytes, defined once in the bundle's IO
+#: adapter; Task 11 mirrors the literal.
+_EXPECTED_RESPONSE_MAGIC = b"TLDW-REMOTE-0001"
 
 #: Ruling 6: the remote-home-relative denylist, verbatim.
 _EXPECTED_REMOTE_DENYLIST = (
@@ -164,13 +163,12 @@ def test_bundle_parses_on_python_310_floor() -> None:
 
 def test_bundle_entry_surface() -> None:
     bundle = _load_bundle_module()
-    # NOTE: the controller ruling says "exactly 16 bytes" but spells the
-    # literal b"TLDW-REMOTE-01!" (15 bytes). The literal is the interop
-    # contract — Task 11 mirrors THE LITERAL — so the exact bytes are
-    # pinned here and the length discrepancy is flagged in the task
-    # report for the controller to confirm before Task 11 lands.
     assert bundle.RESPONSE_MAGIC == _EXPECTED_RESPONSE_MAGIC
-    assert len(bundle.RESPONSE_MAGIC) == 15
+    # Length is pinned separately so a miscounted literal (the original
+    # ruling shipped a 15-byte spelling of a "16-byte" magic) can never
+    # drift back in unnoticed.
+    assert len(bundle.RESPONSE_MAGIC) == 16
+    assert len(_EXPECTED_RESPONSE_MAGIC) == 16
     assert callable(bundle.main)
     assert callable(bundle.split_magic)
     assert callable(bundle.arm_watchdog)
