@@ -296,8 +296,12 @@ class ThemePicker(Vertical):
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
         # Task 3: an Export result is only good for the theme it was made
-        # from; a fresh highlight clears it (spec §7).
+        # from; a fresh highlight clears it (spec §7). A widget's own
+        # `.display` doesn't inherit a hidden ancestor's, so the button also
+        # gets its own flag -- otherwise it stays keyboard-reachable (and
+        # counted by the reachability walk) while its row is invisible.
         self.query_one("#settings-theme-export-result").display = False
+        self.query_one("#settings-theme-copy-path", Button).display = False
         entry = self._highlighted_entry()
         error = entry.error if entry is not None else None
         # Tooltips parse markup; the error quotes untrusted file content.
@@ -485,6 +489,7 @@ class ThemePicker(Vertical):
         self._export_path = path
         self.query_one("#settings-theme-export-path", Static).update(f"Exported to {path}")
         self.query_one("#settings-theme-export-result").display = True
+        self.query_one("#settings-theme-copy-path", Button).display = True
 
     def _can_manage_files(self) -> bool:
         # Rename/Delete/Export/Edit all touch the theme file on disk: gated
