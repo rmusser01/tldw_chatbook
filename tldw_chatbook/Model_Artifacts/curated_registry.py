@@ -118,5 +118,15 @@ def curated_registry() -> CuratedRegistry:
 
         for descriptor, sources in audio_cpp_curated_entries():
             registry.register(descriptor, sources=sources)
+        from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
+            omnivoice_onnx_descriptor,
+            omnivoice_onnx_reference,
+            omnivoice_onnx_source_map,
+        )
+
+        registry.register(
+            omnivoice_onnx_descriptor(),
+            sources=omnivoice_onnx_source_map()[omnivoice_onnx_reference()],
+        )
         _REGISTRY = registry
     return _REGISTRY

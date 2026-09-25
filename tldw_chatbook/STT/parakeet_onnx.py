@@ -20,6 +20,7 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
 )
 
 from .contracts import (
+    FFMPEG_DECODE_TIMEOUT_SECONDS,
     BufferAudioSource,
     ExecutionDevice,
     ProducedCapabilities,
@@ -32,6 +33,7 @@ from .contracts import (
     TranscriptionTimings,
     TranscriptionWarningCode,
 )
+
 from .persistence import (
     FailedTranscriptionAttempt,
     dump_failed_transcription_attempt,
@@ -152,6 +154,9 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
             ],
             check=True,
             capture_output=True,
+            # A malformed or adversarial container can park ffmpeg
+            # indefinitely; bound it rather than wedge the worker.
+            timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
         )
         yield output
     finally:

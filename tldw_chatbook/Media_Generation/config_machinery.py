@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -268,10 +269,34 @@ def warn_unknown_top_level_keys(raw: Any, tables: ModalityConfigTables) -> None:
         )
 
 
+# TASK-32924: Settings' Image/Video Gen panels resolve secrets in compose(),
+# on the UI loop, on every open/save/revert/Test -- one keyring round trip
+# per keyless backend (SecretService over D-Bus on Linux). The app never
+# writes these entries, so a short TTL is the only invalidation needed.
+# ponytail: a key added with `keyring set` shows up within this window.
+_KEYRING_READ_TTL_SECONDS = 10.0
+_KEYRING_READS: dict[tuple[str, str], tuple[float, str | None]] = {}
+
+
 def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
-    """Namespaced keyring lookup; never raises."""
+    """Namespaced keyring lookup through a short-lived cache; never raises.
+
+    Args:
+        backend: Backend id, used as the keyring username.
+        tables: The modality's config tables (supplies the keyring service).
+
+    Returns:
+        The stored secret, or None when absent or when the keyring backend
+        failed. Either result is reused for ``_KEYRING_READ_TTL_SECONDS``
+        after the lookup returns.
+    """
+    key = (tables.keyring_namespace, backend)
+    now = time.monotonic()
+    hit = _KEYRING_READS.get(key)
+    if hit is not None and hit[0] > now:
+        return hit[1]
     try:
-        return keyring.get_password(tables.keyring_namespace, backend)
+        value = keyring.get_password(tables.keyring_namespace, backend)
     except Exception as e:  # keyring backend may be unavailable
         logger.debug(
             "keyring lookup failed for {}/{} (error_type={})",
@@ -279,7 +304,10 @@ def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
             backend,
             type(e).__name__,
         )
-        return None
+        value = None
+    # Expiry starts when the (possibly blocking) lookup returns.
+    _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
+    return value
 
 
 def resolve_secret(

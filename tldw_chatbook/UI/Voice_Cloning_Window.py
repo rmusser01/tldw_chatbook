@@ -2,7 +2,7 @@
 # Description: Voice Cloning management window for multiple TTS backends
 #
 # Imports
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 import asyncio
 from uuid import uuid4
@@ -32,7 +32,10 @@ from textual import work
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 from ..TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
 from ..TTS.backends.voice_manager_base import VoiceManagerBase
+from ..TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
+from ..TTS.omnivoice_voice_manager import OmniVoiceVoiceManager
 from ..config import get_cli_setting
+from ..Utils.input_validation import escape_markup
 from ..Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
     EnhancedFileSave as FileSave,
@@ -175,13 +178,10 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
         self.selected_profile: Optional[str] = None
         self.profiles_data: List[Dict[str, Any]] = []
         self._loading = False
-        #: task-19561. The event loop holds only a WEAK reference to a task,
-        #: so the results of the bare `asyncio.create_task` calls the action
-        #: methods below make were collectable mid-flight -- a keypress could
-        #: start an import or a delete and have it vanish before it finished,
-        #: silently and unreproducibly. These strong references keep each one
-        #: alive until it completes; the done-callback discards it again.
-        self._action_tasks: Set[asyncio.Task[Any]] = set()
+        # task-19561's `_action_tasks` strong-reference set is gone (tier-2
+        # review S20): `_spawn_action` now uses `run_worker`, and Textual's
+        # `WorkerManager` both holds the reference AND cancels the work when
+        # this widget unmounts -- which the hand-rolled set never did.
 
     def compose(self) -> ComposeResult:
         """Compose the Voice Cloning UI"""
@@ -195,6 +195,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                     options=[
                         ("Higgs Audio", "higgs"),
                         ("Chatterbox", "chatterbox"),
+                        ("OmniVoice", "omnivoice"),
                         ("GPT-SoVITS (Coming Soon)", "gpt-sovits"),
                     ],
                     value="higgs",
@@ -311,6 +312,16 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                 )
             ).expanduser()
             self.backend_managers["chatterbox"] = ChatterboxVoiceManager(chatterbox_dir)
+
+            # Initialize OmniVoice
+            omnivoice_dir = Path(
+                get_cli_setting(
+                    "OmniVoiceSettings",
+                    "voice_samples_dir",
+                    OMNIVOICE_DEFAULT_VOICES_DIR,
+                )
+            ).expanduser()
+            self.backend_managers["omnivoice"] = OmniVoiceVoiceManager(omnivoice_dir)
 
             # GPT-SoVITS placeholder
             # self.backend_managers["gpt-sovits"] = GPTSoVITSVoiceManager(...)
@@ -503,23 +514,33 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
                     # Create profile using the current backend manager
                     manager = self.backend_managers.get(self.current_backend)
                     if manager:
-                        success, message = manager.create_profile(
-                            profile_name=profile_data["name"],
-                            reference_audio_path=str(path),
-                            display_name=profile_data["display_name"],
-                            language=profile_data["language"],
-                            description=profile_data["description"],
-                            tags=profile_data["tags"],
+                        create_kwargs: Dict[str, Any] = {
+                            "profile_name": profile_data["name"],
+                            "reference_audio_path": str(path),
+                            "display_name": profile_data["display_name"],
+                            "language": profile_data["language"],
+                            "description": profile_data["description"],
+                            "tags": profile_data["tags"],
+                        }
+                        if self.current_backend == "omnivoice":
+                            # Only OmniVoice consumes the transcript; sibling
+                            # manager signatures do not accept it.
+                            create_kwargs["reference_text"] = profile_data.get(
+                                "reference_text", ""
+                            )
+                        # Creation probes/decodes the clip and copies it:
+                        # keep that file I/O off the UI thread.
+                        self._spawn_action(
+                            self._create_profile_off_thread(manager, create_kwargs),
+                            "voice_cloning_create_profile",
                         )
 
-                        if success:
-                            self.notify(message, severity="information")
-                            self._load_profiles()
-                        else:
-                            self.notify(message, severity="error")
-
                 # Push the profile dialog
-                dialog = VoiceProfileDialog(str(path), on_submit=handle_profile_data)
+                dialog = VoiceProfileDialog(
+                    str(path),
+                    on_submit=handle_profile_data,
+                    request_reference_text=(self.current_backend == "omnivoice"),
+                )
                 self.app.push_screen(dialog)
 
         # Show file picker
@@ -552,32 +573,49 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         if not self.selected_profile:
             return
 
-        # Confirm deletion
-        from textual.widgets import Button as ConfirmButton
-        from textual.containers import Container as ConfirmContainer
-        from textual.screen import ModalScreen
+        # TASK-32892: this used to define a throwaway `ModalScreen` here whose
+        # `compose` read `self.selected_profile` -- `self` being the MODAL, not
+        # this window, so the dialog raised `AttributeError` in compose and the
+        # Delete action could never show its confirmation. The shared dialog
+        # takes the name as a constructed value (and renders it with markup
+        # OFF, so a profile called `[old] voice` names itself correctly).
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
-        class ConfirmDialog(ModalScreen):
-            def compose(self) -> ComposeResult:
-                with ConfirmContainer(id="confirm-dialog"):
-                    yield Label(f"Delete profile '{self.selected_profile}'?")
-                    with Horizontal():
-                        yield ConfirmButton("Delete", id="confirm-yes", variant="error")
-                        yield ConfirmButton("Cancel", id="confirm-no")
+        # Qodo review of PR #2799: the first cut of this fix awaited
+        # `app.push_screen_wait`, which raises `NoActiveWorker` unless it runs
+        # inside a Textual worker -- and NEITHER caller is one
+        # (`on_button_pressed` runs on the message pump; `action_delete_profile`
+        # spawns a bare `asyncio.create_task`). That just swapped the compose
+        # `AttributeError` for a push-time `NoActiveWorker`: still no dialog,
+        # still no delete. The callback form has no worker requirement and is
+        # what every other dialog in this module already uses.
+        #
+        # The name is bound HERE, not re-read in the callback: the prompt names
+        # one profile and the irreversible half must delete that same one even
+        # if the table selection moves while the dialog is up.
+        profile = self.selected_profile
 
-            def on_button_pressed(self, event: ConfirmButton.Pressed) -> None:
-                self.dismiss(event.button.id == "confirm-yes")
-
-        if await self.app.push_screen_wait(ConfirmDialog()):
-            # Delete the profile
+        def _on_confirmed(confirmed: Optional[bool]) -> None:
+            if not confirmed:
+                return
             manager = self.backend_managers.get(self.current_backend)
-            if manager:
-                success, message = manager.delete_profile(self.selected_profile)
-                if success:
-                    self.notify(message, severity="information")
-                    self._load_profiles()
-                else:
-                    self.notify(message, severity="error")
+            if not manager:
+                return
+            success, message = manager.delete_profile(profile)
+            if success:
+                self.notify(message, severity="information")
+                self._load_profiles()
+            else:
+                self.notify(message, severity="error")
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Delete Profile",
+                message=f"Delete profile '{profile}'?",
+                confirm_label="Delete",
+            ),
+            _on_confirmed,
+        )
 
     async def _export_profile(self) -> None:
         """Export selected profile"""
@@ -629,6 +667,24 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         file_open.on_file_selected = handle_import_selection
         self.app.push_screen(file_open)
 
+    async def _create_profile_off_thread(
+        self, manager: VoiceManagerBase, create_kwargs: Dict[str, Any]
+    ) -> None:
+        """Create a profile on a worker thread, then report on the UI thread.
+
+        Args:
+            manager: The current backend's voice manager.
+            create_kwargs: Keyword arguments for ``manager.create_profile``.
+        """
+        success, message = await asyncio.to_thread(
+            manager.create_profile, **create_kwargs
+        )
+        if success:
+            self.notify(message, severity="information")
+            self._load_profiles()
+        else:
+            self.notify(message, severity="error")
+
     async def _test_generate_voice(self) -> None:
         """Generate test audio with selected profile"""
         test_profile = self.query_one("#test-profile-select", Select).value
@@ -644,11 +700,27 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
 
         # Log to test log
         test_log = self.query_one("#test-log", RichLog)
-        test_log.write(f"[yellow]Generating with profile '{test_profile}'...[/yellow]")
+        # `escape_markup`: `#test-log` is `markup=True`, so
+        # `RichLog._make_renderable` runs `Text.from_markup` over this line.
+        # `test_profile` is a user-chosen voice-profile name -- "Bob [v2]"
+        # loses that segment silently, and a name containing "[/" raises
+        # `MarkupError` out of a method with no handler, reached from a bare
+        # `asyncio.create_task`, so the Test-voice button would just do
+        # nothing at all.
+        test_log.write(
+            f"[yellow]Generating with profile "
+            f"'{escape_markup(test_profile)}'...[/yellow]"
+        )
 
         # Post TTS generation event
         # The actual generation will be handled by the STTS event handler
-        provider = "higgs" if self.current_backend == "higgs" else "chatterbox"
+        # Each cloning backend synthesizes its own profiles; OmniVoice's need
+        # its transcript-aware loader, never Chatterbox's.
+        provider = (
+            self.current_backend
+            if self.current_backend in {"higgs", "chatterbox", "omnivoice"}
+            else "chatterbox"
+        )
 
         # For profile-based voices, format as "profile:name"
         voice = f"profile:{test_profile}"
@@ -703,18 +775,37 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         if window is not None:
             window.current_view = "playground"
 
-    def _spawn_action(self, coroutine: Any, name: str) -> "asyncio.Task[Any]":
-        """Start an action coroutine and hold a strong reference to it.
+    def _spawn_action(self, coroutine: Any, name: str) -> Any:
+        """Start an action coroutine as a Textual worker owned by this widget.
 
         task-19561: every caller below used a bare `asyncio.create_task`,
         whose result the event loop holds only weakly -- so a garbage
         collection between the keypress and the first await could discard
-        the task outright. See `_action_tasks`.
+        the task outright.
+
+        Tier-2 review S20: a strong reference was only half the problem.
+        `asyncio.create_task` puts the coroutine OUTSIDE Textual's worker
+        registry, and this file has no `on_unmount`, so nothing cancelled a
+        live action when the screen went away. Several of these coroutines
+        park on `push_screen_wait` (a file picker, a confirm dialog) and
+        then touch the DOM on resume -- `_delete_profile` does exactly that
+        -- so navigating away mid-dialog resumed them against a detached
+        tree and the resulting `NoMatches`/`NoScreen` landed in asyncio's
+        default exception handler, i.e. nowhere the user or the logs would
+        show it. `run_worker` solves both: `Widget._on_unmount` calls
+        `workers.cancel_node(self)`, and the worker machinery reports a
+        failure instead of swallowing it. `exit_on_error=False` because
+        these are recoverable user actions, not invariants -- the
+        `run_worker` default would turn a failed export into an app exit.
+        Not `exclusive=True`: an import and a voice test are independent,
+        and cancelling one from the other is not the intent.
         """
-        task = asyncio.create_task(coroutine, name=name)
-        self._action_tasks.add(task)
-        task.add_done_callback(self._action_tasks.discard)
-        return task
+        return self.run_worker(
+            coroutine,
+            name=name,
+            group="voice-cloning-actions",
+            exit_on_error=False,
+        )
 
     def action_new_profile(self) -> None:
         """Create new profile action"""

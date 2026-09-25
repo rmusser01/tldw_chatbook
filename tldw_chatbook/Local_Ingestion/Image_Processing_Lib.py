@@ -15,6 +15,7 @@
 # Import necessary libraries
 import os
 import tempfile
+import warnings
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, TYPE_CHECKING
 from pathlib import Path
@@ -62,6 +63,7 @@ except ImportError:
 # Import Local
 from ..config import get_media_ingestion_defaults
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.path_validation import validate_path_simple
 from loguru import logger
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) and `ocr_manager`
 # (.OCR_Backends) are intentionally NOT imported at module level -- both
@@ -111,6 +113,55 @@ def get_image_config():
 #######################################################################################################################
 # Function Definitions
 #
+
+
+def reject_image_decompression_bomb(image_path: Union[str, Path]) -> Path:
+    """Refuse an image whose header declares more pixels than Pillow's ceiling.
+
+    The ingest path had no pixel guard at all: a flat ~96-megapixel PNG is a
+    few MB on disk and decodes to ~288 MB, and Pillow only *warns* above
+    ``Image.MAX_IMAGE_PIXELS`` before decoding it anyway. Reading the header
+    is cheap -- ``open()`` parses metadata without decoding pixels.
+
+    This is also the one place every image ingress performs its first
+    filesystem operation (``process_image`` and ``extract_text_from_image``
+    both call it before touching the path themselves), so the central path
+    check lives here rather than in each caller. Rootless mode is the correct
+    one -- an ingest source is any file on the user's own disk, so there is
+    no permitted root to confine it to, only NUL bytes, traversal shapes and
+    shell metacharacters to refuse. Callers must use the RETURNED path for
+    every subsequent filesystem operation.
+
+    Args:
+        image_path: Path to the candidate image.
+
+    Returns:
+        The validated, normalized path.
+
+    Raises:
+        ValueError: The path fails central validation, or the image declares
+            more pixels than the ceiling. Both are policy rejections, not
+            processing failures, so callers must not swallow them into an
+            original-bytes fallback.
+    """
+    image_path = validate_path_simple(image_path, reject_shell_metacharacters=False)
+    if not PIL_AVAILABLE:
+        return image_path
+    try:
+        with warnings.catch_warnings():
+            # PIL warns above the ceiling and raises above twice it; both
+            # arms have to mean the same thing here or the guard goes inert.
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(image_path):
+                pass
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ValueError(
+            "Image has too many pixels to decode safely "
+            f"(limit {Image.MAX_IMAGE_PIXELS} pixels)."
+        ) from exc
+    except Exception:
+        pass  # unreadable here; the caller fails informatively
+    return image_path
 
 
 def preprocess_image_for_ocr(image_path: Union[str, Path]) -> Optional[Path]:
@@ -287,6 +338,7 @@ def extract_text_from_image(
     Returns:
         OCRResult or None if extraction fails
     """
+    image_path = reject_image_decompression_bomb(image_path)
     try:
         from .OCR_Backends import ocr_manager
 
@@ -384,6 +436,15 @@ def process_image(
     if file_ext not in SUPPORTED_IMAGE_FORMATS:
         result["status"] = "Error"
         result["error"] = f"Unsupported image format: {file_ext}"
+        return result
+
+    # Decompression-bomb guard, beside the format check because it is the
+    # same kind of thing: a policy rejection before anything decodes.
+    try:
+        file_path = reject_image_decompression_bomb(file_path)
+    except ValueError as exc:
+        result["status"] = "Error"
+        result["error"] = str(exc)
         return result
 
     try:

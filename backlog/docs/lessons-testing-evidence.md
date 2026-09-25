@@ -16253,6 +16253,39 @@ scheduled animations and asserts the unchanged Pilot mouse click actually hits.
 No retry or direct-handler bypass is involved. Also assert a Failed outcome in
 redaction tests: absence-only checks had accepted the empty, never-run result.
 
+## `git stash push <path>` + `git stash pop` is not a safe revert-and-restore (task-32901)
+
+**Incident.** Watching a test go red before a fix means running it against the
+pre-fix code. The obvious move is `git stash push <the changed file> -q`, run
+pytest, `git stash pop -q`. It works right up until the file is already
+committed: `git stash push` with a pathspec that has **no uncommitted change
+creates no stash entry at all, and exits 0**. The paired `git stash pop` then
+pops whatever is at `stash@{0}` -- which, in a repo several agents share, was
+another session's stash from a different branch. Six files came back with
+conflict markers, including two production modules. Nothing was lost (`pop`
+reported "The stash entry is kept in case you need it again" and the entry was
+still there afterwards), but a nine-minute test run that was in flight at the
+time reported a spurious `test_every_module_compiles_on_the_declared_python_floor`
+failure, which cost a full re-run to clear.
+
+**What to do.** Never pair `stash push <path>` with a bare `stash pop` for a
+revert-and-restore. Two alternatives, both exact:
+
+* **Before the fix is committed:** copy the file aside first
+  (`cp <file> /tmp/fixed.py`), restore the old content with
+  `git show <base>:<path> > <path>`, run the test, then `cp /tmp/fixed.py
+  <path>`. No stash stack involved.
+* **After the fix is committed:** the same shape, using the base revision --
+  `git show 9e33252708:tldw_chatbook/UI/Navigation/base_app_screen.py > ...`.
+
+And if `stash pop` does fire by accident: the entry is KEPT on conflict, so
+`git reset --hard HEAD` restores your worktree and leaves the other session's
+stash intact. Check `git stash list` before and after to prove it.
+
+**Corollary.** Do not run a long test suite in the background while editing the
+tree it reads. A failure from a half-written file looks exactly like a real
+regression, and the only way to tell is to run it again on a quiet tree --
+which is what the batch comparison was supposed to save you.
 ### A workflow that names your tests is not a gate (TASK-32908)
 
 **What happened.** `Tests/UI` — 25,917 collected tests, the largest directory
@@ -16327,3 +16360,62 @@ the guard. Beware assertions guarded by more than one constant: clamped or
 `min()`-bounded code paths absorb a single-constant mutation silently, which is
 precisely the shape that makes a mutation look like a valid control while being
 inert.
+
+### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
+
+**What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
+pinned that every replacement progress timer in `speech_playback_mixin.py` is
+preceded by the awaited cancellation barrier. It did that by dumping every
+earlier statement in the block and substring-searching for
+`_retire_progress_timer`. Qodo pointed out the hole, and it reproduced exactly:
+dropping the `await` from `_pause_audio_async`'s
+`await self._retire_progress_timer()` -- a five-character edit that leaves the
+coroutine created and never driven, so the cancel-and-join never runs at all --
+left the guard **10 passed, exit 0**. The name is still in the dump either way.
+
+The second guard in the same file had the same shape and the same hole.
+
+**What to do.** When a guard's subject is *how* something is called, match the
+AST node that encodes it, not the text. `await f()` is an `ast.Await` wrapping
+an `ast.Call`; `f()` is a bare `ast.Expr(ast.Call)`. Collect the awaited call
+nodes and compare identities (`id(node.value)`) -- a substring of
+`ast.dump(...)` cannot tell the two apart, and neither can a `"await" in
+source` check, because some *other* await in the same block satisfies it.
+
+More generally: an AST guard is the wrong instrument for an ordering invariant
+that spans control-flow blocks. The replacement here had to become a
+behavioural drive (start the real loop, run the real coroutine, assert the old
+task is dead at the moment the new playback starts); the AST guard was kept only
+for the one thing it is actually good at -- "no site may call this without
+`await`".
+
+### 87 green unit tests and an engine that could not produce one sample (TASK-32928, PR #2825)
+
+**What happened.** The OmniVoice ONNX backend shipped with 87 passing tests:
+prompt layout, sampler mechanics, error mapping, format conversion, voice
+profiles. Its only real-model test was env-gated and **skipped** everywhere it
+ran. The first UAT against the actual `ct03/omnivoice-onnx-int8hq` artifact
+failed twice before producing audio:
+`tokenizers.Tokenizer.encode` returns an `Encoding`, not the `list[int]` every
+fake tokenizer returned (so `style_ids + body_ids` raised `TypeError`), and the
+LM graph declares `audio_mask`/`position_ids` as `(batch, seq)` while the
+adapter -- tested only against fake sessions that accepted anything -- fed
+`(batch, 8, seq)` (`ORT INVALID_ARGUMENT: Invalid rank`). Every synthesis
+request would have surfaced as a generic "generation failed". The same pass
+found three more wiring defects that no unit test spanned end to end: the
+Settings Save wrote nothing (no `_TTS_SETTING_BINDINGS` rows -- the persister
+`continue`s past unknown keys), and request admission rejected every Speech
+Lab generation (unlisted numeric provider options are range-checked to
+`[0, 1]`; `num_steps=32` is not).
+
+**What to do.** A fake is evidence only for the contract the fake encodes; when
+the fake is written from the author's *assumption* of a third-party API, the
+suite pins the assumption. For a new engine adapter, (1) build at least one test
+against the real library object where it is cheap (an in-memory
+`tokenizers.Tokenizer` costs nothing), (2) copy the real graph's
+`get_inputs()` names/types/shapes into the fake session, and (3) treat a
+skipped real-model test as *no evidence*, not as a pass -- run it once, with
+the artifact, before claiming the engine works. For a new provider in an
+existing pipeline, drive one request through the real admission and
+persistence layers: both defects above lived in code the provider's own tests
+never touched.

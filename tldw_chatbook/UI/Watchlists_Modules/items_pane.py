@@ -15,7 +15,7 @@ from textual.widgets.data_table import CellDoesNotExist, ColumnKey
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
-from .table_selection import highlight_is_user_driven
+from .table_selection import highlight_is_user_driven, row_with_id
 
 
 class ItemSelected(Message):
@@ -522,12 +522,7 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
 
     def select_item_by_id(self, item_id: str) -> None:
         """Select the item with the given id and notify listeners."""
-        item = None
-        for candidate in self.items:
-            if str(candidate.get("id") or "") == item_id:
-                item = candidate
-                break
-        self.selected_item = item
+        self.selected_item = row_with_id(self.items, item_id)
 
     def displayed_items(self) -> list[dict[str, Any]]:
         """The items actually rendered in the table right now.

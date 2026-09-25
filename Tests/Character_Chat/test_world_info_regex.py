@@ -41,6 +41,26 @@ def test_catastrophic_variants_rejected(pattern):
 
 
 @pytest.mark.parametrize("pattern", [
+    "(a|aa)*$",       # a branch that is a PREFIX of another, not a duplicate
+    "(a|aa)*",
+    "(ab|abc)+",      # the same shape with longer branches
+    r"(\d|\d\d)*",    # ... and with escaped tokens, which must not confuse
+    "(?:a|aa)*",      # behind a non-capturing group
+    "(x|xx|y)+",      # the overlapping pair need not be the only branches
+])
+def test_prefix_overlapping_alternation_rejected(pattern):
+    """``(a|aa)*`` is not a DUPLICATE alternation, and it still explodes.
+
+    Measured on CPython 3.12 against ``"a" * n + "!"``: 0.6 ms at n=18,
+    4.1 ms at n=22, 26 ms at n=26, 177 ms at n=30 -- textbook exponential.
+    Dictionary keys are user-supplied and run with ``.search()``/``.subn()``
+    against message text on the send path, so this hangs the app.
+    """
+    with pytest.raises(ValueError, match="too complex"):
+        validate_regex_pattern(pattern)
+
+
+@pytest.mark.parametrize("pattern", [
     "(?P<name>x+)",     # inner quantifier but NOT externally quantified — safe
     "(?:abc){2,5}",     # bounded outer quantifier — safe
     r"(\d{3}-)+\d{4}",  # bounded inner quantifier — safe

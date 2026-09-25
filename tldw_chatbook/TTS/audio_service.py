@@ -5,7 +5,7 @@ from __future__ import annotations
 
 # Imports
 import io
-import os
+from pathlib import Path
 from typing import Optional, Dict, Union
 import tempfile
 from loguru import logger
@@ -47,6 +47,13 @@ except ImportError:
 #######################################################################################################################
 #
 # Audio Service Implementation
+
+
+#: Ceiling on the ffmpeg pass that muxes chapter metadata into a finished
+#: audiobook. Its own number, not a shared one: this is a stream copy over an
+#: already-encoded file, so if the limit ever needs tuning it will not be for
+#: the same reason as the decode timeouts in the STT backends.
+_FFMPEG_MUX_TIMEOUT_SECONDS = 3600
 
 
 class AudioService:
@@ -384,11 +391,17 @@ class AudioService:
                 metadata_path = f.name
 
             # Export with metadata using ffmpeg
+            temp_audio_path: Optional[str] = None
             try:
-                # First export to temporary m4a
-                temp_audio = tempfile.NamedTemporaryFile(suffix=".m4a", delete=False)
+                # First export to temporary m4a. The handle is closed at once:
+                # only the NAME is handed to the encoders, and an open handle
+                # stops ffmpeg reading the file at all on Windows.
+                with tempfile.NamedTemporaryFile(
+                    suffix=".m4a", delete=False
+                ) as temp_audio:
+                    temp_audio_path = temp_audio.name
                 combined.export(
-                    temp_audio.name, format="mp4", codec="aac", bitrate="128k"
+                    temp_audio_path, format="mp4", codec="aac", bitrate="128k"
                 )
 
                 # Use ffmpeg to add metadata and create final M4B
@@ -397,7 +410,7 @@ class AudioService:
                 cmd = [
                     "ffmpeg",
                     "-i",
-                    temp_audio.name,
+                    temp_audio_path,
                     "-i",
                     metadata_path,
                     "-map_metadata",
@@ -409,7 +422,23 @@ class AudioService:
                     output_path,
                 ]
 
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        # ffmpeg reads stdin for interactive commands; with
+                        # stdin inherited it competes with the TUI for the
+                        # terminal and can block forever waiting on it.
+                        stdin=subprocess.DEVNULL,
+                        timeout=_FFMPEG_MUX_TIMEOUT_SECONDS,
+                    )
+                except subprocess.TimeoutExpired:
+                    # A timeout is an ffmpeg failure; shaping it as one keeps
+                    # the reporting below (and its path-privacy census row)
+                    # exactly as it was, and takes the same chapterless
+                    # fallback rather than losing the whole book.
+                    result = subprocess.CompletedProcess(cmd, 1, "", "timed out")
                 if result.returncode != 0:
                     logger.error(f"FFmpeg error: {result.stderr}")
                     # Fallback: just save as M4B without chapters
@@ -417,11 +446,15 @@ class AudioService:
                         output_path, format="mp4", codec="aac", bitrate="128k"
                     )
 
-                # Cleanup
-                os.unlink(temp_audio.name)
-
             finally:
-                os.unlink(metadata_path)
+                # Both temporaries, unconditionally. The m4a used to be
+                # unlinked AFTER the chapterless fallback export, so a fallback
+                # that raised left a whole book's worth of audio on disk while
+                # the outer handler reported nothing but False. Tolerate an
+                # already-removed file: cleanup must not mask the real error.
+                Path(metadata_path).unlink(missing_ok=True)
+                if temp_audio_path is not None:
+                    Path(temp_audio_path).unlink(missing_ok=True)
 
             return True
 

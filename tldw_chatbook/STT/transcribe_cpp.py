@@ -22,6 +22,7 @@ from typing import Any
 from tldw_chatbook.Model_Artifacts.gguf_admission import validate_local_gguf
 
 from .contracts import (
+    FFMPEG_DECODE_TIMEOUT_SECONDS,
     CancellationGranularity,
     DeviceFailureOrigin,
     ExecutionDevice,
@@ -39,6 +40,7 @@ from .contracts import (
     TranscriptionTask,
     TranscriptionTimings,
 )
+
 from .coordinator import TranscriptionCoordinator, TranscriptionCoordinatorError
 from .registry import (
     CapabilitySet,
@@ -298,6 +300,9 @@ def _pcm_16k_mono(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
+            # A malformed or adversarial container can park ffmpeg
+            # indefinitely; bound it rather than wedge the worker.
+            timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
         )
         return _read_normalized_wav(temporary_path)
     finally:

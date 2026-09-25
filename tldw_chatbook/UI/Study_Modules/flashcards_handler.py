@@ -19,6 +19,7 @@ from textual.widgets import (
 )
 
 from ...Study_Interop import LocalStudyService, ServerStudyService, StudyScopeService
+from ..Screens.study_scope_models import StudyScopeType
 
 if TYPE_CHECKING:
     from ..Study_Window import StudyWindow
@@ -110,7 +111,7 @@ class StudyFlashcardsController:
 
     def _workspace_id(self) -> Optional[str]:
         scope_state = self._scope_state()
-        if self._scope_type_value(scope_state) != "workspace":
+        if self._scope_type_value(scope_state) != StudyScopeType.WORKSPACE.value:
             return None
         workspace_id = getattr(scope_state, "workspace_id", None)
         return str(workspace_id or "").strip() or None
@@ -119,7 +120,7 @@ class StudyFlashcardsController:
         scope_state = self._scope_state()
         if scope_state is None:
             return True
-        if self._scope_type_value(scope_state) != "workspace":
+        if self._scope_type_value(scope_state) != StudyScopeType.WORKSPACE.value:
             return True
         return bool(
             getattr(scope_state, "workspace_scope_available", False)
@@ -130,13 +131,13 @@ class StudyFlashcardsController:
         message = str(getattr(scope_state, "error_message", "") or "").strip()
         if message:
             return message
-        if self._scope_type() == "workspace":
+        if self._scope_type() == StudyScopeType.WORKSPACE.value:
             backend = str(getattr(scope_state, "backend", "") or "unknown")
             return f"Workspace study is unavailable on {backend}."
         return "Study flashcards backend is unavailable."
 
     def _scope_empty_message(self) -> str:
-        if self._scope_type() == "workspace":
+        if self._scope_type() == StudyScopeType.WORKSPACE.value:
             return (
                 "No study decks in this workspace yet. Create a workspace deck, "
                 "or switch to Global Study to review existing decks."
@@ -149,7 +150,11 @@ class StudyFlashcardsController:
         scope_type = self._scope_type()
         return {
             "scope_type": scope_type,
-            "workspace_id": self._workspace_id() if scope_type == "workspace" else None,
+            "workspace_id": (
+                self._workspace_id()
+                if scope_type == StudyScopeType.WORKSPACE.value
+                else None
+            ),
         }
 
     def _workspace_create_arguments(self) -> dict[str, Any]:
