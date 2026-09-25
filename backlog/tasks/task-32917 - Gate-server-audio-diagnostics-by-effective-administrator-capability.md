@@ -4,7 +4,7 @@ title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
 created_date: '2026-09-23 20:15'
-updated_date: '2026-09-23 20:41'
+updated_date: '2026-09-25 08:05'
 labels: []
 dependencies: []
 references:
@@ -39,6 +39,8 @@ Docs/superpowers/plans/2026-09-23-server-audio-diagnostic-admin-parity.md
 PR: https://github.com/rmusser01/tldw_chatbook/pull/2822. Targeted service/scope tests: 15 passed, 1 existing from_config bootstrap failure excluded; Ruff/compileall/diff checks passed.
 
 Qodo wildcard review resolved by server can_run_audio_diagnostics capability. Revised targeted tests: 22 passed, 1 unrelated from_config bootstrap test deselected; Ruff/format/compileall/diff checks passed on touched small files. Older servers without this capability defer to protected diagnostic endpoints.
+
+2026-09-25: rebased PR #2822 onto Chatbook dev 3b11bf972 after OmniVoice merge. All three commits unchanged by range-diff; 22 focused tests passed, one pre-existing from_config bootstrap test deselected; diff check clean. Final required derived-artifact CI must rerun on this head.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
