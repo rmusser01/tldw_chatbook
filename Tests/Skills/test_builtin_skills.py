@@ -280,3 +280,11 @@ def test_index_row_cannot_claim_builtin_on_raw_index_readers(tmp_path, name):
     assert result["trust_status"] == "quarantined_modified"
     assert result.get("source") != "builtin"
     assert name in trust.asked
+
+
+def test_customize_seeds_only_the_named_builtins(tmp_path):
+    svc = _svc(tmp_path)
+    assert asyncio.run(svc.seed_builtin_skills(names=["not-a-builtin"]))["seeded"] == []
+    assert not (tmp_path / "skills" / NAME).exists()
+    assert asyncio.run(svc.seed_builtin_skills(names=[NAME]))["seeded"] == [NAME]
+    assert (tmp_path / "skills" / NAME / "SKILL.md").exists()

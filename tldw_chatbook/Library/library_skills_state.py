@@ -607,6 +607,9 @@ class SkillListRow:
         blocked: Whether the skill is currently trust-blocked
             (``trust_blocked``) -- unusable until reviewed/re-trusted.
         selected: Whether this row owns the retained Work pane.
+        is_builtin: A read-only built-in skill (TASK-32954): badged, and
+            opens a preview instead of the editor.
+        overridden: A user skill that overrides a built-in of the same name.
     """
 
     name: str
@@ -615,6 +618,8 @@ class SkillListRow:
     blocked: bool
     selected: bool = False
     trust_label: str = ""
+    is_builtin: bool = False
+    overridden: bool = False
 
 
 @dataclass(frozen=True)
@@ -952,6 +957,8 @@ def _row(
         trust_label=trust_label,
         blocked=blocked,
         selected=name == selected_name,
+        is_builtin=record.get("source") == "builtin",
+        overridden=bool(record.get("overrides_builtin")),
     )
 
 

@@ -351,7 +351,7 @@ from loguru import logger
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Button, Input, SelectionList, Static, TextArea
+from textual.widgets import Button, Input, SelectionList, Static, Switch, TextArea
 
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
 from ...Library.library_skills_state import (
@@ -369,7 +369,7 @@ from ...Library.library_skills_state import (
     skill_review_identity_line,
 )
 from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
-from ...config import coerce_bool_setting
+from ...config import coerce_bool_setting, save_setting_to_cli_config
 from ...Widgets.Library import (
     LIBRARY_SKILLS_FILTER_ID,
     LIBRARY_SKILLS_PAGE_NEXT_ID,
@@ -395,6 +395,7 @@ from ...Widgets.Library import (
     skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
+from ...Skills_Interop.local_skills_service import LocalSkillsService
 from .canvas_sync import _sync_library_canvas
 from .library_skills_state import LibrarySkillsState, skill_state_shim_attr
 from .screen_constants import (
@@ -982,6 +983,7 @@ class LibrarySkillsController:
             more_actions_open=False,
             trust_details_open=False,
             script_access_granted=False,
+            builtin_preview=None,
         )
         return values
 
@@ -1034,7 +1036,20 @@ class LibrarySkillsController:
             "script_access_granted": self._library_skill_script_grant,
             "detail_notice": "",
             "detail_retryable": False,
+            "builtin_preview": None,
         }
+        if self._library_skills_view == "preview":
+            # TASK-32954: a built-in opens read-only, never the editor.
+            preview = self._library_skill_builtin_preview
+            if preview is None:
+                values["mode"] = "loading"
+                values["detail_notice"] = (
+                    self._library_skill_detail_error or "Loading skill…"
+                )
+            else:
+                values["mode"] = "preview"
+                values["builtin_preview"] = preview
+            return values
         if self._library_skills_view == "editor":
             editor_state = self._library_skill_editor_state
             if editor_state is None:
@@ -1492,6 +1507,152 @@ class LibrarySkillsController:
     def _arm_library_skill_editor(self) -> None:
         """Enable dirty tracking after initial field-change events have settled."""
         self._library_skill_editor_armed = True
+
+    # --- Built-in skills: read-only preview (TASK-32954, spec §3.5) ---
+
+    def _open_library_skill_builtin_preview(self, skill_name: str) -> None:
+        """Open a built-in skill read-only in the Work pane.
+
+        The editor (dirty tracking, Save/Discard vetoes, trust review) has no
+        read-only mode, so a built-in row never reaches it.
+        """
+        self._reset_library_skill_editor_state()
+        self._selected_skill_name = skill_name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "preview"
+        self.run_worker(
+            self._refresh_library_skill_builtin_preview(
+                skill_name, self._claim_library_skill_detail_generation()
+            ),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+        _sync_library_canvas(self, "skills")
+
+    def _library_skill_preview_is_current(self, skill_name: str, generation: int) -> bool:
+        return bool(
+            generation == self._library_skill_detail_generation
+            and skill_name == self._selected_skill_name
+            and self._library_skills_view == "preview"
+        )
+
+    async def _refresh_library_skill_builtin_preview(
+        self, skill_name: str, generation: int
+    ) -> None:
+        """Fetch the built-in's content and render the read-only preview."""
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        detail: Any = None
+        try:
+            detail = await self._run_library_service_call(
+                service.get_skill, skill_name, mode="local", isolate_in_worker=True
+            )
+        except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
+            logger.opt(exception=True).warning("Failed to load a built-in skill preview.")
+        if not self._library_skill_preview_is_current(skill_name, generation):
+            return
+        self._library_skill_detail_loading = False
+        if not isinstance(detail, Mapping):
+            self._library_skill_detail_error = "Couldn’t load this built-in skill."
+        else:
+            _front, body = LocalSkillsService._parse_front_matter(
+                str(detail.get("content") or "")
+            )
+            self._library_skill_builtin_preview = {
+                "name": skill_name,
+                "content": body,
+                "enabled": True,
+            }
+        if self.is_mounted:
+            _sync_library_canvas(self, "skills")
+
+    def handle_library_skill_builtin_customize(self, event: Button.Pressed) -> None:
+        """Customize: copy the open built-in into the user's skills."""
+        event.stop()
+        preview = self._library_skill_builtin_preview
+        if preview is None:
+            return
+        self.run_worker(
+            self._customize_library_skill_builtin(str(preview["name"])),
+            exclusive=True,
+            group="library_skill_builtin_customize",
+            exit_on_error=False,
+        )
+
+    async def _customize_library_skill_builtin(self, skill_name: str) -> None:
+        """Seed only this built-in, return to the list, and say what happened."""
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        try:
+            await self._run_library_service_call(
+                service.seed_builtin_skills,
+                names=[skill_name],
+                mode="local",
+                isolate_in_worker=True,
+            )
+            copy = await self._run_library_service_call(
+                service.get_skill, skill_name, mode="local", isolate_in_worker=True
+            )
+        except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
+            logger.opt(exception=True).warning("Customize of a built-in skill failed.")
+            self.app.notify("Couldn’t copy this built-in skill.", severity="error")
+            return
+        notice = "Copied to your skills — edit your copy."
+        if isinstance(copy, Mapping) and copy.get("trust_blocked"):
+            notice += " It needs review before the assistant can use it."
+        self._reset_library_skill_editor_state()
+        self._refresh_library_skills_after_committed_mutation()
+        self.app.notify(notice)
+
+    def handle_library_skill_builtin_enabled(self, event: Switch.Changed) -> None:
+        """Enabled switch: hide or show the open built-in for every reader."""
+        event.stop()
+        preview = self._library_skill_builtin_preview
+        if preview is None or bool(preview.get("enabled")) == event.value:
+            return
+        self.run_worker(
+            self._set_library_skill_builtin_enabled(str(preview["name"]), event.value),
+            exclusive=True,
+            group="library_skill_builtin_enabled",
+            exit_on_error=False,
+        )
+
+    async def _set_library_skill_builtin_enabled(
+        self, skill_name: str, enabled: bool
+    ) -> None:
+        """Apply ``[skills] disabled_builtins`` in memory now, then persist it.
+
+        The skills service's built-in loader reads the in-memory app config,
+        so the change applies without a restart.
+        """
+        config = self.app_instance.app_config
+        skills_config = config.setdefault("skills", {})
+        current = skills_config.get("disabled_builtins")
+        disabled = [
+            name for name in (current if isinstance(current, list) else [])
+            if isinstance(name, str) and name != skill_name
+        ]
+        if not enabled:
+            disabled.append(skill_name)
+        skills_config["disabled_builtins"] = disabled
+        preview = self._library_skill_builtin_preview
+        if preview is not None and preview.get("name") == skill_name:
+            self._library_skill_builtin_preview = {**preview, "enabled": enabled}
+        self._refresh_library_skills_after_committed_mutation()
+        if self.is_mounted:
+            _sync_library_canvas(self, "skills")
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "skills",
+                "disabled_builtins",
+                list(disabled),
+            )
+        except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
+            saved = False
+        if saved is not True:
+            self.app.notify(
+                "Changed for this session, but could not be saved.",
+                severity="warning",
+            )
 
     def _enter_library_skill_create_editor(self) -> None:
         """Open the in-canvas skill editor on a blank, not-yet-saved record.

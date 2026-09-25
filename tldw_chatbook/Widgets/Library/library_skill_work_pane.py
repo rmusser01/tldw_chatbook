@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Markdown, Static, Switch
 
 from tldw_chatbook.Library.library_skills_state import (
     SkillReaderMode,
@@ -62,6 +63,9 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
             return
         if self.mode == "loading":
             yield from super().compose()
+            return
+        if self.mode == "preview" and self.builtin_preview is not None:
+            yield from self._compose_builtin_preview(self.builtin_preview)
             return
         if self.mode != "editor" or self.editor_state is None:
             yield Static(
@@ -138,6 +142,38 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
                 id="library-skill-supporting",
                 markup=False,
             )
+
+    def _compose_builtin_preview(self, preview: Mapping[str, Any]) -> ComposeResult:
+        """Render a built-in skill read-only (TASK-32954, spec §3.5).
+
+        Never the editor: a built-in has no draft to save or discard. The
+        only actions are Customize (copy to the user's skills) and Enabled.
+        """
+        region = Vertical(id="library-skill-builtin-preview")
+        region.add_class("h-auto")
+        with region:
+            yield Static(
+                f"{preview.get('name', '')} · Built-in (read-only)",
+                classes="destination-section",
+                markup=False,
+            )
+            actions = Horizontal(classes="ds-toolbar")
+            actions.add_class("h-auto")
+            with actions:
+                yield Button(
+                    "Customize",
+                    id="library-skill-builtin-customize",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                label = Static(" Enabled ", markup=False)
+                label.styles.width = "auto"
+                yield label
+                yield Switch(
+                    value=bool(preview.get("enabled", True)),
+                    id="library-skill-builtin-enabled",
+                )
+            yield Markdown(str(preview.get("content") or ""))
 
     def _compose_mode_strip(self) -> ComposeResult:
         """Render the four explicit Skills work modes."""

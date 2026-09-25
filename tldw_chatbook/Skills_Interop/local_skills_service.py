@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 import zipfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -2725,13 +2725,16 @@ class LocalSkillsService:
         await join_retained_task(completion)
         return completion.result()
 
-    async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
+    async def seed_builtin_skills(
+        self, *, overwrite: bool = False, names: Iterable[str] | None = None
+    ) -> dict[str, Any]:
         """Customize: copy each enabled built-in into the user's store.
 
         The copy goes through ``import_skill_directory`` so the index,
         validation and trust handling are the standard ones; the user copy
         then overrides the built-in. Existing user copies are kept unless
-        ``overwrite``.
+        ``overwrite``. ``names`` limits the copy to those built-ins (Library
+        Customize copies one); None copies every enabled built-in.
 
         Returns:
             ``{"seeded": [names], "count": n}``.
@@ -2739,7 +2742,10 @@ class LocalSkillsService:
         self._enforce("skills.seed.launch.local")
         existing = self._load_index()
         seeded: list[str] = []
+        wanted = None if names is None else frozenset(names)
         for name in builtin_skill_records(self._disabled_builtins()):
+            if wanted is not None and name not in wanted:
+                continue
             if name in existing and not overwrite:
                 continue
             await self.import_skill_directory(
