@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 from tldw_chatbook.Agents.agent_worktree import WorktreeRefusal
 from tldw_chatbook.Agents.agent_worktree_recovery import (
     WorktreeRecoveryOutcome,
@@ -18,6 +20,9 @@ from tldw_chatbook.Agents.agent_worktree_recovery import (
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+RECOVERY_FAILED_MESSAGE = "Recovery failed; inspect recorded work before retrying."
+
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
@@ -353,13 +358,17 @@ class ConsoleWorktreeRecovery:
             if not done.cancelled():
                 try:
                     self.receipts[intent.persisted_conversation_id] = done.result()
-                except Exception:  # noqa: BLE001 - keep a bounded failure receipt
+                except Exception as exc:  # noqa: BLE001 - keep a bounded failure receipt
                     self.receipts[intent.persisted_conversation_id] = WorktreeRefusal(
-                        "recovery_failed",
-                        "Recovery failed; inspect recorded work before retrying.",
+                        "recovery_failed", RECOVERY_FAILED_MESSAGE
                     )
+                    failure_type = type(exc).__name__
+                else:
+                    failure_type = None
                 while len(self.receipts) > 32:
                     self.receipts.popitem(last=False)
+                if failure_type is not None:
+                    logger.warning("agent_worktree_recovery_failed: {}", failure_type)
 
         task.add_done_callback(completed)
         return await asyncio.shield(task)
