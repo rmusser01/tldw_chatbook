@@ -26,9 +26,9 @@ async def test_theme_category_opens_on_the_picker_without_state_banner(request):
         pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
         assert pane.current == "settings-theme-picker"
         assert not host.screen.query("#settings-category-state-banner")
-        # R6: picker and editor buttons no longer share ids.
+        # R6: only the picker has Clone/New (PR 2 removed the editor's).
         for button_id in ("clone", "new"):
-            assert len(host.screen.query(f"#settings-theme-{button_id}")) == 1
+            assert len(host.screen.query(f"#settings-theme-{button_id}")) == 0
             assert len(host.screen.query(f"#settings-theme-picker-{button_id}")) == 1
 
 
@@ -211,8 +211,9 @@ async def _dirty_editor_then_back(host, pilot, choice):
 
     await _category(host, pilot, "Theme")
     host.screen.query_one("#settings-theme-list").focus()
-    await pilot.press("c")  # Clone: editor opens modified
+    await pilot.press("c")  # Clone opens clean (TASK-32948 PR 2) ...
     await pilot.pause(0.2)
+    await _edit_primary(host, pilot)  # ... so make a real edit
     screen = host.screen
     # custom_themes_path is the private profile's themes dir (the editor's
     # writer refuses paths outside the profile, so no tmp_path override).
@@ -260,6 +261,7 @@ async def test_back_save_refused_stays_in_editor_with_edits(request):
         host.screen.query_one("#settings-theme-list").focus()
         await pilot.press("c")
         await pilot.pause(0.2)
+        await _edit_primary(host, pilot)  # Clone opens clean; make it dirty
         name = host.screen.query_one("#settings-theme-name", Input)
         name.value = "textual-dark"  # built-in: Save refuses
         await pilot.pause()
@@ -287,7 +289,7 @@ def test_appearance_validation_ignores_theme():
 
 # TASK-32948 Task 7: layout CSS, geometry and contrast at 80x24 and 190x55.
 # R6: the picker's Clone/New buttons are `#settings-theme-picker-clone` /
-# `#settings-theme-picker-new` (the editor's own Clone/New keep the plain ids).
+# `#settings-theme-picker-new` (PR 2 removed the editor's own Clone/New).
 PICKER_CONTROLS = (
     "#settings-theme-filter",
     "#settings-theme-list",
@@ -507,3 +509,143 @@ async def test_picker_lists_via_editor_scope(request, monkeypatch):
         lst = host.screen.query_one("#settings-theme-list")
         prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
         assert THEMES_UNAVAILABLE_LABEL in prompts
+
+
+# TASK-32948 PR 2 Task 4: the editor loses its tree and library buttons,
+# gains a header and Save as; Save returns to the picker.
+async def _edit_primary(host, pilot, colour="#123456"):
+    from textual.widgets import Input
+
+    host.screen.query_one("#settings-theme-color-primary", Input).value = colour
+    await pilot.pause(0.1)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_category_leave_save_does_not_crash_on_saved_message(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    path = _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        screen = host.screen
+        assert screen.theme_editor_modified is True
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        await pilot.click("#settings-theme-leave-save")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.3)
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        assert "#123456" in path.read_text(encoding="utf-8")
+    # run_test re-raises any handler exception on exit; reaching here means
+    # the Saved message on the torn-down pane was swallowed.
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_active_theme_reapplies_and_returns(request):
+    from textual.color import Color
+
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = "mine"
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot, "#AB1234")
+        await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
+        assert pane.current == "settings-theme-picker"
+        assert host.screen.query_one("#settings-theme-picker").highlighted_id == "mine"
+        assert host.theme == "mine"
+        active = host.available_themes[host.theme]
+        assert Color.parse(active.primary).hex.upper() == "#AB1234"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_as_keeps_original(request):
+    from textual.widgets import Input
+
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    host = _host()
+    path = _saved_theme(host)
+    original = path.read_bytes()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.click("#settings-theme-save-as")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        name_input = host.screen.query_one("#settings-rag-profile-name-input", Input)
+        assert name_input.value == "mine_copy"
+        name_input.value = "mine2"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        assert (path.parent / "mine2.toml").exists()
+        assert "#123456" in (path.parent / "mine2.toml").read_text(encoding="utf-8")
+        assert path.read_bytes() == original
+        pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
+        assert pane.current == "settings-theme-picker"
+        assert host.screen.query_one("#settings-theme-picker").highlighted_id == "mine2"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_editor_has_no_tree_or_library_buttons(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        editor = host.screen.query_one("#settings-theme-editor")
+        for selector in (
+            "#settings-theme-tree",
+            "#settings-theme-new",
+            "#settings-theme-clone",
+            "#settings-theme-delete",
+            "#settings-theme-export",
+        ):
+            assert not editor.query(selector), selector
+        for selector in ("#settings-theme-apply", "#settings-theme-save", "#settings-theme-save-as"):
+            assert editor.query_one(selector)
+        assert str(editor.query_one("#settings-theme-apply").label) == "Try"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_editor_header_names_the_source(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "apricot")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        header = host.screen.query_one("#settings-theme-editor-header")
+        assert str(header.render()) == "Editing apricot_copy · copy of Apricot"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clone_then_back_without_edits_does_not_prompt(request):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "apricot")
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-editor").is_modified is False
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        assert not isinstance(host.screen, ThemeLeaveModal)
+        pane = host.screen.query_one("#settings-theme-pane", ContentSwitcher)
+        assert pane.current == "settings-theme-picker"

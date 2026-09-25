@@ -663,10 +663,6 @@ Button.settings-category-group-toggle:focus {
     width: $ds-width-full;
 }
 
-.settings-workbench-compact #settings-theme-tree {
-    height: $ds-size-8;
-}
-
 /* A stacked gallery gives compact terminals a useful card list and preview
    width; the list fits completely inside the detail pane when focused. */
 .settings-workbench-compact #settings-splash-gallery {

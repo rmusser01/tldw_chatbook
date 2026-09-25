@@ -5362,12 +5362,13 @@ StatCard:hover {
 }
 
 
-#settings-theme-tree {
+
+#settings-theme-editor-header {
     width: $ds-width-full;
-    height: $ds-size-12;
-    min-height: $ds-size-8;
-    border: solid $ds-grid-line;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    height: auto;
+    color: $ds-text-primary;
+    text-style: bold;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 

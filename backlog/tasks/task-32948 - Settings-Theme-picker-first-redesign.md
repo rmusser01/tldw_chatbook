@@ -214,3 +214,25 @@ final rewrite deferred to PR 3 per AC #12).
 - Tests cover Back ▸ Discard, Save and refused Save, plus the items above.
 
 <!-- Full task-by-task detail lives in .superpowers/sdd/2026-09-24-theme-picker-pr1/progress.md and task-1..7-report.md (gitignored, worktree-local). -->
+
+### PR 2 (Task 4): editor tree and library buttons removed — retired or rewritten tests
+
+Retired (the tree is gone; each guarantee has a new owner):
+
+- `test_settings_theme_editor.py::test_theme_tree_has_empty_state_guidance` → `test_settings_theme_picker.py::test_empty_your_themes_says_none_yet` (the empty state now lives in the picker list).
+- `test_settings_theme_editor.py::test_settings_theme_editor_tree_lists_your_themes_first_and_expanded` → `Tests/Utils/test_theme_catalog.py::test_groups_and_order` (yours first) and `test_settings_theme_picker.py::test_filter_narrows_and_enter_uses` (the picker has no collapsed group; the filter replaces the shipped collapse).
+- `test_settings_theme_editor.py::test_settings_theme_editor_tree_lists_every_textual_builtin` → `Tests/Utils/test_theme_catalog.py::test_groups_and_order` (asserts the TEXTUAL group equals `BUILTIN_THEMES`).
+- `test_settings_theme_editor.py::test_settings_theme_editor_empty_your_themes_says_none_yet` → new `test_settings_theme_picker.py::test_empty_your_themes_says_none_yet` (disabled, so inert). The picker did not render "(none yet)" before this task (spec §9); it does now.
+
+Rewritten (every file, confirmation and registration assertion kept):
+
+- Delete tests (`…delete_blocks_builtin_themes`, `…delete_blocks_shipped_themes`, `…delete_removes_custom_theme`, `…delete_user_file_shadowing_shipped_name`, `…delete_missing_custom_theme_warns`, `…delete_keeps_app_theme`, `…delete_unregisters_and_restores_shadowed_shipped_theme`, `…delete_user_file_shadowing_builtin_restores_it`, `…name_box_drives_apply_save_reset_delete`) drive `request_delete(name)` (what the picker's Delete calls) instead of the removed `on_delete_theme`; tree-label checks became `list_user_theme_names()`.
+- `…export_confirms_before_overwriting` drives `export_theme("ocean")` on a saved file (R14: the editor's Export is gone).
+- `…cleared_name_blocks_actions_instead_of_using_stale_name` checks Try and Reset (Delete/Export now take an explicit name from the picker).
+- `…survives_backup_recovery_pause` asserts `list_user_theme_names()` raises `RecoveryRequired` (the picker's pause row is `test_pause_row_disables_file_actions` / `test_picker_lists_via_editor_scope`).
+- `…your_themes_placeholder_tracks_save_and_delete` → `…saved_theme_listing_tracks_save_and_delete` (the listing the picker renders gains/loses the theme).
+- `Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py::test_theme_save_failure_and_pause_preserve_draft_and_tree`: `_user_theme_labels` → `editor.list_user_theme_names()`; pause/failure assertions unchanged.
+- `test_settings_configuration_hub.py::test_settings_jk_leaves_theme_editor_focus_alone`: the Tree selector became the Dark checkbox.
+- `test_settings_theme_card_contrast.py`: the editor's button set is now Try/Save/Reset (filled) and Save as/Generate (plain).
+- `test_settings_theme_picker_screen.py`: the R6 id test expects no editor Clone/New; the Back-prompt tests make a real edit (Clone now opens clean).
+- `test_css_build_integrity.py`: the `#settings-theme-tree` pin became `#settings-theme-editor-header`.

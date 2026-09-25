@@ -24483,6 +24483,30 @@ class SettingsScreen(BaseAppScreen):
         if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
             self.query_one(ThemePicker).refresh_catalog(highlight=new)
 
+    @on(SettingsThemeEditor.SaveAsRequested)
+    def handle_theme_save_as_requested(
+        self, event: SettingsThemeEditor.SaveAsRequested
+    ) -> None:
+        """Prompt for the new name, then save the working palette under it."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(
+                title="Save theme as",
+                initial=f"{event.current_name}_copy",
+                confirm_label="Save",
+            ),
+            self._handle_theme_save_as_result,
+        )
+
+    def _handle_theme_save_as_result(self, new: str | None) -> None:
+        if not new:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        editor.save_as(new)
+
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(
         self, event: SettingsThemeEditor.LaunchDefaultChanged

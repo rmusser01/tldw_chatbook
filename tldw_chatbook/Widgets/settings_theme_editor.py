@@ -18,11 +18,11 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import BUILTIN_THEMES, Theme
-from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ..Backup_Recovery import raw_participants as raw
 from ..Backup_Recovery.bootstrap import RecoveryRequired
-from ..css.Themes.theme_catalog import is_catalog_theme
+from ..css.Themes.theme_catalog import display_name, is_catalog_theme
 from ..css.Themes.themes import (
     ALL_THEMES,
     create_theme_from_dict,
@@ -34,7 +34,7 @@ from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
 from .theme_preview import ThemePreview
 
-#: TASK-32942: shown in the tree while backup/recovery holds the theme files.
+#: TASK-32942: shown in the picker while backup/recovery holds the theme files.
 THEMES_UNAVAILABLE_LABEL = "Theme files unavailable while backup/recovery is in progress"
 
 
@@ -103,6 +103,20 @@ class SettingsThemeEditor(Vertical):
     class ThemesChanged(Message):
         """The saved theme files changed (delete, rename, save); rebuild lists."""
 
+    class Saved(Message):
+        """A Save or Save as wrote ``theme_name``; the pane returns to the picker."""
+
+        def __init__(self, theme_name: str) -> None:
+            self.theme_name = theme_name
+            super().__init__()
+
+    class SaveAsRequested(Message):
+        """Save as was pressed; the screen owns the name prompt."""
+
+        def __init__(self, current_name: str) -> None:
+            self.current_name = current_name
+            super().__init__()
+
     current_theme_name = reactive("textual-dark")
     current_theme_data: reactive[dict[str, str]] = reactive(dict, layout=False)
     is_dark_theme = reactive(True)
@@ -147,7 +161,7 @@ class SettingsThemeEditor(Vertical):
                 raw._mkdirs(operation)
         except RecoveryRequired:
             # TASK-32942: a backup/recovery pause must not crash Settings;
-            # _load_user_themes reports the files as unavailable instead.
+            # the picker reports the files as unavailable instead.
             pass
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
@@ -164,6 +178,8 @@ class SettingsThemeEditor(Vertical):
         # The catalog theme currently loaded, so an unmodified Apply can
         # select it by name instead of registering a lossy copy.
         self._loaded_catalog_theme: str | None = None
+        # What the header says the editor was opened from (ThemePane sets it).
+        self._editing_context: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -175,13 +191,16 @@ class SettingsThemeEditor(Vertical):
         with Vertical(id="settings-theme-card", classes="settings-focus-card"):
             # TASK-31256: Actions before the palette and presets so Apply/Save
             # are reachable without Tabbing through 10 inputs and 40 swatches.
-            yield from self._compose_library_section()
+            yield Static("", id="settings-theme-editor-header", markup=False)
+            yield from self._compose_theme_section()
             yield from self._compose_actions_section()
             yield from self._compose_palette_section()
             yield from self._compose_preview_section()
 
-    def _compose_library_section(self) -> ComposeResult:
-        yield Static("Theme Library", classes="destination-section")
+    def _compose_theme_section(self) -> ComposeResult:
+        # TASK-32948: the theme list and New/Clone/Delete/Export moved to
+        # the picker; the editor keeps only the theme's own identity.
+        yield Static("Theme", classes="destination-section")
         with Horizontal(classes="settings-input-row"):
             yield Static("Name", classes="settings-input-label")
             yield Input(
@@ -195,23 +214,6 @@ class SettingsThemeEditor(Vertical):
             # TASK-31254: the label carries the state in text ("On"/"Off") so
             # colour is never the only carrier.
             yield Checkbox("On", value=True, id="settings-theme-dark-mode")
-        # `theme-editor-action` keys the compact-mode width rule to these
-        # buttons only (the CSS fast-path ratchet forbids a bare `Button`
-        # subject, TASK-31279).
-        with Horizontal(classes="settings-action-row"):
-            yield Button("New", id="settings-theme-new", classes="theme-editor-action")
-            yield Button("Clone", id="settings-theme-clone", classes="theme-editor-action")
-            yield Button("Delete", id="settings-theme-delete", variant="error", classes="theme-editor-action")
-            yield Button("Export", id="settings-theme-export", classes="theme-editor-action")
-        yield Tree("Themes", id="settings-theme-tree")
-        # task-1585: the collapsed tree left a large blank region with no
-        # explanation of what fills it.
-        yield Static(
-            "Your themes come first; expand Shipped themes to browse the catalog. "
-            "New starts a theme from the current palette.",
-            id="settings-theme-tree-hint",
-            classes="settings-detail-row",
-        )
 
     def _compose_palette_section(self) -> ComposeResult:
         yield Static("Color Palette", classes="destination-section")
@@ -265,13 +267,17 @@ class SettingsThemeEditor(Vertical):
         # (INSTANT_APPLY_BEHAVIOR_COPY in UI/Screens/settings_screen.py -- the
         # widget must not import the screen).
         yield Static(
-            "Apply previews this palette now - no Save needed; Save stores the theme file.",
+            "Try previews this palette now - no Save needed; Save stores the theme file.",
             id="settings-theme-apply-hint",
             classes="settings-help-copy",
         )
+        # `theme-editor-action` keys the compact-mode width rule to these
+        # buttons only (the CSS fast-path ratchet forbids a bare `Button`
+        # subject, TASK-31279). The id stays `apply` (TASK-32948: "Try").
         with Horizontal(classes="settings-action-row"):
-            yield Button("Apply", id="settings-theme-apply", variant="primary", classes="theme-editor-action")
+            yield Button("Try", id="settings-theme-apply", variant="primary", classes="theme-editor-action")
             yield Button("Save", id="settings-theme-save", variant="success", classes="theme-editor-action")
+            yield Button("Save as…", id="settings-theme-save-as", classes="theme-editor-action")
             yield Button("Reset", id="settings-theme-reset", variant="warning", classes="theme-editor-action")
             yield Button(
                 "Generate from Primary",
@@ -322,6 +328,29 @@ class SettingsThemeEditor(Vertical):
             self.color_swatches.clear()
             return
 
+    def set_editing_context(self, source: str, mode: Literal["clone", "new", "edit"]) -> None:
+        """Say in the header what the editor was opened from (TASK-32948)."""
+        self._editing_context = (source, mode)
+        self._render_header()
+
+    def watch_current_theme_name(self) -> None:
+        self._render_header()
+
+    def _render_header(self) -> None:
+        if self._editing_context is None:
+            return
+        source, mode = self._editing_context
+        suffix = {
+            "clone": f"copy of {display_name(source)}",
+            "new": "new",
+            "edit": "saved theme",
+        }[mode]
+        try:
+            header = self.query_one("#settings-theme-editor-header", Static)
+        except QueryError:
+            return
+        header.update(f"Editing {self.current_theme_name} · {suffix}")
+
     def watch_is_modified(self, is_modified: bool) -> None:
         """Notify parent screen when modified state changes."""
         self.post_message(SettingsThemeEditor.ThemeModifiedStatus(is_modified))
@@ -366,39 +395,6 @@ class SettingsThemeEditor(Vertical):
         if isinstance(exc, OSError):
             return exc.strerror or type(exc).__name__
         return str(exc)
-
-    def _load_user_themes(self, parent_node) -> None:
-        """Load user-created themes from the themes directory."""
-        try:
-            names = self.list_user_theme_names()
-        except RecoveryRequired:
-            # TASK-32942: data=None, so selecting the row loads nothing.
-            parent_node.add_leaf(THEMES_UNAVAILABLE_LABEL)
-            return
-        for theme_name in sorted(names):
-            parent_node.add_leaf(theme_name, data="user")
-        if not parent_node.children:
-            # task-32945: no data, so on_theme_selected ignores it.
-            parent_node.add_leaf("(none yet)")
-
-    @staticmethod
-    def _sync_user_placeholder(user_node) -> None:
-        """Review #5: drop stale "(none yet)"/"unavailable" leaves after a
-        save, and put "(none yet)" back once the last theme is deleted."""
-        for child in list(user_node.children):
-            if child.data != "user":
-                child.remove()
-        if not user_node.children:
-            user_node.add_leaf("(none yet)")
-
-    @on(Tree.NodeSelected)
-    def on_theme_selected(self, event: Tree.NodeSelected) -> None:
-        """Handle theme selection from the tree."""
-        theme_name = str(event.node.label)
-        if event.node.data == "user":
-            self.load_user_theme(theme_name)
-        elif event.node.data == "catalog":
-            self.load_theme(theme_name)
 
     def load_theme(self, theme_name: str) -> None:
         """Load a theme for editing."""
@@ -607,7 +603,7 @@ class SettingsThemeEditor(Vertical):
     def on_theme_name_changed(self, event: Input.Changed) -> None:
         """Keep current_theme_name in step with the Name box (TASK-31251).
 
-        Apply, Export, Reset and Delete all read ``current_theme_name``;
+        Try, Save as and Reset all read ``current_theme_name``;
         without this they acted on the name from the last load. Programmatic
         loads set the box to the name already held, so the equality guard
         makes those echoes no-ops.
@@ -621,8 +617,8 @@ class SettingsThemeEditor(Vertical):
     def _require_theme_name(self) -> str | None:
         """Return the current theme name if it is non-empty and file-safe.
 
-        Notifies and returns ``None`` otherwise, so Apply/Export/Delete/Reset/
-        Set-as-default share Save's guard instead of trusting a raw value.
+        Notifies and returns ``None`` otherwise, so Try and Reset share
+        Save's guard instead of trusting a raw value.
         """
         name = self.current_theme_name.strip()
         if not name:
@@ -675,9 +671,25 @@ class SettingsThemeEditor(Vertical):
 
     @on(Button.Pressed, "#settings-theme-save")
     def on_save_theme(self) -> None:
-        """Save the current theme."""
-        theme_name = self.query_one("#settings-theme-name", Input).value.strip()
+        """Save the current theme under the Name box's name."""
+        self._save_under(self.query_one("#settings-theme-name", Input).value.strip())
 
+    @on(Button.Pressed, "#settings-theme-save-as")
+    def on_save_as_pressed(self, event: Button.Pressed) -> None:
+        """Ask the screen for a new name (it owns the prompt)."""
+        event.stop()
+        self.post_message(self.SaveAsRequested(self.current_theme_name))
+
+    def save_as(self, name: str) -> None:
+        """Write the working palette as a new theme ``name``.
+
+        The file the editor was loaded from is left untouched; an existing
+        ``name.toml`` gets the same overwrite confirmation as Save.
+        """
+        self._save_under(name.strip())
+
+    def _save_under(self, theme_name: str) -> None:
+        """Validate ``theme_name``, confirm an overwrite, then write it."""
         if not theme_name:
             self.app.notify("Please enter a theme name", severity="warning")
             return
@@ -722,7 +734,7 @@ class SettingsThemeEditor(Vertical):
     def _write_theme_file(
         self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
     ) -> None:
-        """Write the theme TOML, register it, and update the tree."""
+        """Write the theme TOML and register it; post ``Saved`` on success."""
         try:
             with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
                 temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
@@ -740,25 +752,34 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
+            if self.current_theme_name != theme_name:
+                # Save as: the editor now edits the new file. Name first, so
+                # the Name box's Changed echo is a no-op.
+                self.current_theme_name = theme_name
+                self.query_one("#settings-theme-name", Input).value = theme_name
+            self._reapply_if_active(theme_name)
             self.post_message(self.ThemesChanged())
-
-            tree = self.query_one("#settings-theme-tree", Tree)
-            user_node = None
-            for node in tree.root.children:
-                if str(node.label) == "Your themes":
-                    user_node = node
-                    break
-
-            if user_node:
-                theme_exists = any(
-                    str(child.label) == theme_name for child in user_node.children
-                )
-                if not theme_exists:
-                    user_node.add_leaf(theme_name, data="user")
-                self._sync_user_placeholder(user_node)
+            self.post_message(self.Saved(theme_name))
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(f"Failed to save theme: {self._failure_reason(e)}", severity="error")
+
+    def _reapply_if_active(self, name: str) -> None:
+        """Spec §6: saving the theme the app is showing re-applies it.
+
+        Done here, not in the pane, so the category-leave Save (which tears
+        the pane down before its messages run) re-applies too.
+        """
+        from ..css.Themes.theme_catalog import use_theme
+
+        active = str(self.app.theme)
+        if active not in (name, f"custom_{name}"):
+            return
+        use_theme(self.app, name, persist=False)
+        if active == name:
+            # Same name: Textual's theme watcher does not re-fire, so the
+            # re-registered palette needs an explicit CSS refresh.
+            self.app.refresh_css(animate=False)
 
     def _snapshot_variables_palette(self) -> None:
         self._variables_palette = (dict(self.current_theme_data), bool(self.is_dark_theme))
@@ -862,7 +883,6 @@ class SettingsThemeEditor(Vertical):
             return
         self.app.notify("Theme reset to original values", severity="information")
 
-    @on(Button.Pressed, "#settings-theme-new")
     def on_new_theme(self) -> None:
         """Create a new theme (confirms before discarding unsaved edits)."""
         # task-1371: starting a new theme replaces the working palette, so it
@@ -890,10 +910,9 @@ class SettingsThemeEditor(Vertical):
     def _new_theme(self) -> None:
         """Start a new theme from the current palette (post-confirmation when modified).
 
-        TASK-31257: the tree hint promises "from the current palette" and
-        Clone already works that way; the hardcoded blue set is only the
-        fallback for an editor that has nothing loaded yet. The dark flag is
-        kept as well.
+        TASK-31257: New starts from the current palette, the way Clone
+        works; the hardcoded blue set is only the fallback for an editor that
+        has nothing loaded yet. The dark flag is kept as well.
         """
         defaults = {
             "primary": "#0099FF",
@@ -918,11 +937,12 @@ class SettingsThemeEditor(Vertical):
 
         self._update_color_inputs()
         self._update_dark_mode_checkbox()
-        self.is_modified = True
+        # TASK-32948: a new theme starts clean; only a real edit marks it, so
+        # Back without edits does not prompt.
+        self.is_modified = False
 
         self.app.notify("Creating new theme", severity="information")
 
-    @on(Button.Pressed, "#settings-theme-clone")
     def on_clone_theme(self) -> None:
         """Clone the current theme."""
         new_name = f"{self.current_theme_name}_copy"
@@ -934,16 +954,9 @@ class SettingsThemeEditor(Vertical):
 
         self.current_theme_name = new_name
         self._loaded_user_theme = None
-        self.is_modified = True
+        self.is_modified = False  # TASK-32948: clean until the first real edit
 
         self.app.notify(f"Cloned theme as '{new_name}'", severity="information")
-
-    @on(Button.Pressed, "#settings-theme-delete")
-    def on_delete_theme(self) -> None:
-        """Delete the current user theme."""
-        if self._require_theme_name() is None:
-            return
-        self.request_delete(self.current_theme_name)
 
     def request_delete(self, name: str) -> None:
         """Confirm, then delete the saved theme ``name`` (see ``_delete_user_theme``)."""
@@ -1005,16 +1018,6 @@ class SettingsThemeEditor(Vertical):
                 self, "theme_file", writing=True, selected_read=theme_path
             ) as operation:
                 raw._unlink(operation, theme_path)
-
-            tree = self.query_one("#settings-theme-tree", Tree)
-            for node in tree.root.children:
-                if str(node.label) == "Your themes":
-                    for child in node.children:
-                        if str(child.label) == theme_name:
-                            child.remove()
-                            break
-                    self._sync_user_placeholder(node)
-                    break
 
             self._release_registration(theme_name)
             self._fall_back_after_delete(theme_name)
@@ -1181,15 +1184,6 @@ class SettingsThemeEditor(Vertical):
         self.post_message(self.ThemesChanged())
         self.app.notify(f"Renamed '{old}' to '{new}'", severity="success")
         return True
-
-    @on(Button.Pressed, "#settings-theme-export")
-    def on_export_theme(self) -> None:
-        """Export the current theme."""
-        name = self._require_theme_name()
-        if name is None:
-            return
-        # The editor's working palette, unsaved edits included.
-        self._export(name, self._theme_file_data(name))
 
     def export_theme(self, name: str) -> None:
         """Export the saved theme file ``name`` (not the editor's palette)."""
@@ -1379,30 +1373,3 @@ class SettingsThemeEditor(Vertical):
             return f"#{r:02X}{g:02X}{b:02X}"
         except Exception:
             return "#808080"
-
-    def _populate_theme_tree(self) -> None:
-        """Populate the theme tree with built-in, custom, and user themes."""
-        tree = self.query_one("#settings-theme-tree", Tree)
-        tree.root.remove_children()
-
-        # TASK-31256: the user's own themes first and open; the two Textual
-        # built-ins; then the 58 shipped themes collapsed so they do not push
-        # everything else out of the 12-row box. The root is expanded so the
-        # box is never a collapsed line over ten blank rows (task-1585).
-        user_node = tree.root.add("Your themes", expand=True)
-        self._load_user_themes(user_node)
-
-        builtin_node = tree.root.add("Built-in", expand=True)
-        for theme_name in BUILTIN_THEMES:  # task-32945: all of Textual's
-            builtin_node.add_leaf(theme_name, data="catalog")
-
-        shipped_node = tree.root.add("Shipped themes", expand=False)
-        for theme in ALL_THEMES:
-            if hasattr(theme, "name"):
-                shipped_node.add_leaf(theme.name, data="catalog")
-
-        tree.root.expand()
-
-    def on_show(self) -> None:
-        """Refresh the theme tree when the widget becomes visible."""
-        self._populate_theme_tree()
