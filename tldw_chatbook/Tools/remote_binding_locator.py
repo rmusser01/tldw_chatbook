@@ -31,20 +31,34 @@ string, a missing port as ``22``, and the path is normalized. Callers
 normalize case (e.g. lowercase the ``ssh -G``-resolved host) before hashing;
 this helper only hashes the strings it is given.
 
+Canonical resolution (``canonicalize_locator``): ``ssh -G`` prints the
+fully resolved *local* configuration for a destination and exits — no
+connection is made, nothing is resolved through DNS, and no command runs
+remotely. The config-expanded symbolic identity (``HostName`` exactly as
+written in the ssh config, ``port``, ``user``) is the ADR-069-style
+fingerprint source (via ``canonical_fingerprint``): cosmetic alias edits
+do not trip re-consent, while a config change that genuinely moves the
+destination does. Resolution runs only at binding add/edit, manual
+refresh, and workspace open — never in the send path.
+
 Stdlib only — this module sits below the pinned remote worker's import
 closure.
 """
 
 import hashlib
 import re
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 __all__ = [
+    "CanonicalTarget",
     "RemoteLocator",
     "RemoteLocatorError",
     "build_ssh_argv",
+    "canonical_fingerprint",
+    "canonicalize_locator",
     "locator_string",
     "parse_remote_locator",
     "sha256_fingerprint",
@@ -54,6 +68,15 @@ _SCHEME = "ssh://"
 _DEFAULT_PORT = 22
 _MIN_PORT = 1
 _MAX_PORT = 65535
+
+# ``ssh -G`` is a local config dump; 10s is far beyond any legitimate
+# runtime and bounds a wedged binary (module-level so tests can tighten
+# it for the timeout case).
+_SSH_G_TIMEOUT_SECONDS = 10.0
+
+# The only ``ssh -G`` output keys consumed; everything else it prints is
+# ignored.
+_SSH_G_KEYS = ("hostname", "port", "user")
 
 # Component charsets (spec: "Charset validation, three distinct sets").
 # Note ``-`` is allowed inside a component but never as its first character;
@@ -290,3 +313,128 @@ def build_ssh_argv(
     if loc.user is not None:
         argv += ["-l", loc.user]
     return argv + ["--", loc.host, *command]
+
+
+@dataclass(frozen=True)
+class CanonicalTarget:
+    """The ``ssh -G``-resolved symbolic identity of a locator's destination.
+
+    Attributes:
+        hostname: Config-expanded ``HostName`` exactly as written in the
+            ssh config — never DNS-resolved to an IP — lowercased (DNS
+            names are case-insensitive, so ``DevBox`` and ``devbox`` are
+            the same destination and must fingerprint identically).
+        port: Config-expanded TCP port. ``ssh -G`` always reports a
+            concrete value (defaulting to 22).
+        user: Config-expanded login user, verbatim — ssh treats
+            usernames case-sensitively, so no case normalization is
+            applied. ``None`` only arises from manual construction;
+            ``ssh -G`` always reports a user.
+    """
+
+    hostname: str
+    port: int
+    user: str | None
+
+
+def canonicalize_locator(
+    loc: RemoteLocator, *, ssh_bin: str = "ssh"
+) -> CanonicalTarget:
+    """Resolve a locator to its config-expanded symbolic identity via ``ssh -G``.
+
+    Runs ``ssh -G`` with the argv built from the locator's validated
+    parts — ``ssh -G [-p <port>] [-l <user>] -- <host>``, identical
+    construction to :func:`build_ssh_argv` — which prints the fully
+    resolved local configuration and exits: no connection is made,
+    nothing is resolved through DNS, and no command runs remotely
+    (``ssh -G`` takes no command). Called only at binding add/edit,
+    manual refresh, and workspace open — never in the send path.
+
+    Only the three identity keys (``hostname``, ``port``, ``user``) are
+    consumed; every other key ``ssh -G`` prints is ignored. The hostname
+    is lowercased; the user is kept verbatim (see
+    :class:`CanonicalTarget` for the case rationale).
+
+    Args:
+        loc: A validated locator; the host may be an ``ssh_config`` alias.
+        ssh_bin: Path to (or name of) the ``ssh`` binary to execute.
+
+    Returns:
+        The canonical target: config-expanded hostname (lowercased),
+        port, and user.
+
+    Raises:
+        RemoteLocatorError: If ``ssh -G`` cannot be executed, exits
+            nonzero, times out, or its output lacks a usable
+            ``hostname``/``port``/``user`` line. Messages are static
+            reasons that name the offending key but never echo command
+            output.
+    """
+    argv = [ssh_bin, *build_ssh_argv(loc, ["-G"], [])]
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=_SSH_G_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RemoteLocatorError(
+            f"ssh -G timed out after {_SSH_G_TIMEOUT_SECONDS:g} seconds"
+        ) from exc
+    except OSError as exc:
+        raise RemoteLocatorError(f"ssh -G could not be run: {exc}") from exc
+    if completed.returncode != 0:
+        raise RemoteLocatorError(f"ssh -G exited with status {completed.returncode}")
+
+    values: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[0] in _SSH_G_KEYS:
+            values[parts[0]] = parts[1].strip()
+
+    missing = [key for key in _SSH_G_KEYS if not values.get(key)]
+    if missing:
+        raise RemoteLocatorError(
+            "ssh -G output missing required key(s): "
+            + ", ".join(repr(key) for key in missing)
+        )
+
+    try:
+        port = int(values["port"])
+    except ValueError as exc:
+        raise RemoteLocatorError(
+            "ssh -G returned a non-numeric 'port' value"
+        ) from exc
+
+    return CanonicalTarget(
+        hostname=values["hostname"].lower(),
+        port=port,
+        user=values["user"],
+    )
+
+
+def canonical_fingerprint(target: CanonicalTarget, path: PurePosixPath) -> str:
+    """Fingerprint a canonical target plus path for retarget detection.
+
+    Owns case normalization on behalf of :func:`sha256_fingerprint`
+    (whose contract is that callers normalize before hashing): the
+    hostname is lowercased here — :func:`canonicalize_locator` already
+    lowercases it, and the defensive repeat keeps hand-built targets
+    honest — while the user is hashed verbatim because ssh treats
+    usernames case-sensitively. The port follows ``sha256_fingerprint``'s
+    rule (an int as-is; a ``None`` would serialize as the SSH default
+    22) and the path is normalized by the underlying hash.
+
+    Args:
+        target: The ``ssh -G``-resolved symbolic identity.
+        path: The binding's normalized absolute POSIX path.
+
+    Returns:
+        The sha256 hexdigest of ``<user>@<hostname>:<port><path>``.
+    """
+    return sha256_fingerprint(
+        target.user, target.hostname.lower(), target.port, path
+    )
