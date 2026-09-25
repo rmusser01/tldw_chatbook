@@ -36,7 +36,7 @@ picker. Delivered as three PRs, each leaving a working screen (design spec
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [x] #1 (PR 1) Theme opens on a picker: a filter box, a grouped list (yours / shipped / Textual) with a colour strip and word markers (`active`, `launch`, `overrides shipped`/`overrides Textual`) per row, and a preview card that repaints on highlight without touching the running app
+- [x] #1 (PR 1) Theme opens on a picker: a filter box, a grouped list (yours / shipped / Textual) with a colour strip and word markers (`active`, `launch`, `overrides shipped`/`overrides textual`) per row, and a preview card that repaints on highlight without touching the running app
 - [x] #2 (PR 1) Enter (or Use this theme) switches to the highlighted theme and saves it as the launch default in one action; `t`/Try switches for the session only and saves nothing; a Revert control appears after either and restores the state from before the first Try/Use in the chain
 - [x] #3 (PR 1) `c`/Clone and `n`/New open the existing full editor in the same pane (a ContentSwitcher, not a modal), pre-loaded from the highlighted theme; Back returns to the picker and, with unsaved edits, asks Stay/Discard/Save
 - [x] #4 (PR 1) Appearance shows a read-only theme row (launch default + active theme, each named) and an Open Theme button that lands on the picker; Appearance no longer has its own theme dropdown, and its Save/Preview no longer touch the theme

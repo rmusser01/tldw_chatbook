@@ -477,7 +477,7 @@ scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
 while you're filtering (e.g. "SHIPPED (12)"). Every row paints a seven-colour
 strip plus word markers, never colour alone: **active** on the theme running
 right now, **launch** on the configured launch default, and **overrides
-shipped** / **overrides Textual** when one of your saved themes shadows a
+shipped** / **overrides textual** when one of your saved themes shadows a
 built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/textual") and a live swatch preview — without
