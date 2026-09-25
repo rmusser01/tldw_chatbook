@@ -118,9 +118,57 @@ def test_readiness_does_not_import_gateway_or_config_runtime_modules(
 
 
 def test_settings_execution_provider_keys_match_chat_api_handlers() -> None:
-    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    """Console settings keys are identity spellings of the handler map.
 
-    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS == frozenset(API_CALL_HANDLERS)
+    b03c4e61df pinned set equality when every handler key was also a
+    Console-settings key. ADR-179 engine keys ended that 1:1 (Phase 1
+    databricks first; red since 37ecb890e2): ``custom-hosted`` is an
+    execution-only spelling -- identity surfaces keep the
+    ``custom``/``custom-openai-api`` spellings per ADR-179 Phase 2 Task 6
+    decision 1 -- and the cloud engine presets (databricks, together,
+    fireworks, cerebras) have not been added to the Console settings
+    modal's support set, so the modal labels them "(WIP)" with blocked
+    readiness copy even though the gateway's default handler universe
+    (full API_CALL_HANDLERS) already dispatches them.
+
+    The invariant therefore compares identity keys, not raw key sets:
+
+    1. every settings key is a real handler key (no orphaned spellings);
+    2. every settings key resolves to a supported identity through the
+       handler map (no spelling drift between the two sets);
+    3. every handler key is covered by the settings set, an explicit
+       engine-execution-only spelling, or the explicit Console-settings
+       gap below -- new handlers must join one side or the other
+       deliberately, so drift can never accumulate silently again.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+
+    handler_keys = frozenset(API_CALL_HANDLERS)
+    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS <= handler_keys
+    for settings_key in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS:
+        identity = resolve_console_provider_identity(
+            settings_key, handler_keys=handler_keys
+        )
+        assert identity.is_supported, settings_key
+
+    engine_execution_only_keys = frozenset({"custom-hosted"})
+    console_settings_gap = frozenset(
+        {"databricks", "together", "fireworks", "cerebras"}
+    )
+    # Both exclusion lists must name real handlers (no typo'd gap entries).
+    assert (
+        engine_execution_only_keys | console_settings_gap
+    ) <= handler_keys
+    uncovered = (
+        handler_keys
+        - CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        - engine_execution_only_keys
+        - console_settings_gap
+    )
+    assert uncovered == frozenset(), sorted(uncovered)
 
 
 def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
