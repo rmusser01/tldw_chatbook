@@ -491,3 +491,8 @@ the full path list.
 - Tests: 2 in `Tests/UI/test_settings_theme_picker.py`, 8 in
   `Tests/UI/test_settings_theme_picker_screen.py`; User Guide updated
   (Esc, Revert/rename).
+
+### Delete-of-launch-default fallback narrowed (user decision)
+
+- User decision 2026-09-25: deleting the launch default changes only the
+  setting unless that theme is on screen.

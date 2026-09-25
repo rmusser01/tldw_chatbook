@@ -1072,17 +1072,39 @@ class SettingsThemeEditor(Vertical):
             self.app.unregister_theme(name)
 
     def _fall_back_after_delete(self, name: str) -> None:
-        """Move the running theme / launch default off a deleted theme."""
-        from ..css.Themes.theme_catalog import current_launch_default, use_theme
+        """Move the running theme / launch default off a deleted theme.
+
+        User decision 2026-09-25: deleting the launch default changes only
+        the *setting* unless that theme is the one on screen -- deleting an
+        inactive launch default must not switch the running theme.
+        """
+        from ..css.Themes.theme_catalog import (
+            current_launch_default,
+            persist_launch_default,
+            use_theme,
+        )
 
         launch = current_launch_default()
         was_active = str(self.app.theme) in (name, f"custom_{name}")
-        if launch == name:
+        if launch == name and was_active:
             change = use_theme(self.app, "textual-dark", persist=True)
             if change.persisted:
                 self.post_message(self.LaunchDefaultChanged("textual-dark"))
                 self.app.notify(
                     f"Deleted '{name}'; launch default and theme reset to Textual Dark",
+                    severity="success",
+                )
+            else:
+                self.app.notify(
+                    f"Deleted '{name}', but could not save the launch default; check the config file",
+                    severity="error",
+                )
+        elif launch == name:
+            persisted, _ = persist_launch_default(self.app, "textual-dark")
+            if persisted:
+                self.post_message(self.LaunchDefaultChanged("textual-dark"))
+                self.app.notify(
+                    f"Deleted '{name}'; launch default reset to Textual Dark",
                     severity="success",
                 )
             else:
