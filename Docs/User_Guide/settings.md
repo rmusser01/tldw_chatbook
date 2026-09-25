@@ -436,11 +436,13 @@ stay governed by the per-provider defaults chain. Credentials follow the
 usual precedence — `api_key_env` (a variable name; the safer form) wins over
 a stored `api_key` — and endpoint displays never show the key.
 
-**The strict engine behind OpenAI-compatible.** OpenAI-compatible entries
-(and the built-in `custom`/`custom_2` slots) execute through the shared
-strict hosted-provider engine rather than the old per-provider handler. The
-base URL, credential, saved sessions, and reasoning behavior are unchanged —
-what changed is response validation and request strictness:
+**The strict engine behind OpenAI-compatible.** OpenAI-compatible
+custom-endpoint entries — the `custom-ep:<slug>` registry entries — execute
+through the shared strict hosted-provider engine rather than the old
+per-provider handler. The built-in `custom`/`custom_2` slots are not part
+of this swap: they keep the legacy handler regardless of the switch below.
+The base URL, credential, saved sessions, and reasoning behavior are
+unchanged — what changed is response validation and request strictness:
 
 - **Tolerant parsing, only where long-tail servers proved it.** Unknown
   shape-safe extra fields at the top level of a response or stream event are
@@ -461,8 +463,11 @@ what changed is response validation and request strictness:
   spellings) are read from the section, and explicit per-send values win.
 - **Stricter request handling than the legacy path.** Sampler values are
   validated to the `[0, 1]` range — an out-of-range `temperature` is
-  rejected with an error instead of forwarded. `top_logprobs` without
-  `logprobs = true` is an error (the legacy path silently dropped it).
+  rejected with an error instead of forwarded. When no `[api_settings.custom]`
+  value supplies a temperature, the payload omits the sampler entirely (the
+  server default applies) — the legacy path sent `temperature = 0.7`.
+  `top_logprobs` without `logprobs = true` is an error (the legacy path
+  silently dropped it).
   String spellings like `streaming = "true"` are no longer coerced — use a
   real boolean. And the section-level `tools`, `tool_choice`, `logit_bias`,
   `presence_penalty`, `frequency_penalty`, `n`, and `user` keys are no
@@ -470,10 +475,12 @@ what changed is response validation and request strictness:
   work); move any pinned section values into the chat defaults chain.
 - **Rollback switch.** If a long-tail server misbehaves under the engine,
   set `custom_endpoints_use_engine = false` under `[console]` in
-  `config.toml` to return every OpenAI-compatible entry (and the built-in
-  slots) to the legacy handler. It defaults to `true`; flip it only to
-  isolate a suspected engine regression, and please report the server's
-  response shape so the tolerant profile can be widened with evidence.
+  `config.toml` to return every OpenAI-compatible custom-endpoint entry to
+  the legacy handler. The built-in `custom`/`custom_2` slots never execute
+  through the engine, so the switch does not affect them. It defaults to
+  `true`; flip it only to isolate a suspected engine regression, and please
+  report the server's response shape so the tolerant profile can be widened
+  with evidence.
 
 **Creating one.** In the Console settings modal, the **New endpoint…**
 button sits with **Base URL** (it appears for providers that take a base
