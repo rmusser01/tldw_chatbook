@@ -19,8 +19,10 @@ from Tests.UI.theme_editor_helpers import open_theme_editor
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 THEMES = ("textual-dark", "textual-light", "gruvbox_dark", "solarized_light")
-FILLED = ("apply", "save", "reset", "delete")
-PLAIN = ("new", "clone", "export", "generate")
+# TASK-32948 PR 2: New/Clone/Delete/Export moved to the picker; the editor
+# card keeps Try (id `apply`), Save, Save as, Reset and Generate.
+FILLED = ("apply", "save", "reset")
+PLAIN = ("save-as", "generate")
 
 
 def _host():
@@ -208,7 +210,7 @@ async def test_focused_theme_buttons_keep_variant_meaning(theme, request):
                 f"{theme}/{name} focus shift {_contrast(bg, rest_bg):.2f}:1"
             )
             if name in FILLED:
-                # Apply/Save/Reset/Delete keep their variant hue on focus.
+                # Try/Save/Reset keep their variant hue on focus.
                 assert {rest_fg, rest_bg} & {fg, bg}, f"{theme}/{name} lost its hue"
             host.set_focus(None)
             await pilot.pause(0.05)

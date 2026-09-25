@@ -353,10 +353,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
     config = install_config_source(monkeypatch)
     from tldw_chatbook.Widgets import settings_theme_editor as themes
-    from Tests.UI.test_settings_theme_editor import (
-        _isolated_editor_app,
-        _user_theme_labels,
-    )
+    from Tests.UI.test_settings_theme_editor import _isolated_editor_app
     from textual.widgets import Input
 
     monkeypatch.setattr(
@@ -378,7 +375,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
         monkeypatch.setattr(themes.toml, "dump", fail)
         editor.on_save_theme()
         assert editor.is_modified
-        assert "mine" not in _user_theme_labels(editor)
+        assert "mine" not in editor.list_user_theme_names()
         assert not (editor.custom_themes_path / "mine.toml").exists()
         assert not list(editor.custom_themes_path.glob("*.tmp"))
         monkeypatch.setattr(themes.toml, "dump", original)
@@ -391,7 +388,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
             pause.resume()
         editor.on_save_theme()
         assert not editor.is_modified
-        assert "mine" in _user_theme_labels(editor)
+        assert "mine" in editor.list_user_theme_names()
         assert (editor.custom_themes_path / "mine.toml").exists()
 
 

@@ -95,12 +95,14 @@
 }
 
 /* ===== Settings theme editor ===== */
-#settings-theme-tree {
+/* TASK-32948: the theme list moved to the picker; the header says what is
+   being edited ("Editing x · copy of Y"). */
+#settings-theme-editor-header {
     width: $ds-width-full;
-    height: $ds-size-12;
-    min-height: $ds-size-8;
-    border: solid $ds-grid-line;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    height: auto;
+    color: $ds-text-primary;
+    text-style: bold;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from

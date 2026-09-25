@@ -193,7 +193,8 @@ async def test_up_on_first_row_returns_to_filter(request, config_writes):
     async with app.run_test(size=(160, 45)) as pilot:
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.focus()
-        lst.highlighted = lst.get_option_index(_option_ids(picker)[1])  # first enabled row
+        # First enabled row (an empty YOUR THEMES now shows a disabled "(none yet)").
+        lst.highlighted = lst.get_option_index(next(i for i in _option_ids(picker) if i))
         await pilot.press("up")
         await pilot.pause()
         assert app.focused.id == "settings-theme-filter"
@@ -420,3 +421,22 @@ async def test_pause_row_disables_file_actions(request, config_writes):
         await pilot.press("enter")
         await pilot.pause()
         assert app.theme == "nord" and app.theme != before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_empty_your_themes_says_none_yet(request, config_writes):
+    """Spec §9 / task-32945: an empty YOUR THEMES group shows an inert
+    "(none yet)" row (the retired editor tree used to own this)."""
+    app, picker = await _picker_app(list_user_names=set)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        prompts = [str(lst.get_option_at_index(i).prompt) for i in range(3)]
+        assert prompts[:2] == ["YOUR THEMES", "(none yet)"]
+        assert lst.get_option_at_index(1).disabled
+        # The filter hides it: no match is not the same as no themes.
+        picker.query_one("#settings-theme-filter").value = "nord"
+        await pilot.pause()
+        prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert "(none yet)" not in prompts

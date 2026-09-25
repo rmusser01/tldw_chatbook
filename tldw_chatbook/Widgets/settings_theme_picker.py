@@ -13,6 +13,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.message import Message
 from textual.widgets import Button, ContentSwitcher, Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -206,14 +207,19 @@ class ThemePicker(Vertical):
         options: list[Option] = []
         for origin, title in _GROUP_TITLES.items():
             group = [e for e in shown if e.origin == origin]
-            show_pause_row = origin == "yours" and not self.files_available
-            if not group and not show_pause_row:
+            placeholder = None
+            if origin == "yours":
+                if not self.files_available:
+                    placeholder = THEMES_UNAVAILABLE_LABEL
+                elif not group and not query:
+                    placeholder = "(none yet)"  # task-32945, spec §9
+            if not group and placeholder is None:
                 continue
             header = f"{title} ({len(group)})" if query else title
             options.append(Option(header, disabled=True))
             options.extend(Option(_row(e), id=e.id) for e in group)
-            if show_pause_row:
-                options.append(Option(THEMES_UNAVAILABLE_LABEL, disabled=True))
+            if placeholder is not None:
+                options.append(Option(placeholder, disabled=True))
         lst = self.query_one("#settings-theme-list", OptionList)
         lst.clear_options()
         lst.add_options(options)
@@ -432,6 +438,7 @@ class ThemePane(ContentSwitcher):
             editor.on_clone_theme()
         elif mode == "new":
             editor.on_new_theme()
+        editor.set_editing_context(theme_id, mode)
         self.current = "settings-theme-editor-view"
         editor.query_one("#settings-theme-name").focus()
 
@@ -449,6 +456,22 @@ class ThemePane(ContentSwitcher):
     def _export_requested(self, event: ThemePicker.ExportRequested) -> None:
         event.stop()
         self._editor().export_theme(event.theme_id)
+
+    @on(SettingsThemeEditor.Saved)
+    def _saved(self, event: SettingsThemeEditor.Saved) -> None:
+        """Save / Save as return to the picker with the saved theme highlighted.
+
+        The category-leave Save tears this pane down right after saving, so
+        a detached pane just ignores the message.
+        """
+        event.stop()
+        if not self.is_attached:
+            return
+        try:
+            self.show_picker()
+            self.query_one(ThemePicker).refresh_catalog(highlight=event.theme_name)
+        except QueryError:
+            return
 
     @on(SettingsThemeEditor.ThemesChanged)
     def _themes_changed(self, event: SettingsThemeEditor.ThemesChanged) -> None:
