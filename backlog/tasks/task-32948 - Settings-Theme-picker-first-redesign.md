@@ -727,3 +727,39 @@ Modified: `tldw_chatbook/Widgets/settings_theme_editor.py`,
 `Tests/UI/test_settings_theme_picker_screen.py`, `Tests/Utils/
 test_theme_catalog.py`, `Tests/Utils/test_user_theme_loader.py`,
 `Tests/UI/test_command_palette_providers.py`.
+
+### PR 3 final-review fixes (R39, R40)
+
+- **R39 (security, terminal escape injection):** TOML `\u001b` escapes in
+  values (and raw ESC bytes, which the `toml` parser accepts, in quoted
+  keys — it does not unescape keys) reached the terminal through import
+  refusals, the unreadable-row card/tooltips and rename notices;
+  `escape_markup` only escapes `[`. New `printable()` in
+  `css/Themes/themes.py` (non-printable → `?`) is applied at the shared
+  seams: `SettingsThemeEditor._failure_reason` (every file-error notice and
+  the card error), `theme_from_file_data`'s key error, the Import refusal
+  notice, the unreadable entry's display name, and the loader/scan log
+  lines. A name that is not `isprintable()` is refused at Import ("control
+  characters are not allowed") and by `theme_from_file_data` ("name has
+  control characters"), so the startup loader skips it and the picker lists
+  it as unreadable. Tests render the notice through `Content.from_markup` →
+  `Strip` and assert every character is printable.
+- **R40(a):** unreadable entries get id `unreadable:<stem>` (display
+  unchanged), so a corrupted `nord.toml` is listed beside the built-in nord;
+  `request_delete` resolves the prefixed id to the file (a readable theme
+  of that exact name still wins) and names it by file name in the dialog
+  and toast; `rename_user_theme` accepts either form.
+- **R40(b):** `ThemePicker(list_themes=)` — one hook returning
+  `(names, unreadable)`; `ThemePane` feeds it one `user_theme_listing()`
+  scan per refresh. Per-file parse failures log at WARNING. Diagnostic
+  inventory rows reviewed (file name + short path-free reason only) and
+  rewritten.
+- **R40(c):** Import accepts only what the editor's
+  `_validate_color_input` accepts (`#RGB`/`#RRGGBB`): "`<key>: '<value>' is
+  not #RRGGBB`".
+- **R40(d):** a blocked Enter/t/c/n/e/r on an unreadable row notifies
+  "This theme file can't be read: <error>" once per key.
+- **R40(e):** unquoted POSIX drop paths unescape any `\X` → `X`.
+- **R40(f):** Import prompt title "Import theme — full path to a .toml file".
+- **R40(g):** `test_theme_file_dark_flag_coerces_strings` moved to
+  `Tests/Utils/test_user_theme_loader.py`.

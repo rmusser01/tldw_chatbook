@@ -563,7 +563,7 @@ async def test_picker_lists_via_editor_scope(request, monkeypatch):
     def paused(self):
         raise RecoveryRequired("x")
 
-    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    monkeypatch.setattr(SettingsThemeEditor, "user_theme_listing", paused)
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Theme")
@@ -739,7 +739,7 @@ async def test_save_buttons_disabled_while_theme_files_are_paused(request, monke
     def paused(self):
         raise RecoveryRequired("x")
 
-    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    monkeypatch.setattr(SettingsThemeEditor, "user_theme_listing", paused)
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
         await _highlight(host, pilot, "apricot")
@@ -974,20 +974,30 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
 
     themes = config._get_effective_config_path().parent / "themes"
     themes.mkdir(exist_ok=True)
-    path = themes / "broken.toml"
+    # R40(a): nord.toml shares its stem with the Textual built-in nord.
+    path = themes / "nord.toml"
     path.write_text("garbage [[ not toml", encoding="utf-8")
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
-        await _highlight(host, pilot, "broken")
+        await _highlight(host, pilot, "unreadable:nord")
         picker = host.screen.query_one("#settings-theme-picker")
-        entry = next(e for e in picker.entries if e.id == "broken")
+        entry = next(e for e in picker.entries if e.id == "unreadable:nord")
         assert entry.origin == "yours" and entry.error == "not valid TOML"
+        assert entry.display_name == "Nord (unreadable)"
+        # R40(b): the pane lists through ONE scan per refresh.
+        editor = host.screen.query_one("#settings-theme-editor")
+        scans = []
+        real_scan = editor._scan_theme_files
+        editor._scan_theme_files = lambda: scans.append(1) or real_scan()
+        picker.refresh_catalog()
+        assert len(scans) == 1
         await pilot.press("delete")
         await pilot.pause(0.2)
         await pilot.click("#confirm-button")  # "Delete theme"
         await pilot.pause(0.3)
         assert not path.exists()
-        assert "broken" not in _picker_ids(host)
+        assert "unreadable:nord" not in _picker_ids(host)
+        assert "nord" in _picker_ids(host)
 
 
 @pytest.mark.asyncio
@@ -1021,6 +1031,8 @@ async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_pa
         await pilot.press("i")
         await pilot.pause(0.2)
         assert isinstance(host.screen, RagProfileNameModal)
+        # R40(f): the prompt says what it wants.
+        assert host.screen._modal_title == "Import theme — full path to a .toml file"
         host.screen.query_one("#settings-rag-profile-name-input", Input).value = f"'{source}'"
         await pilot.click("#settings-rag-profile-name-confirm")
         await pilot.pause(0.3)

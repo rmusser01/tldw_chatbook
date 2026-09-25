@@ -24502,7 +24502,7 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for a theme file path, then import it through the editor."""
         event.stop()
         self.app.push_screen(
-            RagProfileNameModal(title="Import theme from file", initial="", confirm_label="Import"),
+            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
             self._handle_theme_import_result,
         )
 

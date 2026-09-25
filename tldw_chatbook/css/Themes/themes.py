@@ -207,6 +207,16 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     return safe
 
 
+def printable(text: object) -> str:
+    """``text`` with every non-printable character replaced by ``?`` (R39).
+
+    TOML ``\\u001b`` escapes yield real control characters; echoed into a
+    notice, card or title they reach the terminal (an OSC 52 clipboard
+    write, a reset). ``escape_markup`` does not remove them.
+    """
+    return "".join(c if c.isprintable() else "?" for c in str(text))
+
+
 _DARK_FALSE = frozenset({"false", "0", "no", "off"})
 
 
@@ -235,16 +245,20 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
         The theme, as the startup loader registers it.
 
     Raises:
-        ValueError: ``[colors]`` holds a key that is not a base colour.
+        ValueError: ``[colors]`` holds a key that is not a base colour, or
+            the name has control characters (R39).
             R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
             used to pass and then crash ``to_color_system().generate()``.
     """
     meta = data.get("theme", {}) or {}
-    name = str(meta.get("name") or fallback_name).strip() or fallback_name
+    raw_name = str(meta.get("name") or fallback_name)
+    if not raw_name.isprintable():
+        raise ValueError("name has control characters")  # R39
+    name = raw_name.strip() or fallback_name
     colors = dict(data.get("colors", {}) or {})
     for key in colors:
         if key not in THEME_COLOUR_KEYS:
-            raise ValueError(f"{str(key)[:40]} is not a theme colour")
+            raise ValueError(f"{printable(str(key)[:40])} is not a theme colour")
     colors["dark"] = theme_file_dark(meta.get("dark", True))
     # TASK-32940: extra colour variables the editor carried over.
     variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)
@@ -284,7 +298,7 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this
             # warning reaches the persistent log (path-privacy policy).
-            logger.warning(f"Skipping unreadable user theme {path.name}: {exc}")
+            logger.warning(f"Skipping unreadable user theme {printable(path.name)}: {printable(exc)}")
     return themes
 
 

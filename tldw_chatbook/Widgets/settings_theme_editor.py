@@ -13,7 +13,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.color import Color, ColorParseError
+from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Click, Key
@@ -25,11 +25,16 @@ from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ..Backup_Recovery import raw_participants as raw
 from ..Backup_Recovery.bootstrap import RecoveryRequired
-from ..css.Themes.theme_catalog import display_name, is_catalog_theme
+from ..css.Themes.theme_catalog import (
+    UNREADABLE_ID_PREFIX,
+    display_name,
+    is_catalog_theme,
+)
 from ..css.Themes.themes import (
     ALL_THEMES,
     create_theme_from_dict,
     pinned_text_hues,
+    printable,
     sanitize_theme_variables,
     theme_file_dark,
     theme_from_file_data,
@@ -399,9 +404,11 @@ class SettingsThemeEditor(Vertical):
                 except RecoveryRequired:
                     raise
                 except Exception as e:
+                    error = self._theme_file_error(e, theme_data)
                     # File name only: the themes directory is a user path.
-                    logger.error(f"Failed to load user theme {theme_file.name}: {e}")
-                    unreadable[theme_file.stem] = (theme_file, self._theme_file_error(e, theme_data))
+                    # WARNING: the picker re-lists on every theme change.
+                    logger.warning(f"Unreadable user theme {printable(theme_file.name)}: {error}")
+                    unreadable[theme_file.stem] = (theme_file, error)
         return files, unreadable
 
     def user_theme_listing(self) -> tuple[dict[str, Path], dict[str, str]]:
@@ -427,7 +434,7 @@ class SettingsThemeEditor(Vertical):
 
     @classmethod
     def _theme_file_error(cls, exc: Exception, data: Any) -> str:
-        """A short, path-free reason a theme file can't be read."""
+        """A short, path-free, printable (R39) reason a theme file can't be read."""
         if data is None and isinstance(exc, (toml.TomlDecodeError, UnicodeDecodeError)):
             return "not valid TOML"
         message = str(exc)
@@ -449,10 +456,13 @@ class SettingsThemeEditor(Vertical):
 
     @staticmethod
     def _failure_reason(exc: Exception) -> str:
-        """R16: an error's reason without the file path OSError carries."""
+        """R16: an error's reason without the file path OSError carries.
+
+        R39: printable only -- a parse error can quote file bytes.
+        """
         if isinstance(exc, OSError):
             return exc.strerror or type(exc).__name__
-        return str(exc)
+        return printable(exc)
 
     def load_theme(self, theme_name: str) -> None:
         """Load a theme for editing."""
@@ -1065,8 +1075,11 @@ class SettingsThemeEditor(Vertical):
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return
-        # PR 3: an unreadable file is listed (and deletable) by its stem.
-        theme_path = files.get(name) or unreadable.get(name, (None, ""))[0]
+        # PR 3 / R40(a): an unreadable file is listed (and deletable) under
+        # its own id, so a broken nord.toml can't hide behind shipped nord.
+        theme_path = files.get(name)
+        if theme_path is None and name.startswith(UNREADABLE_ID_PREFIX):
+            theme_path = unreadable.get(name.removeprefix(UNREADABLE_ID_PREFIX), (None, ""))[0]
 
         # File existence decides: anything saved in the user themes directory
         # is a user theme and deletable, even when its name shadows a shipped
@@ -1092,8 +1105,9 @@ class SettingsThemeEditor(Vertical):
 
         # task-1367: unlinking a user theme file is irreversible -- confirm
         # first; ``name`` is bound here, so a theme switch while the dialog is
-        # up cannot delete the wrong file.
-        theme_name = name
+        # up cannot delete the wrong file. An unreadable file is named by its
+        # file name: it never registered a theme, so nothing falls back.
+        theme_name = name if name in files else printable(theme_path.name)
 
         async def _confirmed_delete() -> None:
             self._delete_user_theme(theme_path, theme_name)
@@ -1226,11 +1240,12 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return False
         old_path = files.get(old)
-        if old_path is None and old in unreadable:
+        stem = old.removeprefix(UNREADABLE_ID_PREFIX)
+        if old_path is None and stem in unreadable:
             self.app.notify(
                 # notify parses markup; name and error are untrusted file text.
-                f"Can't rename '{escape_markup(old)}': this theme file can't be read: "
-                f"{escape_markup(unreadable[old][1])}",
+                f"Can't rename '{escape_markup(printable(stem))}': this theme file can't be read: "
+                f"{escape_markup(unreadable[stem][1])}",
                 severity="error",
             )
             return False
@@ -1398,7 +1413,8 @@ class SettingsThemeEditor(Vertical):
         if isinstance(parsed, str):
             # R16: the reason only, never the source path; file text is
             # untrusted and notify parses markup.
-            self.app.notify(escape_markup(parsed), severity="error")
+            # R39: and may carry control characters.
+            self.app.notify(escape_markup(printable(parsed)), severity="error")
             return None
         name, data, theme = parsed
         # R12: write back to the file that already claims the name.
@@ -1426,9 +1442,9 @@ class SettingsThemeEditor(Vertical):
         if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
             text = text[1:-1]  # a terminal drop can paste a quoted path
         elif os.sep == "/":
-            # R35: macOS Terminal/iTerm drop `/a/My\ Theme.toml`. Targeted,
-            # not shlex: only these escapes, so no other backslash is eaten.
-            text = re.sub(r"\\([ ()'])", r"\1", text)
+            # R35/R40(e): macOS Terminal/iTerm drop `/a/My\ \&\ Theme.toml`,
+            # backslash-escaping any shell-special character: `\X` -> `X`.
+            text = re.sub(r"\\(.)", r"\1", text)
         try:
             path = validate_browsing_path(os.path.expanduser(text))
         except ValueError:
@@ -1465,18 +1481,17 @@ class SettingsThemeEditor(Vertical):
         if not isinstance(colors, dict) or "primary" not in colors:
             return "Missing [colors].primary"
         for key, value in colors.items():
-            try:
-                if not isinstance(value, str):
-                    raise ColorParseError("not a string")
-                Color.parse(value)
-            except ColorParseError:
-                return f"{str(key)[:40]}: '{str(value)[:40]}' is not a colour"
+            # Spec §7 / R40(c): what the editor's colour fields accept.
+            if not (isinstance(value, str) and self._validate_color_input(value)):
+                return f"{str(key)[:40]}: '{str(value)[:40]}' is not #RRGGBB"
         name = str(meta.get("name") or path.stem).strip() or path.stem
         try:
             validate_filename(name)
             if "[" in name:
                 # Review Focus 1: a name is shown in toasts and titles.
                 raise ValueError("'[' is not allowed")
+            if not name.isprintable():
+                raise ValueError("control characters are not allowed")  # R39
         except ValueError as exc:
             return f"Invalid theme name: {exc}"
         if name in ("textual-dark", "textual-light"):

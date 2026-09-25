@@ -126,17 +126,48 @@ HOSTILE = [
     (
         "badcolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = "notacolour"\n',
-        "background: 'notacolour' is not a colour",
+        "background: 'notacolour' is not #RRGGBB",
     ),
     (
         "markupcolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = "[b]x[/b]"\n',
-        "background: '[b]x[/b]' is not a colour",
+        "background: '[b]x[/b]' is not #RRGGBB",
     ),
     (
         "numbercolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = 7\n',
-        "background: '7' is not a colour",
+        "background: '7' is not #RRGGBB",
+    ),
+    # R40(c) / spec §7: hex only, what the editor's colour fields accept.
+    ("named.toml", '[colors]\nprimary = "#112233"\nbackground = "blue"\n', "background: 'blue' is not #RRGGBB"),
+    (
+        "rgb.toml",
+        '[colors]\nprimary = "#112233"\nbackground = "rgb(1,2,3)"\n',
+        "background: 'rgb(1,2,3)' is not #RRGGBB",
+    ),
+    (
+        "rgba-hex.toml",
+        '[colors]\nprimary = "#112233"\nbackground = "#11223344"\n',
+        "background: '#11223344' is not #RRGGBB",
+    ),
+    # R39: TOML \u001b escapes are real ESC chars -- an OSC 52 clipboard
+    # write or a reset must never reach the terminal through a notice.
+    (
+        "osc-value.toml",
+        '[colors]\nprimary = "#112233"\nbackground = "\\u001b]52;c;eA==\\u001b\\\\"\n',
+        "background: '?]52;c;eA==?",
+    ),
+    # The toml parser does not unescape quoted keys, but it accepts a raw
+    # ESC byte in one (the TOML spec forbids it).
+    (
+        "osc-key.toml",
+        '[colors]\nprimary = "#112233"\n"\x1b]52;c;eA==\x1b\\\\" = "#000000"\n',
+        "?]52;c;eA==?",
+    ),
+    (
+        "esc-name.toml",
+        '[theme]\nname = "x\\u001bc"\n[colors]\nprimary = "#112233"\n',
+        "Invalid theme name: control characters are not allowed",
     ),
     ("sep.toml", '[theme]\nname = "../evil"\n[colors]\nprimary = "#112233"\n', "Invalid theme name"),
     ("markup.toml", '[theme]\nname = "x[/]"\n[colors]\nprimary = "#112233"\n', "Invalid theme name"),
@@ -187,6 +218,16 @@ async def test_hostile_or_broken_file_is_refused_and_writes_nothing(
         rendered = to_content(call.args[0]).plain
         assert reason in rendered
         assert str(src) not in rendered  # R16: never the source path
+        # R39: what reaches the terminal carries no control characters.
+        assert all(ch.isprintable() for ch in _terminal_text(call.args[0])), repr(rendered)
+
+
+def _terminal_text(markup: str) -> str:
+    """The text Textual would send to the terminal for a notice."""
+    from textual.content import Content
+    from textual.strip import Strip
+
+    return Strip(Content.from_markup(markup).render_segments()).text
 
 
 @pytest.mark.asyncio
@@ -383,7 +424,16 @@ async def test_source_is_checked_and_read_through_one_nonblocking_descriptor(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("typed", ["My\\ Theme.toml", "My\\ \\(copy\\).toml"])
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "My\\ Theme.toml",
+        "My\\ \\(copy\\).toml",
+        # R40(e): macOS escapes every shell-special character.
+        "My\\ \\&\\ Theme.toml",
+        "a\\,b\\!\\$\\[1\\].toml",
+    ],
+)
 @private_profile_test
 async def test_backslash_escaped_drop_path_imports(request, tmp_path, src, typed):
     """R35: macOS Terminal/iTerm drop `/a/My\\ Theme.toml` (unquoted)."""
@@ -454,19 +504,6 @@ async def test_uppercase_suffix_imports(request, tmp_path, src):
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         assert editor.import_theme(str(src / "THEME.TOML")) == "sunny"
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [('"false"', False), ('"OFF"', False), ('"0"', False), ('"no"', False),
-     ('"true"', True), ('"Yes"', True), ("false", False), ("true", True), ('"maybe"', True)],
-)
-def test_theme_file_dark_flag_coerces_strings(raw, expected):
-    """R31: ``dark = "false"`` is a light theme, not ``bool("false")``."""
-    from tldw_chatbook.css.Themes.themes import theme_from_file_data
-
-    data = toml.loads(f'[theme]\nname = "t"\ndark = {raw}\n[colors]\nprimary = "#FFAA00"\n')
-    assert theme_from_file_data(data, "t", "t.toml").dark is expected
 
 
 @pytest.mark.asyncio

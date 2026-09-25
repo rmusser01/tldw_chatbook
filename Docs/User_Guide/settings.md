@@ -550,21 +550,28 @@ button (copies the path to the clipboard and confirms "Path copied") — the
 row clears the next time you highlight a different theme.
 
 A saved file that can't be read — invalid TOML, a missing or unparseable
-primary colour, or a `[colors]` key that isn't one of the ten base colours —
+primary colour, a `[colors]` key that isn't one of the ten base colours, or
+a name containing control characters ("name has control characters") —
 is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
 the reason as both a short label on the card and every disabled button's
-tooltip. Use, Try, Clone, New, Edit, Rename and Export are all disabled on
-that row; only **Delete** works, so a broken file can always be cleared.
+tooltip. It is listed even when its file name matches a shipped or Textual
+theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
+Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
+pressing one of their keys shows the reason instead. Only **Delete** works,
+so a broken file can always be cleared. Control characters in anything a
+theme file puts on screen — an error, a key, a value — show as `?`.
 
 **Import…** (the button beside New, or the **i** key) brings a theme file
-from outside the app into YOUR THEMES. A modal prompts for its path — typed,
-pasted (quoted or not), or dropped from Finder or a terminal, which
-unescapes the backslash-escaped spaces and parentheses a drop pastes on
-macOS. The file must be a real `.toml` under 64 KB with a valid
+from outside the app into YOUR THEMES. A modal ("Import theme — full path to a .toml file") prompts for its path —
+typed, pasted (quoted or not), or dropped from Finder or a terminal, which
+unescapes every backslash-escaped character a drop pastes on macOS
+(`My\ \&\ Theme.toml`). The file must be a real `.toml` under 64 KB with a valid
 `[colors].primary`, using only the ten base colour keys — a stray
-`variables` or `dark` entry under `[colors]`, a bad colour value, invalid
-TOML, or a name that isn't filename-safe or contains `[` each refuse with a
-specific reason and write nothing. A `[variables]` entry that isn't a colour
+`variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB` or
+`#RRGGBB` (the editor's own rule: "background: 'blue' is not #RRGGBB" — no
+names, `rgb(…)` or `#RRGGBBAA`), invalid TOML, or a name that isn't
+filename-safe, contains `[`, or contains control characters each refuse
+with a specific reason and write nothing. A `[variables]` entry that isn't a colour
 (or `auto NN%`, or a text style) is dropped with a warning instead, the same
 as Save. Importing a name you already have asks first ("Replace the saved
 theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
@@ -1279,3 +1286,11 @@ is already running does not appear in the picker's YOUR THEMES group until
 either Import (which registers it explicitly) or a restart (which runs the
 startup loader) — a bare drop alone needs one of those two to take effect,
 which is by design, not a defect.*
+
+*Verified against `feat/theme-picker-pr3` (final-review fixes, off 868e9cc526)
+— 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`
+colours; control characters in a theme file's name refuse it (import) or
+list it as unreadable (saved file), and every file-derived error shows them
+as `?`; a broken file named like a shipped theme is listed and deletable;
+blocked keys on an unreadable row say why; the Import prompt names what it
+wants. Pinned by pilot and unit tests, not driven live.*
