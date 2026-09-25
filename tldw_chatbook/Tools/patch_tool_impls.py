@@ -29,7 +29,7 @@ Deviations from reference (deliberate fixes; reference kept otherwise):
    ``invalid_diff``. The reference raised ``invalid_diff`` on any such
    line, making real git diffs unparseable.
 3. ``_parse_hunk``'s body loop terminates when the header line counts are
-   satisfied (accepting only the ``\ No newline at end of file`` marker
+   satisfied (accepting only the ``\\ No newline at end of file`` marker
    afterwards), instead of only on ``@@ ``/``--- `` sentinels. The
    reference misread a removal of content starting with ``-- `` (e.g. a
    SQL comment) as a file-header sentinel. A ``--- `` line followed by a

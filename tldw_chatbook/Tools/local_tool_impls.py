@@ -686,14 +686,71 @@ def _atomic_write_target(
             except OSError:
                 pass
         if target_lock is not None:
-            try:
-                import portalocker
-
-                portalocker.unlock(target_lock)
-            except Exception:  # noqa: BLE001 - best-effort lock release
-                pass
+            _unlock_target_handle(target_lock)
             target_lock.close()
         os.close(parent_fd)
+
+
+def _portalocker_module():
+    """Return the ``portalocker`` module, or ``None`` where absent.
+
+    The remote worker bundle (Phase 1d, Task 8) concatenates this module
+    onto a bare remote interpreter that has no third-party packages, so
+    the CAS write lock needs a stdlib fallback there. In the parent
+    application ``portalocker`` is a pinned dependency and the fallback
+    never runs.
+    """
+    try:
+        import portalocker
+    except ImportError:
+        return None
+    return portalocker
+
+
+def _lock_expected_target(handle: BinaryIO) -> None:
+    """Take one non-blocking exclusive advisory lock on an open target.
+
+    Uses portalocker where installed; otherwise falls back to the same
+    POSIX advisory lock portalocker itself delegates to (``fcntl.flock``,
+    exclusive + non-blocking). Contention or a lock failure raises
+    ``LocalToolError`` with the fixed precondition message callers map to.
+    """
+    portalocker = _portalocker_module()
+    if portalocker is not None:
+        try:
+            portalocker.lock(
+                handle,
+                portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+            )
+        except portalocker.exceptions.LockException:
+            handle.close()
+            raise LocalToolError(
+                "write precondition failed: target is being modified"
+            ) from None
+        return
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise LocalToolError(
+            "write precondition failed: target is being modified"
+        ) from None
+
+
+def _unlock_target_handle(handle: BinaryIO) -> None:
+    """Best-effort release of the advisory lock taken by the helper above."""
+    portalocker = _portalocker_module()
+    try:
+        if portalocker is not None:
+            portalocker.unlock(handle)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:  # noqa: BLE001 - closing the handle releases the lock anyway
+        pass
 
 
 def _acquire_expected_target_lock(
@@ -703,8 +760,6 @@ def _acquire_expected_target_lock(
     expected_sha256: str,
 ) -> BinaryIO:
     """Acquire a non-blocking process lock on the expected target inode."""
-    import portalocker
-
     flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -713,16 +768,7 @@ def _acquire_expected_target_lock(
         handle = os.fdopen(descriptor, "r+b", buffering=0)
     except OSError:
         raise LocalToolError("write precondition failed: target digest changed") from None
-    try:
-        portalocker.lock(
-            handle,
-            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
-        )
-    except portalocker.exceptions.LockException:
-        handle.close()
-        raise LocalToolError(
-            "write precondition failed: target is being modified"
-        ) from None
+    _lock_expected_target(handle)
     try:
         _assert_expected_target_is_current(
             parent_fd,
@@ -732,10 +778,7 @@ def _acquire_expected_target_lock(
             handle,
         )
     except Exception:
-        try:
-            portalocker.unlock(handle)
-        except Exception:  # noqa: BLE001 - preserve the validation failure
-            pass
+        _unlock_target_handle(handle)
         handle.close()
         raise
     return handle
