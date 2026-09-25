@@ -275,9 +275,32 @@ class TestThemeProvider:
 
             assert theme_provider.app.theme == "test-theme"
             theme_provider.app.notify.assert_called_once_with(
-                "Test Theme is now your theme", severity="information"
+                "Test Theme is now your theme (was: Textual Dark)", severity="information"
             )
             mock_apply.assert_called_once_with({"general": {"default_theme": "test-theme"}})
+
+    def test_switch_theme_persisted_but_cache_reload_failed(self, theme_provider):
+        """Palette toast parity (TASK-32948): a failed cache refresh after a
+        persisted switch gets its own warning, same wording as elsewhere in
+        Settings ("configuration refresh failed -- reopen Settings...")."""
+        with (
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog._apply_config_mutation"
+            ) as mock_apply,
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog.current_launch_default",
+                return_value="textual-dark",
+            ),
+        ):
+            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=False)
+            theme_provider.switch_theme("test-theme")
+
+            assert theme_provider.app.theme == "test-theme"
+            theme_provider.app.notify.assert_called_once_with(
+                "Test Theme is now your theme (was: Textual Dark); configuration "
+                "refresh failed — reopen Settings to refresh",
+                severity="warning",
+            )
 
     def test_switch_theme_failure(self, theme_provider):
         """Test theme switching with error handling."""

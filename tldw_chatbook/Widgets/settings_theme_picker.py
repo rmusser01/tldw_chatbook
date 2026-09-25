@@ -154,9 +154,17 @@ class ThemePicker(Vertical):
 
     def _sync_revert_chip(self) -> None:
         revert = self.query_one("#settings-theme-revert", Button)
-        revert.display = self._revert is not None
-        if self._revert is not None:
-            revert.label = f"Revert to {display_name(self._revert.previous_active)}"
+        change = self._revert
+        revert.display = change is not None
+        if change is None:
+            return
+        label = f"Revert to {display_name(change.previous_active)}"
+        # Only worth naming the launch default too when it persisted AND
+        # disagrees with the active theme it's reverting to -- otherwise
+        # they're the same theme and the parenthetical is noise.
+        if change.persisted and change.previous_active != change.previous_launch_default:
+            label = f"{label} (launch: {display_name(change.previous_launch_default)})"
+        revert.label = label
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings-theme-picker-columns"):

@@ -333,6 +333,41 @@ async def test_pending_revert_survives_a_new_picker_instance(request, config_wri
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_revert_label_names_the_launch_default_when_it_differs(request, config_writes):
+    # Task 5 (TASK-32948 PR 2): a persisted Use captures where a Revert would
+    # land -- normally just the previously-active theme, but when the active
+    # theme and the (already-persisted) launch default disagree, name both.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"  # active diverges from the launch default (textual-dark)
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()
+        await pilot.pause()
+        revert = picker.query_one("#settings-theme-revert", Button)
+        assert str(revert.label) == (
+            f"Revert to {tc.display_name('nord')} (launch: {tc.display_name('textual-dark')})"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_label_stays_plain_for_a_try_even_when_launch_differs(request, config_writes):
+    # A Try never persists, so the chip never needs the launch-default
+    # qualifier even when active and launch disagree.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.try_highlighted()
+        await pilot.pause()
+        revert = picker.query_one("#settings-theme-revert", Button)
+        assert str(revert.label) == f"Revert to {tc.display_name('nord')}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_yours_actions_only_show_for_your_themes(request, config_writes):
     app, picker = await _picker_app(list_user_names=lambda: {"mine"})
     app.register_theme(Theme(name="mine", primary="#336699"))

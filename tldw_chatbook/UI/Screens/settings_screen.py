@@ -24642,6 +24642,23 @@ class SettingsScreen(BaseAppScreen):
     def handle_appearance_open_theme(self, event: Button.Pressed) -> None:
         event.stop()
         self._select_category(SettingsCategoryId.THEME.value, restore_focus=True)
+        # NOT call_after_refresh (see _after_category_panes's docstring): the
+        # category swap mounts the picker in a worker on the PANE's own
+        # message pump, which finishes after the screen's call_after_refresh
+        # queue -- the picker's own on_mount would already have highlighted
+        # the active theme by the time a screen-level callback ran, and
+        # silently overwrite this (spec §8: land on the launch default, not
+        # whatever's merely active right now).
+        self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _highlight_theme_launch_default(self) -> None:
+        from ...css.Themes.theme_catalog import current_launch_default
+
+        try:
+            picker = self.query_one(ThemePicker)
+        except QueryError:
+            return
+        picker.refresh_catalog(highlight=current_launch_default())
 
     @on(Input.Changed, "#settings-appearance-palette-theme-limit")
     def handle_appearance_palette_theme_limit_changed(
