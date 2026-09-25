@@ -219,14 +219,26 @@ def _is_main_guard(node: ast.stmt) -> bool:
     )
 
 
-def _is_tldw_import(node: ast.stmt) -> bool:
-    if isinstance(node, ast.Import):
-        return any(alias.name.split(".")[0] == "tldw_chatbook" for alias in node.names)
+def _is_tldw_import_from(node: ast.stmt) -> bool:
+    """Whether ``node`` is a module-level ``from tldw_chatbook...`` import."""
     if isinstance(node, ast.ImportFrom):
         if node.level > 0:
             return False  # a module-level relative import would not even import
         return bool(node.module) and node.module.split(".")[0] == "tldw_chatbook"
     return False
+
+
+def _split_tldw_aliases(node: ast.Import) -> tuple[list[ast.alias], list[ast.alias]]:
+    """Partition one ``import a, b`` node into (kept, dropped) aliases.
+
+    ``import os, tldw_chatbook.x`` must lose only its tldw alias — the
+    stdlib alias keeps its import instead of the whole node being dropped.
+    """
+    kept = [
+        alias for alias in node.names if alias.name.split(".")[0] != "tldw_chatbook"
+    ]
+    dropped = [alias for alias in node.names if alias.name.split(".")[0] == "tldw_chatbook"]
+    return kept, dropped
 
 
 def _is_all_assignment(node: ast.stmt) -> bool:
@@ -299,10 +311,19 @@ def _module_section(module_name: str) -> tuple[str, set[str]]:
 
     body: list[ast.stmt] = []
     for node in tree.body:
-        if _is_future_import(node) or _is_tldw_import(node) or _is_all_assignment(
-            node
-        ) or _is_main_guard(node):
+        if (
+            _is_future_import(node)
+            or _is_tldw_import_from(node)
+            or _is_all_assignment(node)
+            or _is_main_guard(node)
+        ):
             continue
+        if isinstance(node, ast.Import):
+            kept, dropped = _split_tldw_aliases(node)
+            if dropped:
+                if kept:
+                    body.append(ast.Import(names=kept))
+                continue
         if module_name == _WORKER_MODULE and isinstance(node, ast.FunctionDef):
             if node.name == "main":
                 # The bundle's IO adapter below defines the real entry
@@ -313,7 +334,7 @@ def _module_section(module_name: str) -> tuple[str, set[str]]:
                     *(arg.arg for arg in node.args.args),
                     *(arg.arg for arg in node.args.kwonlyargs),
                 ]
-                if argument_names:
+                if argument_names or node.args.vararg or node.args.kwarg:
                     raise BundleBuildError(
                         "workspace_tool_worker.main grew parameters; the "
                         "builder's drop rule for it must be re-reviewed"

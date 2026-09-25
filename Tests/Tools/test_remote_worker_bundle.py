@@ -18,16 +18,20 @@ Four invariants, each with its own gate:
   the dev interpreter proves nothing about 3.10; the guard shells out to
   a real 3.10 located via PATH or ``uv python find``, and skips LOUDLY
   when neither exists (CI installs one).
-* **Runtime probe**: failure paths driven end-to-end in a bare ``-I``
-  subprocess with no site-packages — loguru, Metrics and portalocker are
-  genuinely absent there, which is the only environment that proves the
-  bundle's failure branches never reach for them.
+* **Runtime probe**: failure paths driven end-to-end in a bare
+  ``-I -S -E`` subprocess. ``-I`` alone leaves this venv's site-packages
+  importable, so ``-S`` is what actually removes loguru/portalocker —
+  the driver ASSERTS they are unimportable before running the bundle,
+  which is the only environment that proves the bundle's failure
+  branches never reach for them.
 """
 
 from __future__ import annotations
 
 import ast
 import base64
+import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -35,10 +39,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import tldw_chatbook.Tools.local_tool_impls as local_tool_impls
 from tldw_chatbook.Tools.build_remote_worker_bundle import build_bundle_text
 from tldw_chatbook.Tools.remote_sensitive_paths import REMOTE_SENSITIVE_PATHS
 
@@ -218,6 +224,21 @@ def _probe_frame(operation: str, arguments: dict[str, Any], root: str) -> bytes:
 _PROBE_DRIVER = """
 import base64, io, json, sys
 
+# Isolation premise, asserted rather than assumed: this driver must run
+# where the bundle's forced fallbacks (no loguru, no portalocker, no
+# tldw_chatbook) are real. -S keeps the interpreter's site-packages off
+# sys.path; this check fails loudly if that ever stops holding (e.g. a
+# path-config change re-exposing the venv).
+import importlib.util
+
+for banned in ("loguru", "portalocker", "tldw_chatbook"):
+    try:
+        findable = importlib.util.find_spec(banned) is not None
+    except (ImportError, ValueError):
+        findable = False
+    if findable:
+        raise SystemExit(f"isolation premise broken: {banned} is importable")
+
 bundle_path, payload_b64 = sys.argv[1], sys.argv[2]
 import types
 
@@ -241,10 +262,16 @@ print("PROBE" + json.dumps({"rc": exit_code, "out": captured.getvalue().decode()
 
 
 def _run_bundle_probe(payload: bytes) -> dict[str, Any]:
+    # -I alone does NOT remove this venv's site-packages from sys.path;
+    # -S does (site.py never runs), -E ignores PYTHON* overrides. With
+    # all three, loguru/portalocker/tldw_chatbook are genuinely
+    # unimportable — which the driver asserts before executing anything.
     completed = subprocess.run(
         [
             sys.executable,
             "-I",
+            "-S",
+            "-E",
             "-c",
             _PROBE_DRIVER,
             str(_BUNDLE_PATH),
@@ -302,7 +329,7 @@ def _terminal_frame(output: str) -> dict[str, Any]:
 def test_bundle_failure_paths_run_in_a_bare_interpreter(
     payload: bytes, expected_code: str
 ) -> None:
-    """loguru/Metrics/portalocker are absent under ``-I``; the paths still work."""
+    """Third-party deps are absent under ``-I -S -E`` (asserted by the driver)."""
     assert _BUNDLE_PATH.exists(), "committed bundle artifact is missing"
     result = _run_bundle_probe(payload)
     assert result["rc"] == 2, result
@@ -310,3 +337,93 @@ def test_bundle_failure_paths_run_in_a_bare_interpreter(
     assert frame["outcome"] == "failure"
     assert frame["code"] == expected_code
     assert frame["operation_id"] in {"probe-op", "unknown"}
+
+
+def test_fs_write_cas_falls_back_to_fcntl_when_portalocker_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Executed coverage for the bundle-forced fcntl lock fallback.
+
+    Parent-side tests always run with portalocker installed, so
+    ``_lock_expected_target``/``_unlock_target_handle`` take their fcntl
+    branch ONLY inside the remote bundle — this test is their sole
+    executed coverage. It drives a real pinned-root fs_write CAS through
+    the full dispatch path with ``_portalocker_module`` forced to None:
+
+    * a happy CAS round-trip acquires and RELEASES the fallback lock
+      (proven by the test taking its own non-blocking lock afterwards);
+    * a contended attempt fails with the fixed busy error and closes its
+      handle BEFORE raising (proven via a recording ``os.fdopen`` wrapper);
+    * the same CAS succeeds once contention clears (the unlock path
+      released everything).
+    """
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+    from tldw_chatbook.Tools.workspace_root_pin import pin_workspace_root
+    from tldw_chatbook.Tools.workspace_tool_dispatch import execute_pinned_operation
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    target = root / "cas.txt"
+    target.write_bytes(b"before")
+    expected = hashlib.sha256(b"before").hexdigest()
+
+    def request(content: str, digest: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            operation="fs_write",
+            arguments={
+                "path": "cas.txt",
+                "content": content,
+                "expected_sha256": digest,
+                "sensitive_exclusions": [],
+            },
+        )
+
+    opened_handles: list[Any] = []
+    real_fdopen = os.fdopen
+
+    def recording_fdopen(*args: Any, **kwargs: Any) -> Any:
+        handle = real_fdopen(*args, **kwargs)
+        opened_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(local_tool_impls, "_portalocker_module", lambda: None)
+    monkeypatch.setattr(local_tool_impls.os, "fdopen", recording_fdopen)
+    chain = capture_directory_chain(root)
+
+    with pin_workspace_root(root, chain) as pinned:
+        # Happy CAS: fallback lock acquired, write applied, lock released.
+        result = execute_pinned_operation(request("after", expected), pinned)
+        assert "wrote 5 characters" in result
+        assert target.read_bytes() == b"after"
+        probe_fd = os.open(target, os.O_RDWR)
+        try:
+            fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(probe_fd)
+        assert opened_handles and all(h.closed for h in opened_handles)
+
+        # Contended CAS: the test holds the exclusive lock on the target.
+        target.write_bytes(b"contended")
+        contended_digest = hashlib.sha256(b"contended").hexdigest()
+        holder_fd = os.open(target, os.O_RDWR)
+        fcntl.flock(holder_fd, fcntl.LOCK_EX)
+        handles_before = len(opened_handles)
+        try:
+            with pytest.raises(LocalToolError, match="target is being modified"):
+                execute_pinned_operation(
+                    request("never-written", contended_digest), pinned
+                )
+            # close-before-raise: the contended attempt's handle is gone.
+            assert len(opened_handles) == handles_before + 1
+            assert opened_handles[-1].closed
+        finally:
+            fcntl.flock(holder_fd, fcntl.LOCK_UN)
+            os.close(holder_fd)
+        assert target.read_bytes() == b"contended"
+
+        # Same CAS succeeds once contention clears: unlock released all.
+        result = execute_pinned_operation(request("settled", contended_digest), pinned)
+        assert "wrote 7 characters" in result
+        assert target.read_bytes() == b"settled"
+        assert all(h.closed for h in opened_handles)
