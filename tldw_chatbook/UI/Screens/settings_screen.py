@@ -25742,7 +25742,9 @@ class SettingsScreen(BaseAppScreen):
         ``ssh://[user@]host[:port]/absolute/path`` locator. The save is
         immediate; the connectivity probe is ADVISORY and dispatched to a
         thread worker after the pane recomposes (see
-        ``_probe_settings_workspace_ssh_binding``).
+        ``_probe_settings_workspace_ssh_binding``). Without an ``ssh``
+        binary on PATH the submit refuses inline with the feature-off
+        message (Task 21) — the feature is disabled, not broken.
         """
         event.stop()
         workspace_id = self._settings_selected_workspace_id
@@ -25750,6 +25752,14 @@ class SettingsScreen(BaseAppScreen):
             return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
+            return
+        from ...Tools.remote_workspace_transport import (
+            SSH_UNAVAILABLE_MESSAGE,
+            ssh_available,
+        )
+
+        if not ssh_available():
+            self._set_workspace_ssh_result(SSH_UNAVAILABLE_MESSAGE)
             return
         target = self.query_one("#settings-workspace-ssh-target", Input).value.strip()
         raw_path = self.query_one("#settings-workspace-ssh-path", Input).value.strip()

@@ -5242,10 +5242,15 @@ class ConsoleSessionController:
             self._request_console_project_instruction_display_refresh(session.id)
 
     @staticmethod
-    def _project_instruction_binding_label(selection: Any, index: int) -> str:
+    def _project_instruction_binding_label(
+        selection: Any, index: int, *, ssh_missing: bool = False
+    ) -> str:
         """One picker label: the binding's own name plus, for SSH roots,
         a live cache-status chip (Task 20 — listing/labeling only; the
-        selection flow itself is untouched)."""
+        selection flow itself is untouched). With ``ssh_missing`` the chip
+        is suppressed: the status cache cannot be truthful without an
+        ``ssh`` client, so the option's recovery row carries the refusal
+        instead (Task 21)."""
         from ...Tools.remote_binding_status import cached_status_display
 
         binding = getattr(selection, "binding", None)
@@ -5258,7 +5263,7 @@ class ConsoleSessionController:
             getattr(getattr(binding, "binding_kind", None), "value", None)
             or str(getattr(binding, "binding_kind", ""))
         )
-        if kind == "ssh-filesystem":
+        if kind == "ssh-filesystem" and not ssh_missing:
             binding_id = str(getattr(binding, "binding_id", "") or "")
             label = f"{label} · ssh: {cached_status_display(binding_id)}"
         return label
@@ -5279,11 +5284,39 @@ class ConsoleSessionController:
 
         if not owning_session_exists():
             return "cancel", None
+        # Task 21 availability floor: without an ssh client the feature is
+        # DISABLED, not broken — ssh-filesystem options refuse with the
+        # one feature-off message (ineligible + recovery row); local
+        # folder options are untouched.
+        from ...Tools.remote_workspace_transport import (
+            SSH_UNAVAILABLE_MESSAGE,
+            ssh_available,
+        )
+
+        ssh_missing = not ssh_available()
+
+        def _binding_kind(binding: Any) -> str:
+            return (
+                getattr(getattr(binding, "binding_kind", None), "value", None)
+                or str(getattr(binding, "binding_kind", ""))
+            )
+
         options = tuple(
             ProjectInstructionBindingOption(
                 binding_id=str(selection.binding.binding_id),
-                label=self._project_instruction_binding_label(selection, index),
-                eligible=True,
+                label=self._project_instruction_binding_label(
+                    selection, index, ssh_missing=ssh_missing
+                ),
+                eligible=not (
+                    ssh_missing
+                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                ),
+                recovery=(
+                    SSH_UNAVAILABLE_MESSAGE
+                    if ssh_missing
+                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                    else ""
+                ),
             )
             for index, selection in enumerate(selections)
         )

@@ -53,6 +53,7 @@ import json
 import os
 import re
 import selectors
+import shutil
 import signal
 import subprocess
 import threading
@@ -74,16 +75,42 @@ __all__ = [
     "PERCENT_C_EXPANSION_LENGTH",
     "RemoteCallResult",
     "RemoteWorkspaceTransport",
+    "SSH_UNAVAILABLE_MESSAGE",
     "SUN_PATH_LIMIT",
     "SshMasterManager",
     "TransportFailure",
     "TransportFailureKind",
     "get_master_manager",
+    "ssh_available",
 ]
 
 #: macOS's ``struct sockaddr_un.sun_path`` budget (including NUL); Linux
 #: allows 108 but the shared code must fit the smaller of the two.
 SUN_PATH_LIMIT = 104
+
+#: The one feature-off message every user entry point (Settings add-form
+#: submit, Console project-instruction picker) surfaces when no ``ssh``
+#: client is on PATH — a clear refusal, never a crash (spec
+#: "User-facing surfaces", Task 21).
+SSH_UNAVAILABLE_MESSAGE = (
+    "OpenSSH client (ssh) not found — SSH workspace bindings unavailable"
+)
+
+
+def ssh_available() -> bool:
+    """True when an OpenSSH client is on PATH (the feature floor).
+
+    The cheap ``shutil.which`` gate the user entry points consult BEFORE
+    any binding is created or offered: without an ``ssh`` binary the
+    feature surfaces as disabled with :data:`SSH_UNAVAILABLE_MESSAGE`
+    instead of failing later inside a spawn. Availability is checked per
+    entry-point use, not cached, so installing/removing the client takes
+    effect without a restart.
+
+    Returns:
+        True when ``shutil.which("ssh")`` resolves a binary.
+    """
+    return shutil.which("ssh") is not None
 
 #: OpenSSH's ``%C`` expands to a SHA-1 hex digest of the connection
 #: endpoints — always 40 characters. Used only for budget arithmetic; the
