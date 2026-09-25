@@ -218,6 +218,7 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
         self.renames: list[str] = []
         self.deletes: list[str] = []
         self.exports: list[str] = []
+        self.imports = 0
 
     @on(ThemePicker.EditRequested)
     def _capture(self, message: ThemePicker.EditRequested) -> None:
@@ -234,6 +235,10 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
     @on(ThemePicker.ExportRequested)
     def _capture_export(self, message: ThemePicker.ExportRequested) -> None:
         self.exports.append(message.theme_id)
+
+    @on(ThemePicker.ImportRequested)
+    def _capture_import(self, message: ThemePicker.ImportRequested) -> None:
+        self.imports += 1
 
 
 @pytest.mark.asyncio
@@ -632,3 +637,50 @@ async def test_unreadable_error_with_markup_renders_its_tooltip_literally(reques
         await pilot.hover("#settings-theme-use")
         await pilot.pause(0.6)
         assert "[/mismatched]" in str(picker.query_one("#settings-theme-card-error").render())
+
+
+def _capture_app(picker):
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    return app
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_button_and_i_key_post_import_requested(request, config_writes):
+    """TASK-32948 PR 3 Task 2: Import… sits next to New; `i` on the list."""
+    picker = ThemePicker(id="settings-theme-picker")
+    app = _capture_app(picker)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = picker.query_one("#settings-theme-picker-import", Button)
+        assert str(button.label) == "Import…"
+        assert button.parent is picker.query_one("#settings-theme-picker-new").parent
+        picker.query_one("#settings-theme-list", OptionList).focus()
+        await pilot.press("i")
+        await pilot.click("#settings-theme-picker-import")
+        await pilot.pause()
+        assert app.imports == 2
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_is_disabled_while_paused(request, config_writes):
+    def raiser():
+        raise RecoveryRequired("x")
+
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=raiser)
+    app = _capture_app(picker)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = picker.query_one("#settings-theme-picker-import", Button)
+        assert button.disabled
+        assert button.tooltip == THEMES_UNAVAILABLE_LABEL
+        picker.query_one("#settings-theme-list", OptionList).focus()
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.imports == 0

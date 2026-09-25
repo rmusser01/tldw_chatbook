@@ -70,6 +70,7 @@ class ThemeOptionList(OptionList):
         Binding("e", "edit_theme", "Edit"),
         Binding("r", "rename_theme", "Rename"),
         Binding("delete", "delete_theme", "Delete"),
+        Binding("i", "import_theme", "Import"),
     ]
 
     def _first_enabled_index(self) -> int | None:
@@ -113,6 +114,9 @@ class ThemeOptionList(OptionList):
     def action_delete_theme(self) -> None:
         self.query_ancestor(ThemePicker).request_delete()
 
+    def action_import_theme(self) -> None:
+        self.query_ancestor(ThemePicker).request_import()
+
 
 class ThemePicker(Vertical):
     class EditRequested(Message):
@@ -135,6 +139,9 @@ class ThemePicker(Vertical):
         def __init__(self, theme_id: str) -> None:
             self.theme_id = theme_id
             super().__init__()
+
+    class ImportRequested(Message):
+        """Import… pressed; the screen owns the path prompt."""
 
     def __init__(
         self,
@@ -194,6 +201,7 @@ class ThemePicker(Vertical):
                     yield Button("Try", id="settings-theme-try", classes="theme-editor-action")
                     yield Button("Clone", id="settings-theme-picker-clone", classes="theme-editor-action")
                     yield Button("New", id="settings-theme-picker-new", classes="theme-editor-action")
+                    yield Button("Import…", id="settings-theme-picker-import", classes="theme-editor-action")
                     yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
                 with Horizontal(classes="settings-action-row"):
                     yield Button("Edit", id="settings-theme-picker-edit", classes="theme-editor-action")
@@ -281,6 +289,9 @@ class ThemePicker(Vertical):
         new.tooltip = unreadable_tip
         is_yours = entry is not None and entry.origin == "yours"
         tooltip = None if self.files_available else THEMES_UNAVAILABLE_LABEL
+        import_button = self.query_one("#settings-theme-picker-import", Button)
+        import_button.disabled = not self.files_available
+        import_button.tooltip = tooltip
         for button_id in (
             "#settings-theme-picker-edit",
             "#settings-theme-picker-rename",
@@ -362,6 +373,11 @@ class ThemePicker(Vertical):
         event.stop()
         self.request_edit("new")
 
+    @on(Button.Pressed, "#settings-theme-picker-import")
+    def _import_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.request_import()
+
     @on(Button.Pressed, "#settings-theme-picker-edit")
     def _edit_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -426,6 +442,10 @@ class ThemePicker(Vertical):
     def request_export(self) -> None:
         if self._can_manage_files() and self._highlighted_readable():
             self.post_message(self.ExportRequested(self.highlighted_id))
+
+    def request_import(self) -> None:
+        if self.files_available:
+            self.post_message(self.ImportRequested())
 
     def _can_manage_files(self) -> bool:
         # Rename/Delete/Export/Edit all touch the theme file on disk: gated
@@ -541,4 +561,4 @@ class ThemePane(ContentSwitcher):
     @on(SettingsThemeEditor.ThemesChanged)
     def _themes_changed(self, event: SettingsThemeEditor.ThemesChanged) -> None:
         event.stop()
-        self.query_one(ThemePicker).refresh_catalog()
+        self.query_one(ThemePicker).refresh_catalog(highlight=event.highlight)

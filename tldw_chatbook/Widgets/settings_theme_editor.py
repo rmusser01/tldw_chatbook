@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -11,7 +13,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.color import Color
+from textual.color import Color, ColorParseError
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Click, Key
@@ -32,12 +34,15 @@ from ..css.Themes.themes import (
     theme_from_file_data,
 )
 from ..Utils.input_validation import escape_markup
-from ..Utils.path_validation import validate_filename
+from ..Utils.path_validation import validate_browsing_path, validate_filename
 from .confirmation_dialog import ConfirmationDialog
 from .theme_preview import ThemePreview
 
 #: TASK-32942: shown in the picker while backup/recovery holds the theme files.
 THEMES_UNAVAILABLE_LABEL = "Theme files unavailable while backup/recovery is in progress"
+
+#: TASK-32948 PR 3: the largest theme file Import reads.
+IMPORT_MAX_BYTES = 64 * 1024
 
 
 ThemeLeaveChoice = Literal["save", "discard", "cancel"]
@@ -103,7 +108,12 @@ class SettingsThemeEditor(Vertical):
             super().__init__()
 
     class ThemesChanged(Message):
-        """The saved theme files changed (delete, rename, save); rebuild lists."""
+        """The saved theme files changed (delete, rename, save, import);
+        rebuild lists, selecting ``highlight`` when given."""
+
+        def __init__(self, highlight: str | None = None) -> None:
+            self.highlight = highlight
+            super().__init__()
 
     class Saved(Message):
         """A Save or Save as wrote ``theme_name``; the pane returns to the picker."""
@@ -803,14 +813,7 @@ class SettingsThemeEditor(Vertical):
     ) -> None:
         """Write the theme TOML and register it; post ``Saved`` on success."""
         try:
-            with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
-                temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
-                try:
-                    with raw._file(operation, temporary, "w") as f:
-                        toml.dump(theme_data, f)
-                    raw._replace(operation, temporary, theme_path)
-                finally:
-                    raw._remove_temporary(operation, temporary)
+            self._write_toml(theme_path, theme_data)
 
             # TASK-31250: register at once so Appearance and the palette can
             # offer the theme without a restart.
@@ -830,6 +833,24 @@ class SettingsThemeEditor(Vertical):
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(f"Failed to save theme: {self._failure_reason(e)}", severity="error")
+
+    def _write_toml(self, theme_path: Path, data: dict[str, Any]) -> None:
+        """Temp-then-replace ``data`` into ``theme_path`` in the backup scope.
+
+        The one theme-file write path (Save, Rename, Import).
+
+        Raises:
+            RecoveryRequired: backup/recovery holds the theme files.
+            OSError: the write failed; the old file is untouched.
+        """
+        with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
+            temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
+            try:
+                with raw._file(operation, temporary, "w") as f:
+                    toml.dump(data, f)
+                raw._replace(operation, temporary, theme_path)
+            finally:
+                raw._remove_temporary(operation, temporary)
 
     def _reapply_if_active(self, name: str) -> None:
         """Spec §6: saving the theme the app is showing re-applies it.
@@ -1229,16 +1250,7 @@ class SettingsThemeEditor(Vertical):
             # file Textual rejects (no primary, unknown colour key) fails the
             # rename with nothing on disk changed.
             theme = theme_from_file_data(data, new, new_path.name)
-            with raw._scope(
-                self, "theme_file", writing=True, selected_read=new_path
-            ) as operation:
-                temporary = new_path.with_suffix(new_path.suffix + ".tmp")
-                try:
-                    with raw._file(operation, temporary, "w") as f:
-                        toml.dump(data, f)
-                    raw._replace(operation, temporary, new_path)
-                finally:
-                    raw._remove_temporary(operation, temporary)
+            self._write_toml(new_path, data)
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return False
@@ -1356,6 +1368,125 @@ class SettingsThemeEditor(Vertical):
         except Exception as e:
             logger.error(f"Failed to export theme: {e}")
             self.app.notify(f"Failed to export theme: {self._failure_reason(e)}", severity="error")
+
+    def import_theme(self, source: str) -> str | None:
+        """Import the theme file at ``source`` (a typed, pasted or dropped path).
+
+        Returns:
+            The imported theme's name once written; None when refused, paused,
+            or waiting on the Replace confirmation (which writes, registers
+            and posts ``ThemesChanged(highlight=name)`` itself).
+        """
+        try:
+            files = self._user_theme_files()
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return None
+        parsed = self._parse_import(source)
+        if isinstance(parsed, str):
+            # R16: the reason only, never the source path; file text is
+            # untrusted and notify parses markup.
+            self.app.notify(escape_markup(parsed), severity="error")
+            return None
+        name, data, theme = parsed
+        # R12: write back to the file that already claims the name.
+        target = files.get(name, self.custom_themes_path / f"{name}.toml")
+        if name in files or target.exists():
+
+            async def _confirmed_replace() -> None:
+                self._write_import(name, target, data, theme)
+
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Replace theme",
+                    message=f"Replace the saved theme '{name}'?",
+                    confirm_label="Replace",
+                    cancel_label="Keep existing",
+                    confirm_callback=_confirmed_replace,
+                )
+            )
+            return None
+        return name if self._write_import(name, target, data, theme) else None
+
+    def _parse_import(self, source: str) -> tuple[str, dict[str, Any], Theme] | str:
+        """``(name, normalised file data, theme)``, or a path-free refusal reason."""
+        text = source.strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+            text = text[1:-1]  # a terminal drop can paste a quoted path
+        try:
+            path = validate_browsing_path(os.path.expanduser(text))
+        except ValueError:
+            return "Import needs the full path to a .toml file"
+        if path.suffix.lower() != ".toml":
+            return "Import needs a .toml file"
+        try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                return "Import needs a .toml file"
+            # Bounded read: the size may change after stat (and stat alone
+            # would let a growing file through).
+            with path.open("rb") as f:
+                content = f.read(IMPORT_MAX_BYTES + 1)
+        except OSError as exc:
+            return f"Could not read the file: {self._failure_reason(exc)}"
+        if len(content) > IMPORT_MAX_BYTES:
+            return "Theme file is larger than 64 KB"
+        try:
+            raw_data = toml.loads(content.decode("utf-8"))
+        except Exception:  # noqa: BLE001 - any parser failure is "not TOML"
+            return "File is not valid TOML"
+        meta = raw_data.get("theme", {})
+        if not isinstance(meta, dict):
+            return "[theme] must be a table"
+        colors = raw_data.get("colors")
+        if not isinstance(colors, dict) or "primary" not in colors:
+            return "Missing [colors].primary"
+        for key, value in colors.items():
+            try:
+                if not isinstance(value, str):
+                    raise ColorParseError("not a string")
+                Color.parse(value)
+            except ColorParseError:
+                return f"{str(key)[:40]}: '{str(value)[:40]}' is not a colour"
+        name = str(meta.get("name") or path.stem).strip() or path.stem
+        try:
+            validate_filename(name)
+            if "[" in name:
+                # Review Focus 1: a name is shown in toasts and titles.
+                raise ValueError("'[' is not allowed")
+        except ValueError as exc:
+            return f"Invalid theme name: {exc}"
+        if name in ("textual-dark", "textual-light"):
+            return "Cannot overwrite built-in themes"
+        data: dict[str, Any] = {
+            "theme": {"name": name, "dark": bool(meta.get("dark", True))},
+            "colors": dict(colors),
+        }
+        if variables := sanitize_theme_variables(raw_data.get("variables"), f"{name}.toml"):
+            data["variables"] = variables
+        try:
+            theme = theme_from_file_data(data, name, f"{name}.toml")
+        except (TypeError, ValueError, AttributeError) as exc:
+            return self._theme_file_error(exc, data)
+        return name, data, theme
+
+    def _write_import(self, name: str, target: Path, data: dict[str, Any], theme: Theme) -> bool:
+        try:
+            self._write_toml(target, data)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return False
+        except OSError as exc:
+            logger.error(f"Failed to import theme '{name}': {self._failure_reason(exc)}")
+            self.app.notify(
+                f"Failed to import theme: {escape_markup(self._failure_reason(exc))}",
+                severity="error",
+            )
+            return False
+        self.app.register_theme(theme)
+        self._reapply_if_active(name)
+        self.post_message(self.ThemesChanged(highlight=name))
+        self.app.notify(f"Imported '{name}'", severity="success")
+        return True
 
     def _apply_preset_swatch(self, swatch: Static) -> None:
         """Apply a preset swatch's color to the last focused color input."""
