@@ -718,6 +718,10 @@ def test_a_configured_buffer_duration_is_honored(monkeypatch, good):
         -1,
         2001,
         [],
+        # TOML booleans: `int(True)` is 1, which the old hand-rolled `int()`
+        # resolver accepted as a 1 ms buffer (Qodo, PR #2811).
+        True,
+        False,
     ],
 )
 def test_an_invalid_buffer_duration_falls_back_to_the_default(monkeypatch, bad):
