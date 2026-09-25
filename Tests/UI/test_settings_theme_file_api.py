@@ -179,6 +179,33 @@ async def test_delete_active_non_default_switches_to_launch_default(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_delete_non_active_launch_default_only_changes_setting(
+    request, tmp_path, monkeypatch, config_writes
+):
+    """User decision 2026-09-25: deleting the launch default changes only
+    the setting unless that theme is the one on screen -- the running
+    theme must not switch."""
+    path = _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        app.theme = "nord"
+        await _confirm_delete(pilot, app, editor, "mine")
+
+        assert not path.exists()
+        assert "mine" not in app.available_themes
+        assert app.theme == "nord"
+        assert config_writes[-1] == {"general": {"default_theme": "textual-dark"}}
+        assert app.notify.call_args.args[0] == (
+            "Deleted 'mine'; launch default reset to Textual Dark"
+        )
+        assert app.themes_changed >= 1
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_rename_moves_file_registration_active_and_launch_default(
     request, tmp_path, monkeypatch, config_writes
 ):

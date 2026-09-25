@@ -529,12 +529,15 @@ editor on the saved file, in place — unlike Clone, it does not append
 saved launch default to the new name without changing the theme you are
 running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
 '\<name\>'? This removes the theme file and cannot be undone."); if the
-deleted theme was the launch default, the launch default and the running
-theme both reset to Textual Dark and the toast says so, if it was merely
-active it switches to your launch default instead, and either way, deleting
-a saved theme that reuses a shipped or built-in name (say `nord`) brings the
-original back. **Export** writes the saved file to your Downloads folder and
-asks before replacing an earlier export.
+deleted theme is both the launch default and the one on screen, the launch
+default and the running theme both reset to Textual Dark and the toast says
+so; if it is the launch default but not the one on screen, only the launch
+default setting resets to Textual Dark — the running theme is left alone —
+and the toast says "launch default reset to Textual Dark"; if it was merely
+active (not the launch default) it switches to your launch default instead;
+and either way, deleting a saved theme that reuses a shipped or built-in
+name (say `nord`) brings the original back. **Export** writes the saved
+file to your Downloads folder and asks before replacing an earlier export.
 
 **Clone**, **New** or **Edit** swap in the full editor below, behind a **Back
 to themes** button; the editor no longer has its own theme list — the header

@@ -130,7 +130,15 @@ All of these go through `raw._scope` and the backup participant, as Save and Del
 4. If the theme was active, set `app.theme` to the new name. If it was the launch default, rewrite the config.
 5. If the old name overrode a shipped theme, that shipped theme appears again.
 
-**Delete of the active theme.** The theme is unregistered (`app.unregister_theme`), then the app switches to the launch default. If the deleted theme *was* the launch default, the app switches to `textual-dark` and the config is rewritten. The toast states what happened. This fixes the editor/app disagreement the critique found.
+**Delete of the active theme.** The theme is unregistered (`app.unregister_theme`), then the app switches to the launch default. If the deleted theme *was* the launch default *and* the one on screen, the app switches to `textual-dark` and the config is rewritten. The toast states what happened. This fixes the editor/app disagreement the critique found.
+
+User decision 2026-09-25: deleting the launch default changes only the config
+setting unless that theme is the one currently on screen. If the deleted
+theme is the launch default but is *not* active, only `default_theme` is
+rewritten to `textual-dark` (toast: "launch default reset to Textual Dark")
+— the running theme is left untouched. The app only switches to
+`textual-dark` when the deleted theme is both the launch default and active,
+as above.
 
 **Import** (PR 3).
 
