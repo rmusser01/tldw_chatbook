@@ -37,6 +37,10 @@ Every UI-thread path that could reach a keyring read now runs that read on a wor
 - Trade-off: the Gen panels and the skill-trust row now pay one extra paint while the worker loads. In return, a locked keyring no longer freezes the app.
 - Tests: `Tests/UI/test_settings_keyring_off_ui_thread.py` (9 tests). Its fakes block on a `threading.Event` and count main-thread calls. The tests cover all four surfaces: pending state rendered, main-thread calls == 0, and the value arrives after release. Each new test failed before the fix for the expected reason. Existing Gen-panel, video and hub tests now wait for the loaded panel rather than just its container. The library-shell `capture_apply` forwards the new argument.
 - Regression check: I ran the touched suites (hub, privacy, image/video gen, library shell and onboarding, trace maintenance, library support surface) on the branch and on a clean origin/dev worktree. Both runs finished at 1095 failed / 219 passed / 34 errors, with identical FAILED/ERROR name sets. The large red count is the known local ADR-126 `RecoveryRequired` fixture baseline. Because of that baseline, most of the existing Gen-panel tests cannot run locally, so the wait-helper edits to them are verified only by reading them; CI has to confirm them. `preflight.sh` exits 0.
+- Qodo review (#2831) follow-ups:
+  - `keyring_get` is now single-flight per key, so overlapping workers share one blocking lookup (one unlock prompt).
+  - Each off-thread read carries an `object()` token, so a stale load, Clear lookup or Privacy status result is dropped. This matters because thread workers cannot be cancelled mid-read.
+  - A config load that raises now logs only the exception type and shows "… settings could not be loaded" in the panel. Before, it exited the app via `exit_on_error`.
 - Files: settings_screen.py, settings_privacy_security.py, library_screen.py, Library_Modules/screen_helpers.py, Widgets/settings_image_gen_panel.py, Widgets/settings_video_gen_panel.py, plus the tests above.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

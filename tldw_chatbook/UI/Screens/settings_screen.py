@@ -3115,6 +3115,16 @@ class SettingsScreen(BaseAppScreen):
         #: dropped rather than clobbering an unrelated, freshly (re)opened
         #: panel's badge or in-flight state.
         self._image_gen_probe_session: int = 0
+        #: TASK-32926 (Qodo on #2831): identity tokens for the off-thread
+        #: keyring-backed reads. Each start mints a new ``object()``; a
+        #: callback whose token is no longer current (a newer load, a panel
+        #: replaced by Save/Revert/revisit, a re-rendered Privacy row) is
+        #: dropped, because thread workers cannot be cancelled mid-read.
+        self._image_gen_load_token: object | None = None
+        self._video_gen_load_token: object | None = None
+        self._image_gen_key_source_tokens: dict[str, object] = {}
+        self._video_gen_key_source_tokens: dict[str, object] = {}
+        self._skill_trust_token: object | None = None
         #: Qodo PR #901 fix 3: `_image_gen_raw_section()`'s merged
         #: `[image_generation]` baseline, cached for the duration of one
         #: category "session" -- reached from every keystroke's staging
@@ -7440,23 +7450,56 @@ class SettingsScreen(BaseAppScreen):
     # through the OS keyring (seconds on Linux, or an unlock prompt), so the
     # panel never loads it in compose(). Every (re)compose -- category open,
     # Save, Revert -- loads it here, on a thread, then recomposes the panel.
-    @work(thread=True, exclusive=True, group="settings-imagegen-load")
-    def _image_gen_panel_load_worker(
+    def _start_image_gen_panel_load(
         self, overlay: Mapping[str, object], message: str | None = None
     ) -> None:
-        cfg = get_image_generation_config(reload=True)
-        cleared = {
-            key.split("::")[1]: image_gen_key_source_after_clear(key.split("::")[1])
-            for key in overlay
-            if key.startswith("cleared::")
-        }
+        """Start the one current Image Gen config load; older ones go stale."""
+        token = object()
+        self._image_gen_load_token = token
+        # The panel is about to be replaced: pending Clear lookups are moot.
+        self._image_gen_key_source_tokens.clear()
+        self._image_gen_panel_load_worker(overlay, message, token)
+
+    @work(thread=True, exclusive=True, group="settings-imagegen-load")
+    def _image_gen_panel_load_worker(
+        self, overlay: Mapping[str, object], message: str | None, token: object
+    ) -> None:
+        try:
+            cfg = get_image_generation_config(reload=True)
+            cleared = {
+                key.split("::")[1]: image_gen_key_source_after_clear(
+                    key.split("::")[1]
+                )
+                for key in overlay
+                if key.startswith("cleared::")
+            }
+        except Exception as exc:  # noqa: BLE001 - a worker raise exits the app
+            logger.warning(
+                "Image Gen settings failed to load. error_type=%s",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(self._show_image_gen_load_error, token)
+            return
         self.app.call_from_thread(
-            self._apply_image_gen_panel_config, cfg, cleared, message
+            self._apply_image_gen_panel_config, cfg, cleared, message, token
         )
 
+    def _show_image_gen_load_error(self, token: object) -> None:
+        if token is not self._image_gen_load_token:
+            return
+        text = "Image Gen settings could not be loaded; reopen Image Gen to retry."
+        self._set_static_text("#settings-imagegen-loading", text)
+        self._set_static_text("#settings-imagegen-save-result", text)
+
     async def _apply_image_gen_panel_config(
-        self, cfg: Any, cleared_key_sources: dict[str, str], message: str | None
+        self,
+        cfg: Any,
+        cleared_key_sources: dict[str, str],
+        message: str | None,
+        token: object,
     ) -> None:
+        if token is not self._image_gen_load_token:
+            return
         try:
             panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         except QueryError:
@@ -7717,15 +7760,26 @@ class SettingsScreen(BaseAppScreen):
             pass
         # TASK-32926: the after-Clear source is a keyring read.
         self._show_image_gen_key_source(backend_id, toml_key, "checking")
-        self._image_gen_key_source_worker(backend_id, toml_key)
+        token = object()
+        self._image_gen_key_source_tokens[backend_id] = token
+        self._image_gen_key_source_worker(backend_id, toml_key, token)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
     @work(thread=True, group="settings-imagegen-key-source")
-    def _image_gen_key_source_worker(self, backend_id: str, toml_key: str) -> None:
+    def _image_gen_key_source_worker(
+        self, backend_id: str, toml_key: str, token: object
+    ) -> None:
         source = image_gen_key_source_after_clear(backend_id)
         self.app.call_from_thread(
-            self._show_image_gen_key_source, backend_id, toml_key, source
+            self._apply_image_gen_key_source, backend_id, toml_key, source, token
         )
+
+    def _apply_image_gen_key_source(
+        self, backend_id: str, toml_key: str, source: str, token: object
+    ) -> None:
+        if self._image_gen_key_source_tokens.get(backend_id) is not token:
+            return
+        self._show_image_gen_key_source(backend_id, toml_key, source)
 
     def _show_image_gen_key_source(
         self, backend_id: str, toml_key: str, new_source: str
@@ -7945,7 +7999,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._image_gen_panel_load_worker({}, message)
+            self._start_image_gen_panel_load({}, message)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
         self.app.notify(message, severity="warning" if warnings else "information")
 
@@ -7964,7 +8018,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._image_gen_panel_load_worker({}, "")
+            self._start_image_gen_panel_load({}, "")
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
     @on(Button.Pressed)
@@ -8206,23 +8260,55 @@ class SettingsScreen(BaseAppScreen):
 
     # TASK-32926: see `_image_gen_panel_load_worker` -- same off-thread
     # load for every Video Gen panel (re)compose.
-    @work(thread=True, exclusive=True, group="settings-videogen-load")
-    def _video_gen_panel_load_worker(
+    def _start_video_gen_panel_load(
         self, overlay: Mapping[str, object], message: str | None = None
     ) -> None:
-        cfg = get_video_generation_config(reload=True)
-        cleared = {
-            key.split("::")[1]: video_gen_key_source_after_clear(key.split("::")[1])
-            for key in overlay
-            if key.startswith("cleared::")
-        }
+        """Start the one current Video Gen config load; older ones go stale."""
+        token = object()
+        self._video_gen_load_token = token
+        self._video_gen_key_source_tokens.clear()
+        self._video_gen_panel_load_worker(overlay, message, token)
+
+    @work(thread=True, exclusive=True, group="settings-videogen-load")
+    def _video_gen_panel_load_worker(
+        self, overlay: Mapping[str, object], message: str | None, token: object
+    ) -> None:
+        try:
+            cfg = get_video_generation_config(reload=True)
+            cleared = {
+                key.split("::")[1]: video_gen_key_source_after_clear(
+                    key.split("::")[1]
+                )
+                for key in overlay
+                if key.startswith("cleared::")
+            }
+        except Exception as exc:  # noqa: BLE001 - a worker raise exits the app
+            logger.warning(
+                "Video Gen settings failed to load. error_type=%s",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(self._show_video_gen_load_error, token)
+            return
         self.app.call_from_thread(
-            self._apply_video_gen_panel_config, cfg, cleared, message
+            self._apply_video_gen_panel_config, cfg, cleared, message, token
         )
 
+    def _show_video_gen_load_error(self, token: object) -> None:
+        if token is not self._video_gen_load_token:
+            return
+        text = "Video Gen settings could not be loaded; reopen Video Gen to retry."
+        self._set_static_text("#settings-videogen-loading", text)
+        self._set_static_text("#settings-videogen-save-result", text)
+
     async def _apply_video_gen_panel_config(
-        self, cfg: Any, cleared_key_sources: dict[str, str], message: str | None
+        self,
+        cfg: Any,
+        cleared_key_sources: dict[str, str],
+        message: str | None,
+        token: object,
     ) -> None:
+        if token is not self._video_gen_load_token:
+            return
         try:
             panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
         except QueryError:
@@ -8487,13 +8573,24 @@ class SettingsScreen(BaseAppScreen):
             pass
         # TASK-32926: the after-Clear source is a keyring read.
         self._show_video_gen_key_source(backend_id, "checking…")
-        self._video_gen_key_source_worker(backend_id)
+        token = object()
+        self._video_gen_key_source_tokens[backend_id] = token
+        self._video_gen_key_source_worker(backend_id, token)
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
     @work(thread=True, group="settings-videogen-key-source")
-    def _video_gen_key_source_worker(self, backend_id: str) -> None:
+    def _video_gen_key_source_worker(self, backend_id: str, token: object) -> None:
         source = video_gen_key_source_after_clear(backend_id)
-        self.app.call_from_thread(self._show_video_gen_key_source, backend_id, source)
+        self.app.call_from_thread(
+            self._apply_video_gen_key_source, backend_id, source, token
+        )
+
+    def _apply_video_gen_key_source(
+        self, backend_id: str, source: str, token: object
+    ) -> None:
+        if self._video_gen_key_source_tokens.get(backend_id) is not token:
+            return
+        self._show_video_gen_key_source(backend_id, source)
 
     def _show_video_gen_key_source(self, backend_id: str, text: str) -> None:
         try:
@@ -8556,7 +8653,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._video_gen_panel_load_worker({}, message)
+            self._start_video_gen_panel_load({}, message)
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
         self.app.notify(message, severity="warning" if warnings else "information")
 
@@ -8569,7 +8666,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._video_gen_panel_load_worker({}, "")
+            self._start_video_gen_panel_load({}, "")
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
     @on(Button.Pressed)
@@ -11502,11 +11599,15 @@ class SettingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._apply_privacy_check_result, rows)
 
     @work(exclusive=True, group="settings-skill-trust-status", thread=True)
-    def _skill_trust_status_worker(self) -> None:
+    def _skill_trust_status_worker(self, token: object) -> None:
         trust = self._skill_trust_posture()
-        self.app.call_from_thread(self._apply_skill_trust_status, trust)
+        self.app.call_from_thread(self._apply_skill_trust_status, trust, token)
 
-    def _apply_skill_trust_status(self, trust: Mapping[str, object]) -> None:
+    def _apply_skill_trust_status(
+        self, trust: Mapping[str, object], token: object
+    ) -> None:
+        if token is not self._skill_trust_token:
+            return  # a later Privacy render owns the row now
         status = safe_skill_trust_status(trust.get("trust_status"))
         self._set_static_text(
             "#settings-privacy-skill-trust",
@@ -21498,7 +21599,7 @@ class SettingsScreen(BaseAppScreen):
                 overlay=image_gen_overlay,
             )
             self.call_after_refresh(
-                self._image_gen_panel_load_worker, image_gen_overlay
+                self._start_image_gen_panel_load, image_gen_overlay
             )
         elif category is SettingsCategoryId.VIDEO_GENERATION:
             yield Static(
@@ -21511,7 +21612,7 @@ class SettingsScreen(BaseAppScreen):
                 overlay=video_gen_overlay,
             )
             self.call_after_refresh(
-                self._video_gen_panel_load_worker, video_gen_overlay
+                self._start_video_gen_panel_load, video_gen_overlay
             )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
@@ -21610,7 +21711,10 @@ class SettingsScreen(BaseAppScreen):
             # TASK-32926: never read the keyring-backed trust status here.
             posture = self._settings_privacy_posture(read_skill_trust=False)
             if posture.skill_trust_enabled:
-                self.call_after_refresh(self._skill_trust_status_worker)
+                self._skill_trust_token = object()
+                self.call_after_refresh(
+                    self._skill_trust_status_worker, self._skill_trust_token
+                )
             yield Static(
                 "Privacy & Security",
                 classes="destination-section settings-column-title",

@@ -391,7 +391,17 @@ def _bounded_nonnegative_int(value: object, *, maximum: int = 2**63 - 1) -> int:
 
 
 def safe_skill_trust_status(value: object) -> str:
-    """Clamp a skill-trust status to the closed display set."""
+    """Clamp a skill-trust status to the closed display set.
+
+    Args:
+        value: A raw status from the skill-trust service or a posture mapping;
+            any type is accepted.
+
+    Returns:
+        The stripped status (truncated to ``MAX_SKILL_TRUST_STATUS_CHARS``)
+        when it is in ``SAFE_SKILL_TRUST_STATUSES``, otherwise
+        ``"unavailable"`` -- so unknown or path-bearing text never renders.
+    """
     status = str(value or "unavailable").strip()[:MAX_SKILL_TRUST_STATUS_CHARS]
     return status if status in SAFE_SKILL_TRUST_STATUSES else "unavailable"
 

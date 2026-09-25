@@ -95,6 +95,21 @@ class VideoGenSettingsPanel(Vertical):
         cleared_key_sources: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the panel.
+
+        Args:
+            *args: Positional arguments forwarded to ``Vertical``.
+            overlay: The screen's staged, unsaved values (empty means render
+                straight from disk).
+            config: The effective ``VideoGenerationConfig``, loaded off the UI
+                thread by the screen. ``None`` composes only a pending
+                "Loading..." line until the screen supplies it.
+            cleared_key_sources: Backend id to the key source that applies
+                once its locally saved secret is cleared, for each
+                ``cleared::`` overlay key. A missing entry renders as
+                "checking...".
+            **kwargs: Keyword arguments forwarded to ``Vertical``.
+        """
         super().__init__(*args, **kwargs)
         # TASK-32926: the effective config resolves backend secrets through
         # the OS keyring (seconds on Linux), so the screen loads it -- and

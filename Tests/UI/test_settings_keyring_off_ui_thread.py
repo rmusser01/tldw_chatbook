@@ -439,3 +439,80 @@ async def test_video_gen_panel_loads_config_off_the_ui_thread(request, monkeypat
             assert loader.main_thread_calls == 0
     finally:
         loader.release.set()
+
+
+# --- Stale callbacks and load failures (Qodo review on #2831) ---------------
+
+
+def _screen_that_must_not_touch_the_dom() -> SettingsScreen:
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("a stale callback touched the DOM")
+
+    screen.query_one = forbidden
+    screen._set_static_text = forbidden
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_superseded_gen_panel_loads_are_dropped():
+    screen = _screen_that_must_not_touch_the_dom()
+    stale = object()
+    screen._image_gen_load_token = object()
+    screen._video_gen_load_token = object()
+
+    await screen._apply_image_gen_panel_config(None, {}, None, stale)
+    await screen._apply_video_gen_panel_config(None, {}, None, stale)
+    screen._show_image_gen_load_error(stale)
+    screen._show_video_gen_load_error(stale)
+
+
+def test_superseded_clear_key_source_results_are_dropped():
+    screen = _screen_that_must_not_touch_the_dom()
+    stale = object()
+    screen._image_gen_key_source_tokens = {"openrouter": object()}
+    screen._video_gen_key_source_tokens = {}
+
+    screen._apply_image_gen_key_source("openrouter", "api_key", "keyring", stale)
+    screen._apply_video_gen_key_source("minimax", "keyring", stale)
+
+
+def test_superseded_skill_trust_results_are_dropped():
+    screen = _screen_that_must_not_touch_the_dom()
+    screen._skill_trust_token = object()
+
+    screen._apply_skill_trust_status({"trust_status": "trusted"}, object())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_gen_panel_config_load_failure_is_reported_not_fatal(
+    request, monkeypatch
+):
+    import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("config exploded")
+
+    monkeypatch.setattr(settings_screen_module, "get_image_generation_config", broken)
+    monkeypatch.setattr(settings_screen_module, "get_video_generation_config", broken)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        for category, label in (
+            ("image_generation", "Image Gen"),
+            ("video_generation", "Video Gen"),
+        ):
+            await _select_settings_category(screen, pilot, category)
+            await _wait_until(
+                pilot,
+                lambda label=label: f"{label} settings could not be loaded"
+                in _visible_text(screen),
+                f"{label} load failure was not reported",
+            )
+        # The worker raise would exit the app (exit_on_error) with this set.
+        assert app._exception is None, app._exception
+        assert app.return_code is None
