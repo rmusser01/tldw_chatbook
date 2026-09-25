@@ -175,3 +175,48 @@ async def test_defaults_to_an_installed_backend_when_higgs_is_missing(
         window = app.query_one(VoiceCloningWindow)
         assert app.query_one("#backend-select", Select).value == "omnivoice"
         assert window.current_backend == "omnivoice"
+
+
+# --- pure policy units (no Textual app) -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [
+        ({}, None),
+        ({"kokoro": True}, None),  # Kokoro cannot clone
+        ({"omnivoice": True}, "omnivoice"),
+        ({"chatterbox": True}, "chatterbox"),
+        ({"omnivoice": True, "chatterbox": True}, "omnivoice"),
+        ({"higgs": True, "omnivoice": True}, "higgs"),  # Higgs stays default
+    ],
+)
+def test_default_cloning_backend_policy(installed: dict, expected) -> None:
+    from tldw_chatbook.UI.Voice_Cloning_Window import default_cloning_backend
+
+    assert default_cloning_backend(_local_availability(**installed)) == expected
+
+
+@pytest.mark.parametrize(
+    ("absent", "expected"),
+    [
+        (set(), []),
+        ({"tokenizers"}, ["tokenizers"]),
+        ({"onnxruntime", "tokenizers"}, ["onnxruntime", "tokenizers"]),
+    ],
+)
+def test_alert_lists_only_the_missing_omnivoice_modules(
+    monkeypatch: pytest.MonkeyPatch, absent: set, expected: list
+) -> None:
+    """Qodo (PR #2833): the alert named both modules even when one was present."""
+    import importlib.util
+
+    from tldw_chatbook.Utils import widget_helpers
+
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **k: None if name in absent else real_find_spec("json"),
+    )
+    assert widget_helpers.missing_omnivoice_modules() == expected

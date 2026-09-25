@@ -5,6 +5,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, Button, Label
 from textual.message import Message
+from textual.widget import Widget
 from typing import Optional, List
 
 
@@ -272,7 +273,28 @@ def alert_ocr_not_available(parent) -> None:
     )
 
 
-def alert_voice_cloning_not_available(parent) -> None:
+def missing_omnivoice_modules() -> List[str]:
+    """Return the OmniVoice runtime modules that are not installed.
+
+    Probed with ``find_spec`` (no import), so the alert names exactly the
+    packages that are missing rather than the whole ``omnivoice_tts`` extra.
+
+    Returns:
+        The missing module names, in install order.
+    """
+    from importlib.util import find_spec
+
+    missing: List[str] = []
+    for module_name in ("onnxruntime", "tokenizers"):
+        try:
+            if find_spec(module_name) is None:
+                missing.append(module_name)
+        except (ImportError, ValueError):
+            missing.append(module_name)
+    return missing
+
+
+def alert_voice_cloning_not_available(parent: Widget) -> None:
     """Show alert when no local voice-cloning backend is installed.
 
     Voice cloning runs on OmniVoice, Higgs Audio or Chatterbox -- never on
@@ -287,7 +309,7 @@ def alert_voice_cloning_not_available(parent) -> None:
         feature_name="Voice Cloning",
         feature_key="voice_cloning",
         extra_name="omnivoice_tts",
-        missing_deps=["onnxruntime", "tokenizers"],
+        missing_deps=missing_omnivoice_modules() or ["omnivoice_tts"],
         additional_info=(
             "Voice cloning needs one local backend: OmniVoice (the command "
             "above; CPU-only), Higgs Audio (pip extra higgs_tts) or Chatterbox "

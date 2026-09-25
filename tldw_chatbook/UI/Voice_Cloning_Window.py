@@ -51,6 +51,28 @@ from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixi
 #
 
 
+#: Cloning backends in default-preference order (Higgs stays the default
+#: whenever it is installed).
+_CLONING_BACKEND_ORDER = ("higgs", "omnivoice", "chatterbox")
+
+
+def default_cloning_backend(local: Any) -> Optional[str]:
+    """Pick the backend the Voice Cloning window should open on.
+
+    Args:
+        local: A ``SpeechLocalDependencyAvailability`` snapshot (anything with
+            boolean ``higgs``/``omnivoice``/``chatterbox`` attributes).
+
+    Returns:
+        The first installed cloning backend in preference order, or None when
+        no cloning backend is installed (the window then shows its alert).
+    """
+    return next(
+        (name for name in _CLONING_BACKEND_ORDER if getattr(local, name, False)),
+        None,
+    )
+
+
 class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
     """
     Voice Cloning management view supporting multiple TTS backends.
@@ -276,27 +298,17 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
         # "Text-to-Speech not available" alert for packages they don't need.
         from .Lab_Modules.lab_speech_status import speech_local_dependency_availability
 
-        local = speech_local_dependency_availability(refresh=True)
-        if not (local.omnivoice or local.higgs or local.chatterbox):
+        backend = default_cloning_backend(
+            speech_local_dependency_availability(refresh=True)
+        )
+        if backend is None:
             from ..Utils.widget_helpers import alert_voice_cloning_not_available
 
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_voice_cloning_not_available(self))
-        else:
-            # Open on a backend that can actually clone here: Higgs stays the
-            # default when installed, otherwise the first installed one.
-            installed = [
-                backend
-                for backend, available in (
-                    ("higgs", local.higgs),
-                    ("omnivoice", local.omnivoice),
-                    ("chatterbox", local.chatterbox),
-                )
-                if available
-            ]
-            if installed[0] != self.current_backend:
-                self.current_backend = installed[0]
-                self.query_one("#backend-select", Select).value = installed[0]
+        elif backend != self.current_backend:
+            self.current_backend = backend
+            self.query_one("#backend-select", Select).value = backend
 
         # Initialize backend managers
         await self._initialize_backends()
