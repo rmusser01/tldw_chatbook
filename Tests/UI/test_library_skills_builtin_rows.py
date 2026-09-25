@@ -103,6 +103,9 @@ def _controller_stand_in(**extra: Any) -> SimpleNamespace:
             fake, *a, **k
         )
     )
+    fake._library_skill_preview_is_current = (
+        lambda *a: LibrarySkillsController._library_skill_preview_is_current(fake, *a)
+    )
     fake._claim_library_skill_detail_generation = (
         lambda: LibrarySkillsController._claim_library_skill_detail_generation(fake)
     )
@@ -214,3 +217,124 @@ def test_preview_pane_is_read_only_markdown_with_customize_and_switch():
             assert not app.query("#library-skill-save")
 
     asyncio.run(run())
+
+
+# --- Fix round 1 -----------------------------------------------------------
+
+
+def test_disabled_builtin_row_is_badged_disabled():
+    rows = _rows(
+        [{"name": NAME, "source": "builtin", "builtin_disabled": True}]
+    )
+    assert rows[NAME].is_builtin and rows[NAME].builtin_disabled
+
+
+def test_preview_enabled_state_comes_from_config_and_reads_disabled(monkeypatch):
+    monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    calls: list[Any] = []
+
+    async def get_skill(name, **kwargs):
+        calls.append(kwargs)
+        return {"name": name, "content": "---\nname: x\n---\n# Body\n"}
+
+    fake = _controller_stand_in(
+        app_instance=SimpleNamespace(
+            skills_scope_service=_service(get_skill=get_skill),
+            app_config={"skills": {"disabled_builtins": [NAME]}},
+        ),
+        _run_library_service_call=_direct_call,
+    )
+    fake._selected_skill_name = NAME
+    fake._library_skills_view = "preview"
+    fake._library_skill_detail_generation = 3
+    asyncio.run(
+        LibrarySkillsController._refresh_library_skill_builtin_preview(fake, NAME, 3)
+    )
+    assert calls == [{"mode": "local", "include_disabled_builtins": True}]
+    assert fake._library_skill_builtin_preview == {
+        "name": NAME,
+        "content": "# Body\n",
+        "enabled": False,
+    }
+
+
+def test_customize_that_copied_nothing_says_so():
+    async def seed_builtin_skills(**kwargs):
+        return {"seeded": [], "count": 0}
+
+    async def get_skill(name, **kwargs):
+        return {"name": name}
+
+    fake = _controller_stand_in(
+        app_instance=SimpleNamespace(
+            skills_scope_service=_service(
+                seed_builtin_skills=seed_builtin_skills, get_skill=get_skill
+            )
+        ),
+        _run_library_service_call=_direct_call,
+    )
+    asyncio.run(LibrarySkillsController._customize_library_skill_builtin(fake, NAME))
+    notices = [m[1] for m in fake.calls if isinstance(m, tuple) and m[0] == "notify"]
+    assert notices and not notices[0].startswith("Copied")
+    assert "Nothing was copied" in notices[0]
+    assert "reset" not in fake.calls and "refresh" not in fake.calls
+
+
+def test_rapid_enabled_toggles_leave_disk_matching_memory(monkeypatch):
+    import itertools
+    import time
+
+    saved: list[list[str]] = []
+    entered = itertools.count()
+
+    def slow_first_save(section, key, value):
+        if next(entered) == 0:
+            time.sleep(0.3)  # the first (soon stale) write is the slow one
+        saved.append(list(value))
+        return True
+
+    monkeypatch.setattr(lsc, "save_setting_to_cli_config", slow_first_save)
+    monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    config: dict[str, Any] = {"skills": {"disabled_builtins": []}}
+    fake = _controller_stand_in(app_instance=SimpleNamespace(app_config=config))
+    fake._library_skill_builtin_preview = {"name": NAME, "enabled": True}
+
+    async def both() -> None:
+        await asyncio.gather(
+            LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, False),
+            LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, True),
+        )
+
+    asyncio.run(both())
+    assert config["skills"]["disabled_builtins"] == []
+    assert saved[-1] == config["skills"]["disabled_builtins"]
+
+
+@pytest.mark.parametrize(("source", "expected"), [("builtin", "preview"), ("local", "editor")])
+def test_review_link_routes_builtin_only_names_to_preview(monkeypatch, source, expected):
+    monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    opened: list[str] = []
+
+    async def flush() -> bool:
+        return True
+
+    async def get_skill(name, **kwargs):
+        return {"name": name, "source": source}
+
+    fake = _controller_stand_in(
+        app_instance=SimpleNamespace(skills_scope_service=_service(get_skill=get_skill)),
+        _run_library_service_call=_direct_call,
+        _flush_library_skill_save=flush,
+        _refresh_library_skill_detail=lambda name: asyncio.sleep(0),
+    )
+    fake._open_library_skill_builtin_preview = lambda n: opened.append("preview")
+    fake._library_skill_is_builtin_only = (
+        lambda n: LibrarySkillsController._library_skill_is_builtin_only(fake, n)
+    )
+    asyncio.run(
+        LibrarySkillsController._open_library_skill_editor_for_review(fake, NAME)
+    )
+    if expected == "preview":
+        assert opened == ["preview"] and fake._library_skills_view != "editor"
+    else:
+        assert opened == [] and fake._library_skills_view == "editor"

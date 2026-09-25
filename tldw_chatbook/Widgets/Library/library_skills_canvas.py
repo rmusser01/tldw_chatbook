@@ -1328,6 +1328,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     # TASK-32954: built-in (read-only) and override badges.
                     if row.is_builtin:
                         trust = f"{trust} · Built-in"
+                        if row.builtin_disabled:
+                            trust = f"{trust} · Disabled"
                     elif row.overridden:
                         trust = f"{trust} · overrides built-in"
                     button = library_row_button(

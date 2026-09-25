@@ -343,6 +343,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -395,6 +396,10 @@ from ...Widgets.Library import (
     skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
+from ...Skills_Interop.builtin_skills import (
+    BUILTIN_SKILL_DIGESTS,
+    disabled_builtins_from_config,
+)
 from ...Skills_Interop.local_skills_service import LocalSkillsService
 from .canvas_sync import _sync_library_canvas
 from .library_skills_state import LibrarySkillsState, skill_state_shim_attr
@@ -410,6 +415,10 @@ from ..Screens.skills_screen import SkillTrustBootstrapModal, SkillTrustPassphra
 
 if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
+
+
+#: Serializes ``[skills] disabled_builtins`` writes (TASK-32954).
+_DISABLED_BUILTINS_SAVE_LOCK = threading.Lock()
 
 
 class LibrarySkillsController:
@@ -1544,7 +1553,11 @@ class LibrarySkillsController:
         detail: Any = None
         try:
             detail = await self._run_library_service_call(
-                service.get_skill, skill_name, mode="local", isolate_in_worker=True
+                service.get_skill,
+                skill_name,
+                mode="local",
+                include_disabled_builtins=True,
+                isolate_in_worker=True,
             )
         except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
             logger.opt(exception=True).warning("Failed to load a built-in skill preview.")
@@ -1560,10 +1573,28 @@ class LibrarySkillsController:
             self._library_skill_builtin_preview = {
                 "name": skill_name,
                 "content": body,
-                "enabled": True,
+                "enabled": skill_name
+                not in disabled_builtins_from_config(self.app_instance.app_config),
             }
         if self.is_mounted:
             _sync_library_canvas(self, "skills")
+
+    async def _library_skill_is_builtin_only(self, skill_name: str) -> bool:
+        """Whether ``skill_name`` is a built-in with no user copy."""
+        if skill_name not in BUILTIN_SKILL_DIGESTS:
+            return False
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        try:
+            detail = await self._run_library_service_call(
+                service.get_skill,
+                skill_name,
+                mode="local",
+                include_disabled_builtins=True,
+                isolate_in_worker=True,
+            )
+        except Exception:  # noqa: BLE001 -- unknown: the preview reports the error
+            return True
+        return isinstance(detail, Mapping) and detail.get("source") == "builtin"
 
     def handle_library_skill_builtin_customize(self, event: Button.Pressed) -> None:
         """Customize: copy the open built-in into the user's skills."""
@@ -1582,7 +1613,7 @@ class LibrarySkillsController:
         """Seed only this built-in, return to the list, and say what happened."""
         service = getattr(self.app_instance, "skills_scope_service", None)
         try:
-            await self._run_library_service_call(
+            result = await self._run_library_service_call(
                 service.seed_builtin_skills,
                 names=[skill_name],
                 mode="local",
@@ -1594,6 +1625,15 @@ class LibrarySkillsController:
         except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
             logger.opt(exception=True).warning("Customize of a built-in skill failed.")
             self.app.notify("Couldn’t copy this built-in skill.", severity="error")
+            return
+        seeded = result.get("seeded") if isinstance(result, Mapping) else None
+        if not seeded or skill_name not in seeded:
+            # e.g. a folder of that name exists in the store but is not indexed.
+            self.app.notify(
+                "Nothing was copied — a skill with this name may already exist "
+                "in your skills folder.",
+                severity="warning",
+            )
             return
         notice = "Copied to your skills — edit your copy."
         if isinstance(copy, Mapping) and copy.get("trust_blocked"):
@@ -1639,13 +1679,17 @@ class LibrarySkillsController:
         self._refresh_library_skills_after_committed_mutation()
         if self.is_mounted:
             _sync_library_canvas(self, "skills")
+        def persist_current() -> bool:
+            # Serialized, and reads memory at write time: a cancelled earlier
+            # toggle's thread can never land a stale list after a newer one.
+            with _DISABLED_BUILTINS_SAVE_LOCK:
+                current = config.get("skills", {}).get("disabled_builtins", [])
+                return save_setting_to_cli_config(
+                    "skills", "disabled_builtins", list(current)
+                )
+
         try:
-            saved = await asyncio.to_thread(
-                save_setting_to_cli_config,
-                "skills",
-                "disabled_builtins",
-                list(disabled),
-            )
+            saved = await asyncio.to_thread(persist_current)
         except Exception:  # noqa: BLE001 -- UI boundary: failure becomes a notice
             saved = False
         if saved is not True:
@@ -3008,6 +3052,10 @@ class LibrarySkillsController:
         """
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
+            return
+        if await self._library_skill_is_builtin_only(skill_name):
+            # TASK-32954: a built-in has no editor, even from the review link.
+            self._open_library_skill_builtin_preview(skill_name)
             return
         self._reset_library_skill_editor_state()
         self._selected_skill_name = skill_name

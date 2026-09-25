@@ -610,6 +610,8 @@ class SkillListRow:
         is_builtin: A read-only built-in skill (TASK-32954): badged, and
             opens a preview instead of the editor.
         overridden: A user skill that overrides a built-in of the same name.
+        builtin_disabled: A built-in the user turned off (Library-only row,
+            so it can be turned back on; the model never sees it).
     """
 
     name: str
@@ -620,6 +622,7 @@ class SkillListRow:
     trust_label: str = ""
     is_builtin: bool = False
     overridden: bool = False
+    builtin_disabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -959,6 +962,7 @@ def _row(
         selected=name == selected_name,
         is_builtin=record.get("source") == "builtin",
         overridden=bool(record.get("overrides_builtin")),
+        builtin_disabled=bool(record.get("builtin_disabled")),
     )
 
 

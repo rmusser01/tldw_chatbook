@@ -113,7 +113,7 @@ _TEXT_FIELD_LIMITS = {
 }
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
 #: Record keys only the service assigns; never trusted from the index file.
-_SERVICE_ASSIGNED_KEYS = ("source", "overrides_builtin")
+_SERVICE_ASSIGNED_KEYS = ("source", "overrides_builtin", "builtin_disabled")
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 SKILL_FILE_READ_CAP_CHARS = 100_000
 
@@ -425,12 +425,24 @@ class LocalSkillsService:
         record["source"] = "builtin"
         return record
 
-    def _visible_records(self) -> dict[str, dict[str, Any]]:
-        """Index records plus enabled built-ins; a user skill of the same name wins."""
-        records = {
-            name: self._builtin_record(name)
-            for name in builtin_skill_records(self._disabled_builtins())
-        }
+    def _visible_records(
+        self, *, include_disabled_builtins: bool = False
+    ) -> dict[str, dict[str, Any]]:
+        """Index records plus enabled built-ins; a user skill of the same name wins.
+
+        ``include_disabled_builtins`` is for the Library only (so a hidden
+        built-in can be turned back on): disabled built-ins are added too,
+        flagged ``builtin_disabled``. Model-facing paths never pass it.
+        """
+        disabled = self._disabled_builtins()
+        if include_disabled_builtins and self._builtin_disabled_loader is not None:
+            names = builtin_skill_records(frozenset())
+        else:
+            names = builtin_skill_records(disabled)
+        records = {name: self._builtin_record(name) for name in names}
+        for name, record in records.items():
+            if name in disabled:
+                record["builtin_disabled"] = True
         for name, record in self._load_index().items():
             if name in BUILTIN_SKILL_DIGESTS:
                 record["overrides_builtin"] = True
@@ -869,6 +881,7 @@ class LocalSkillsService:
             "backend",
             "source",
             "overrides_builtin",
+            "builtin_disabled",
         ):
             if field in record:
                 summary[field] = record[field]
@@ -1121,6 +1134,7 @@ class LocalSkillsService:
         offset: int = 0,
         query: str = "",
         sort: str = "name",
+        include_disabled_builtins: bool = False,
     ) -> dict[str, Any]:
         """Return one exact page from the complete classified local index.
 
@@ -1135,6 +1149,8 @@ class LocalSkillsService:
             offset: Zero-based summary offset at which the page begins.
             query: Literal case-insensitive name/description filter.
             sort: ``"name"`` or ``"status"`` ordering mode.
+            include_disabled_builtins: Library browse only -- also list
+                disabled built-ins (flagged ``builtin_disabled``).
 
         Returns:
             A serialized Skills-list response with exact page coordinates,
@@ -1156,7 +1172,9 @@ class LocalSkillsService:
         normalized_sort = validated.sort
 
         self._enforce("skills.list.local")
-        records = self._visible_records()
+        records = self._visible_records(
+            include_disabled_builtins=include_disabled_builtins
+        )
         summaries = [
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
@@ -1264,9 +1282,13 @@ class LocalSkillsService:
         )
 
     @content_call(_content_sources)
-    async def get_skill(self, skill_name: str) -> dict[str, Any]:
+    async def get_skill(
+        self, skill_name: str, *, include_disabled_builtins: bool = False
+    ) -> dict[str, Any]:
         self._enforce("skills.detail.local")
-        records = self._visible_records()
+        records = self._visible_records(
+            include_disabled_builtins=include_disabled_builtins
+        )
         return self._response_for_record(self._require_record(skill_name, records))
 
     # --- Library read seams (task-1337) ---
@@ -2743,7 +2765,16 @@ class LocalSkillsService:
         existing = self._load_index()
         seeded: list[str] = []
         wanted = None if names is None else frozenset(names)
-        for name in builtin_skill_records(self._disabled_builtins()):
+        # An explicit request (Library Customize) copies a disabled built-in
+        # too; the blanket seed skips disabled ones. Built-ins stay off
+        # entirely without a loader.
+        if self._builtin_disabled_loader is None:
+            candidates = builtin_skill_records(self._disabled_builtins())
+        elif wanted is not None:
+            candidates = builtin_skill_records(frozenset())
+        else:
+            candidates = builtin_skill_records(self._disabled_builtins())
+        for name in candidates:
             if wanted is not None and name not in wanted:
                 continue
             if name in existing and not overwrite:

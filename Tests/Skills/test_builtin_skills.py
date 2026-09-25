@@ -288,3 +288,92 @@ def test_customize_seeds_only_the_named_builtins(tmp_path):
     assert not (tmp_path / "skills" / NAME).exists()
     assert asyncio.run(svc.seed_builtin_skills(names=[NAME]))["seeded"] == [NAME]
     assert (tmp_path / "skills" / NAME / "SKILL.md").exists()
+
+
+def test_disabled_builtin_listed_for_library_only_and_reenables(tmp_path):
+    disabled: set[str] = {NAME}
+    svc = LocalSkillsService(
+        store_dir=tmp_path,
+        builtin_disabled_loader=lambda: frozenset(disabled),
+        allow_untrusted_without_trust_service=True,
+    )
+    # Library browse still lists it, flagged, and can read it for the preview.
+    library = asyncio.run(svc.list_skills(include_disabled_builtins=True))
+    row = next(s for s in library["skills"] if s["name"] == NAME)
+    assert row["source"] == "builtin" and row["builtin_disabled"] is True
+    detail = asyncio.run(svc.get_skill(NAME, include_disabled_builtins=True))
+    assert "# Character Creator" in detail["content"]
+    # Every model-facing path still excludes it.
+    assert NAME not in [s["name"] for s in asyncio.run(svc.list_skills())["skills"]]
+    ctx = asyncio.run(svc.get_context())
+    assert NAME not in [s["name"] for s in ctx["available_skills"] + ctx["blocked_skills"]]
+    assert NAME not in svc._visible_records()  # Console per-send capture reads this
+    with pytest.raises(ValueError):
+        asyncio.run(svc.get_skill(NAME))
+    with pytest.raises(ValueError):
+        asyncio.run(svc.execute_skill(NAME))
+    # Re-enable: a normal row again, and available to the model.
+    disabled.clear()
+    library = asyncio.run(svc.list_skills(include_disabled_builtins=True))
+    row = next(s for s in library["skills"] if s["name"] == NAME)
+    assert "builtin_disabled" not in row
+    ctx = asyncio.run(svc.get_context())
+    assert NAME in [s["name"] for s in ctx["available_skills"]]
+
+
+def test_index_cannot_claim_builtin_disabled(tmp_path):
+    svc = _svc(tmp_path)
+    asyncio.run(svc.seed_builtin_skills())
+    import json
+
+    index = svc.index_path
+    data = json.loads(index.read_text())
+    data["skills"][NAME]["builtin_disabled"] = True
+    index.write_text(json.dumps(data))
+    assert NAME in svc._load_index()
+    assert "builtin_disabled" not in svc._load_index().get(NAME, {})
+
+
+def test_explicit_customize_copies_a_disabled_builtin(tmp_path):
+    svc = _svc(tmp_path, frozenset({NAME}))
+    assert asyncio.run(svc.seed_builtin_skills())["seeded"] == []  # blanket seed skips it
+    assert asyncio.run(svc.seed_builtin_skills(names=[NAME]))["seeded"] == [NAME]
+    assert (tmp_path / "skills" / NAME / "SKILL.md").exists()
+
+
+def test_persisted_disabled_builtins_reach_app_config_after_restart(tmp_path, monkeypatch):
+    """Live-check finding: load_settings dropped [skills], so a built-in turned
+    off in the Library came back after a restart."""
+    import tldw_chatbook.config as app_config
+
+    saved = {
+        name: getattr(app_config, name)
+        for name in (
+            "_CONFIG_CACHE",
+            "_CONFIG_CACHE_SOURCE",
+            "_SETTINGS_CACHE",
+            "_SETTINGS_CACHE_SOURCE",
+            "settings",
+            "_CONFIG_GENERATION",
+            "_LAST_CONFIG_LOAD_FAILURE",
+        )
+    }
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[skills]\ndisabled_builtins = ["character-creator"]\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    for name in ("_CONFIG_CACHE", "_CONFIG_CACHE_SOURCE", "_SETTINGS_CACHE",
+                 "_SETTINGS_CACHE_SOURCE", "_LAST_CONFIG_LOAD_FAILURE"):
+        setattr(app_config, name, None)
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    try:
+        try:
+            settings = app_config.load_settings(force_reload=True)
+        except RecoveryRequired:  # local ADR-126 gate; runs in CI
+            pytest.skip("RecoveryRequired (ADR-126) blocks config loads here")
+        assert bs.disabled_builtins_from_config(settings) == frozenset({NAME})
+    finally:
+        for name, value in saved.items():
+            setattr(app_config, name, value)
