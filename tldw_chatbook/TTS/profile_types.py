@@ -72,6 +72,7 @@ PROFILE_PROVIDER_FORMATS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "chatterbox": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
         "higgs": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
         "alltalk": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "omnivoice": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
     }
 )
 PROFILE_PROVIDER_IDS: frozenset[str] = frozenset(PROFILE_PROVIDER_FORMATS)

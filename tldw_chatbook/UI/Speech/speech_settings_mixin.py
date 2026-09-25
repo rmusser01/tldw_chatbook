@@ -43,6 +43,7 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_kokoro_ui_blends,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
@@ -206,6 +207,7 @@ class SpeechSettingsMixin:
                 "chatterbox",
                 "higgs",
                 "alltalk",
+                "omnivoice",
             ]:
                 provider_select.value = preferences.provider_id
 
@@ -425,6 +427,9 @@ class SpeechSettingsMixin:
         elif event.button.id == "higgs-voices-browse-btn":
             self._browse_higgs_voices_dir()
             event.stop()
+        elif event.button.id == "omnivoice-voices-browse-btn":
+            self._browse_omnivoice_voices_dir()
+            event.stop()
 
     def _is_valid_voice(self, voice: object) -> bool:
         """Check if a voice value is valid (not a separator)"""
@@ -576,6 +581,9 @@ class SpeechSettingsMixin:
                 ]
             )
             voice_select.value = "professional_female"
+        elif provider == "omnivoice":
+            voice_select.set_options(LEGACY_VOICE_OPTIONS["omnivoice"])
+            voice_select.value = LEGACY_DEFAULT_VOICES["omnivoice"]
         elif provider == "alltalk":
             voice_select.set_options(LEGACY_VOICE_OPTIONS["alltalk"])
             voice_select.value = LEGACY_DEFAULT_VOICES["alltalk"]
@@ -663,6 +671,13 @@ class SpeechSettingsMixin:
             )
             model_select.value = "higgs-audio-v2"
             logger.info("Higgs model set successfully")
+        elif provider == "omnivoice":
+            model_select.set_options(
+                [
+                    ("OmniVoice int8hq (ONNX)", "omnivoice-int8hq"),
+                ]
+            )
+            model_select.value = "omnivoice-int8hq"
         elif provider == "alltalk":
             model_select.set_options(
                 [
@@ -1053,6 +1068,42 @@ class SpeechSettingsMixin:
 
         # Push the file picker screen
         self.app.push_screen(file_picker, self._handle_higgs_voices_dir_selection)
+
+    def _browse_omnivoice_voices_dir(self) -> None:
+        """Browse for OmniVoice voice profiles directory"""
+        voices_input = self.query_one("#omnivoice-voices-dir-input", Input)
+        current_value = voices_input.value
+        if current_value.startswith("~"):
+            current_value = str(Path(current_value).expanduser())
+        location = (
+            Path(current_value)
+            if current_value and Path(current_value).exists()
+            else Path.home()
+        )
+
+        filters = Filters(
+            ("Directories", lambda p: p.is_dir() if p.exists() else False),
+            ("All Files", lambda p: True),
+        )
+
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select OmniVoice Voice Profiles Directory (choose any file in target directory)",
+            filters=filters,
+            context="omnivoice_voices_dir",
+        )
+        self.app.push_screen(file_picker, self._handle_omnivoice_voices_dir_selection)
+
+    def _handle_omnivoice_voices_dir_selection(self, path: Optional[Path]) -> None:
+        """Handle OmniVoice voice profiles directory selection"""
+        if path:
+            directory = path if path.is_dir() else path.parent
+            voices_input = self.query_one("#omnivoice-voices-dir-input", Input)
+            voices_input.value = str(directory)
+            logger.info(
+                "OmniVoice voice profiles directory selected: {}",
+                redact_user_paths(str(directory)),
+            )
 
     def _handle_chatterbox_voice_dir_selection(self, path: Optional[Path]) -> None:
         """Handle Chatterbox voice directory selection"""

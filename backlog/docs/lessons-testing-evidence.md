@@ -16438,3 +16438,34 @@ behavioural drive (start the real loop, run the real coroutine, assert the old
 task is dead at the moment the new playback starts); the AST guard was kept only
 for the one thing it is actually good at -- "no site may call this without
 `await`".
+
+### 87 green unit tests and an engine that could not produce one sample (TASK-32928, PR #2825)
+
+**What happened.** The OmniVoice ONNX backend shipped with 87 passing tests:
+prompt layout, sampler mechanics, error mapping, format conversion, voice
+profiles. Its only real-model test was env-gated and **skipped** everywhere it
+ran. The first UAT against the actual `ct03/omnivoice-onnx-int8hq` artifact
+failed twice before producing audio:
+`tokenizers.Tokenizer.encode` returns an `Encoding`, not the `list[int]` every
+fake tokenizer returned (so `style_ids + body_ids` raised `TypeError`), and the
+LM graph declares `audio_mask`/`position_ids` as `(batch, seq)` while the
+adapter -- tested only against fake sessions that accepted anything -- fed
+`(batch, 8, seq)` (`ORT INVALID_ARGUMENT: Invalid rank`). Every synthesis
+request would have surfaced as a generic "generation failed". The same pass
+found three more wiring defects that no unit test spanned end to end: the
+Settings Save wrote nothing (no `_TTS_SETTING_BINDINGS` rows -- the persister
+`continue`s past unknown keys), and request admission rejected every Speech
+Lab generation (unlisted numeric provider options are range-checked to
+`[0, 1]`; `num_steps=32` is not).
+
+**What to do.** A fake is evidence only for the contract the fake encodes; when
+the fake is written from the author's *assumption* of a third-party API, the
+suite pins the assumption. For a new engine adapter, (1) build at least one test
+against the real library object where it is cheap (an in-memory
+`tokenizers.Tokenizer` costs nothing), (2) copy the real graph's
+`get_inputs()` names/types/shapes into the fake session, and (3) treat a
+skipped real-model test as *no evidence*, not as a pass -- run it once, with
+the artifact, before claiming the engine works. For a new provider in an
+existing pipeline, drive one request through the real admission and
+persistence layers: both defects above lived in code the provider's own tests
+never touched.

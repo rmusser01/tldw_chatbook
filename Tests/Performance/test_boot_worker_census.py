@@ -125,6 +125,9 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
         # Stall persistence: starts only when the responsiveness monitor
         # observes a UI stall during boot -- allowlisted, never asserted.
         ("ui-stall-persist", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._drain_stalls"),
+        # TASK-32920: stall attribution -- one daemon thread, started by the
+        # first heartbeat, that samples the loop's stack only while it stalls.
+        ("ui-stall-watchdog", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._watch_loop"),
     }
 )
 

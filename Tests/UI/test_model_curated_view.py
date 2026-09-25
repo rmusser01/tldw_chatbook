@@ -578,6 +578,83 @@ async def test_curated_terminal_failure_persists_bounded_inline_recovery(
         assert retry in app.screen._compositor.visible_widgets
 
 
+@pytest.mark.asyncio
+async def test_plain_decline_returns_focus_to_the_row_that_was_declined(
+    tmp_path: Path,
+) -> None:
+    """Cancel at the consent modal must not drop the user at the catalog top.
+
+    UAT (PR #2825): declining the last curated card recomposed the list and
+    left it scrolled to the first card, so the next click hit another row.
+    """
+    references = [
+        ArtifactRef(f"model-{index:02d}", f"{index:x}" * 40, "int8")
+        for index in range(1, 13)
+    ]
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(
+            *(_descriptor(reference) for reference in references)
+        ),
+    )
+    app = _StyledViewApp(view)
+    declined = references[-1]
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        view._operation_reference = declined
+        view.cancel_pending_install()  # plain decline: no recovery message
+
+        def declined_button():
+            return next(
+                button
+                for button in view.query(".curated-install").results(Button)
+                if getattr(button, "reference", None) == declined
+            )
+
+        assert await _wait_until(
+            lambda: declined_button().has_focus, pilot=pilot
+        )
+        assert declined_button() in app.screen._compositor.visible_widgets
+        assert "Retry install…" not in _all_text(app)
+
+
+def _painted(app) -> str:
+    """What the compositor painted, as plain text (SVG runs joined)."""
+    import html
+    import re
+
+    runs = re.findall(r">([^<>]*)</text>", app.export_screenshot())
+    return html.unescape("".join(runs)).replace("\xa0", " ")
+
+
+@pytest.mark.asyncio
+async def test_focused_install_button_still_paints_its_label(tmp_path: Path) -> None:
+    """Focus must not hide the one-row action's label.
+
+    UAT (PR #2825): `outline: heavy` is drawn over a widget's own cells, so on
+    these one-row buttons its top edge covered the label and a focused
+    "Review and install…" painted as an empty bar.
+    """
+    reference = ArtifactRef("model-a", "a" * 40, "int8")
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(_descriptor(reference)),
+    )
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = view.query_one(".curated-install", Button)
+        assert "Review and install" in _painted(app)
+        button.focus()
+        await pilot.pause()
+        assert button.has_focus
+        assert "Review and install" in _painted(app)
+
+
 # ---------------------------------------------------------------------------
 # Module-scope import boundary (TASK-1914 fix round 1).
 #
