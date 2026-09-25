@@ -295,3 +295,39 @@ def test_traversal_names_refused_on_every_path(tmp_path: Path) -> None:
     assert json.loads(victim.read_text())["name"] == "victim"
     # and the legitimate profile is intact
     assert mgr.get_profile("x") is not None
+
+
+def test_create_accepts_float_wav_via_soundfile(tmp_path: Path) -> None:
+    """The stdlib ``wave`` module rejects IEEE-float WAVs; with soundfile
+    installed they must still be measurable (and so accepted)."""
+    sf = pytest.importorskip("soundfile")
+    import numpy as np
+
+    ref = tmp_path / "float.wav"
+    sf.write(str(ref), np.zeros(24000, dtype=np.float32), 24000, subtype="FLOAT")
+    with pytest.raises(wave.Error):
+        wave.open(str(ref), "rb")
+
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+    ok, msg = mgr.create_profile("floaty", str(ref), reference_text="hello there")
+    assert ok, msg
+
+
+def test_overwrite_import_drops_stale_reference_clip(tmp_path: Path) -> None:
+    mgr = OmniVoiceVoiceManager(tmp_path / "voices")
+    _write_wav(tmp_path / "ref.wav")
+    ok, msg = mgr.create_profile("swap", str(tmp_path / "ref.wav"), reference_text="hi")
+    assert ok, msg
+
+    package = tmp_path / "omnivoice_voice_swap"
+    package.mkdir()
+    (package / "reference.flac").write_bytes(b"not-really-flac")
+    (package / "profile.json").write_text(
+        json.dumps({"reference_audio": "reference.flac", "reference_text": "new words"})
+    )
+    ok, msg = mgr.import_profile(str(package), overwrite=True)
+    assert ok, msg
+
+    profile_dir = tmp_path / "voices" / "swap"
+    assert sorted(p.name for p in profile_dir.glob("reference.*")) == ["reference.flac"]
+    assert mgr.get_reference_audio_path("swap") == profile_dir / "reference.flac"

@@ -27,6 +27,7 @@ except ImportError:
 
 # Import new base classes
 from tldw_chatbook.TTS.base_backends import TTSBackendBase
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 
 
 # --- Backend Registry ---
@@ -388,7 +389,7 @@ class TTSBackendManager:
                 ),
                 "OMNIVOICE_VOICE_SAMPLES_DIR": omnivoice_setting(
                     "OMNIVOICE_VOICE_SAMPLES_DIR",
-                    "~/.config/tldw_cli/omnivoice_voices",
+                    OMNIVOICE_DEFAULT_VOICES_DIR,
                 ),
             }
             config.update(omnivoice_defaults)

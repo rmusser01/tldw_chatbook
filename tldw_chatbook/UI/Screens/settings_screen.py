@@ -4264,7 +4264,8 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.SPEECH_TTS,
                 "Speech & TTS",
                 "Application-wide speech, TTS, voice, audio.cpp, OpenAI, "
-                "ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk defaults and setup.",
+                "ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk, and OmniVoice "
+                "defaults and setup.",
                 "Global",
             ),
             SettingsCategorySummary(
@@ -5480,6 +5481,7 @@ class SettingsScreen(BaseAppScreen):
                     "app_tts provider connection and initialization",
                     "API OpenAI and ElevenLabs credentials",
                     "HiggsSettings initialization",
+                    "OmniVoiceSettings initialization",
                 ),
                 reads_runtime_state_from=("TTS service configuration revisions",),
                 writes_allowed=True,

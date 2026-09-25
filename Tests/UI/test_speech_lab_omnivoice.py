@@ -31,13 +31,21 @@ from tldw_chatbook.UI.Speech.speech_settings_model import (
     ALL_SETTINGS_CONTROLS,
     PROVIDER_SETTINGS,
     REQUIRED_SETTINGS,
+    SETTINGS_ACTIONS,
     settings_for_provider,
 )
 
 
 def test_omnivoice_param_defaults_and_labels() -> None:
-    assert PARAM_DEFAULTS["tts-omnivoice-num-steps-input"]["value"] == "32"
-    assert PARAM_DEFAULTS["tts-omnivoice-guidance-scale-input"]["value"] == "2.0"
+    # Blank defers to the saved [OmniVoiceSettings] value (UAT: a pre-filled
+    # "32" silently overrode a Settings value of 16 on every request).
+    for knob in (
+        "tts-omnivoice-num-steps-input",
+        "tts-omnivoice-guidance-scale-input",
+        "tts-omnivoice-max-ref-duration-input",
+    ):
+        assert PARAM_DEFAULTS[knob]["value"] == ""
+        assert "Settings default" in PARAM_DEFAULTS[knob]["placeholder"]
     assert PARAM_LABELS["tts-omnivoice-num-steps-input"] == "Diffusion steps"
     assert PARAM_LABELS["tts-omnivoice-guidance-scale-input"] == "Guidance (CFG)"
 
@@ -57,12 +65,15 @@ def test_omnivoice_settings_declared_everywhere() -> None:
         "omnivoice-guidance-scale-input",
         "omnivoice-max-ref-duration-input",
         "omnivoice-model-root-input",
-        "omnivoice-voices-browse-btn",
         "omnivoice-voices-dir-input",
     }
     assert expected <= set(PROVIDER_SETTINGS["omnivoice"])
     assert settings_for_provider("omnivoice") == PROVIDER_SETTINGS["omnivoice"]
     assert expected <= ALL_SETTINGS_CONTROLS
+    # The browse button is a command, not a persisted value (Higgs precedent).
+    assert "omnivoice-voices-browse-btn" in SETTINGS_ACTIONS
+    assert "omnivoice-voices-browse-btn" not in PROVIDER_SETTINGS["omnivoice"]
+    assert "omnivoice-voices-browse-btn" in ALL_SETTINGS_CONTROLS
     assert REQUIRED_SETTINGS["omnivoice"] == ()
     assert PROVIDER_TITLES["omnivoice"] == "OmniVoice"
     provider_values = {
@@ -187,3 +198,55 @@ class _FakeTokenizer:
 class _FakeDecoder:
     def run(self, codes: np.ndarray) -> list[np.ndarray]:
         return [np.zeros(codes.shape[2] * 320, dtype=np.float32)]
+
+
+# --- review fixes: knob parsing + configured profile dir ------------------------
+
+
+def test_lab_knobs_parse_all_three_including_max_reference() -> None:
+    from tldw_chatbook.UI.Speech.speech_synthesis_mixin import omnivoice_request_knobs
+
+    params, error = omnivoice_request_knobs(
+        {
+            "#tts-omnivoice-num-steps-input": "16",
+            "#tts-omnivoice-guidance-scale-input": "1.5",
+            "#tts-omnivoice-max-ref-duration-input": "12",
+        }
+    )
+    assert error is None
+    assert params == {
+        "num_steps": 16,
+        "guidance_scale": 1.5,
+        "max_reference_duration": 12.0,
+    }
+    assert isinstance(params["num_steps"], int)
+    # blank fields defer to the configured defaults
+    assert omnivoice_request_knobs({}) == ({}, None)
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-3", "nan", "inf"])
+def test_lab_knobs_refuse_bad_steps_without_raising(bad: str) -> None:
+    from tldw_chatbook.UI.Speech.speech_synthesis_mixin import omnivoice_request_knobs
+
+    params, error = omnivoice_request_knobs({"#tts-omnivoice-num-steps-input": bad})
+    assert params == {}
+    assert error is not None and "num steps" in error
+
+
+def test_profile_choices_read_the_configured_voices_dir(tmp_path: Path) -> None:
+    from tldw_chatbook.UI.Speech.speech_catalog_mixin import SpeechCatalogMixin
+
+    _write_wav(tmp_path / "ref.wav")
+    voices = tmp_path / "custom_voices"
+    ok, _msg = OmniVoiceVoiceManager(voices).create_profile(
+        "narrator", str(tmp_path / "ref.wav"), reference_text="hello there"
+    )
+    assert ok
+
+    class _Host(SpeechCatalogMixin):
+        def _cli_setting(self, section, key, default=None):
+            if (section, key) == ("OmniVoiceSettings", "voice_samples_dir"):
+                return str(voices)
+            return default
+
+    assert _Host()._omnivoice_profile_choices() == [("narrator", "profile:narrator")]

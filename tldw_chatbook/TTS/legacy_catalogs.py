@@ -19,6 +19,9 @@ ELEVENLABS_MODELS = (
     "english_v1",
     "elevenlabs",
 )
+#: Default OmniVoice voice-profile directory (one shared literal; ADR-040).
+OMNIVOICE_DEFAULT_VOICES_DIR = "~/.config/tldw_cli/omnivoice_voices"
+
 LEGACY_MODELS = {
     "openai": ("tts-1", "tts-1-hd"),
     "elevenlabs": ELEVENLABS_MODELS[:7],
@@ -218,7 +221,12 @@ LEGACY_REQUEST_OPTION_KEYS = MappingProxyType(
             "language",
         ),
         "alltalk": ("language",),
-        "omnivoice": ("language", "num_steps", "guidance_scale"),
+        "omnivoice": (
+            "language",
+            "num_steps",
+            "guidance_scale",
+            "max_reference_duration",
+        ),
     }
 )
 

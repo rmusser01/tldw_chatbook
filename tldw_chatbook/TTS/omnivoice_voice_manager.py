@@ -13,11 +13,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from tldw_chatbook.TTS.backends.voice_manager_base import VoiceManagerBase
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_TEXT_CHARACTERS,
     validate_reference_text,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Optional imports
 try:
@@ -38,7 +41,7 @@ class _InvalidProfileName(ValueError):
     """A profile name that cannot safely become a directory name."""
 
 
-_DEFAULT_VOICES_DIR = Path("~/.config/tldw_cli/omnivoice_voices")
+_DEFAULT_VOICES_DIR = Path(OMNIVOICE_DEFAULT_VOICES_DIR)
 _EXPORT_PREFIX = "omnivoice_voice_"
 # Profile names become directory names; keep them to a safe, flat charset.
 _PROFILE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
@@ -154,7 +157,7 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             dest_audio = profile_dir / f"reference{ref_path.suffix.lower()}"
             shutil.copy2(ref_path, dest_audio)
 
-            now = datetime.now().isoformat()
+            now = utc_now_iso()
             profile = {
                 "name": profile_name,
                 "display_name": display_name or profile_name,
@@ -174,7 +177,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             return True, f"Successfully created profile '{profile_name}'"
 
         except Exception as e:
-            logger.error(f"Error creating OmniVoice profile: {e}")
+            logger.error(
+                f"Error creating OmniVoice profile: {redact_user_paths(str(e))}"
+            )
             return False, f"Error: {str(e)}"
 
     def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -260,12 +265,14 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             if description is not None:
                 profile["description"] = description
 
-            profile["updated_at"] = datetime.now().isoformat()
+            profile["updated_at"] = utc_now_iso()
             self._write_profile(self._profile_dir(profile_name), profile)
             return True, f"Successfully updated profile '{profile_name}'"
 
         except Exception as e:
-            logger.error(f"Error updating OmniVoice profile: {e}")
+            logger.error(
+                f"Error updating OmniVoice profile: {redact_user_paths(str(e))}"
+            )
             return False, f"Error: {str(e)}"
 
     def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
@@ -282,7 +289,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             return True, f"Successfully deleted profile '{profile_name}'"
 
         except Exception as e:
-            logger.error(f"Error deleting OmniVoice profile: {e}")
+            logger.error(
+                f"Error deleting OmniVoice profile: {redact_user_paths(str(e))}"
+            )
             return False, f"Error: {str(e)}"
 
     # -- import/export ---------------------------------------------------------------
@@ -317,7 +326,8 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                     shutil.copy2(source_audio, package_dir / reference_name)
                 else:
                     logger.warning(
-                        f"Reference audio not found for export: {source_audio}"
+                        f"Reference audio not found for export: "
+                        f"{redact_user_paths(str(source_audio))}"
                     )
                     profile = {
                         k: v for k, v in profile.items() if k != "reference_audio"
@@ -339,11 +349,16 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                 )
                 f.write("\nTo import this profile, use the import_profile function.\n")
 
-            logger.info(f"Exported OmniVoice profile '{profile_name}' to {package_dir}")
+            logger.info(
+                f"Exported OmniVoice profile '{profile_name}' to "
+                f"{redact_user_paths(str(package_dir))}"
+            )
             return True, f"Successfully exported to {package_dir}"
 
         except Exception as e:
-            logger.error(f"Error exporting OmniVoice profile: {e}")
+            logger.error(
+                f"Error exporting OmniVoice profile: {redact_user_paths(str(e))}"
+            )
             return False, f"Error: {str(e)}"
 
     def import_profile(
@@ -412,8 +427,13 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                         f"Reference audio not found in package: {reference_name}",
                     )
 
-            now = datetime.now().isoformat()
+            now = utc_now_iso()
             profile_dir.mkdir(parents=True, exist_ok=True)
+            # Overwrite replaces the clip: drop earlier reference.* files so a
+            # different extension never leaves a stale clip behind.
+            for stale in profile_dir.glob("reference.*"):
+                if not reference_name or stale.name != Path(reference_name).name:
+                    stale.unlink(missing_ok=True)
             if reference_name:
                 shutil.copy2(
                     package_dir / Path(reference_name).name,
@@ -434,7 +454,9 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             return True, f"Successfully imported profile '{name}'"
 
         except Exception as e:
-            logger.error(f"Error importing OmniVoice profile: {e}")
+            logger.error(
+                f"Error importing OmniVoice profile: {redact_user_paths(str(e))}"
+            )
             return False, f"Error: {str(e)}"
 
     # -- helpers ---------------------------------------------------------------------
@@ -507,10 +529,15 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
             with open(profile_file, "r") as f:
                 stored = json.load(f)
         except Exception as e:
-            logger.error(f"Failed to load profile in {profile_dir}: {e}")
+            logger.error(
+                f"Failed to load profile in {redact_user_paths(str(profile_dir))}: "
+                f"{redact_user_paths(str(e))}"
+            )
             return None
         if not isinstance(stored, dict):
-            logger.error(f"Corrupt profile.json in {profile_dir}")
+            logger.error(
+                f"Corrupt profile.json in {redact_user_paths(str(profile_dir))}"
+            )
             return None
         return stored
 
@@ -523,11 +550,13 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
     def _probe_duration(audio_path: Path) -> Optional[float]:
         """Return the clip's duration in seconds, or None if unverifiable.
 
-        WAV files are measured via the stdlib ``wave`` header; other
-        containers need soundfile (the same library the OmniVoice engine
-        uses to decode them).
+        soundfile first (the library the OmniVoice engine decodes with, and
+        it reads float/24-bit WAVs the stdlib cannot); the stdlib ``wave``
+        header is the fallback for plain PCM WAVs without soundfile.
         """
-        if audio_path.suffix.lower() == ".wav":
+        if not (SOUNDFILE_AVAILABLE and _sf is not None) and (
+            audio_path.suffix.lower() == ".wav"
+        ):
             try:
                 with wave.open(str(audio_path), "rb") as reader:
                     rate = reader.getframerate()
@@ -535,7 +564,10 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                         return None
                     return reader.getnframes() / rate
             except (wave.Error, EOFError) as e:
-                logger.error(f"Could not read WAV header of {audio_path}: {e}")
+                logger.error(
+                    f"Could not read WAV header of "
+                    f"{redact_user_paths(str(audio_path))}: {redact_user_paths(str(e))}"
+                )
                 return None
         if SOUNDFILE_AVAILABLE and _sf is not None:
             try:
@@ -543,7 +575,10 @@ class OmniVoiceVoiceManager(VoiceManagerBase):
                 if info.samplerate > 0:
                     return info.frames / info.samplerate
             except Exception as e:
-                logger.error(f"Could not read audio info of {audio_path}: {e}")
+                logger.error(
+                    f"Could not read audio info of "
+                    f"{redact_user_paths(str(audio_path))}: {redact_user_paths(str(e))}"
+                )
         return None
 
 

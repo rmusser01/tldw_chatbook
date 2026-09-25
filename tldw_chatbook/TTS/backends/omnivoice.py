@@ -4,14 +4,15 @@
 # Engine port lineage: k2-fsa/omnivoice (Apache-2.0) — prompt construction and
 # the diffusion sampling loop live in TTS/omnivoice_prompt.py and
 # TTS/omnivoice_sampler.py; this module owns sessions, resolution, threading,
-# and audio post-processing. Sessions: ct03/omnivoice-onnx-int8hq (CC-BY-NC
-# weights; Boson tokenizer license).
+# and audio post-processing. Sessions: ct03/omnivoice-onnx-int8hq (Apache-2.0
+# LM weights; Boson Higgs Audio 2 Community License tokenizer).
 #
 # Imports
 from __future__ import annotations
 
 import asyncio
 import io
+import threading
 import time
 import wave
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -26,6 +27,7 @@ from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_ONNX_REQUIRED_PATHS
 from tldw_chatbook.TTS.omnivoice_prompt import (
     NUM_AUDIO_CODEBOOK,
@@ -37,10 +39,13 @@ from tldw_chatbook.TTS.omnivoice_sampler import (
     OmniVoiceSamplingCancelled,
     run_diffusion_sampling,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 _SAMPLE_RATE = 24_000
 _FRAME_RATE = 75  # one codec frame = 320 samples at 24 kHz
+_HOP_LENGTH = _SAMPLE_RATE // _FRAME_RATE  # samples per codec frame
 _RTF_HEADROOM = 8.0  # observed worst case ~7; timeout budget multiplier
+_MIN_TIMEOUT_S = 30.0  # floor so short lines never race fixed per-step overhead
 
 # Post-processing shape (upstream generate() conventions, seconds/samples at 24 kHz)
 _EDGE_TRIM_MARGIN_S = 0.1  # silence retained around the first/last voiced sample
@@ -49,8 +54,8 @@ _FADE_S = 0.1  # fade-in/out length
 _PAD_S = 0.1  # leading/trailing silence pad
 _SILENCE_THRESHOLD = 1e-3
 _PEAK_TARGET = 0.5  # non-cloned peak normalization target
-_DEFAULT_REF_RMS = 0.1  # cloned RMS target when the reference measured silent
-_PEAK_CEILING = 0.99  # normalization never clips
+_REF_RMS_FLOOR = 0.1  # upstream: quieter references are boosted to this RMS
+_NO_LANGUAGE = frozenset({"", "auto", "none"})  # upstream language-agnostic mode
 
 _AUDIO_SUFFIXES = (
     ".wav", ".mp3", ".flac", ".ogg", ".oga", ".m4a", ".mp4", ".opus", ".aac", ".wma",
@@ -186,6 +191,34 @@ def _managed_root() -> Path | None:
     return None
 
 
+def _resolve_language(value: Any) -> str | None:
+    """Map a configured language to the prompt's language id.
+
+    Upstream ``_resolve_language``: ``None``/"none" (and this app's "auto")
+    mean language-agnostic mode, which the prompt spells ``None``; ISO ids
+    such as ``en`` pass through.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text.lower() in _NO_LANGUAGE else text
+
+
+# Upstream omnivoice/utils/text.py END_PUNCTUATION (Apache-2.0).
+_END_PUNCTUATION = frozenset(
+    ';:,.!?…)]}"\'“”‘’；：，。！？、）】'
+)
+
+
+def _add_punctuation(text: str) -> str:
+    """Upstream ``add_punctuation``: end the reference transcript cleanly."""
+    text = text.strip()
+    if not text or text[-1] in _END_PUNCTUATION:
+        return text
+    is_chinese = any("\u4e00" <= char <= "\u9fff" for char in text)
+    return text + ("。" if is_chinese else ".")
+
+
 #######################################################################################################################
 #
 # ONNX session adapters
@@ -213,35 +246,71 @@ def _ort_dtype(declared: str) -> np.dtype:
         ) from None
 
 
+def _declared_rank(session_input: Any) -> int | None:
+    shape = getattr(session_input, "shape", None)
+    return len(shape) if isinstance(shape, (list, tuple)) else None
+
+
+def _to_rank(array: np.ndarray, rank: int | None) -> np.ndarray:
+    """Collapse the per-codebook axis for rank-2 (batch, seq) inputs.
+
+    The sampler's contract masks are (B, 8, S) with identical codebook rows;
+    the ct03 export declares ``audio_mask``/``position_ids`` as (B, S).
+    """
+    if rank == 2 and array.ndim == 3:
+        return array[:, 0, :]
+    return array
+
+
 class _OrtBatchRunner:
     """Adapt the (2,8,S) batched prompt to the LM session's declared inputs.
 
     ``run`` receives the sampler's contract arrays — ``input_ids`` /
     ``audio_mask`` shaped (2, 8, S) and ``attention_mask`` (2, 1, S, S) — and
-    supplies each input the session actually declares, casting to the declared
+    supplies each input the session actually declares, at its declared rank
+    (the ct03 export takes ``audio_mask``/``position_ids`` as (B, S)) and
     dtype (bool masks export as int64 in some graphs).
     """
 
     def __init__(self, session: Any) -> None:
         self._session = session
-        self._spec = tuple((i.name, i.type) for i in session.get_inputs())
+        self._spec = tuple(
+            (i.name, i.type, _declared_rank(i)) for i in session.get_inputs()
+        )
+        # The attention mask and position ids are constant across the
+        # diffusion steps of one request; cast them once, not per step.
+        self._static: tuple[Any, dict[str, np.ndarray]] | None = None
+
+    def _static_feeds(
+        self, attention_mask: np.ndarray, shape: tuple[int, int, int]
+    ) -> dict[str, np.ndarray]:
+        if self._static is not None and self._static[0] is attention_mask:
+            return self._static[1]
+        batch, codebooks, seq_len = shape
+        feeds: dict[str, np.ndarray] = {}
+        for name, declared, rank in self._spec:
+            dtype = _ort_dtype(declared)
+            if "attention" in name and "audio" not in name:
+                feeds[name] = attention_mask.astype(dtype, copy=False)
+            elif "position" in name:
+                position_ids = np.tile(np.arange(seq_len), (batch, codebooks, 1))
+                feeds[name] = _to_rank(position_ids, rank).astype(dtype, copy=False)
+        self._static = (attention_mask, feeds)
+        return feeds
 
     def run(
         self, input_ids: np.ndarray, audio_mask: np.ndarray, attention_mask: np.ndarray
     ) -> np.ndarray:
-        batch, codebooks, seq_len = input_ids.shape
+        static = self._static_feeds(attention_mask, input_ids.shape)
         feeds: dict[str, np.ndarray] = {}
-        for name, declared in self._spec:
+        for name, declared, rank in self._spec:
             dtype = _ort_dtype(declared)
             if "input_ids" in name:
                 feeds[name] = input_ids.astype(dtype, copy=False)
             elif "audio" in name:
-                feeds[name] = audio_mask.astype(dtype, copy=False)
-            elif "attention" in name:
-                feeds[name] = attention_mask.astype(dtype, copy=False)
-            elif "position" in name:
-                position_ids = np.tile(np.arange(seq_len), (batch, codebooks, 1))
-                feeds[name] = position_ids.astype(dtype, copy=False)
+                feeds[name] = _to_rank(audio_mask, rank).astype(dtype, copy=False)
+            elif name in static:
+                feeds[name] = static[name]
             else:
                 raise OmniVoiceModelError(
                     f"omnivoice: model_invalid — LM session declares unsupported "
@@ -283,19 +352,26 @@ class _OrtCodeRunner:
 
 
 class _OrtWaveRunner:
-    """Feed a (T,) 24 kHz float32 mono waveform to the encoder session."""
+    """Feed a (T,) 24 kHz float32 mono waveform to the encoder session.
+
+    The ct03 export declares ``audio`` as (batch, 1, num_samples); a graph
+    declaring (batch, num_samples) gets the rank-2 form.
+    """
 
     def __init__(self, session: Any) -> None:
         self._session = session
-        self._spec = tuple((i.name, i.type) for i in session.get_inputs())
+        self._spec = tuple(
+            (i.name, i.type, _declared_rank(i)) for i in session.get_inputs()
+        )
 
     def run(self, waveform: np.ndarray) -> list[np.ndarray]:
         feeds: dict[str, np.ndarray] = {}
         assigned = False
-        for name, declared in self._spec:
+        for name, declared, rank in self._spec:
             dtype = _ort_dtype(declared)
             if not assigned:
-                feeds[name] = waveform[None, :].astype(dtype, copy=False)
+                shaped = waveform[None, :] if rank == 2 else waveform[None, None, :]
+                feeds[name] = shaped.astype(dtype, copy=False)
                 assigned = True
             else:
                 raise OmniVoiceModelError(
@@ -334,10 +410,25 @@ def _as_codebooks(codes: np.ndarray) -> np.ndarray:
 #
 # Audio helpers
 #
-def _resample_linear(waveform: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-    """Linear-interpolation resample (reference-audio grade, not synthesis grade)."""
+def _resample(waveform: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    """Band-limited polyphase resample via scipy when installed.
+
+    Without scipy this degrades to linear interpolation, which aliases when
+    downsampling (44.1/48 kHz references) — acceptable for a clone prompt.
+    """
     if source_rate == target_rate or waveform.size == 0:
         return waveform
+    try:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+    except ImportError:
+        resample_poly = None
+    if resample_poly is not None:
+        g = gcd(source_rate, target_rate)
+        return resample_poly(waveform, target_rate // g, source_rate // g).astype(
+            np.float32
+        )
     frames = max(1, round(waveform.size * target_rate / source_rate))
     positions = np.linspace(0.0, waveform.size - 1, frames)
     return np.interp(positions, np.arange(waveform.size), waveform).astype(np.float32)
@@ -389,7 +480,7 @@ def _load_audio_mono(path: Path) -> np.ndarray:
             retryable=False,
             operation_id=_OPERATION_ID,
         )
-    return _resample_linear(mono, int(sample_rate), _SAMPLE_RATE)
+    return _resample(mono, int(sample_rate), _SAMPLE_RATE)
 
 
 def _compress_mid_silence(waveform: np.ndarray) -> np.ndarray:
@@ -412,11 +503,13 @@ def _compress_mid_silence(waveform: np.ndarray) -> np.ndarray:
 def _postprocess(waveform: np.ndarray, ref_rms: float | None) -> np.ndarray:
     """Trim, normalize, and pad the decoder output into the final waveform.
 
-    Steps (upstream ``generate()`` conventions): trim lead/trail silence
+    Steps (upstream ``_post_process_audio``): trim lead/trail silence
     keeping a 100 ms margin (a fully silent clip is kept, never emptied);
-    compress mid-silence runs over 500 ms; RMS-normalize to the reference
-    loudness when cloning (peak 0.5 otherwise, never clipping past 0.99);
-    apply 0.1 s fade-in/out and pad 0.1 s of silence on each side.
+    compress mid-silence runs over 500 ms; when cloning from a reference
+    quieter than 0.1 RMS (boosted before encoding) scale back down by
+    ``ref_rms / 0.1``, otherwise leave cloned loudness alone; without a
+    reference peak-normalize to 0.5; apply 0.1 s fade-in/out and pad 0.1 s
+    of silence on each side.
     """
     audio = np.asarray(waveform, dtype=np.float32).reshape(-1)
     if audio.size == 0:
@@ -436,17 +529,13 @@ def _postprocess(waveform: np.ndarray, ref_rms: float | None) -> np.ndarray:
 
     audio = _compress_mid_silence(audio)
 
-    peak = float(np.max(np.abs(audio)))
-    if ref_rms is not None and ref_rms > 0.0:
-        target_rms = ref_rms if ref_rms > 0.0 else _DEFAULT_REF_RMS
-        rms = float(np.sqrt(np.mean(np.square(audio))))
-        if rms > 0.0:
-            gain = target_rms / rms
-            if peak > 0.0:
-                gain = min(gain, _PEAK_CEILING / peak)
-            audio = audio * gain
-    elif peak > 0.0:
-        audio = audio * (_PEAK_TARGET / peak)
+    if ref_rms is not None:
+        if ref_rms < _REF_RMS_FLOOR:
+            audio = audio * (ref_rms / _REF_RMS_FLOOR)
+    else:
+        peak = float(np.max(np.abs(audio)))
+        if peak > 1e-6:
+            audio = audio * (_PEAK_TARGET / peak)
 
     fade = min(int(_FADE_S * _SAMPLE_RATE), audio.size // 2)
     if fade > 0:
@@ -520,7 +609,10 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 recovery_action="install_omnivoice_tts",
             )
         self._root = await asyncio.to_thread(resolve_model_root, self.config, _managed_root)
-        logger.info(f"OmniVoiceOnnxTTSBackend: model root resolved at {self._root}")
+        logger.info(
+            "OmniVoiceOnnxTTSBackend: model root resolved at {}",
+            redact_user_paths(str(self._root)),
+        )
 
     async def load_model(self) -> None:
         """Lazy: nothing heavy until the first generation."""
@@ -621,6 +713,21 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 )
             reference_source = profile_audio
             reference_text = profile_text
+        # Cloning conditions on the reference transcript; without one the
+        # model clones against an empty text segment and garbles the output
+        # (upstream would ASR it — this engine has no ASR, so refuse).
+        if reference_source and not str(reference_text or "").strip():
+            raise TTSOperationError(
+                code="request_invalid",
+                message=(
+                    "omnivoice: request_invalid — voice cloning needs the "
+                    "reference audio's transcript (reference_text); use a "
+                    "voice profile from the Voice Cloning window"
+                ),
+                retryable=False,
+                operation_id=_OPERATION_ID,
+                recovery_action="provide_reference_text",
+            )
 
         # User multiplier on top of the built-in worst-case RTF headroom.
         timeout_factor = float(self.config.get("OMNIVOICE_TIMEOUT_FACTOR", 1.0))
@@ -631,6 +738,23 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         guidance_override: float | None = None
         if isinstance(extra.get("guidance_scale"), (int, float)):
             guidance_override = float(extra["guidance_scale"])
+        language = _resolve_language(
+            extra.get("language")
+            if isinstance(extra.get("language"), str)
+            else self.config.get("OMNIVOICE_LANGUAGE")
+        )
+        max_reference_duration = float(
+            self.config.get("OMNIVOICE_MAX_REFERENCE_DURATION", 30) or 0
+        )
+        if (
+            isinstance(extra.get("max_reference_duration"), (int, float))
+            and extra["max_reference_duration"] > 0
+        ):
+            max_reference_duration = float(extra["max_reference_duration"])
+        cancel_event = threading.Event()
+
+        def cancel_requested() -> bool:
+            return cancel_event.is_set() or self._cancel.is_set()
         started = time.monotonic()
         loop = asyncio.get_running_loop()
 
@@ -658,10 +782,14 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             ref_codes = None
             try:
                 if reference_source:
-                    ref_codes = await asyncio.to_thread(
-                        self._encode_reference, reference_source
+                    ref_codes = await self._run_off_thread(
+                        cancel_event,
+                        self._encode_reference,
+                        reference_source,
+                        max_reference_duration,
                     )
-                waveform = await asyncio.to_thread(
+                waveform = await self._run_off_thread(
+                    cancel_event,
                     self._synthesize_codes,
                     text,
                     instruct,
@@ -671,17 +799,23 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                     speed,
                     timeout_factor,
                     guidance_override,
-                    lambda: self._cancel.is_set(),
+                    cancel_requested,
                     progress,
+                    language,
                 )
             except OmniVoiceSamplingCancelled:
+                # Only close() gets here (a cancelled awaiting task re-raises
+                # CancelledError from _run_off_thread): surface the
+                # cancellation instead of ending the stream with zero chunks.
                 logger.info("OmniVoiceOnnxTTSBackend: generation cancelled; no audio")
-                return
+                raise asyncio.CancelledError(
+                    "omnivoice generation cancelled by backend close"
+                ) from None
             except TTSOperationError:
                 raise
             except Exception as e:
                 logger.opt(exception=True).error(
-                    f"OmniVoiceOnnxTTSBackend: generation failed: {e}"
+                    f"OmniVoiceOnnxTTSBackend: generation failed: {redact_user_paths(str(e))}"
                 )
                 raise TTSOperationError(
                     code="generation_failed",
@@ -752,7 +886,8 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             raise
         except (RuntimeError, ValueError) as e:
             logger.opt(exception=True).error(
-                f"OmniVoiceOnnxTTSBackend: conversion to {target_format} failed: {e}"
+                f"OmniVoiceOnnxTTSBackend: conversion to {target_format} failed: "
+                f"{redact_user_paths(str(e))}"
             )
             raise TTSOperationError(
                 code="generation_failed",
@@ -774,6 +909,29 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             and target_format in _SOUNDFILE_FORMATS
         )
 
+    @staticmethod
+    async def _run_off_thread(
+        cancel_event: threading.Event, func: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Run ``func`` on a worker thread, propagating task cancellation.
+
+        ``asyncio.to_thread`` cannot stop its thread: a cancelled caller would
+        release the generation lock while the sampler kept burning CPU on the
+        shared sessions. Instead, signal the sampler's cooperative cancel and
+        wait (shielded) for the thread to stop before re-raising, so the lock
+        stays single-flight.
+        """
+        task = asyncio.ensure_future(asyncio.to_thread(func, *args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - the cancel is what surfaces
+                pass
+            raise
+
     # -- lazy loading -------------------------------------------------
 
     async def _ensure_loaded(self) -> None:
@@ -787,6 +945,9 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 await self.initialize()
             root = self._root
             assert root is not None
+            # A previous close() cancelled whatever was in flight; this is a
+            # fresh load, so new generations must not inherit that cancel.
+            self._cancel.clear()
 
             def _load() -> None:
                 if self._tokenizer is None:
@@ -867,7 +1028,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 str(
                     self.config.get(
                         "OMNIVOICE_VOICE_SAMPLES_DIR",
-                        "~/.config/tldw_cli/omnivoice_voices",
+                        OMNIVOICE_DEFAULT_VOICES_DIR,
                     )
                 )
             ).expanduser()
@@ -880,15 +1041,21 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 return None, None
             return str(audio), str(profile.get("reference_text") or "")
         except Exception as exc:
-            logger.warning("OmniVoice voice profile lookup failed: {}", exc)
+            logger.warning(
+                "OmniVoice voice profile lookup failed: {}",
+                redact_user_paths(str(exc)),
+            )
             return None, None
 
-    def _encode_reference(self, reference_audio: str) -> np.ndarray:
+    def _encode_reference(
+        self, reference_audio: str, max_duration: float | None = None
+    ) -> np.ndarray:
         """Encode reference audio as (8, T_ref) int64 codec codes.
 
-        Loads the file as 24 kHz mono float32, enforces the configured
-        maximum reference duration, and runs the encoder session. Also
-        records the reference RMS for loudness-matched post-processing.
+        Upstream ``create_voice_clone_prompt``: load as 24 kHz mono float32,
+        record the RMS of the full clip and boost a reference quieter than
+        0.1 RMS up to it, enforce the maximum duration, trim to a whole
+        number of codec frames, and run the encoder session.
         """
         path = Path(reference_audio).expanduser()
         if not path.is_file():
@@ -906,20 +1073,32 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 retryable=False,
                 operation_id=_OPERATION_ID,
             )
-        self._last_reference_rms = float(np.sqrt(np.mean(np.square(waveform))))
+        ref_rms = float(np.sqrt(np.mean(np.square(waveform))))
+        self._last_reference_rms = ref_rms
+        if 0.0 < ref_rms < _REF_RMS_FLOOR:
+            waveform = waveform * (_REF_RMS_FLOOR / ref_rms)
 
-        max_duration = float(
-            self.config.get("OMNIVOICE_MAX_REFERENCE_DURATION", 30) or 0
-        )
+        if max_duration is None:
+            max_duration = float(
+                self.config.get("OMNIVOICE_MAX_REFERENCE_DURATION", 30) or 0
+            )
         if max_duration > 0 and waveform.size > max_duration * _SAMPLE_RATE:
             waveform = waveform[: int(max_duration * _SAMPLE_RATE)]
             logger.info(
                 f"OmniVoiceOnnxTTSBackend: reference truncated to {max_duration:.1f}s"
             )
+        waveform = waveform[: waveform.size - waveform.size % _HOP_LENGTH]
+        if waveform.size == 0:
+            raise TTSOperationError(
+                code="request_invalid",
+                message="omnivoice: request_invalid — reference audio is too short",
+                retryable=False,
+                operation_id=_OPERATION_ID,
+            )
 
         if self._encoder is None:
             self._encoder = self._create_encoder_session()
-        output = self._encoder.run(waveform)
+        output = self._encoder.run(np.ascontiguousarray(waveform, dtype=np.float32))
         return _as_codebooks(_first_output(output))
 
     # -- synthesis ----------------------------------------------------
@@ -936,6 +1115,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         guidance_override: float | None = None,
         cancel_check: Callable[[], bool] = lambda: False,
         progress: Callable[[int, int], None] | None = None,
+        language: str | None = None,
     ) -> np.ndarray:
         """Run prompt -> sampler -> decoder -> postprocess; return the waveform.
 
@@ -952,6 +1132,10 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 operation_id=_OPERATION_ID,
                 recovery_action="fix_num_steps",
             )
+        # Local references: close() may drop the attributes mid-generation.
+        lm, decoder, tokenizer = self._lm, self._decoder, self._tokenizer
+        if lm is None or decoder is None or tokenizer is None:
+            raise OmniVoiceSamplingCancelled("omnivoice backend closed")
         cloning = ref_codes is not None
         ref_frames = int(ref_codes.shape[1]) if cloning else 0
         prompt_ref_text = ref_text if cloning else ""
@@ -959,17 +1143,24 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             text, prompt_ref_text, ref_frames, speed=speed if speed > 0 else 1.0
         )
         prompt = build_prompt_inputs(
-            self._tokenizer,
+            tokenizer,
             text=text,
-            ref_text=prompt_ref_text,
-            lang=self.config.get("OMNIVOICE_LANGUAGE") or None,
+            ref_text=_add_punctuation(prompt_ref_text) if cloning else "",
+            lang=language,
             instruct=instruct,
             ref_codes=ref_codes,
             target_len=target_len,
             num_codebooks=NUM_AUDIO_CODEBOOK,
         )
 
-        budget_seconds = (target_len / _FRAME_RATE) * _RTF_HEADROOM * max(timeout_factor, 0.0)
+        # Every step runs the LM over the WHOLE sequence (style + text +
+        # reference codes + target), so the budget scales with that length,
+        # not just the target — a long reference with a short line would
+        # otherwise time out.
+        sequence_seconds = prompt.input_ids.shape[1] / _FRAME_RATE
+        budget_seconds = max(
+            _MIN_TIMEOUT_S, sequence_seconds * _RTF_HEADROOM
+        ) * max(timeout_factor, 0.0)
         deadline = None if timeout_factor <= 0 else time.monotonic() + budget_seconds
 
         def deadline_cancel() -> bool:
@@ -997,7 +1188,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         )
         try:
             codes = run_diffusion_sampling(
-                self._lm,
+                lm,
                 prompt.input_ids,
                 target_len,
                 config=sampler_config,
@@ -1014,7 +1205,8 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 message=(
                     f"omnivoice: generation_timeout — sampling exceeded the "
                     f"{budget_seconds:.1f}s budget for ~{target_len / _FRAME_RATE:.1f}s "
-                    f"of audio (timeout factor {timeout_factor})"
+                    f"of audio (timeout factor {timeout_factor}; raise "
+                    f"[OmniVoiceSettings] timeout_factor or lower num_steps)"
                 ),
                 retryable=True,
                 operation_id=_OPERATION_ID,
@@ -1029,7 +1221,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 recovery_action="retry_or_raise_timeout_factor",
             )
 
-        output = self._decoder.run(codes[None, :, :])  # (1, 8, T)
+        output = decoder.run(codes[None, :, :])  # (1, 8, T)
         waveform = np.asarray(_first_output(output), dtype=np.float32).reshape(-1)
         if waveform.size == 0 or not np.isfinite(waveform).all():
             raise TTSOperationError(

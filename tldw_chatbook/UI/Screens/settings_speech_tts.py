@@ -35,6 +35,7 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
     validate_audio_cpp_managed_launch,
 )
 from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 from tldw_chatbook.TTS.openai_compatible_config import (
     OpenAIAuthenticationMode,
     OpenAICompatibleEndpoint,
@@ -288,7 +289,7 @@ _PROVIDER_NON_SECRET_DEFAULTS: dict[str, dict[str, object]] = {
     },
     "omnivoice": {
         "model_root": "",
-        "voice_resource_directory": "~/.config/tldw_cli/omnivoice_voices",
+        "voice_resource_directory": OMNIVOICE_DEFAULT_VOICES_DIR,
         "num_steps": 32,
         "guidance_scale": 2.0,
         "max_reference_duration": 30,
@@ -2098,8 +2099,10 @@ def _validated_provider_values(
 
     if provider_id == "omnivoice":
         return {
+            # Blank is meaningful: use the managed artifact from the model
+            # browser (resolve_model_root's fallback), so it is not required.
             "model_root": _path_syntax(
-                provider_id, "model_root", values.get("model_root")
+                provider_id, "model_root", values.get("model_root"), allow_empty=True
             ),
             "voice_resource_directory": _path_syntax(
                 provider_id,

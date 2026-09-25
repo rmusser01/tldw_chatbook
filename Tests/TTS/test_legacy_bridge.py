@@ -256,7 +256,12 @@ EXPECTED_OPTIONS = {
         "language",
     ),
     "alltalk": ("language",),
-    "omnivoice": ("language", "num_steps", "guidance_scale"),
+    "omnivoice": (
+        "language",
+        "num_steps",
+        "guidance_scale",
+        "max_reference_duration",
+    ),
 }
 EXPECTED_DISPLAY_NAMES = {
     "openai": "OpenAI",

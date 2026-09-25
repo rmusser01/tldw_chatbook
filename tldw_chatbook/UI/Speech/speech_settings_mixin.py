@@ -43,6 +43,7 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_kokoro_ui_blends,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
@@ -1099,7 +1100,10 @@ class SpeechSettingsMixin:
             directory = path if path.is_dir() else path.parent
             voices_input = self.query_one("#omnivoice-voices-dir-input", Input)
             voices_input.value = str(directory)
-            logger.info(f"OmniVoice voice profiles directory selected: {directory}")
+            logger.info(
+                "OmniVoice voice profiles directory selected: {}",
+                redact_user_paths(str(directory)),
+            )
 
     def _handle_chatterbox_voice_dir_selection(self, path: Optional[Path]) -> None:
         """Handle Chatterbox voice directory selection"""

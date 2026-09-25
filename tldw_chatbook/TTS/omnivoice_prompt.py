@@ -292,6 +292,12 @@ def estimate_target_frames(
 # --- prompt assembly -----------------------------------------------------------
 
 
+def _encode_ids(tokenizer, text: str) -> list[int]:
+    """Token ids for ``text``; unwraps a ``tokenizers.Encoding`` to ``.ids``."""
+    encoded = tokenizer.encode(text, add_special_tokens=False)
+    return list(getattr(encoded, "ids", encoded))
+
+
 @dataclass(frozen=True)
 class OmniVoicePromptInputs:
     """Inference prompt for the OmniVoice ONNX graph (no torch dependency).
@@ -326,8 +332,9 @@ def build_prompt_inputs(
     """Build ``input_ids`` and ``audio_mask`` for inference.
 
     Port of upstream ``OmniVoice._prepare_inference_inputs``. ``tokenizer`` is
-    any object with ``encode(text, add_special_tokens=False) -> list[int]``
-    (the ``tokenizers`` library's ``Tokenizer`` satisfies this).
+    any object whose ``encode(text, add_special_tokens=False)`` returns token
+    ids — either a ``list[int]`` or an object with ``.ids`` (the
+    ``tokenizers`` library's ``Tokenizer`` returns an ``Encoding``).
 
     Raises:
         ValueError: If ``ref_codes`` shape does not match ``num_codebooks``.
@@ -341,13 +348,11 @@ def build_prompt_inputs(
                 f"ref_codes must have shape ({num_codebooks}, T), got {ref.shape}"
             )
     style_text = build_style_text(lang, instruct, has_reference=has_ref)
-    style_ids = tokenizer.encode(style_text, add_special_tokens=False)
+    style_ids = _encode_ids(tokenizer, style_text)
 
     # Upstream folds the reference transcript into the text segment.
     body = combine_text(text, ref_text)
-    body_ids = tokenizer.encode(
-        f"<|text_start|>{body}<|text_end|>", add_special_tokens=False
-    )
+    body_ids = _encode_ids(tokenizer, f"<|text_start|>{body}<|text_end|>")
     prefix = np.asarray(style_ids + body_ids, dtype=np.int64)
 
     rows = []

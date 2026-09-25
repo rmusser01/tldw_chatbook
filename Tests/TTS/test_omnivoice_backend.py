@@ -298,7 +298,9 @@ async def test_generate_cloning_marks_reference_codes_as_audio(
     _make_tree(root)
     backend, tokenizer, _ = _make_backend(root, monkeypatch)
     ref_codes = np.full((8, 50), 7, dtype=np.int64)
-    monkeypatch.setattr(backend, "_encode_reference", lambda path: ref_codes)
+    monkeypatch.setattr(
+        backend, "_encode_reference", lambda path, max_duration=None: ref_codes
+    )
     captured: dict = {}
 
     def fake_sampling(
@@ -355,18 +357,22 @@ async def test_generate_reports_step_progress(
     assert all(r["elapsed"] >= 0 for r in reports)
 
 
-async def test_cancelled_generation_returns_quietly_and_releases_lock(
+async def test_close_cancel_raises_cancelled_and_reload_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A close()-driven cancel surfaces as CancelledError (never a silent
+    zero-chunk stream), releases the lock, and a reload clears the flag."""
     root = tmp_path / "m"
     _make_tree(root)
     backend, _, _ = _make_backend(root, monkeypatch)
-    backend._cancel.set()
     chunks = [c async for c in backend.generate_speech_stream(text="hello world", voice="")]
-    assert chunks == []
+    assert len(chunks) == 1
+    backend._cancel.set()  # what close() does to an in-flight generation
+    with pytest.raises(asyncio.CancelledError):
+        async for _ in backend.generate_speech_stream(text="hello world", voice=""):
+            pass
     assert not backend._generation_lock.locked()
-    # after the flag clears, a fresh run generates normally on the same lock
-    backend._cancel.clear()
+    await backend.close()
     chunks = [c async for c in backend.generate_speech_stream(text="hello world", voice="")]
     assert len(chunks) == 1
 

@@ -32,6 +32,7 @@ from textual import work
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 from ..TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
 from ..TTS.backends.voice_manager_base import VoiceManagerBase
+from ..TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 from ..TTS.omnivoice_voice_manager import OmniVoiceVoiceManager
 from ..config import get_cli_setting
 from ..Utils.input_validation import escape_markup
@@ -317,7 +318,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                 get_cli_setting(
                     "OmniVoiceSettings",
                     "voice_samples_dir",
-                    "~/.config/tldw_cli/omnivoice_voices",
+                    OMNIVOICE_DEFAULT_VOICES_DIR,
                 )
             ).expanduser()
             self.backend_managers["omnivoice"] = OmniVoiceVoiceManager(omnivoice_dir)

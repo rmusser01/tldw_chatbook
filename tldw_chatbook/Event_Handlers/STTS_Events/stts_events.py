@@ -290,6 +290,20 @@ _TTS_SETTING_BINDINGS = {
     "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT": _app_tts_binding(
         "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT"
     ),
+    **{
+        f"OMNIVOICE_{name.upper()}": _SettingBinding(
+            (("OmniVoiceSettings", name),),
+            "omnivoice",
+        )
+        for name in (
+            "model_root",
+            "voice_samples_dir",
+            "num_steps",
+            "guidance_scale",
+            "max_reference_duration",
+            "language",
+        )
+    },
 }
 _TTS_PROVIDER_ORDER = (
     "audio_cpp",
@@ -299,6 +313,7 @@ _TTS_PROVIDER_ORDER = (
     "chatterbox",
     "higgs",
     "alltalk",
+    "omnivoice",
 )
 _CREDENTIAL_CONFIG_TARGETS = {
     "openai": frozenset(

@@ -48,6 +48,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
     LEGACY_DEFAULT_VOICES,
     LEGACY_VOICE_OPTIONS,
+    OMNIVOICE_DEFAULT_VOICES_DIR,
 )
 from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
@@ -1489,14 +1490,24 @@ class SpeechCatalogMixin:
             logger.warning("Saved Higgs voice profiles could not be loaded")
             return []
 
-    @staticmethod
-    def _omnivoice_profile_choices() -> list[tuple[str, str]]:
+    def _omnivoice_profile_choices(self) -> list[tuple[str, str]]:
         try:
             from tldw_chatbook.TTS.omnivoice_voice_manager import (
                 OmniVoiceVoiceManager,
             )
 
-            voice_dir = Path.home() / ".config" / "tldw_cli" / "omnivoice_voices"
+            # The configured dir — the one the engine and the Voice Cloning
+            # window use — not a hardcoded default.
+            voice_dir = Path(
+                str(
+                    self._cli_setting(
+                        "OmniVoiceSettings",
+                        "voice_samples_dir",
+                        OMNIVOICE_DEFAULT_VOICES_DIR,
+                    )
+                    or OMNIVOICE_DEFAULT_VOICES_DIR
+                )
+            ).expanduser()
             if not voice_dir.is_dir():
                 return []
             profiles = OmniVoiceVoiceManager(voice_dir).list_profiles()

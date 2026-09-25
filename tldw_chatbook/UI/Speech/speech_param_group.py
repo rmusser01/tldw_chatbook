@@ -80,20 +80,22 @@ PARAM_DEFAULTS: dict[str, dict[str, object]] = {
     "tts-higgs-voice-cloning-switch": {"value": True},
     "tts-higgs-multi-speaker-switch": {"value": True},
     "tts-higgs-delimiter-input": {"value": "|||", "placeholder": "Default: |||"},
-    # OmniVoice
+    # OmniVoice: blank = use the Settings value ([OmniVoiceSettings]); a
+    # typed value overrides it for this request only. A pre-filled literal
+    # here would silently override the saved Settings default every time.
     "tts-omnivoice-num-steps-input": {
-        "value": "32",
-        "placeholder": "Default: 32",
+        "value": "",
+        "placeholder": "Settings default (32 if unset)",
         "type": "number",
     },
     "tts-omnivoice-guidance-scale-input": {
-        "value": "2.0",
-        "placeholder": "Default: 2.0",
+        "value": "",
+        "placeholder": "Settings default (2.0 if unset)",
         "type": "number",
     },
     "tts-omnivoice-max-ref-duration-input": {
-        "value": "30",
-        "placeholder": "Default: 30",
+        "value": "",
+        "placeholder": "Settings default (30 if unset)",
         "type": "number",
     },
     "tts-preprocess-text-switch": {"value": True},

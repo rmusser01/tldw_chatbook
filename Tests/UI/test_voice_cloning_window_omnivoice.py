@@ -52,14 +52,30 @@ async def test_backend_select_offers_omnivoice_and_defaults_to_higgs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_initialize_backends_includes_omnivoice() -> None:
+async def test_initialize_backends_includes_omnivoice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Hermetic config: the real get_cli_setting is storage-gated (ADR-126),
+    # so a lone run would log "Error initializing backends" and build nothing.
+    voices = tmp_path / "omni_voices"
+
+    def fake_setting(section, key, default=None):
+        if (section, key) == ("OmniVoiceSettings", "voice_samples_dir"):
+            return str(voices)
+        return default
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Voice_Cloning_Window.get_cli_setting", fake_setting
+    )
     app = _WindowApp()
     async with app.run_test(size=(200, 60)):
         window = app.query_one(VoiceCloningWindow)
         await window._initialize_backends()
 
         assert "omnivoice" in window.backend_managers
-        assert isinstance(window.backend_managers["omnivoice"], OmniVoiceVoiceManager)
+        manager = window.backend_managers["omnivoice"]
+        assert isinstance(manager, OmniVoiceVoiceManager)
+        assert manager.voice_samples_dir == voices
         assert "higgs" in window.backend_managers
 
 
