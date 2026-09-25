@@ -22,6 +22,7 @@ EXPECTED_LEGACY_IDS = {
     "local_chatterbox_*",
     "alltalk_*",
     "local_higgs_*",
+    "local_omnivoice_*",
 }
 
 

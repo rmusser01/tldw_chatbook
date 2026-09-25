@@ -2312,6 +2312,7 @@ class SpeechTTSSettingsPanel(Vertical):
         "kokoro": ("Local Kokoro", "kokoro", "local_tts"),
         "chatterbox": ("Local Chatterbox", "chatterbox", "chatterbox"),
         "higgs": ("Local Higgs", "higgs", "higgs_tts"),
+        "omnivoice": ("Local OmniVoice", "omnivoice", "omnivoice_tts"),
     }
 
     def _local_dependency_row(self, provider_id: str) -> Static | None:
@@ -3644,6 +3645,50 @@ class SpeechTTSSettingsPanel(Vertical):
                 yield self._select(
                     provider_id, "language", "Default language", _LANGUAGE_OPTIONS
                 )
+                return
+
+            if provider_id == "omnivoice":
+                dependency_row = self._local_dependency_row(provider_id)
+                if dependency_row is not None:
+                    yield dependency_row
+                with Collapsible(
+                    title="Model",
+                    collapsed=False,
+                    id="settings-speech-omnivoice-group-model",
+                ):
+                    yield self._path(
+                        provider_id,
+                        "model_root",
+                        "Model root",
+                        placeholder=(
+                            "Empty = managed artifact from the model browser"
+                        ),
+                    )
+                    yield self._path(
+                        provider_id,
+                        "voice_resource_directory",
+                        "Voice resource directory",
+                        placeholder="Path to voice profiles",
+                    )
+                with Collapsible(
+                    title="Generation",
+                    collapsed=False,
+                    id="settings-speech-omnivoice-group-generation",
+                ):
+                    yield self._input(provider_id, "num_steps", "Diffusion steps")
+                    yield self._input(provider_id, "guidance_scale", "Guidance (CFG)")
+                    yield self._input(
+                        provider_id,
+                        "max_reference_duration",
+                        "Max reference duration",
+                    )
+                    yield self._select(
+                        provider_id,
+                        "language",
+                        "Default language",
+                        [("Auto", "auto"), *_LANGUAGE_OPTIONS],
+                    )
+                return
 
     def _collect_visible_state(self) -> None:
         """Copy mounted widget values into the in-memory draft."""
@@ -6016,6 +6061,8 @@ class SpeechTTSSettingsPanel(Vertical):
         directory_fields = {
             "#settings-speech-chatterbox-voice-resource-directory",
             "#settings-speech-higgs-voice-resource-directory",
+            "#settings-speech-omnivoice-voice-resource-directory",
+            "#settings-speech-omnivoice-model-root",
         }
         if target_selector in directory_fields:
             picker = SelectDirectory(title="Choose voice resource directory")
