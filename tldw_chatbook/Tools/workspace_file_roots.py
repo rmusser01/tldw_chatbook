@@ -95,6 +95,16 @@ _NOTE_NO_ROOTS = (
     "This workspace has no filesystem roots bound; file tools are limited to "
     "the app sandbox."
 )
+#: Remote-root section header (Phase 4a, spec "Model-facing surface"):
+#: the alias->URI mapping the model addresses with root_alias, plus the
+#: fs_*-only rule (git tools are not yet supported on SSH bindings).
+_NOTE_REMOTE_HEADER = (
+    "Remote workspace roots (SSH bindings; reachable with the fs_* tools "
+    'only — pass root_alias "<alias>" and a path relative to that root):'
+)
+#: The explicit degradation line (spec: "Degraded semantics" — the note
+#: says which remote bindings composition excluded this run).
+_NOTE_REMOTE_UNREACHABLE = "remote binding unreachable — excluded this run"
 
 
 def _relativize_root(folder: Path, launch: Path) -> tuple[str, bool]:
@@ -122,6 +132,18 @@ def _iter_valid_folder_bindings(
 ) -> Iterator[tuple[WorkspaceRuntimeBinding, Path]]:
     """Yield existing folder bindings whose stored path has not drifted."""
     for binding in bindings:
+        kind = (
+            getattr(getattr(binding, "binding_kind", None), "value", None)
+            or str(getattr(binding, "binding_kind", ""))
+        )
+        if kind == "ssh-filesystem":
+            # Phase 4a: an ssh binding's root lives on the REMOTE host;
+            # it is never a family-B laptop root. Skipping by KIND (not
+            # by the existence check below) also closes the collision
+            # where ``Path("ssh://host/path")`` -- a RELATIVE laptop
+            # path -- happens to exist under the process cwd and would
+            # otherwise admit a "remote" binding as a local root.
+            continue
         folder = Path(binding.locator)
         if not folder.is_dir():
             continue
@@ -134,12 +156,118 @@ def _iter_valid_folder_bindings(
         yield binding, folder
 
 
+def _list_remote_bindings(registry: Any, workspace_id: str) -> tuple[Any, ...]:
+    """The workspace's ssh-filesystem binding rows (service or fallback).
+
+    The real service exposes ``list_ssh_bindings``; fake registries and
+    older shapes fall back to filtering ``list_runtime_bindings`` by
+    kind. Any failure degrades to "no remote rows" (fail-safe: the note
+    simply lists no remote roots).
+    """
+    try:
+        listing = getattr(registry, "list_ssh_bindings", None)
+        if callable(listing):
+            return tuple(listing(workspace_id))
+        return tuple(
+            binding
+            for binding in registry.list_runtime_bindings(workspace_id)
+            if (
+                (
+                    getattr(
+                        getattr(binding, "binding_kind", None), "value", None
+                    )
+                    or str(getattr(binding, "binding_kind", ""))
+                )
+                == "ssh-filesystem"
+            )
+        )
+    except Exception:  # noqa: BLE001 - remote rows are note-only extras
+        logger.opt(exception=True).debug(
+            "workspace_context_note: remote bindings unavailable"
+        )
+        return ()
+
+
+def _remote_note_lines(
+    registry: Any,
+    workspace_id: str,
+    *,
+    authority_by_id: dict[str, Any] | None,
+    status_cache: Any,
+) -> tuple[list[str], list[str]]:
+    """Render the remote-root lines: admitted aliases and dropped ones.
+
+    Admitted (READY / STALE_IDENTITY / cold-optimistic) remote bindings
+    render as the alias -> display-URI mapping with ``[ssh]`` and the
+    ro/rw tag; BLOCKED/MISSING bindings render the explicit degradation
+    line instead. Everything is whitespace-collapsed exactly like the
+    local display paths: a crafted locator cannot splice a fake prompt
+    section into the note.
+    """
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot, display_uri
+
+    admitted: list[str] = []
+    dropped: list[str] = []
+    for binding in _list_remote_bindings(registry, workspace_id):
+        binding_id = str(getattr(binding, "binding_id", ""))
+        if not binding_id:
+            continue
+        if authority_by_id is not None and binding_id not in authority_by_id:
+            continue
+        try:
+            from tldw_chatbook.Tools.remote_binding_locator import (
+                locator_string,
+                parse_remote_locator,
+            )
+
+            parsed = parse_remote_locator(str(binding.locator))
+            descriptor = RemoteRoot(
+                alias=binding_id,
+                canonical_locator=locator_string(parsed),
+                root=parsed.path,
+                binding_id=binding_id,
+            )
+            uri = display_uri(descriptor)
+        except Exception:  # noqa: BLE001 - unrenderable row stays out of the note
+            logger.opt(exception=True).debug(
+                "workspace_context_note: remote binding locator unparseable"
+            )
+            continue
+        frozen = (
+            authority_by_id.get(binding_id) if authority_by_id is not None else None
+        )
+        read_only = (
+            not bool(frozen.allow_write)
+            if frozen is not None
+            else str(
+                (getattr(binding, "metadata", None) or {}).get("access", "ro")
+            )
+            != "rw"
+        )
+        state: str | None = None
+        try:
+            cached = status_cache.status(binding_id)
+            state = str(getattr(cached, "state", cached))
+        except Exception:  # noqa: BLE001 - unreadable cache drops the row
+            state = None
+        alias = " ".join(binding_id.split())
+        uri = " ".join(uri.split())
+        if state in {"BLOCKED", "MISSING"} or state is None:
+            dropped.append(f"  - {alias}: {_NOTE_REMOTE_UNREACHABLE}")
+        else:
+            admitted.append(
+                f"  - {alias} → {uri} [ssh, {'ro' if read_only else 'rw'}]"
+            )
+    return admitted, dropped
+
+
 def workspace_context_note(
     workspace_id: str | None,
     *,
     launch_cwd: str | os.PathLike[str] | None = None,
     registry=None,
     binding_authority: Iterable[Any] | None = None,
+    status_cache: Any = None,
 ) -> str:
     """Build the agent system-prompt note for a non-default workspace.
 
@@ -157,6 +285,11 @@ def workspace_context_note(
             ``get_launch_cwd()``.
         registry: Workspace registry to read from; defaults to the shared
             process registry ``allowed_file_roots`` uses.
+        binding_authority: Optional frozen run authority — when present,
+            only bindings it names render (local and remote alike).
+        status_cache: Optional :class:`RemoteBindingStatusCache` backing
+            the remote-root lines; ``None`` resolves the process-wide
+            singleton (test seam for injection).
 
     Returns:
         The note text, or ``""`` when no note applies. On any registry failure
@@ -236,10 +369,36 @@ def workspace_context_note(
         f"Active workspace: {json.dumps(name, ensure_ascii=False)}",
         f"Launched from: {launch_label}",
     ]
+    # Remote-root lines (Phase 4a): alias -> URI mappings, the fs_*-only
+    # rule, and the explicit degradation line for excluded bindings. The
+    # singleton resolution failure degrades to no remote lines (the note
+    # never fails because the cache is unavailable).
+    remote_admitted: list[str] = []
+    remote_dropped: list[str] = []
+    if status_cache is None:
+        try:
+            from tldw_chatbook.Tools.remote_binding_status import (
+                get_remote_binding_status_cache,
+            )
+
+            status_cache = get_remote_binding_status_cache()
+        except Exception:  # noqa: BLE001 - note-only extra, fail-soft
+            status_cache = None
+    if status_cache is not None:
+        remote_admitted, remote_dropped = _remote_note_lines(
+            registry,
+            workspace_id,
+            authority_by_id=authority_by_id,
+            status_cache=status_cache,
+        )
     if root_lines:
         lines.append("Workspace file roots (relative to the launch directory):")
         lines.extend(root_lines)
-    else:
+    if remote_admitted or remote_dropped:
+        lines.append(_NOTE_REMOTE_HEADER)
+        lines.extend(remote_admitted)
+        lines.extend(remote_dropped)
+    if not (root_lines or remote_admitted or remote_dropped):
         lines.append(_NOTE_NO_ROOTS)
     return "\n".join(lines)
 

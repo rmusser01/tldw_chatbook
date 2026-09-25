@@ -733,3 +733,166 @@ def test_allowed_file_roots_remote_frozen_authority_raises_not_silently_drops(
                 "".join(traceback.format_exception(*exception))
             )
     assert any("remote root reached laptop-disk path" in text for text in tripwire_texts)
+
+
+# -- Phase 4a (task 18): remote roots in the note + kind-explicit skips ----
+
+
+class _SshRow(SimpleNamespace):
+    """A registry row for an ssh-filesystem binding (fake shape)."""
+
+    def __init__(self, binding_id: str = "ssh-b1", *, locator: str = "ssh://devbox/srv/www", access: str = "rw"):
+        super().__init__(
+            workspace_id="ws-a",
+            binding_id=binding_id,
+            binding_kind="ssh-filesystem",
+            label=binding_id,
+            locator=locator,
+            status="ready",
+            metadata={"access": access},
+        )
+
+
+class _MixedRegistry:
+    """Local + remote bindings without touching a real workspace DB."""
+
+    def __init__(self, *bindings: SimpleNamespace, name: str = "Client A"):
+        self._bindings = tuple(bindings)
+        self._name = name
+
+    def get_workspace(self, _workspace_id):
+        return SimpleNamespace(name=self._name)
+
+    def list_folder_bindings(self, _workspace_id):
+        return tuple(
+            b for b in self._bindings if b.binding_kind == "local-filesystem"
+        )
+
+    def list_ssh_bindings(self, _workspace_id):
+        return tuple(
+            b for b in self._bindings if b.binding_kind == "ssh-filesystem"
+        )
+
+    def list_runtime_bindings(self, _workspace_id):
+        return self._bindings
+
+
+def _status_cache():
+    from tldw_chatbook.Tools.remote_binding_status import (
+        RemoteBindingStatusCache,
+    )
+
+    return RemoteBindingStatusCache()
+
+
+def test_note_renders_remote_root_alias_uri_and_fs_only_rule(tmp_path) -> None:
+    local = tmp_path / "proj"
+    local.mkdir()
+    registry = _MixedRegistry(
+        SimpleNamespace(
+            workspace_id="ws-a",
+            binding_id="folder-1",
+            binding_kind="local-filesystem",
+            label="folder-1",
+            locator=str(local),
+            status="ready",
+            metadata={"access": "rw"},
+        ),
+        _SshRow(),
+    )
+
+    note = wfr.workspace_context_note(
+        "ws-a",
+        launch_cwd=tmp_path,
+        registry=registry,
+        status_cache=_status_cache(),
+    )
+
+    # alias -> URI mapping with the [ssh] tag and the access mode
+    assert "ssh-b1 → ssh://devbox/srv/www [ssh, rw]" in note
+    # the note teaches that remote roots are fs_*-only and addressed by
+    # root_alias with a relative path
+    assert "fs_*" in note
+    assert "root_alias" in note
+
+
+def test_note_tags_read_only_remote_root(tmp_path) -> None:
+    registry = _MixedRegistry(_SshRow(access="ro"))
+    note = wfr.workspace_context_note(
+        "ws-a",
+        launch_cwd=tmp_path,
+        registry=registry,
+        status_cache=_status_cache(),
+    )
+    assert "ssh-b1 → ssh://devbox/srv/www [ssh, ro]" in note
+
+
+def test_note_marks_blocked_remote_excluded_this_run(tmp_path) -> None:
+    from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
+    cache = _status_cache()
+    cache.record_transport_failure(
+        "ssh-b1", TransportFailureKind.UNREACHABLE, "no route to host"
+    )
+    registry = _MixedRegistry(_SshRow())
+
+    note = wfr.workspace_context_note(
+        "ws-a", launch_cwd=tmp_path, registry=registry, status_cache=cache
+    )
+
+    assert "ssh-b1: remote binding unreachable — excluded this run" in note
+    assert "ssh://devbox/srv/www [ssh" not in note  # not listed as usable
+
+
+def test_note_reports_no_roots_only_when_no_local_and_no_remote(tmp_path) -> None:
+    registry = _MixedRegistry(_SshRow())
+    note = wfr.workspace_context_note(
+        "ws-a",
+        launch_cwd=tmp_path,
+        registry=registry,
+        status_cache=_status_cache(),
+    )
+    # A remote-only workspace has roots; the sandbox-only line must not lie.
+    assert "no filesystem roots" not in note
+    assert "ssh://devbox/srv/www" in note
+
+
+def test_note_respects_frozen_authority_for_remote_roots(tmp_path) -> None:
+    registry = _MixedRegistry(_SshRow(), _SshRow("ssh-b2"))
+    frozen = SimpleNamespace(binding_id="ssh-b2", allow_write=True)
+
+    note = wfr.workspace_context_note(
+        "ws-a",
+        launch_cwd=tmp_path,
+        registry=registry,
+        binding_authority=(frozen,),
+        status_cache=_status_cache(),
+    )
+
+    assert "ssh-b2 →" in note
+    assert "ssh-b1" not in note
+
+
+def test_allowed_file_roots_skips_ssh_bindings_even_with_colliding_laptop_dir(
+    tmp_path, monkeypatch
+) -> None:
+    """An ssh locator must never alias a laptop directory.
+
+    ``Path("ssh://devbox/srv/www")`` is the RELATIVE path
+    ``ssh:/devbox/srv/www``; a directory with that spelling under the
+    process cwd would satisfy the old existence check and silently admit
+    a "remote" binding as a LOCAL root for the family-B tools. The
+    binding-kind skip closes that collision by construction.
+    """
+    monkeypatch.chdir(tmp_path)
+    collision = tmp_path / "ssh:" / "devbox" / "srv" / "www"
+    collision.mkdir(parents=True)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    registry = _MixedRegistry(_SshRow())
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+
+    with wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+
+    assert roots == (sandbox,)

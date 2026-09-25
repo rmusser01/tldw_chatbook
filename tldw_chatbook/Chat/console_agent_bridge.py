@@ -4844,8 +4844,14 @@ def build_console_first_request_plan(
         offer_find_load=True,
     )
     discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
+    from tldw_chatbook.Tools.remote_binding_status import (
+        get_remote_binding_status_cache,
+    )
+
     workspace_note = workspace_context_note(
-        workspace_id, binding_authority=workspace_binding_authority
+        workspace_id,
+        binding_authority=workspace_binding_authority,
+        status_cache=get_remote_binding_status_cache(),
     )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION

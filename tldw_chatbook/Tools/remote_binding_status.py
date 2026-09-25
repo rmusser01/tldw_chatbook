@@ -62,6 +62,8 @@ __all__ = [
     "ProbeClassification",
     "RemoteBindingStatusCache",
     "classify_probe_result",
+    "get_remote_binding_status_cache",
+    "set_remote_binding_status_cache",
 ]
 
 #: Default recovery-probe debounce: one scheduled probe per resolved
@@ -182,6 +184,47 @@ class _BindingRecord:
 def _moment(now: float | None) -> float:
     """Resolve one record's timestamp: injected ``now`` or the clock."""
     return time.monotonic() if now is None else float(now)
+
+
+#: Process-wide status cache shared by every composition/admission site
+#: (Phase 4a). One cache per process is the point: run composition, the
+#: per-call client guard, the transport's learning writes, and the
+#: debounced recovery probe must all see the SAME binding states or
+#: availability decisions fragment per call site. Lazily constructed;
+#: ``set_remote_binding_status_cache`` is the test seam.
+_APP_STATUS_CACHE: "RemoteBindingStatusCache | None" = None
+_APP_STATUS_CACHE_LOCK = threading.Lock()
+
+
+def get_remote_binding_status_cache() -> "RemoteBindingStatusCache":
+    """Return the process-wide :class:`RemoteBindingStatusCache`.
+
+    Lazily constructed with the shipped defaults on first use; stable
+    thereafter. Pure in-memory, no I/O, no clocks at construction --
+    safe to call from any hot path (composition, note building).
+    """
+    global _APP_STATUS_CACHE
+    if _APP_STATUS_CACHE is not None:
+        return _APP_STATUS_CACHE
+    with _APP_STATUS_CACHE_LOCK:
+        if _APP_STATUS_CACHE is None:
+            _APP_STATUS_CACHE = RemoteBindingStatusCache()
+    return _APP_STATUS_CACHE
+
+
+def set_remote_binding_status_cache(
+    cache: "RemoteBindingStatusCache | None",
+) -> None:
+    """Install or clear the process-wide status cache (test seam).
+
+    Args:
+        cache: The replacement cache, or ``None`` to drop the singleton
+            so the next :func:`get_remote_binding_status_cache` builds a
+            fresh one.
+    """
+    global _APP_STATUS_CACHE
+    with _APP_STATUS_CACHE_LOCK:
+        _APP_STATUS_CACHE = cache
 
 
 class RemoteBindingStatusCache:

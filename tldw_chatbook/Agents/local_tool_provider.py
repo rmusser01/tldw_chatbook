@@ -539,7 +539,11 @@ class RunAdmittedWorkspaceRoot:
             # the union existed (LocalRoot/RemoteRoot descriptors are
             # stored verbatim -- unwrapping happens at the consumer).
             object.__setattr__(self, "root", Path(self.root))
-        if not self.root_identity:
+        # A REMOTE root may carry an empty identity chain: a cold
+        # (optimistic) admission has never pinged, and the WORKER's root
+        # pin is the per-call guard (spec: split authority). Task 18's
+        # composition is the caller that legitimately passes one.
+        if not self.root_identity and not isinstance(self.root, RemoteRoot):
             raise ValueError("root_identity must be non-empty")
         if not callable(self.guard):
             raise ValueError("guard must be callable")

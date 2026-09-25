@@ -1176,13 +1176,24 @@ def capture_project_instruction_authority(
     *,
     include_bindings: bool = True,
 ) -> ConsoleProjectAuthoritySnapshot:
-    """Freeze one session's maximum project authority without view callbacks."""
+    """Freeze one session's maximum project authority without view callbacks.
+
+    Listing and selection run against the process-wide remote binding
+    status cache (Task 18): the frozen snapshot sees the SAME live
+    remote states every dispatch/preview site sees, so a captured
+    identity chain survives later revalidation instead of reading
+    cold-empty at the comparison site.
+    """
     state = session.project_instruction_state
     selected = None
     options: tuple[ConsoleProjectBindingSnapshot, ...] = ()
     if include_bindings:
         try:
-            choices = list_project_instruction_bindings(session, registry)
+            choices = list_project_instruction_bindings(
+                session,
+                registry,
+                status_cache=_app_remote_binding_status_cache(),
+            )
         except ProjectInstructionBindingRecovery:
             choices = ()
         options = tuple(
@@ -1191,7 +1202,11 @@ def capture_project_instruction_authority(
         )
     if include_bindings and state.project_instructions_enabled:
         try:
-            selection = resolve_project_instruction_binding(session, registry)
+            selection = resolve_project_instruction_binding(
+                session,
+                registry,
+                status_cache=_app_remote_binding_status_cache(),
+            )
         except ProjectInstructionBindingRecovery:
             pass
         else:
@@ -1843,14 +1858,162 @@ def _exclusion_paths_provider(
     return read
 
 
+#: Parity-matrix v1 wording (spec: "Run composition & tool parity"):
+#: git_* stays advertised for local aliases on mixed runs, but a remote
+#: alias refuses at CALL time with this typed message.
+_REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
+
+#: URI-in-path teaching copy (spec: "Model-facing surface"): the note
+#: shows alias -> URI mappings, so the refusal a URI path earns must
+#: teach the correct convention instead of a bare invalid-path error.
+_REMOTE_URI_PATH_MESSAGE = (
+    'remote roots take a path RELATIVE to the root, not a URI: use '
+    'root_alias "{alias}" with a relative path'
+)
+
+
+class _RemoteExecutorDispatchAdapter:
+    """Wire-dict-to-str adapter at the run-composition seam (Task 18).
+
+    ``LocalToolSpec`` handlers return the bounded result TEXT (the local
+    ``WorkspaceToolExecutor.execute`` contract) and the CAS/ledger sites
+    above them consume either seam via ``_response_result_text`` — but
+    every handler-facing slot expects a STR. The remote transport
+    executor returns the final wire-frame dict. Wrapping ONCE here (the
+    adapter Task 17 shipped test-only, now real) keeps every spec
+    handler transport-agnostic and gives the two call-time policies one
+    owner:
+
+    - git_* on a remote alias refuses with the parity-matrix typed error
+      (local aliases keep git tools — they hold different executors);
+    - a URI in a ``path``/``pattern`` argument refuses with the message
+      that teaches the ``root_alias`` + relative-path convention.
+
+    Raises whatever the inner executor raises (typed transport errors
+    included); the provider's protocol boundary renders them.
+    """
+
+    def __init__(self, inner: Any, *, alias: str) -> None:
+        self._inner = inner
+        self._alias = str(alias)
+
+    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> str:
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            RemoteWorkspaceExecutionError,
+        )
+
+        if tool.startswith("git_"):
+            raise RemoteWorkspaceExecutionError(
+                "git_unsupported_on_remote",
+                _REMOTE_GIT_UNSUPPORTED_MESSAGE,
+                admitted=False,
+            )
+        for key in ("path", "pattern"):
+            value = args.get(key) if isinstance(args, dict) else None
+            if isinstance(value, str) and "://" in value:
+                raise RemoteWorkspaceExecutionError(
+                    "uri_path_rejected",
+                    _REMOTE_URI_PATH_MESSAGE.format(alias=self._alias),
+                    admitted=False,
+                )
+        wire = self._inner.execute(tool, args, intent=intent)
+        result = wire.get("result") if isinstance(wire, dict) else wire
+        if not isinstance(result, str):
+            # Contract violation (a success frame without result text):
+            # refuse loudly rather than stringifying a wire dict.
+            raise RemoteWorkspaceExecutionError(
+                "protocol_failure", admitted=True
+            )
+        return result
+
+    def ping(self) -> Any:
+        return self._inner.ping()
+
+    def maybe_schedule_recovery_probe(self) -> None:
+        self._inner.maybe_schedule_recovery_probe()
+
+
+def _default_remote_run_executor_factory(
+    binding: Any,
+    binding_id: str,
+    *,
+    status_cache: Any,
+    sensitive_exclusions: Any,
+) -> Any:
+    """Build the dispatch adapter over the real ssh transport executor.
+
+    Pure construction — no spawn, no network (the hot-path rule): the
+    master manager is the shared lazy singleton, and the first transport
+    call happens only when a tool call (or the debounced probe thread)
+    actually executes.
+    """
+    from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceToolExecutor,
+    )
+    from tldw_chatbook.Tools.remote_workspace_transport import get_master_manager
+
+    loc = parse_remote_locator(str(binding.locator))
+    metadata = getattr(binding, "metadata", None) or {}
+    python = str(metadata.get("python") or "python3")
+    inner = RemoteWorkspaceToolExecutor.for_ssh(
+        loc,
+        binding_id,
+        cache=status_cache,
+        masters=get_master_manager(),
+        python=python,
+        sensitive_exclusions=sensitive_exclusions,
+    )
+    return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
+
+
+def _app_remote_binding_status_cache() -> Any:
+    """Resolve the process-wide remote binding status cache (lazy import)."""
+    from tldw_chatbook.Tools.remote_binding_status import (
+        get_remote_binding_status_cache,
+    )
+
+    return get_remote_binding_status_cache()
+
+
+def _remote_cached_state(status_cache: Any, binding_id: str) -> str | None:
+    """Read one binding's cached state; ``None`` when the read fails."""
+    if status_cache is None:
+        return None
+    try:
+        cached = status_cache.status(binding_id)
+        return str(getattr(cached, "state", cached))
+    except Exception:  # noqa: BLE001 - unreadable cache excludes fail-closed
+        return None
+
+
+def _is_ssh_binding_row(binding: Any) -> bool:
+    kind = (
+        getattr(getattr(binding, "binding_kind", None), "value", None)
+        or str(getattr(binding, "binding_kind", ""))
+    )
+    return kind == "ssh-filesystem"
+
+
 def capture_run_admitted_workspace_roots(
     *,
     session: ConsoleChatSession | Any,
     registry: Any,
     project_selection: ProjectInstructionBindingSelection | None = None,
     project_authority_guard: Callable[[], bool] | None = None,
+    status_cache: Any = None,
+    remote_executor_factory: Callable[..., Any] | None = None,
 ) -> tuple[Any, ...]:
-    """Capture immutable local-folder authority for one owning Console run.
+    """Capture immutable run-root authority for one owning Console run.
+
+    Local roots keep the exact pre-Phase-4a admission. REMOTE roots
+    (Task 18, spec "Run composition & tool parity") admit as
+    ``RunAdmittedWorkspaceRoot``\\ s whose ``root`` slot carries the
+    ``RemoteRoot`` descriptor and whose executor slot carries the
+    ssh-transport dispatch adapter: cache state READY, STALE_IDENTITY,
+    or cold (optimistic) admits; BLOCKED/MISSING bindings are EXCLUDED
+    and the debounced recovery probe is scheduled (never awaited — the
+    hot-path rule: composition reads cached status only).
 
     Args:
         session: Console session that owns the run and its Workspace binding.
@@ -1859,10 +2022,18 @@ def capture_run_admitted_workspace_roots(
             instructions; when present, it is the run's only admitted root.
         project_authority_guard: Optional selected-project guard reused by the
             admitted authority.
+        status_cache: Optional :class:`RemoteBindingStatusCache`; ``None``
+            resolves the process-wide singleton (test seam for injection).
+        remote_executor_factory: Optional factory over
+            ``(binding, binding_id, *, status_cache, sensitive_exclusions)``
+            building the remote dispatch executor; ``None`` uses the real
+            ssh transport adapter (test seam for stub executors).
 
     Returns:
         Immutable run-root authorities ordered by stable binding ID, or an
-        empty tuple when the owning session has no valid local binding.
+        empty tuple when the owning session has no admissible binding
+        (every remote binding degraded counts: the run proceeds on its
+        local roots, never a forced re-selection).
     """
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
@@ -1875,14 +2046,71 @@ def capture_run_admitted_workspace_roots(
         or registry is None
     ):
         return ()
+    if status_cache is None:
+        status_cache = _app_remote_binding_status_cache()
+    remote_factory = (
+        remote_executor_factory or _default_remote_run_executor_factory
+    )
 
+    def _schedule_recovery_probe(binding: Any, binding_id: str) -> None:
+        # Fire-and-forget: the executor's own debounce (one probe per
+        # resolved host per ~30s) and daemon thread do the rest; a
+        # factory failure here must never break composition.
+        try:
+            remote_factory(
+                binding,
+                binding_id,
+                status_cache=status_cache,
+                sensitive_exclusions=lambda: (),
+            ).maybe_schedule_recovery_probe()
+        except Exception:  # noqa: BLE001 - probe scheduling degrades silently
+            logger.opt(exception=True).debug(
+                "Remote binding recovery probe could not be scheduled "
+                "(binding_id={})",
+                binding_id,
+            )
+
+    excluded_remote_ids: set[str] = set()
     if project_selection is not None:
         selections = (project_selection,)
+        if is_remote(project_selection.root) and project_selection.degraded:
+            # Degraded SELECTION warning (spec "Degraded semantics"): a
+            # BLOCKED selected working folder warns and proceeds on
+            # scratch/local — never a forced re-selection.
+            binding_id = str(project_selection.binding.binding_id)
+            logger.warning(
+                "Remote working-folder binding is BLOCKED at run "
+                "composition; excluded this run and a recovery probe "
+                "scheduled (binding_id={})",
+                binding_id,
+            )
+            excluded_remote_ids.add(binding_id)
+            _schedule_recovery_probe(project_selection.binding, binding_id)
     else:
         try:
             bindings = registry.list_runtime_bindings(workspace_id)
         except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
             return ()
+        # Remote pre-pass (cache-only reads): BLOCKED/MISSING rows are
+        # excluded here and get the debounced recovery probe, including
+        # MISSING rows that admission itself refuses (``None``) and that
+        # would otherwise vanish before the selection loop.
+        for binding in bindings:
+            if not _is_ssh_binding_row(binding):
+                continue
+            binding_id = str(getattr(binding, "binding_id", ""))
+            state = _remote_cached_state(status_cache, binding_id)
+            if state in {"BLOCKED", "MISSING"}:
+                logger.warning(
+                    "Remote workspace binding {} at run composition "
+                    "(state={}, binding_id={}); excluded this run and a "
+                    "recovery probe scheduled",
+                    "is BLOCKED" if state == "BLOCKED" else "root is MISSING",
+                    state,
+                    binding_id,
+                )
+                excluded_remote_ids.add(binding_id)
+                _schedule_recovery_probe(binding, binding_id)
         selections = tuple(
             sorted(
                 (
@@ -1890,7 +2118,7 @@ def capture_run_admitted_workspace_roots(
                     for binding in bindings
                     if (
                         selection := _validate_project_instruction_binding(
-                            session, binding
+                            session, binding, status_cache=status_cache
                         )
                     )
                     is not None
@@ -1902,6 +2130,85 @@ def capture_run_admitted_workspace_roots(
     roots = []
     for selection in selections:
         binding_id = str(selection.binding.binding_id)
+        if is_remote(selection.root):
+            if binding_id in excluded_remote_ids:
+                continue  # warned + probe scheduled in the pre-pass above
+            from tldw_chatbook.Workspaces.registry_service import (
+                binding_exclusion_entries,
+            )
+
+            snapshot_rels = tuple(
+                entry.path
+                for entry in binding_exclusion_entries(selection.binding)
+            )
+            exclusions_provider = _exclusion_paths_provider(
+                registry, binding_id, selection.root, snapshot_rels
+            )
+            try:
+                remote_executor = remote_factory(
+                    selection.binding,
+                    binding_id,
+                    status_cache=status_cache,
+                    sensitive_exclusions=exclusions_provider,
+                )
+            except Exception:  # noqa: BLE001 - unbuildable executor revokes
+                logger.warning(
+                    "Remote workspace binding excluded because its executor "
+                    "could not be built (binding_id={})",
+                    binding_id,
+                )
+                continue
+
+            if project_selection is not None and project_authority_guard is not None:
+
+                def remote_guard(
+                    write: bool,
+                    selection: ProjectInstructionBindingSelection = selection,
+                    project_guard: Callable[[], bool] = project_authority_guard,
+                ) -> bool:
+                    # Local project-root parity (access + the session's
+                    # selected-authority guard) PLUS the remote
+                    # split-authority client check (registry row, fingerprint,
+                    # cache identity); the worker's root pin guards the call.
+                    return (
+                        not write
+                        or selection.allow_write
+                    ) and bool(project_guard()) and _workspace_binding_authority_is_current(
+                        workspace_id=workspace_id,
+                        registry=registry,
+                        expected_selection=selection,
+                        write=write,
+                        status_cache=status_cache,
+                    )
+            else:
+
+                def remote_guard(
+                    write: bool,
+                    selection: ProjectInstructionBindingSelection = selection,
+                ) -> bool:
+                    return _workspace_binding_authority_is_current(
+                        workspace_id=workspace_id,
+                        registry=registry,
+                        expected_selection=selection,
+                        write=write,
+                        status_cache=status_cache,
+                    )
+
+            roots.append(
+                RunAdmittedWorkspaceRoot(
+                    workspace_id=workspace_id,
+                    binding_id=binding_id,
+                    alias=binding_id,
+                    root=selection.root,
+                    locator_fingerprint=selection.locator_fingerprint,
+                    root_identity=selection.root_identity,
+                    allow_write=selection.allow_write,
+                    guard=remote_guard,
+                    exclusions_provider=exclusions_provider,
+                    workspace_executor=remote_executor,
+                )
+            )
+            continue
         from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
         snapshot_rels = tuple(
@@ -1935,6 +2242,7 @@ def capture_run_admitted_workspace_roots(
                     registry=registry,
                     expected_selection=selection,
                     write=write,
+                    status_cache=status_cache,
                 )
 
         roots.append(
@@ -1988,7 +2296,11 @@ def project_instruction_authority_snapshot_is_current(
     ):
         return False
     try:
-        current_selection = resolve_project_instruction_binding(session, registry)
+        current_selection = resolve_project_instruction_binding(
+            session,
+            registry,
+            status_cache=_app_remote_binding_status_cache(),
+        )
     except ProjectInstructionBindingRecovery:
         return False
     return current_selection is not None and _same_project_instruction_authority(
@@ -2033,7 +2345,11 @@ def commit_project_instruction_setup_decision(
     if expected is None:
         return "cancel", None
     try:
-        fresh_options = list_project_instruction_bindings(session, registry)
+        fresh_options = list_project_instruction_bindings(
+            session,
+            registry,
+            status_cache=_app_remote_binding_status_cache(),
+        )
     except ProjectInstructionBindingRecovery:
         return "cancel", None
     current = next(
@@ -16093,7 +16409,15 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
-        if project_root is None:
+        if project_root is None or is_remote(project_root):
+            # Phase 4a: a REMOTE working-folder selection contributes its
+            # authority through ``admitted_roots`` (the per-alias remote
+            # executor), never as the provider's base root — the base
+            # root is a laptop-path construction input (standalone
+            # executor, spill home), and a RemoteRoot there is the
+            # Phase 3a laptop-disk boundary. The run's private scratch
+            # stands in, so a BLOCKED remote selection proceeds on
+            # scratch/local (the degraded posture) instead of crashing.
             snapshot = turn_context.scratch_space if turn_context is not None else None
             if snapshot is None:
                 return None, None
@@ -16267,7 +16591,15 @@ class ConsoleChatController:
                 return service.gate_tool_test(hub)
             return service.gate_tool_test_for_profile(hub, profile_id)
 
-        if project_root is None:
+        if project_root is None or is_remote(project_root):
+            # Phase 4a: a REMOTE working-folder selection contributes its
+            # authority through ``admitted_roots`` (the per-alias remote
+            # executor), never as the provider's base root — the base
+            # root is a laptop-path construction input (standalone
+            # executor, spill home), and a RemoteRoot there is the
+            # Phase 3a laptop-disk boundary. The run's private scratch
+            # stands in, so a BLOCKED remote selection proceeds on
+            # scratch/local (the degraded posture) instead of crashing.
             snapshot = turn_context.scratch_space if turn_context is not None else None
             if snapshot is None:
                 return None, None
@@ -16399,9 +16731,13 @@ class ConsoleChatController:
                 return service.gate_tool_test(hub)
             return service.gate_tool_test_for_profile(hub, profile_id)
 
-        if project_root is not None:
+        if project_root is not None and not is_remote(project_root):
             initial_directory = project_root
         else:
+            # Phase 4a: raw shell is local-only (ADR-094); a remote
+            # working-folder selection never becomes its cwd — the run's
+            # private scratch stands in (the remote authority rides the
+            # fs_* admitted roots, not the shell).
             snapshot = turn_context.scratch_space if turn_context is not None else None
             if snapshot is None:
                 return None, None
@@ -21139,6 +21475,7 @@ class ConsoleChatController:
                     project_selection = resolve_project_instruction_binding(
                         session,
                         registry,
+                        status_cache=_app_remote_binding_status_cache(),
                     )
                 except Exception:  # noqa: BLE001 - preview cannot repair authority
                     project_selection = None
@@ -21313,7 +21650,11 @@ class ConsoleChatController:
             return None
         registry = getattr(self.app, "workspace_registry_service", None)
         try:
-            selection = resolve_project_instruction_binding(session, registry)
+            selection = resolve_project_instruction_binding(
+                session,
+                registry,
+                status_cache=_app_remote_binding_status_cache(),
+            )
             if selection is None:
                 return None
             if is_remote(selection.root):
@@ -27230,7 +27571,9 @@ class ConsoleChatController:
                     )
                 else:
                     project_selection = resolve_project_instruction_binding(
-                        session, registry
+                        session,
+                        registry,
+                        status_cache=_app_remote_binding_status_cache(),
                     )
             except ProjectInstructionBindingRecovery as exc:
                 expected_setup_state = project_state
@@ -27241,7 +27584,11 @@ class ConsoleChatController:
                     )
                 else:
                     try:
-                        options = list_project_instruction_bindings(session, registry)
+                        options = list_project_instruction_bindings(
+                            session,
+                            registry,
+                            status_cache=_app_remote_binding_status_cache(),
+                        )
                     except ProjectInstructionBindingRecovery:
                         options = ()
                 # An unselected session with no usable folder is a valid
