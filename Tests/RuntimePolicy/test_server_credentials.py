@@ -418,3 +418,107 @@ def test_keyring_clear_server_deletes_known_purpose_usernames_for_server():
     store.clear_server("server-a")
 
     assert fake.values == {}
+
+
+class CountingKeyring(FakeKeyring):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+
+    def get_password(self, service_name: str, username: str) -> str | None:
+        self.reads += 1
+        return super().get_password(service_name, username)
+
+
+def test_repeated_secret_reads_share_one_keyring_round_trip() -> None:
+    """TASK-32922: every server API call re-read the keyring on the UI loop.
+
+    ``build_client`` resolves the token before its client cache can hit, so
+    each call was a SecretService D-Bus round trip on Linux.
+    """
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "secret-1")
+    fake.reads = 0
+
+    for _ in range(10):
+        assert store.get_scoped_secret(scope) == "secret-1"
+    assert fake.reads == 1
+
+
+def test_writes_and_deletes_are_visible_immediately() -> None:
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "secret-1")
+    assert store.get_scoped_secret(scope) == "secret-1"
+
+    store.set_scoped_secret(scope, "secret-2")
+    assert store.get_scoped_secret(scope) == "secret-2"
+
+    store.delete_scoped_secret(scope)
+    assert store.get_scoped_secret(scope) is None
+
+    store.set_scoped_secret(scope, "secret-3")
+    store.clear_all()
+    assert store.get_scoped_secret(scope) is None
+
+
+def test_slow_secret_read_is_cached_from_when_it_returned(monkeypatch) -> None:
+    """Qodo review on #2820: a read slower than the TTL (unlock prompt) was
+    stored already expired, so the next API call read the keyring again."""
+    from tldw_chatbook.runtime_policy import server_credentials
+
+    clock = [100.0]
+    monkeypatch.setattr(server_credentials.time, "monotonic", lambda: clock[0])
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "secret-1")
+    real_get = fake.get_password
+
+    def slow(service_name: str, username: str):
+        clock[0] += 45  # an unlock prompt longer than the TTL
+        return real_get(service_name, username)
+
+    fake.get_password = slow
+    fake.reads = 0
+    assert store.get_scoped_secret(scope) == "secret-1"
+    assert store.get_scoped_secret(scope) == "secret-1"
+    assert fake.reads == 1
+
+
+def test_externally_rotated_secret_is_picked_up_within_seconds(monkeypatch) -> None:
+    """Qodo review on #2820: tldw_server rejects a rotated key immediately, so
+    a key rotated by another process must reach this process quickly."""
+    from tldw_chatbook.runtime_policy import server_credentials
+
+    clock = [100.0]
+    monkeypatch.setattr(server_credentials.time, "monotonic", lambda: clock[0])
+    fake = CountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p1",
+        normalized_origin="https://server.example",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+    store.set_scoped_secret(scope, "old-key")
+    assert store.get_scoped_secret(scope) == "old-key"
+    other_process = KeyringServerCredentialStore(keyring_backend=fake)
+    other_process.set_scoped_secret(scope, "new-key")
+
+    clock[0] += 5.1
+    assert store.get_scoped_secret(scope) == "new-key"
