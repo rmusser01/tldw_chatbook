@@ -507,6 +507,22 @@ def test_no_marker_exit_76_parses_found_python_version(
     assert failure.exit_code == 76
 
 
+def test_no_marker_exit_76_without_version_uses_fallback_reason(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 76 is reserved for the version gate even if stderr is odd."""
+    monkeypatch.setenv("FAKE_SSH_MODE", "exit-only")
+    monkeypatch.setenv("FAKE_SSH_EXIT", "76")
+    monkeypatch.setenv("FAKE_SSH_STDERR_LINE", "something else entirely")
+
+    result = env.call()
+
+    failure = result.failure
+    assert failure.kind is TransportFailureKind.PYTHON_TOO_OLD
+    assert failure.reason == "python ≥ 3.10 required"
+    assert failure.exit_code == 76
+
+
 def test_no_marker_silent_exit_1_is_worker_failed_to_start(
     env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -680,6 +696,53 @@ def test_mux_error_is_typed_and_restarts_the_master_without_retry(
     assert env.fake.count("-MNf") == 1, env.fake.invocations()
     # No retry: exactly one per-call invocation happened for this call.
     assert len(env.fake.call_invocations()) == 1
+
+
+# ---------------------------------------------------------------------------
+# local errors: the call contract holds and nothing leaks
+# ---------------------------------------------------------------------------
+
+
+def test_watch_exchange_error_is_typed_failure_and_reaps_the_child(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A local exception in the watch loop must not escape or leak ssh.
+
+    ``call`` promises a typed result for every failed exchange; a raise
+    from ``_watch_exchange`` (only ValueError is caught at the parse
+    site, so e.g. RecursionError escapes it) must become a typed
+    failure, and the still-running ssh must be killed and reaped —
+    never orphaned.
+    """
+    monkeypatch.setenv("FAKE_SSH_MODE", "stall")
+
+    pid_path = env.fake.pid_file
+
+    def exploding_watch(
+        proc: object, *, budget: float, grace: float
+    ) -> object:
+        # Let the fake publish its PID first, so the reaped-process
+        # assertion below cannot race the bash startup.
+        deadline = time.monotonic() + 5.0
+        while not pid_path.exists():
+            if time.monotonic() >= deadline:
+                raise AssertionError("fake ssh never wrote its pid file")
+            time.sleep(0.01)
+        raise RecursionError("deeply nested frame")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.remote_workspace_transport._watch_exchange",
+        exploding_watch,
+    )
+
+    result = env.call()  # must not raise
+
+    assert result.admitted is False
+    failure = result.failure
+    assert failure.kind is TransportFailureKind.WORKER_FAILED_TO_START
+    assert "RecursionError" in failure.reason
+    assert failure.exit_code == -9  # the reap-everything path group-killed it
+    env.fake.assert_pid_gone()
 
 
 # ---------------------------------------------------------------------------

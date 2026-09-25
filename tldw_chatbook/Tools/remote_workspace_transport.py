@@ -966,8 +966,11 @@ class RemoteWorkspaceTransport:
 
         Returns:
             A :class:`RemoteCallResult` — never an exception for a
-            failed exchange; spawn/typing problems raise ``TypeError``/
-            ``ValueError`` before any subprocess exists.
+            failed exchange (unexpected local errors type as
+            WORKER_FAILED_TO_START with the exception's class name in
+            the reason, after killing and reaping the ssh process);
+            spawn/typing problems raise ``TypeError``/``ValueError``
+            before any subprocess exists.
         """
         if not isinstance(request_bytes, bytes):
             raise TypeError(
@@ -1019,14 +1022,41 @@ class RemoteWorkspaceTransport:
         stderr_thread.start()
         stdin_thread.start()
 
-        outcome = _watch_exchange(
-            proc, budget=budget, grace=self._grace_seconds
-        )
-        exit_code = _settle_process(proc)
-        stdin_thread.join(timeout=_THREAD_JOIN_SECONDS)
-        stderr_thread.join(timeout=_THREAD_JOIN_SECONDS)
+        outcome: _ExchangeOutcome | None = None
+        exit_code: int | None = None
+        local_error: Exception | None = None
+        try:
+            outcome = _watch_exchange(
+                proc, budget=budget, grace=self._grace_seconds
+            )
+            exit_code = _settle_process(proc)
+        except Exception as exc:  # noqa: BLE001 - the call contract is typed
+            # Any local failure (selectors/os.read under fd pressure, a
+            # parse error ValueError does not cover) is a typed result,
+            # never an escaping exception.
+            local_error = exc
+        finally:
+            # Every path reaps: a local error must never orphan the ssh
+            # process past this call (its group is its own session).
+            if proc.poll() is None:
+                _kill_group(proc)
+            if exit_code is None:
+                exit_code = proc.wait()
+            stdin_thread.join(timeout=_THREAD_JOIN_SECONDS)
+            stderr_thread.join(timeout=_THREAD_JOIN_SECONDS)
         stderr_bytes = stderr_capture.value()
 
+        if local_error is not None:
+            return RemoteCallResult(
+                admitted=False,
+                response=None,
+                failure=TransportFailure(
+                    TransportFailureKind.WORKER_FAILED_TO_START,
+                    exit_code,
+                    f"local transport error: {type(local_error).__name__}",
+                ),
+            )
+        assert outcome is not None  # only reachable when no local error
         if outcome.terminal_frame is not None:
             return RemoteCallResult(
                 admitted=outcome.admitted,
