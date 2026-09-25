@@ -24,6 +24,21 @@ from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
 
 
+#: The base colours a theme file's ``[colors]`` may set (R32).
+THEME_COLOUR_KEYS = (
+    "primary",
+    "secondary",
+    "accent",
+    "warning",
+    "error",
+    "success",
+    "background",
+    "surface",
+    "panel",
+    "foreground",
+)
+
+
 # Helper to convert string dicts to Theme objects
 def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
     theme_args = {"name": name}
@@ -31,18 +46,7 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
         if key == "dark":
             theme_args[key] = bool(value)
         # All other color keys are assumed to be color strings
-        elif key in [
-            "primary",
-            "secondary",
-            "accent",
-            "warning",
-            "error",
-            "success",
-            "background",
-            "surface",
-            "panel",
-            "foreground",
-        ]:
+        elif key in THEME_COLOUR_KEYS:
             try:
                 # Ensure value is a string before parsing, though it should be from the dict
                 theme_args[key] = Color.parse(str(value))
@@ -215,10 +219,18 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
 
     Returns:
         The theme, as the startup loader registers it.
+
+    Raises:
+        ValueError: ``[colors]`` holds a key that is not a base colour.
+            R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
+            used to pass and then crash ``to_color_system().generate()``.
     """
     meta = data.get("theme", {}) or {}
     name = str(meta.get("name") or fallback_name).strip() or fallback_name
     colors = dict(data.get("colors", {}) or {})
+    for key in colors:
+        if key not in THEME_COLOUR_KEYS:
+            raise ValueError(f"{str(key)[:40]} is not a theme colour")
     colors["dark"] = bool(meta.get("dark", True))
     # TASK-32940: extra colour variables the editor carried over.
     variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)

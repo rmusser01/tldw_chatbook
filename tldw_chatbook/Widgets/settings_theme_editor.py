@@ -423,15 +423,11 @@ class SettingsThemeEditor(Vertical):
         if data is None and isinstance(exc, (toml.TomlDecodeError, UnicodeDecodeError)):
             return "not valid TOML"
         message = str(exc)
-        if isinstance(exc, TypeError):
-            if "'primary'" in message and "missing" in message:
-                colors = data.get("colors") if isinstance(data, dict) else None
-                if isinstance(colors, dict) and "primary" in colors:
-                    return "invalid colour 'primary'"
-                return "missing [colors].primary"
-            unknown = re.search(r"unexpected keyword argument '([^']+)'", message)
-            if unknown:
-                return f"unknown colour '{unknown.group(1)}'"
+        if isinstance(exc, TypeError) and "'primary'" in message and "missing" in message:
+            colors = data.get("colors") if isinstance(data, dict) else None
+            if isinstance(colors, dict) and "primary" in colors:
+                return "invalid colour 'primary'"
+            return "missing [colors].primary"
         return cls._failure_reason(exc)
 
     def list_user_theme_names(self) -> set[str]:
@@ -1399,7 +1395,7 @@ class SettingsThemeEditor(Vertical):
             self.app.push_screen(
                 ConfirmationDialog(
                     title="Replace theme",
-                    message=f"Replace the saved theme '{name}'?",
+                    message=f"Replace the saved theme '{escape_markup(name)}'?",
                     confirm_label="Replace",
                     cancel_label="Keep existing",
                     confirm_callback=_confirmed_replace,
@@ -1413,6 +1409,10 @@ class SettingsThemeEditor(Vertical):
         text = source.strip()
         if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
             text = text[1:-1]  # a terminal drop can paste a quoted path
+        elif os.sep == "/":
+            # R35: macOS Terminal/iTerm drop `/a/My\ Theme.toml`. Targeted,
+            # not shlex: only these escapes, so no other backslash is eaten.
+            text = re.sub(r"\\([ ()'])", r"\1", text)
         try:
             path = validate_browsing_path(os.path.expanduser(text))
         except ValueError:
@@ -1420,12 +1420,20 @@ class SettingsThemeEditor(Vertical):
         if path.suffix.lower() != ".toml":
             return "Import needs a .toml file"
         try:
-            if not stat.S_ISREG(path.stat().st_mode):
-                return "Import needs a .toml file"
-            # Bounded read: the size may change after stat (and stat alone
-            # would let a growing file through).
-            with path.open("rb") as f:
-                content = f.read(IMPORT_MAX_BYTES + 1)
+            # R34: check and read ONE descriptor, opened non-blocking, so a
+            # FIFO (or one swapped in after a path check) can't stall the UI.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode):
+                    return "Import needs a regular file"
+                if info.st_size > IMPORT_MAX_BYTES:
+                    return "Theme file is larger than 64 KB"
+                # Bounded: the file may grow after fstat.
+                with os.fdopen(fd, "rb", closefd=False) as f:
+                    content = f.read(IMPORT_MAX_BYTES + 1)
+            finally:
+                os.close(fd)
         except OSError as exc:
             return f"Could not read the file: {self._failure_reason(exc)}"
         if len(content) > IMPORT_MAX_BYTES:
@@ -1485,7 +1493,7 @@ class SettingsThemeEditor(Vertical):
         self.app.register_theme(theme)
         self._reapply_if_active(name)
         self.post_message(self.ThemesChanged(highlight=name))
-        self.app.notify(f"Imported '{name}'", severity="success")
+        self.app.notify(f"Imported '{escape_markup(name)}'", severity="success")
         return True
 
     def _apply_preset_swatch(self, swatch: Static) -> None:

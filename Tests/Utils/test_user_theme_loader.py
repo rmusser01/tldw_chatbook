@@ -82,3 +82,28 @@ async def test_malformed_user_theme_survives_css_refresh(tmp_path):
         await pilot.pause()
         assert app.theme == "hostile"
     assert app.return_code in (None, 0)
+
+
+def test_theme_from_file_data_refuses_non_colour_keys():
+    """R32: `variables`/`dark` are Theme kwargs, not colours; accepting them
+    built a theme whose generate() raised AttributeError."""
+    import pytest
+
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    for key, value in (("variables", "#ffffff"), ("dark", "#000000"), ("bogus", "#fff")):
+        data = {"colors": {"primary": "#112233", key: value}}
+        with pytest.raises(ValueError, match=f"^{key} is not a theme colour$"):
+            theme_from_file_data(data, "x", "x.toml")
+
+
+def test_load_user_themes_skips_non_colour_keys(tmp_path):
+    _write(tmp_path, "good", '[colors]\nprimary = "#9966FF"\n')
+    _write(tmp_path, "vars", '[colors]\nprimary = "#9966FF"\nvariables = "#ffffff"\n')
+    _write(tmp_path, "dark", '[colors]\nprimary = "#9966FF"\ndark = "#000000"\n')
+
+    themes = load_user_themes(tmp_path)
+
+    assert [t.name for t in themes] == ["good"]
+    for theme in themes:
+        theme.to_color_system().generate()  # would raise for a bad key

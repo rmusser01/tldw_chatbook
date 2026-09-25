@@ -457,6 +457,8 @@ async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_p
     (tmp_path / "a.toml").write_text("garbage [[ not toml", encoding="utf-8")
     _write(tmp_path, "b", colors={"background": "#000000"})
     _write(tmp_path, "c", colors={**MINE, "bogus": "#FFFFFF"})
+    # R32: Theme kwargs that are not colours are unreadable too.
+    _write(tmp_path, "d", colors={**MINE, "variables": "#FFFFFF"})
     _write(tmp_path, "mine")
     editor = SettingsThemeEditor()
     app = _app(editor)
@@ -467,7 +469,8 @@ async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_p
         assert unreadable == {
             "a": "not valid TOML",
             "b": "missing [colors].primary",
-            "c": "unknown colour 'bogus'",
+            "c": "bogus is not a theme colour",
+            "d": "variables is not a theme colour",
         }
         for error in unreadable.values():
             assert str(tmp_path) not in error
@@ -516,9 +519,9 @@ async def test_rename_of_unreadable_file_notice_escapes_file_content(request, tm
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.user_theme_listing()[1] == {"broken": "unknown colour '[/mismatched]'"}
+        assert editor.user_theme_listing()[1] == {"broken": "[/mismatched] is not a theme colour"}
         app.notify.reset_mock()
         assert editor.rename_user_theme("broken", "fixed") is False
         message = app.notify.call_args.args[0]
-        assert "unknown colour '[/mismatched]'" in Content.from_markup(message).plain
+        assert "[/mismatched] is not a theme colour" in Content.from_markup(message).plain
         assert path.exists() and not (tmp_path / "fixed.toml").exists()

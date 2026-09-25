@@ -1008,6 +1008,15 @@ async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_pa
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Theme")
+        picker = host.screen.query_one("#settings-theme-picker")
+        highlights: list[str | None] = []
+        real_refresh = picker.refresh_catalog
+
+        def spy(highlight=None):
+            highlights.append(highlight)
+            real_refresh(highlight=highlight)
+
+        picker.refresh_catalog = spy
         host.screen.query_one("#settings-theme-list").focus()
         await pilot.press("i")
         await pilot.pause(0.2)
@@ -1021,3 +1030,5 @@ async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_pa
         picker = host.screen.query_one("#settings-theme-picker")
         assert picker.highlighted_id == "dropped"
         assert "dropped" in _picker_ids(host)
+        # R37: one refresh (ThemesChanged(highlight=)), not a second from the screen.
+        assert highlights.count("dropped") == 1
