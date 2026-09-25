@@ -53,3 +53,37 @@ earlier run of the same bench exists, **Compare with previous** shows the
 composite and per-dimension deltas between the two reports. A preflight check blocks
 the run early if the chosen models aren't configured. Skill bodies longer
 than 8,000 characters are truncated in the prompts and the report says so.
+
+## Speech: the OmniVoice (ONNX) provider
+
+The speech sub-area offers **OmniVoice (Local)** as a TTS provider: a
+CPU-only ONNX int8hq engine for multilingual speech with zero-shot voice
+cloning, independent of the audio.cpp runtime.
+
+- **Install**: `pip install ".[omnivoice_tts]"` (onnxruntime + tokenizers),
+  then fetch the model in the model browser — the consent step states both
+  licenses. The LM weights are **Apache-2.0** (the model card forbids
+  unauthorized voice cloning, impersonation and fraud). The audio tokenizer,
+  which every synthesis needs, is under the **Boson Higgs Audio 2 Community
+  License**: commercial use above 100,000 annual active users needs a license
+  from Boson AI, use must follow the Llama 3 Acceptable Use Policy, and
+  products built with it must credit "Built with Higgs Materials". Or point
+  `[OmniVoiceSettings] model_root` at a local copy of the
+  `ct03/omnivoice-onnx-int8hq` tree.
+- **Latency**: the engine runs at roughly 2–7× real time on desktop CPUs —
+  a 10 s clip can take well over half a minute. It is a batch provider:
+  expect progress reporting per diffusion step, not streaming audio.
+  Every step processes the reference clip too, so **long references are
+  slow**: a 20 s reference made a 2 s line take ~30 s (upstream recommends
+  3–10 s references).
+- **Quality/speed dial**: **Diffusion steps** (default 32; lower is faster,
+  slightly rougher), **Guidance (CFG)** and **Max reference (s)** are set in
+  Settings ▸ Speech & TTS ▸ OmniVoice. The speech playground's knobs of the
+  same names start blank — blank uses the Settings value; a typed value
+  overrides it for that request only.
+- **Language**: *Auto* lets the model infer the language; picking the
+  language (e.g. `es`) is slightly better when you know it.
+- **Voice cloning**: cloning needs the reference clip *and its exact
+  transcript*, so clone voices are managed as profiles in the Voice
+  Cloning window (which asks for the transcript). A bare reference upload
+  in the playground cannot clone.
