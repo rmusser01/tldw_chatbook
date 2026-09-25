@@ -126,29 +126,29 @@ HOSTILE = [
     (
         "badcolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = "notacolour"\n',
-        "background: 'notacolour' is not #RRGGBB",
+        "background: 'notacolour' is not #RGB, #RRGGBB or #RRGGBBAA",
     ),
     (
         "markupcolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = "[b]x[/b]"\n',
-        "background: '[b]x[/b]' is not #RRGGBB",
+        "background: '[b]x[/b]' is not #RGB, #RRGGBB or #RRGGBBAA",
     ),
     (
         "numbercolour.toml",
         '[colors]\nprimary = "#112233"\nbackground = 7\n',
-        "background: '7' is not #RRGGBB",
+        "background: '7' is not #RGB, #RRGGBB or #RRGGBBAA",
     ),
     # R40(c) / spec §7: hex only, what the editor's colour fields accept.
-    ("named.toml", '[colors]\nprimary = "#112233"\nbackground = "blue"\n', "background: 'blue' is not #RRGGBB"),
+    ("named.toml", '[colors]\nprimary = "#112233"\nbackground = "blue"\n', "background: 'blue' is not #RGB, #RRGGBB or #RRGGBBAA"),
     (
         "rgb.toml",
         '[colors]\nprimary = "#112233"\nbackground = "rgb(1,2,3)"\n',
-        "background: 'rgb(1,2,3)' is not #RRGGBB",
+        "background: 'rgb(1,2,3)' is not #RGB, #RRGGBB or #RRGGBBAA",
     ),
     (
-        "rgba-hex.toml",
-        '[colors]\nprimary = "#112233"\nbackground = "#11223344"\n',
-        "background: '#11223344' is not #RRGGBB",
+        "seven-hex.toml",
+        '[colors]\nprimary = "#112233"\nbackground = "#1122334"\n',
+        "background: '#1122334' is not #RGB, #RRGGBB or #RRGGBBAA",
     ),
     # R39: TOML \u001b escapes are real ESC chars -- an OSC 52 clipboard
     # write or a reset must never reach the terminal through a notice.

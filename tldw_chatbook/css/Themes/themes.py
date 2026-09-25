@@ -24,12 +24,13 @@ from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
 
 
-_HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
+_HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})")
 
 
 def is_hex_colour(value: object) -> bool:
-    """``value`` is ``#RGB`` or ``#RRGGBB`` -- the only colours a theme file
-    or the editor's colour fields accept (R41)."""
+    """``value`` is ``#RGB``, ``#RRGGBB`` or ``#RRGGBBAA`` -- the only colours
+    a theme file or the editor's colour fields accept (R41). ``#RRGGBBAA`` is
+    what the editor writes for a translucent colour (``Color.hex``)."""
     return isinstance(value, str) and _HEX_COLOUR.fullmatch(value) is not None
 
 
@@ -162,17 +163,18 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     return theme
 
 
-_VARIABLE_NAME = re.compile(r"^[a-z0-9-]+$")
+_VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
 _TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
-_ALPHA_SUFFIX = re.compile(r"^(.+) (\d{1,3})%$")
+_ALPHA_SUFFIX = re.compile(r"(.+) (\d{1,3})%")
 
 
 def _is_safe_variable_value(value: object) -> bool:
-    if not isinstance(value, str) or not value:
+    # Color.parse accepts "#fff\n"; nothing non-printable is a CSS value.
+    if not isinstance(value, str) or not value or not value.isprintable():
         return False
     if all(word in _TEXT_STYLES for word in value.split(" ")):
         return True
-    match = _ALPHA_SUFFIX.match(value)
+    match = _ALPHA_SUFFIX.fullmatch(value)
     if match and match.group(1) == "auto":
         return True
     try:
@@ -205,7 +207,7 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
         return {}
     safe: dict[str, str] = {}
     for key, value in variables.items():
-        if isinstance(key, str) and _VARIABLE_NAME.match(key) and _is_safe_variable_value(value):
+        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(value):
             safe[key] = value
         else:
             # Name only (truncated), never the value: file content must not
@@ -253,7 +255,7 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
 
     Raises:
         ValueError: ``[colors]`` holds a key that is not a base colour or a
-            value that is not ``#RGB``/``#RRGGBB`` (R41), or the name has
+            value that is not ``#RGB``/``#RRGGBB``/``#RRGGBBAA`` (R41), or the name has
             control characters (R39).
             R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
             used to pass and then crash ``to_color_system().generate()``.

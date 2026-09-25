@@ -150,11 +150,13 @@ def test_non_hex_colour_value_is_refused_and_skipped(tmp_path):
 
     from tldw_chatbook.css.Themes.themes import theme_from_file_data
 
-    for value in ("\x1b]52;c;eA==\x1b\\", "red", "#12345", "#11223344", "rgb(1,2,3)", 7):
+    for value in ("\x1b]52;c;eA==\x1b\\", "red", "#12345", "#1122334", "#fff\n", "rgb(1,2,3)", 7):
         data = {"colors": {"primary": "#112233", "secondary": value}}
         with pytest.raises(ValueError, match=r"^invalid colour 'secondary'$"):
             theme_from_file_data(data, "x", "x.toml")
-    for value in ("#abc", "#ABCDEF", "#a1B2c3"):
+    # Follow-up: #RRGGBBAA is what the editor writes for a translucent
+    # shipped colour (deep_dive_cyberspace.error = #FF33AACC).
+    for value in ("#abc", "#ABCDEF", "#a1B2c3", "#FF33AACC"):
         theme_from_file_data({"colors": {"primary": value}}, "x", "x.toml")
 
     _write(tmp_path, "osc", _OSC_SECONDARY)
@@ -190,3 +192,19 @@ def test_variable_warning_file_label_is_printable():
     finally:
         logger.remove(sink)
     assert messages and all(m.isprintable() for m in messages), [repr(m) for m in messages]
+
+
+def test_rrggbbaa_colour_file_loads(tmp_path):
+    _write(tmp_path, "alpha", '[colors]\nprimary = "#112233"\nerror = "#FF33AACC"\n')
+    [theme] = load_user_themes(tmp_path)
+    assert theme.name == "alpha"
+    theme.to_color_system().generate()
+
+
+def test_variables_with_trailing_newline_are_dropped():
+    """Follow-up item 4: ``$`` matches before a trailing newline."""
+    from tldw_chatbook.css.Themes.themes import sanitize_theme_variables
+
+    assert sanitize_theme_variables(
+        {"foo\n": "red", "bar": "#fff\n", "baz": "auto 50%\n", "ok": "#fff"}, "t.toml"
+    ) == {"ok": "#fff"}
