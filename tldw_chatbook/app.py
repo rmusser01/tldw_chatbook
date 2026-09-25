@@ -665,6 +665,9 @@ from tldw_chatbook.Skills_Interop import (  # noqa: E402
     SkillsScopeService,
     default_local_skills_store_dir,
 )
+from tldw_chatbook.Skills_Interop.builtin_skills import (
+    disabled_builtins_from_config,
+)
 from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
     MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,
     SkillTrustStore,
@@ -8891,6 +8894,11 @@ class TldwCli(
                 store_dir=default_local_skills_store_dir(get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
                 trust_service_factory=lambda: self.local_skill_trust_service,
+                # In-memory config read: this runs on every skills read,
+                # including the Console's per-send capture.
+                builtin_disabled_loader=lambda: disabled_builtins_from_config(
+                    getattr(self, "app_config", None)
+                ),
             )
         if self._skills_scope_service is None:
             self._skills_scope_service = SkillsScopeService(

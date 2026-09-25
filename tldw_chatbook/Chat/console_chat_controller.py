@@ -1296,12 +1296,15 @@ def capture_skill_context_maximum(app: Any) -> dict[str, Any]:
     if local is None:
         return _empty_local_skill_context()
     try:
-        records = local._load_index()  # noqa: SLF001 -- app-owned snapshot seam
+        records = local._visible_records()  # noqa: SLF001 -- app-owned snapshot seam
         available: list[dict[str, Any]] = []
         blocked: list[dict[str, Any]] = []
         for _, record in sorted(records.items()):
             summary = local._summary_for_record(record)  # noqa: SLF001
-            trust = getattr(local, "trust_service", None)
+            # A built-in never reads trust; with no definition_digest the
+            # later digest gates skip it, and execute re-verifies its pins.
+            is_builtin = record.get("source") == "builtin"
+            trust = None if is_builtin else getattr(local, "trust_service", None)
             if not summary.get("trust_blocked") and trust is not None:
                 summary["definition_digest"] = trust.current_fingerprint_digest(
                     str(summary.get("name", ""))

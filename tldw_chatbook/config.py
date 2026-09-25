@@ -3715,6 +3715,7 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
+# disabled_builtins = []  # built-in skills to hide, e.g. ["character-creator"]
 
 [appearance]
 character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
