@@ -1,7 +1,10 @@
 """Curated managed-artifact catalog for ct03/omnivoice-onnx-int8hq.
 
-Weights: CC-BY-NC (k2-fsa/OmniVoice upstream, training-data constraints).
-Tokenizer: Boson Higgs Audio 2 Community License. Both surfaced at consent.
+LM weights: Apache-2.0 (k2-fsa/OmniVoice model card; the card adds a
+research-use / anti-impersonation disclaimer). Audio tokenizer (encoder +
+decoder): Boson Higgs Audio 2 Community License (Llama-3-based). The tokenizer
+is required for every synthesis, so its terms bind the whole bundle. Both are
+surfaced at consent.
 """
 
 from __future__ import annotations
@@ -164,10 +167,14 @@ def omnivoice_onnx_descriptor() -> ArtifactDescriptor:
         license_id="other",
         license_url=f"https://huggingface.co/{OMNIVOICE_ONNX_REPOSITORY}",
         usage_notice=(
-            "Dual license: LM weights are CC-BY-NC (non-commercial use only; "
-            "no impersonation or fraud) via k2-fsa/OmniVoice; the audio "
-            "tokenizer is Boson Higgs Audio 2 Community License. By installing "
-            "you accept both."
+            "Two licenses: the LM weights are Apache-2.0 (k2-fsa/OmniVoice; its "
+            "model card forbids unauthorized voice cloning, impersonation and "
+            "fraud). The audio tokenizer, required for all synthesis, is under "
+            "the Boson Higgs Audio 2 Community License (Llama 3-based): "
+            "commercial use above 100,000 annual active users needs a license "
+            "from Boson AI, use must follow the Llama 3 Acceptable Use Policy, "
+            "and products built with it must credit \"Built with Higgs "
+            "Materials\". By installing you accept both."
         ),
         runtime_name="onnx-tts",
         # onnxruntime is intentionally unpinned in the omnivoice_tts extra;

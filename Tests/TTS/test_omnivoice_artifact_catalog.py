@@ -13,8 +13,13 @@ def test_descriptor_shape() -> None:
     assert d.precision == "int8hq"
     assert d.format.value == "onnx"
     assert d.role.value == "root"
-    assert "CC-BY-NC" in d.usage_notice
-    assert "Higgs Audio 2" in d.usage_notice
+    # The weights are Apache-2.0 (model card + export README); the binding
+    # terms come from the Boson tokenizer license, which must be spelled out.
+    assert "Apache-2.0" in d.usage_notice
+    assert "CC-BY-NC" not in d.usage_notice
+    assert "Higgs Audio 2 Community License" in d.usage_notice
+    assert "100,000 annual active users" in d.usage_notice
+    assert "Acceptable Use Policy" in d.usage_notice
     assert any("omnivoice_lm_int8_hq/model.onnx_data" == file.path for file in d.files)
 
 

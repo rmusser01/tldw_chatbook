@@ -17,8 +17,9 @@ Add `omnivoice` as the 8th built-in TTS provider via the legacy bridge
 - In-process engine: onnxruntime sessions + numpy diffusion sampler + `tokenizers`.
 - Sampler/prompt logic ported from the Apache-2.0 k2-fsa/omnivoice upstream with
   attribution. The AFun9/Omnivoice-onnx reference repo is unlicensed — never copied.
-- Managed acquisition through the Model_Artifacts curated registry (CC-BY-NC weights
-  + Boson tokenizer license surfaced at consent), config-path fallback.
+- Managed acquisition through the Model_Artifacts curated registry (Apache-2.0 LM weights
+  + Boson Higgs Audio 2 Community License tokenizer surfaced at consent; see the
+  2026-09-24 correction in the spec's licensing section), config-path fallback.
 - Cloning via ADR-051 canonical reference assets (audio + transcript).
 
 ## Context

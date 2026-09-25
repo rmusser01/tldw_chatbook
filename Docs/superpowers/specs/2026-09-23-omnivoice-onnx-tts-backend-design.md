@@ -29,14 +29,19 @@ Licensing facts shape the work — there are **three layers**:
 
 - **Code**: the k2-fsa/OmniVoice code (and the `pip install omnivoice` package) is
   Apache-2.0. We may read and port the sampler/prompt logic with attribution.
-- **LM weights**: k2-fsa states the upstream weights are **CC-BY-NC** (training-data
-  constraints, e.g. Emilia); the ct03 ONNX export is a quantized derivative, so the
-  restriction carries through. Chatbook is AGPL but never redistributes weights —
-  acquisition is download-on-user-consent — so this is workable, but the consent step
-  must state the non-commercial restriction and the card's anti-impersonation
-  disclaimer explicitly.
-- **Audio tokenizer**: from Boson AI's Higgs Audio 2 under a Llama-3-style community
-  license. The repo already ships a Boson-derived `higgs` TTS backend, so there is
+- **LM weights**: **Apache-2.0**. *Correction 2026-09-24:* an earlier revision said
+  CC-BY-NC; no primary source supports that. The k2-fsa/OmniVoice model card
+  (`license: apache-2.0`), the GitHub repo (Apache-2.0), the ct03 export README
+  ("Diffusion LM … Apache-2.0") and this repo's own audio.cpp catalog entry for the
+  same weights all say Apache-2.0. The card does carry a research-use /
+  anti-impersonation disclaimer, which the consent step repeats. Chatbook never
+  redistributes weights — acquisition is download-on-user-consent.
+- **Audio tokenizer**: from Boson AI's Higgs Audio 2 under the Boson Higgs Audio 2
+  Community License (Llama 3-based): commercial use above 100,000 annual active users
+  needs an expanded license from Boson, use must follow the Llama 3 Acceptable Use
+  Policy, and distributors must display the "Built with Higgs Materials" attribution.
+  The tokenizer is needed for every synthesis, so these are the bundle's binding
+  terms. The repo already ships a Boson-derived `higgs` TTS backend, so there is
   precedent; the consent step surfaces this too.
 
 The reference ONNX implementation (github.com/AFun9/Omnivoice-onnx) is
@@ -142,7 +147,7 @@ HF URLs as sources; registered in `Model_Artifacts.curated_registry()` alongside
 parakeet and audio.cpp entries. This buys consent gating, resumable downloads,
 disk-space preflight, staging→active promotion, and model-browser visibility. The
 consent step runs the ADR-080 machine-memory fit check (the engine wants ~1.2 GB+
-RAM) and surfaces the full license stack: CC-BY-NC LM weights (non-commercial use;
+RAM) and surfaces the full license stack: Apache-2.0 LM weights (with the card's
 anti-impersonation disclaimer) and the Boson Higgs Audio 2 Community License for
 the tokenizer.
 
@@ -263,7 +268,7 @@ notes. Existing ADRs 023 (registry), 051 (clone assets), 039 (settings ownership
 
 - Model card: <https://huggingface.co/ct03/omnivoice-onnx-int8hq>
 - Upstream weights & code: <https://huggingface.co/k2-fsa/OmniVoice> (Apache-2.0
-  code, CC-BY-NC weights) and its GitHub repo — the canonical source to port the
+  code and weights) and its GitHub repo — the canonical source to port the
   sampler and prompt logic from; paper: arXiv:2604.00688
 - ADR-023 (TTS adapter registry), ADR-051 (clone reference assets), ADR-039 (TTS
   settings ownership), ADR-080 (machine-memory fit)

@@ -1,5 +1,10 @@
 # OmniVoice ONNX (int8hq) Standalone TTS Backend — Implementation Plan
 
+> **Correction (2026-09-24):** this plan's "CC-BY-NC LM weights" wording was wrong.
+> The weights are Apache-2.0; the binding terms are the Boson Higgs Audio 2
+> Community License on the audio tokenizer. See the spec's licensing section.
+> The code snippets below are the historical plan, not the shipped text.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `omnivoice` as the 8th built-in TTS provider — a standalone, in-process ONNX int8hq engine (text→speech + zero-shot cloning) with managed artifact acquisition.
