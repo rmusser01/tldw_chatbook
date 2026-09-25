@@ -504,10 +504,12 @@ active theme unsaved), the label also names the launch default: "Revert to
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
-crashes and Revert stays available. The command palette's "Switch to
-\<theme\>" uses the same wording and, if the save lands but the in-process
-config cache fails to refresh, adds "; configuration refresh failed —
-reopen Settings to refresh".
+crashes and Revert stays available. If the save lands but the in-process
+config cache fails to refresh, Use's toast instead adds "; configuration
+refresh failed — reopen Settings to refresh". One shared helper builds this
+toast, so the command palette's "Switch to \<theme\>" command — which also
+persists like Use — shows the exact same wording, cache-refresh warning
+included.
 
 **Clone** or **New** swap in the same full editor this category has always
 had, behind a **Back to themes** button. **Theme Library**: a **Name** box
@@ -1140,3 +1142,11 @@ Open Theme highlights the launch default, not merely the active theme;
 the Revert chip names the launch default too when a persisted change left
 it disagreeing with the active theme. Pinned by pilot tests, not driven
 live.*
+
+*Verified against `feat/theme-picker-pr2` @ 7690d30c35 — 2026-09-25
+(TASK-32948 PR 2, Task 5, fix round 1): the Use toast and the palette's
+"Switch to \<theme\>" toast — cache-refresh warning included — now come
+from one shared helper (`theme_catalog.use_theme_toast`), so the picker's
+own Use button carries the same cache-refresh-failed warning the palette
+does; fixes the prior stamp's palette-only framing. Pinned by pilot tests,
+not driven live.*

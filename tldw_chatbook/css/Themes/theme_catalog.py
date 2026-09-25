@@ -208,6 +208,31 @@ def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
     return ThemeChange(previous_active, previous_launch, persisted, caches_reloaded)
 
 
+def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
+    """Toast text + severity for a persisted (Use, not Try) theme switch.
+
+    Fix round 1 (TASK-32948 Task 5): the palette (``ThemeProvider.switch_
+    theme``) and the picker (``ThemePicker._switch``) both apply a
+    persisted switch through ``use_theme`` and must show the identical
+    toast for it (spec §4: one code path, one toast) -- including the
+    cache-refresh-failed warning, which the picker was missing. Callers
+    keep their own separate wording for a Try (``persist=False``); this
+    only covers the Use branch both of them share.
+    """
+    if not change.persisted:
+        return (
+            f"{display_name(name)} applied; the launch default was not saved",
+            "warning",
+        )
+    message = f"{display_name(name)} is now your theme (was: {display_name(change.previous_active)})"
+    if change.caches_reloaded:
+        return message, "information"
+    return (
+        f"{message}; configuration refresh failed — reopen Settings to refresh",
+        "warning",
+    )
+
+
 def revert_theme(app: Any, change: ThemeChange) -> bool:
     """Undo ``change``; False when the launch default could not be restored."""
     app.theme = change.previous_active

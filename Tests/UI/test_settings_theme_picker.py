@@ -270,6 +270,28 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_use_toast_warns_when_cache_reload_fails(request, monkeypatch, config_writes):
+    # Fix round 1 (TASK-32948 Task 5): the picker's Use toast must carry the
+    # same cache-refresh-failed warning as the palette's -- both persist
+    # through use_theme/use_theme_toast, one shared toast (spec §4).
+    monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted, cache reload fails)
+        await pilot.pause()
+        assert any(
+            "is now your theme" in message
+            and "configuration refresh failed — reopen Settings to refresh" in message
+            and severity == "warning"
+            for message, severity in notes
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_mouse_click_highlights_but_does_not_use(request, config_writes):
     # Spec D2: highlight only repaints the preview. OptionList's own click
     # handler highlights AND selects (= Use); the picker's must only highlight.
