@@ -1,6 +1,7 @@
 """Tests for the UI-free avatar resolution helper (TASK-32954, Task 2)."""
 
 import base64
+from pathlib import Path
 
 from tldw_chatbook.Character_Chat import character_avatar as ca
 
@@ -51,3 +52,28 @@ def test_generate_failure_is_reported():
 
 def test_remove():
     assert ca.resolve_avatar({"source": "remove"}, CARD).kind == "remove"
+
+
+def test_generate_without_description_or_prompt_is_reported():
+    # Never raises (fix round 1, Important finding #1): a blank card
+    # description with no explicit prompt used to let ValueError from
+    # compose_expression_prompt escape resolve_avatar.
+    blank_card = {"name": "Aria", "description": "", "personality": "wry"}
+    outcome = ca.resolve_avatar({"source": "generate"}, blank_card, generate=lambda p: PNG)
+    assert outcome.kind == "failed"
+    assert outcome.reason == "add a description or give an avatar prompt"
+
+
+def test_file_avatar_read_error_is_reported(tmp_path, monkeypatch):
+    # Never raises (fix round 1, Important finding #2): an OSError raised
+    # between the is_file() check and the actual read used to escape
+    # resolve_avatar instead of becoming a failed outcome.
+    path = tmp_path / "a.png"
+    path.write_bytes(PNG)
+
+    def boom(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+    outcome = ca.resolve_avatar({"source": "file", "path": str(path)}, CARD)
+    assert outcome.kind == "failed"

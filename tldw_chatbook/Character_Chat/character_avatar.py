@@ -65,9 +65,12 @@ def _read_file(path_text: str) -> AvatarOutcome:
         return AvatarOutcome("failed", reason="not a file")
     if path.suffix.lower() not in AVATAR_IMAGE_SUFFIXES:
         return AvatarOutcome("failed", reason=f"use {AVATAR_IMAGE_SUFFIX_COPY}")
-    if path.stat().st_size > AVATAR_MAX_BYTES:
-        return AvatarOutcome("failed", reason=f"must be {AVATAR_MAX_SIZE_COPY} or smaller")
-    data = path.read_bytes()
+    try:
+        if path.stat().st_size > AVATAR_MAX_BYTES:
+            return AvatarOutcome("failed", reason=f"must be {AVATAR_MAX_SIZE_COPY} or smaller")
+        data = path.read_bytes()
+    except OSError:  # file removed/unreadable after the is_file() check above
+        return AvatarOutcome("failed", reason="could not read file")
     if not data or _portrait_content_type(data) is None:
         return AvatarOutcome("failed", reason="not an image")
     return AvatarOutcome("image", image=data)
@@ -117,9 +120,21 @@ def resolve_avatar(
     if source == "file":
         return _read_file(str(request.get("path") or ""))
     if source == "generate":
-        prompt = str(request.get("prompt") or "").strip() or _card_prompt(card)
+        explicit_prompt = str(request.get("prompt") or "").strip()
+        if not explicit_prompt:
+            try:
+                explicit_prompt = _card_prompt(card)
+            except ValueError:
+                # compose_expression_prompt raises when the card has no
+                # description and no explicit prompt was given (spec §4.3:
+                # never raise -- report it instead, with no card text).
+                return AvatarOutcome(
+                    "failed", reason="add a description or give an avatar prompt"
+                )
         try:
-            return AvatarOutcome("image", image=(generate or generate_avatar_bytes)(prompt))
+            return AvatarOutcome(
+                "image", image=(generate or generate_avatar_bytes)(explicit_prompt)
+            )
         except Exception as exc:  # noqa: BLE001 - reported, never raised (spec §4.3)
             return AvatarOutcome("failed", reason=f"generation failed ({type(exc).__name__})")
     return AvatarOutcome("failed", reason="unknown avatar source")
