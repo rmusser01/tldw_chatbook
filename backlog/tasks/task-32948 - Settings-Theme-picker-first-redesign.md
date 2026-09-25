@@ -763,3 +763,24 @@ test_theme_catalog.py`, `Tests/Utils/test_user_theme_loader.py`,
 - **R40(f):** Import prompt title "Import theme — full path to a .toml file".
 - **R40(g):** `test_theme_file_dark_flag_coerces_strings` moved to
   `Tests/Utils/test_user_theme_loader.py`.
+
+### Fix round 2 (R41)
+
+- **Security (R39 residual):** `theme_from_file_data` now refuses any
+  `[colors]` value that is not `#RGB`/`#RRGGBB` ("invalid colour
+  '<key>'") via a new shared `is_hex_colour()` in `css/Themes/themes.py`
+  (the editor's `_validate_color_input` now delegates to it). Before, a
+  non-primary value Textual could not parse was silently skipped by
+  `create_theme_from_dict`, so an ESC-laden `secondary` was listed readable,
+  registered at startup, and Edit wrote it into a colour Input. Such a file
+  is now unreadable in the picker, skipped by the startup loader, and Edit
+  cannot load it. `create_theme_from_dict` logs an unparseable colour at
+  debug instead of `print()`.
+- Deleting an unreadable file (`unreadable:<stem>`) no longer releases a
+  registration, retargets a pending revert or moves the launch default
+  (`_delete_user_theme(..., registered=False)`), so it can't touch a
+  readable theme literally named `<stem>.toml`.
+- The "No saved custom theme named …" notices (delete, rename) pass the
+  name through `printable()`; `sanitize_theme_variables` prints its
+  `source` label through `printable()` itself (one guard for all four
+  callers).

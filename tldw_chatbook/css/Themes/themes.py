@@ -24,6 +24,15 @@ from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
 
 
+_HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
+
+
+def is_hex_colour(value: object) -> bool:
+    """``value`` is ``#RGB`` or ``#RRGGBB`` -- the only colours a theme file
+    or the editor's colour fields accept (R41)."""
+    return isinstance(value, str) and _HEX_COLOUR.fullmatch(value) is not None
+
+
 #: The base colours a theme file's ``[colors]`` may set (R32).
 THEME_COLOUR_KEYS = (
     "primary",
@@ -50,12 +59,10 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
             try:
                 # Ensure value is a string before parsing, though it should be from the dict
                 theme_args[key] = Color.parse(str(value))
-            except Exception as e:
-                print(
-                    f"Warning: Could not parse color '{value}' for key '{key}' in theme '{name}'. Error: {e}"
-                )
-                # Fallback to a default color or skip if parsing fails
-                # For example, Color.parse("red") or continue
+            except Exception:  # noqa: BLE001 - skipped; file data is hex-checked first (R41)
+                from loguru import logger
+
+                logger.debug(f"Theme {printable(name)!r}: skipping unparseable colour {key!r}")
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
     return ensure_readable_text_hues(Theme(**theme_args))
@@ -203,7 +210,7 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
         else:
             # Name only (truncated), never the value: file content must not
             # reach the persistent log verbatim.
-            logger.warning(f"Theme {source}: dropping invalid variable {str(key)[:40]!r}")
+            logger.warning(f"Theme {printable(source)}: dropping invalid variable {str(key)[:40]!r}")
     return safe
 
 
@@ -245,8 +252,9 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
         The theme, as the startup loader registers it.
 
     Raises:
-        ValueError: ``[colors]`` holds a key that is not a base colour, or
-            the name has control characters (R39).
+        ValueError: ``[colors]`` holds a key that is not a base colour or a
+            value that is not ``#RGB``/``#RRGGBB`` (R41), or the name has
+            control characters (R39).
             R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
             used to pass and then crash ``to_color_system().generate()``.
     """
@@ -256,9 +264,13 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
         raise ValueError("name has control characters")  # R39
     name = raw_name.strip() or fallback_name
     colors = dict(data.get("colors", {}) or {})
-    for key in colors:
+    for key, value in colors.items():
         if key not in THEME_COLOUR_KEYS:
             raise ValueError(f"{printable(str(key)[:40])} is not a theme colour")
+        # R41: create_theme_from_dict skips an unparseable colour, so an
+        # ESC-laden secondary used to load and reach Edit's colour Input.
+        if not is_hex_colour(value):
+            raise ValueError(f"invalid colour '{printable(key)}'")
     colors["dark"] = theme_file_dark(meta.get("dark", True))
     # TASK-32940: extra colour variables the editor carried over.
     variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)

@@ -550,7 +550,8 @@ button (copies the path to the clipboard and confirms "Path copied") — the
 row clears the next time you highlight a different theme.
 
 A saved file that can't be read — invalid TOML, a missing or unparseable
-primary colour, a `[colors]` key that isn't one of the ten base colours, or
+primary colour, a `[colors]` key that isn't one of the ten base colours, a
+colour that isn't `#RGB` or `#RRGGBB` ("invalid colour 'secondary'"), or
 a name containing control characters ("name has control characters") —
 is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
 the reason as both a short label on the card and every disabled button's
@@ -1291,6 +1292,8 @@ which is by design, not a defect.*
 — 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`
 colours; control characters in a theme file's name refuse it (import) or
 list it as unreadable (saved file), and every file-derived error shows them
-as `?`; a broken file named like a shipped theme is listed and deletable;
+as `?`; a saved file's colours, like Import's, must be `#RGB`/`#RRGGBB`
+or the file is unreadable and skipped at startup (R41); a broken file named
+like a shipped theme is listed and deletable;
 blocked keys on an unreadable row say why; the Import prompt names what it
 wants. Pinned by pilot and unit tests, not driven live.*

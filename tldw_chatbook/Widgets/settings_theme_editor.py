@@ -33,6 +33,7 @@ from ..css.Themes.theme_catalog import (
 from ..css.Themes.themes import (
     ALL_THEMES,
     create_theme_from_dict,
+    is_hex_colour,
     pinned_text_hues,
     printable,
     sanitize_theme_variables,
@@ -617,17 +618,8 @@ class SettingsThemeEditor(Vertical):
                 swatch.update(_INVALID_COLOUR_TEXT)
 
     def _validate_color_input(self, color_value: str) -> bool:
-        """Validate a color input value."""
-        try:
-            if not color_value.startswith("#"):
-                return False
-            hex_part = color_value[1:]
-            if len(hex_part) not in {3, 6}:
-                return False
-            Color.parse(color_value)
-            return True
-        except Exception:
-            return False
+        """Validate a color input value (``#RGB``/``#RRGGBB``, R41)."""
+        return is_hex_colour(color_value)
 
     def _preset_target(self) -> str:
         """The colour a preset swatch fills: the visible Select's value."""
@@ -1098,7 +1090,8 @@ class SettingsThemeEditor(Vertical):
                 )
             else:
                 self.app.notify(
-                    f"No saved custom theme named '{escape_markup(name)}'",
+                    # R41: a stale ``unreadable:<stem>`` echoes file-name text.
+                    f"No saved custom theme named '{escape_markup(printable(name))}'",
                     severity="warning",
                 )
             return
@@ -1107,10 +1100,11 @@ class SettingsThemeEditor(Vertical):
         # first; ``name`` is bound here, so a theme switch while the dialog is
         # up cannot delete the wrong file. An unreadable file is named by its
         # file name: it never registered a theme, so nothing falls back.
-        theme_name = name if name in files else printable(theme_path.name)
+        readable = name in files
+        theme_name = name if readable else printable(theme_path.name)
 
         async def _confirmed_delete() -> None:
-            self._delete_user_theme(theme_path, theme_name)
+            self._delete_user_theme(theme_path, theme_name, registered=readable)
 
         self.app.push_screen(
             ConfirmationDialog(
@@ -1125,19 +1119,30 @@ class SettingsThemeEditor(Vertical):
             )
         )
 
-    def _delete_user_theme(self, theme_path: Path, theme_name: str) -> None:
-        """Unlink a user theme file and reset the editor (post-confirmation)."""
+    def _delete_user_theme(
+        self, theme_path: Path, theme_name: str, *, registered: bool = True
+    ) -> None:
+        """Unlink a user theme file and reset the editor (post-confirmation).
+
+        ``registered=False`` (an unreadable file, R41): nothing was registered
+        under ``theme_name`` -- a readable theme may be literally named
+        ``b.toml`` -- so no registration, pending revert or default moves.
+        """
         try:
             with raw._scope(
                 self, "theme_file", writing=True, selected_read=theme_path
             ) as operation:
                 raw._unlink(operation, theme_path)
 
-            self._release_registration(theme_name)
-            from ..css.Themes.theme_catalog import retarget_pending_revert
+            if registered:
+                self._release_registration(theme_name)
+                from ..css.Themes.theme_catalog import retarget_pending_revert
 
-            retarget_pending_revert(self.app, theme_name, None)
-            self._fall_back_after_delete(theme_name)
+                retarget_pending_revert(self.app, theme_name, None)
+                self._fall_back_after_delete(theme_name)
+            else:
+                self.app.notify(f"Deleted theme '{escape_markup(theme_name)}'", severity="success")
+                self.post_message(self.ThemesChanged())
             # The editor must not keep offering the deleted file as loaded;
             # a delete of some other theme (from the picker) keeps its edits.
             if self.current_theme_name == theme_name:
@@ -1250,7 +1255,7 @@ class SettingsThemeEditor(Vertical):
             )
             return False
         if old_path is None:
-            self.app.notify(f"No saved custom theme named '{escape_markup(old)}'", severity="warning")
+            self.app.notify(f"No saved custom theme named '{escape_markup(printable(old))}'", severity="warning")
             return False
         shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
         new_path = self.custom_themes_path / f"{new}.toml"
