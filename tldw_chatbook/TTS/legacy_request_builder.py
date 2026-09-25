@@ -113,6 +113,8 @@ def build_legacy_speech_request(
         internal_model_id = "local_chatterbox_default"
     elif provider_id == "higgs":
         internal_model_id = "local_higgs_v2"
+    elif provider_id == "omnivoice":
+        internal_model_id = "local_omnivoice_default"
     elif provider_id == "alltalk":
         internal_model_id = "alltalk_default"
     else:

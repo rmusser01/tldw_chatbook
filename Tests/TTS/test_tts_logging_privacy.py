@@ -394,9 +394,9 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
         in normalized_architecture
     )
     assert (
-        "The following six entries remain unchanged behind the temporary "
+        "The following seven entries remain unchanged behind the temporary "
         "compatibility bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, "
-        "`higgs`, and `alltalk`." in normalized_architecture
+        "`higgs`, `alltalk`, and `omnivoice`." in normalized_architecture
     )
     assert documented_routes == LEGACY_ROUTES
     assert 'internal_model_id = "openai_official_tts-1"' in usage
