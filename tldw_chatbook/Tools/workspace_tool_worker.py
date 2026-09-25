@@ -12,6 +12,10 @@ byte layout the conformance tests pin to the parent's
 
 from __future__ import annotations
 
+import json
+import os
+import platform
+import stat
 import sys
 import time
 import unicodedata
@@ -40,6 +44,8 @@ from tldw_chatbook.Tools.workspace_wire_decode import (
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
     DirectoryIdentity,
+    DirectoryIdentityError,
+    capture_directory_chain,
 )
 
 _MAX_DOMAIN_ERROR_CHARS = 300
@@ -66,8 +72,21 @@ def run_workspace_worker(
     stdin: BinaryIO,
     stdout: BinaryIO,
     stderr: BinaryIO,
+    *,
+    bundle_sha256: str = "",
 ) -> int:
-    """Read, pin, dispatch, respond once, and return a process exit code."""
+    """Read, pin, dispatch, respond once, and return a process exit code.
+
+    Args:
+        stdin: The buffered request stream (already positioned past the
+            remote bundle bytes when running as the shipped bundle).
+        stdout: Frame sink for the admitted/terminal response contract.
+        stderr: Reserved for fixed diagnostics; no request-derived text
+            is written.
+        bundle_sha256: The remote bundle's identity stamp, threaded in
+            by the bundle IO adapter so ``ping`` can echo it. The LOCAL
+            worker has no bundle and reports the empty default.
+    """
     del stderr  # Reserved for fixed diagnostics; no request-derived text is written.
     started = time.monotonic()
     raw = stdin.read(MAX_REQUEST_BYTES + 1)
@@ -79,6 +98,9 @@ def run_workspace_worker(
     except WireDecodeError:
         _emit(stdout, _failure("unknown", "invalid_request", started))
         return 2
+
+    if request.operation == "ping":
+        return _run_ping(stdout, request, started, bundle_sha256=bundle_sha256)
 
     chain = DirectoryChain(
         canonical_root=request.root_locator,
@@ -159,6 +181,75 @@ def _identity(payload: Mapping[str, Any]) -> DirectoryIdentity:
         inode=payload["inode"],
         mode=payload["mode"],
         reparse=payload["reparse"],
+    )
+
+
+def _run_ping(
+    stdout: BinaryIO,
+    request: _DecodedRequest,
+    started: float,
+    *,
+    bundle_sha256: str,
+) -> int:
+    """Capture and report the root's full identity chain without pinning.
+
+    Ping is the bootstrap probe: the ONE operation dispatched before the
+    root pin, because its purpose is to capture the identity chain every
+    other operation's request must carry (over ssh the parent cannot
+    stat the remote root). The request's own identity fields are
+    therefore advisory for ping — a first-contact ping has no identity
+    to verify against. A root that cannot be captured (missing, itself a
+    symlink, unsafe metadata) fails with the pin-failure code and emits
+    NO admitted marker — the no-marker bucket the parent's status cache
+    reads as a transport/setup-class failure.
+    """
+    try:
+        locator_metadata = os.lstat(request.root_locator)
+        if not stat.S_ISDIR(locator_metadata.st_mode) or stat.S_ISLNK(
+            locator_metadata.st_mode
+        ):
+            raise DirectoryIdentityError("unsafe directory metadata")
+        chain = capture_directory_chain(request.root_locator)
+        payload = _ping_payload(chain, bundle_sha256=bundle_sha256)
+    except (DirectoryIdentityError, OSError, ValueError):
+        _emit(stdout, _failure(request.operation_id, "root_pin_failed", started))
+        return 2
+    _emit(
+        stdout,
+        _frame(
+            request.operation_id,
+            outcome="success",
+            code="ok",
+            result=payload,
+            error=None,
+            started=started,
+        ),
+    )
+    return 0
+
+
+def _ping_payload(chain: DirectoryChain, *, bundle_sha256: str) -> str:
+    """Serialize the ping result: chain, canonical path, python, stamp.
+
+    The identity chain is root-first and covers every ancestor to ``/``,
+    exactly the shape ``DirectoryChain(identities=(root_identity,
+    *ancestor_identities[1:]))`` reconstruction consumes — a root-only
+    stat cannot build a request the pinned dispatcher accepts. Rendered
+    as a JSON document inside the response's string ``result`` field
+    (the frame schema itself is unchanged).
+    """
+    paths = (chain.canonical_root, *chain.canonical_root.parents)
+    payload = {
+        "identity_chain": [
+            [str(path_text), identity.device, identity.inode, identity.mode]
+            for path_text, identity in zip(paths, chain.identities)
+        ],
+        "canonical_path": str(chain.canonical_root),
+        "python_version": platform.python_version(),
+        "bundle_sha256": bundle_sha256,
+    }
+    return json.dumps(
+        payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")
     )
 
 

@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib
 import importlib.util
 import inspect
@@ -107,12 +108,25 @@ Contract:
   positioned AFTER the bootstrap consumed this bundle's own bytes.
   Loaders that ``exec`` this file must register the executing namespace
   in ``sys.modules`` first — the closure's ``dataclass(slots=True)``
-  classes resolve their defining module through it.
+  classes resolve their defining module through it. The fixed remote
+  bootstrap needs no such registration: it execs this file inside the
+  interpreter's own ``__main__`` namespace, and the builder-emitted
+  entry guard at the bottom of this file then runs the one exchange and
+  propagates the worker exit code.
 * Every response frame is emitted as ``RESPONSE_MAGIC + <json frame>``;
   use ``split_magic(raw)`` to strip before parsing. The LOCAL worker
   does not add this prefix — its pipe has no noise source.
+* The ``ping`` operation (Task 9) is dispatched BEFORE the root pin: it
+  captures the full root-to-``/`` directory identity chain, canonical
+  path, remote python version, and ``BUNDLE_SHA256`` so a first-contact
+  caller can build every other operation's pinned request.
+* ``BUNDLE_SHA256`` (bottom of this file) is the SHA-256 of this file's
+  bytes ABOVE its own assignment line — a full-file digest is not
+  self-embeddable (the stamp would change its own input). Derive the
+  same value from the artifact with
+  ``build_remote_worker_bundle.expected_bundle_stamp``.
 * ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
-  nothing yet. The ping operation arrives with Task 9.
+  nothing yet.
 * ``REMOTE_SENSITIVE_PATHS`` (embedded from
   ``Tools/remote_sensitive_paths.py``) are remote-home-relative paths the
   worker must never touch; enforcement wiring lands with the remote
@@ -455,6 +469,7 @@ def main(stream: Any) -> int:
         stream,
         _MagicPrefixStdout(sys.stdout.buffer),
         sys.stderr.buffer,
+        bundle_sha256=BUNDLE_SHA256,
     )
 
 
@@ -511,6 +526,66 @@ def _denylist_section() -> str:
     )
 
 
+#: The stamp assignment line the artifact ends with (minus the digest).
+#: ``expected_bundle_stamp`` locates it from the RIGHT so the hashed
+#: prefix rule is machine-derivable by any consumer.
+_BUNDLE_STAMP_ASSIGNMENT = 'BUNDLE_SHA256 = "'
+
+
+def expected_bundle_stamp(data: bytes) -> str:
+    """Return the artifact stamp derivable from committed bundle bytes.
+
+    The stamp is the SHA-256 of the artifact's bytes ABOVE the (sole)
+    ``BUNDLE_SHA256 = "..."`` assignment line — a full-file digest is not
+    self-embeddable, because the stamp would change its own input. The
+    loopback harness, the transport, and the tests all derive the
+    expected value through this single rule so a tampered or divergent
+    bundle cannot silently agree with the caller.
+
+    Args:
+        data: The bundle artifact's exact bytes.
+
+    Returns:
+        The lowercase hex digest the bundle's ``ping`` must echo.
+
+    Raises:
+        ValueError: If the assignment line is absent (not a stamped
+            bundle artifact).
+    """
+    marker = b"\n" + _BUNDLE_STAMP_ASSIGNMENT.encode("utf-8")
+    index = data.rfind(marker)
+    if index == -1:
+        raise ValueError("bundle artifact lacks a BUNDLE_SHA256 stamp line")
+    return hashlib.sha256(data[: index + 1]).hexdigest()
+
+
+_BUNDLE_TAIL_TEMPLATE = '''
+
+# ---------------------------------------------------------------------------
+# Bundle identity stamp (builder-emitted; ping echoes this value)
+# ---------------------------------------------------------------------------
+#: SHA-256 of this file's bytes ABOVE this assignment line. A full-file
+#: digest is not self-embeddable (the stamp would change its own input),
+#: so the stamp pins the code prefix; derive the same value from the
+#: artifact with ``build_remote_worker_bundle.expected_bundle_stamp``.
+#: The remote worker's ``ping`` echoes it so callers can confirm which
+#: bundle the remote actually executed.
+BUNDLE_SHA256 = "{stamp}"
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap entry (builder-emitted)
+# ---------------------------------------------------------------------------
+# The fixed remote bootstrap (``python3 -I -c '<bootstrap>'``) execs this
+# file inside the interpreter's own __main__ namespace with stdin already
+# positioned past the compressed bundle bytes — run the one exchange and
+# propagate the worker exit code. In-process loaders that register this
+# file under its own module name never trigger this guard.
+if __name__ == "__main__":
+    raise SystemExit(main(sys.stdin.buffer))
+'''
+
+
 def build_bundle_text() -> str:
     """Build the complete bundle text deterministically from live sources."""
     _assert_frozen_list_matches_closure()
@@ -524,15 +599,30 @@ def build_bundle_text() -> str:
     _assert_no_top_level_collisions(top_level)
 
     floor = f"{REMOTE_PYTHON_FLOOR[0]}.{REMOTE_PYTHON_FLOOR[1]}"
-    parts = [
-        _BUNDLE_DOCSTRING.format(floor=floor),
-        "from __future__ import annotations",
-        "",
-        "\n\n".join(sections).rstrip("\n"),
-        _IO_ADAPTER_SOURCE,
-        _denylist_section(),
-    ]
-    return "\n".join(parts).rstrip("\n") + "\n"
+    # Stage 1: assemble everything above the stamp with a placeholder
+    # digest of identical length, so the stamp's own bytes cannot move
+    # the boundary it is computed from.
+    head = "\n".join(
+        [
+            _BUNDLE_DOCSTRING.format(floor=floor),
+            "from __future__ import annotations",
+            "",
+            "\n\n".join(sections).rstrip("\n"),
+            _IO_ADAPTER_SOURCE,
+            _denylist_section(),
+        ]
+    ).rstrip("\n") + "\n"
+    placeholder = "0" * 64
+    unstamped = head + _BUNDLE_TAIL_TEMPLATE.format(stamp=placeholder)
+    # Stage 2: hash the bytes above the assignment line, then substitute
+    # — the placeholder and digest are both 64 characters, so the
+    # substitution cannot shift the hashed prefix.
+    stamp = expected_bundle_stamp(unstamped.encode("utf-8"))
+    return unstamped.replace(
+        f'{_BUNDLE_STAMP_ASSIGNMENT}{placeholder}"',
+        f'{_BUNDLE_STAMP_ASSIGNMENT}{stamp}"',
+        1,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

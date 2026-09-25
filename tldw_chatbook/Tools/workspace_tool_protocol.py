@@ -49,6 +49,7 @@ WorkspaceOperation = Literal[
     "git_log",
     "git_blame",
     "git_branches",
+    "ping",
 ]
 WorkspaceIntent = Literal["read", "write"]
 WorkspaceResponseOutcome = Literal["admitted", "success", "failure"]

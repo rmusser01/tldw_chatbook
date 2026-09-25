@@ -67,6 +67,7 @@ def _arguments_for(operation: str) -> dict[str, object]:
         "git_log": {"sensitive_exclusions": []},
         "git_blame": {"path": "file.txt", "sensitive_exclusions": []},
         "git_branches": {"sensitive_exclusions": []},
+        "ping": {},
     }[operation]
 
 
@@ -108,6 +109,7 @@ def test_request_round_trip_uses_the_closed_exact_schema() -> None:
         ("git_log", "read"),
         ("git_blame", "read"),
         ("git_branches", "read"),
+        ("ping", "read"),
     ],
 )
 def test_request_accepts_each_closed_operation_and_intent(

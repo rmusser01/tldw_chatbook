@@ -16,12 +16,25 @@ Contract:
   positioned AFTER the bootstrap consumed this bundle's own bytes.
   Loaders that ``exec`` this file must register the executing namespace
   in ``sys.modules`` first — the closure's ``dataclass(slots=True)``
-  classes resolve their defining module through it.
+  classes resolve their defining module through it. The fixed remote
+  bootstrap needs no such registration: it execs this file inside the
+  interpreter's own ``__main__`` namespace, and the builder-emitted
+  entry guard at the bottom of this file then runs the one exchange and
+  propagates the worker exit code.
 * Every response frame is emitted as ``RESPONSE_MAGIC + <json frame>``;
   use ``split_magic(raw)`` to strip before parsing. The LOCAL worker
   does not add this prefix — its pipe has no noise source.
+* The ``ping`` operation (Task 9) is dispatched BEFORE the root pin: it
+  captures the full root-to-``/`` directory identity chain, canonical
+  path, remote python version, and ``BUNDLE_SHA256`` so a first-contact
+  caller can build every other operation's pinned request.
+* ``BUNDLE_SHA256`` (bottom of this file) is the SHA-256 of this file's
+  bytes ABOVE its own assignment line — a full-file digest is not
+  self-embeddable (the stamp would change its own input). Derive the
+  same value from the artifact with
+  ``build_remote_worker_bundle.expected_bundle_stamp``.
 * ``arm_watchdog`` is an unimplemented seam (Task 12); the bundle arms
-  nothing yet. The ping operation arrives with Task 9.
+  nothing yet.
 * ``REMOTE_SENSITIVE_PATHS`` (embedded from
   ``Tools/remote_sensitive_paths.py``) are remote-home-relative paths the
   worker must never touch; enforcement wiring lands with the remote
@@ -1546,11 +1559,11 @@ MAX_COLLECTION_ITEMS = 1024
 REQUEST_FIELD_NAMES = ('version', 'operation_id', 'operation', 'intent', 'root_locator', 'root_identity', 'ancestor_identities', 'arguments', 'timeout_seconds', 'output_max_bytes')
 RESPONSE_FIELD_NAMES = ('version', 'operation_id', 'outcome', 'code', 'result', 'error', 'elapsed_ms', 'truncated', 'cleanup_proven')
 DIRECTORY_IDENTITY_FIELD_NAMES = ('device', 'inode', 'mode', 'reparse')
-WORKSPACE_OPERATIONS = frozenset({'fs_list', 'fs_read', 'fs_write', 'fs_edit', 'fs_patch', 'fs_glob', 'fs_grep', 'stat_path', 'git_status', 'git_diff', 'git_log', 'git_blame', 'git_branches'})
+WORKSPACE_OPERATIONS = frozenset({'fs_list', 'fs_read', 'fs_write', 'fs_edit', 'fs_patch', 'fs_glob', 'fs_grep', 'stat_path', 'git_status', 'git_diff', 'git_log', 'git_blame', 'git_branches', 'ping'})
 WORKSPACE_WRITE_OPERATIONS = frozenset({'fs_write', 'fs_edit', 'fs_patch'})
 WORKSPACE_INTENTS = frozenset({'read', 'write'})
 WORKSPACE_OUTCOMES = frozenset({'admitted', 'success', 'failure'})
-ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {'fs_list': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_read': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'offset': 'positive_int', 'limit': 'nonnegative_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_write': (frozenset({'path', 'content', 'sensitive_exclusions'}), {'path': 'path', 'content': 'text', 'dry_run': 'bool', 'expected_sha256': 'sha256', 'expected_absent': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_edit': (frozenset({'path', 'old_string', 'new_string', 'sensitive_exclusions'}), {'path': 'path', 'old_string': 'text', 'new_string': 'text', 'replace_all': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_patch': (frozenset({'diff', 'sensitive_exclusions'}), {'diff': 'patch', 'dry_run': 'bool', 'targets': 'patch_targets', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_glob': (frozenset({'pattern', 'sensitive_exclusions'}), {'pattern': 'glob_pattern', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_grep': (frozenset({'pattern', 'sensitive_exclusions', 'content_exclusions'}), {'pattern': 'text', 'mode': 'grep_mode', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions', 'content_exclusions': 'sensitive_exclusions'}), 'stat_path': (frozenset({'path'}), {'path': 'path'}), 'git_status': (frozenset({'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_diff': (frozenset({'sensitive_exclusions'}), {'staged': 'bool', 'commit_range': 'text', 'path': 'path', 'stat': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_log': (frozenset({'sensitive_exclusions'}), {'count': 'positive_int', 'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_blame': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'start_line': 'positive_int', 'end_line': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_branches': (frozenset({'sensitive_exclusions'}), {'sensitive_exclusions': 'sensitive_exclusions'})}
+ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {'fs_list': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_read': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'offset': 'positive_int', 'limit': 'nonnegative_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_write': (frozenset({'path', 'content', 'sensitive_exclusions'}), {'path': 'path', 'content': 'text', 'dry_run': 'bool', 'expected_sha256': 'sha256', 'expected_absent': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_edit': (frozenset({'path', 'old_string', 'new_string', 'sensitive_exclusions'}), {'path': 'path', 'old_string': 'text', 'new_string': 'text', 'replace_all': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_patch': (frozenset({'diff', 'sensitive_exclusions'}), {'diff': 'patch', 'dry_run': 'bool', 'targets': 'patch_targets', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_glob': (frozenset({'pattern', 'sensitive_exclusions'}), {'pattern': 'glob_pattern', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_grep': (frozenset({'pattern', 'sensitive_exclusions', 'content_exclusions'}), {'pattern': 'text', 'mode': 'grep_mode', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions', 'content_exclusions': 'sensitive_exclusions'}), 'stat_path': (frozenset({'path'}), {'path': 'path'}), 'git_status': (frozenset({'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_diff': (frozenset({'sensitive_exclusions'}), {'staged': 'bool', 'commit_range': 'text', 'path': 'path', 'stat': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_log': (frozenset({'sensitive_exclusions'}), {'count': 'positive_int', 'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_blame': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'start_line': 'positive_int', 'end_line': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_branches': (frozenset({'sensitive_exclusions'}), {'sensitive_exclusions': 'sensitive_exclusions'}), 'ping': (frozenset(), {})}
 _REQUEST_KEYS = frozenset(REQUEST_FIELD_NAMES)
 _RESPONSE_KEYS = frozenset(RESPONSE_FIELD_NAMES)
 _IDENTITY_KEYS = frozenset(DIRECTORY_IDENTITY_FIELD_NAMES)
@@ -4056,6 +4069,7 @@ arrive already decoded/validated; dispatch consumes the attribute surface
 ``WorkspaceToolRequest`` dataclass and the worker's decoded-request view
 both satisfy it).
 """
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Any, Protocol
@@ -4090,7 +4104,8 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
     if request.operation == 'fs_list':
         return _list_relative_directory(_request_relative_path(request, root), workspace=Path('.'), max_entries=MAX_LIST_ENTRIES, sensitive_exclusions=exclusions)
     if request.operation == 'fs_read':
-        return _read_relative_file(_request_relative_path(request, root), workspace=Path('.'), offset=request.arguments.get('offset', 1), limit=request.arguments.get('limit'), sensitive_exclusions=exclusions)
+        relative = _request_relative_path(request, root)
+        return _read_relative_file(relative, workspace=Path('.'), offset=request.arguments.get('offset', 1), limit=request.arguments.get('limit'), sensitive_exclusions=exclusions) + _file_content_stamps(relative)
     if request.operation == 'fs_glob':
         try:
             pattern = validate_glob_pattern(request.arguments['pattern'])
@@ -4099,6 +4114,29 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
         return _glob_relative_files(pattern, workspace=Path('.'), max_results=request.arguments.get('max_results', MAX_GLOB_RESULTS), sensitive_exclusions=exclusions, validate_targets=True)
     if request.operation == 'fs_grep':
         return _grep_relative_files(request.arguments['pattern'], workspace=Path('.'), mode=request.arguments.get('mode', 'content'), max_results=request.arguments.get('max_results', MAX_GREP_RESULTS), sensitive_exclusions=_request_exclusions(request, 'content_exclusions'))
+
+def _file_content_stamps(relative: Path) -> str:
+    """Render the worker-reported CAS stamps for one read target.
+
+    The spec moves CAS stamping to worker-reported values (read side
+    here; the write side follows): the parent's ledger records these
+    instead of hashing its own copy of the path — which for a remote
+    root is the WRONG file whenever the same path exists on both
+    machines. Stamps cover the WHOLE file (the CAS target), rendered in
+    the established ``key: value`` style (see ``_format_stat_result``)
+    as the final two lines of the result, so consumers parse them from
+    the tail and file bodies can never shadow them.
+    """
+    digest = hashlib.sha256()
+    size = 0
+    with open(relative, 'rb') as handle:
+        while True:
+            chunk = handle.read(64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
+    return f'\nsha256: {digest.hexdigest()}\nsize: {size}'
 
 def _git_request(request: _PinnedOperationRequest) -> str:
     """Run one closed read-only Git operation beneath the retained root."""
@@ -4169,6 +4207,10 @@ responses are emitted by ``workspace_wire_decode.encode_response``, whose
 byte layout the conformance tests pin to the parent's
 ``WorkspaceToolResponse.to_bytes``.
 """
+import json
+import os
+import platform
+import stat
 import sys
 import time
 import unicodedata
@@ -4193,8 +4235,19 @@ class _DecodedRequest:
     ancestor_identities: tuple[DirectoryIdentity, ...]
     arguments: dict[str, Any] = field(repr=False)
 
-def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO) -> int:
-    """Read, pin, dispatch, respond once, and return a process exit code."""
+def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO, *, bundle_sha256: str='') -> int:
+    """Read, pin, dispatch, respond once, and return a process exit code.
+
+    Args:
+        stdin: The buffered request stream (already positioned past the
+            remote bundle bytes when running as the shipped bundle).
+        stdout: Frame sink for the admitted/terminal response contract.
+        stderr: Reserved for fixed diagnostics; no request-derived text
+            is written.
+        bundle_sha256: The remote bundle's identity stamp, threaded in
+            by the bundle IO adapter so ``ping`` can echo it. The LOCAL
+            worker has no bundle and reports the empty default.
+    """
     del stderr
     started = time.monotonic()
     raw = stdin.read(MAX_REQUEST_BYTES + 1)
@@ -4206,6 +4259,8 @@ def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO) ->
     except WireDecodeError:
         _emit(stdout, _failure('unknown', 'invalid_request', started))
         return 2
+    if request.operation == 'ping':
+        return _run_ping(stdout, request, started, bundle_sha256=bundle_sha256)
     chain = DirectoryChain(canonical_root=request.root_locator, identities=(request.root_identity, *request.ancestor_identities[1:]))
     try:
         with pin_workspace_root(request.root_locator, chain) as root:
@@ -4236,6 +4291,45 @@ def _decode_request(raw: bytes) -> _DecodedRequest:
 
 def _identity(payload: Mapping[str, Any]) -> DirectoryIdentity:
     return DirectoryIdentity(device=payload['device'], inode=payload['inode'], mode=payload['mode'], reparse=payload['reparse'])
+
+def _run_ping(stdout: BinaryIO, request: _DecodedRequest, started: float, *, bundle_sha256: str) -> int:
+    """Capture and report the root's full identity chain without pinning.
+
+    Ping is the bootstrap probe: the ONE operation dispatched before the
+    root pin, because its purpose is to capture the identity chain every
+    other operation's request must carry (over ssh the parent cannot
+    stat the remote root). The request's own identity fields are
+    therefore advisory for ping — a first-contact ping has no identity
+    to verify against. A root that cannot be captured (missing, itself a
+    symlink, unsafe metadata) fails with the pin-failure code and emits
+    NO admitted marker — the no-marker bucket the parent's status cache
+    reads as a transport/setup-class failure.
+    """
+    try:
+        locator_metadata = os.lstat(request.root_locator)
+        if not stat.S_ISDIR(locator_metadata.st_mode) or stat.S_ISLNK(locator_metadata.st_mode):
+            raise DirectoryIdentityError('unsafe directory metadata')
+        chain = capture_directory_chain(request.root_locator)
+        payload = _ping_payload(chain, bundle_sha256=bundle_sha256)
+    except (DirectoryIdentityError, OSError, ValueError):
+        _emit(stdout, _failure(request.operation_id, 'root_pin_failed', started))
+        return 2
+    _emit(stdout, _frame(request.operation_id, outcome='success', code='ok', result=payload, error=None, started=started))
+    return 0
+
+def _ping_payload(chain: DirectoryChain, *, bundle_sha256: str) -> str:
+    """Serialize the ping result: chain, canonical path, python, stamp.
+
+    The identity chain is root-first and covers every ancestor to ``/``,
+    exactly the shape ``DirectoryChain(identities=(root_identity,
+    *ancestor_identities[1:]))`` reconstruction consumes — a root-only
+    stat cannot build a request the pinned dispatcher accepts. Rendered
+    as a JSON document inside the response's string ``result`` field
+    (the frame schema itself is unchanged).
+    """
+    paths = (chain.canonical_root, *chain.canonical_root.parents)
+    payload = {'identity_chain': [[str(path_text), identity.device, identity.inode, identity.mode] for path_text, identity in zip(paths, chain.identities)], 'canonical_path': str(chain.canonical_root), 'python_version': platform.python_version(), 'bundle_sha256': bundle_sha256}
+    return json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(',', ':'))
 
 def _frame(operation_id: str, *, outcome: str, code: str, result: str | None, error: str | None, started: float) -> dict[str, Any]:
     """Build one response payload in the parent's fixed field order."""
@@ -4320,6 +4414,7 @@ def main(stream: Any) -> int:
         stream,
         _MagicPrefixStdout(sys.stdout.buffer),
         sys.stderr.buffer,
+        bundle_sha256=BUNDLE_SHA256,
     )
 
 
@@ -4373,3 +4468,27 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
     '.docker',
     '.netrc',
 )
+
+
+# ---------------------------------------------------------------------------
+# Bundle identity stamp (builder-emitted; ping echoes this value)
+# ---------------------------------------------------------------------------
+#: SHA-256 of this file's bytes ABOVE this assignment line. A full-file
+#: digest is not self-embeddable (the stamp would change its own input),
+#: so the stamp pins the code prefix; derive the same value from the
+#: artifact with ``build_remote_worker_bundle.expected_bundle_stamp``.
+#: The remote worker's ``ping`` echoes it so callers can confirm which
+#: bundle the remote actually executed.
+BUNDLE_SHA256 = "792b5fffeed08f19717d9fcf641847ed0039de1d3e937c10a0a78a87597517f2"
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap entry (builder-emitted)
+# ---------------------------------------------------------------------------
+# The fixed remote bootstrap (``python3 -I -c '<bootstrap>'``) execs this
+# file inside the interpreter's own __main__ namespace with stdin already
+# positioned past the compressed bundle bytes — run the one exchange and
+# propagate the worker exit code. In-process loaders that register this
+# file under its own module name never trigger this guard.
+if __name__ == "__main__":
+    raise SystemExit(main(sys.stdin.buffer))

@@ -133,6 +133,10 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
     "git_log": {"sensitive_exclusions": []},
     "git_blame": {"path": "file.txt", "sensitive_exclusions": []},
     "git_branches": {"sensitive_exclusions": []},
+    # The bootstrap probe (Task 9): dispatched before the root pin to
+    # capture the identity chain every other operation must carry; it
+    # takes no operational arguments.
+    "ping": {},
 }
 
 
@@ -466,6 +470,16 @@ _ARG_CASES: tuple[tuple[str, str, dict[str, Any]], ...] = (
         "stat_path",
         {"path": "a.txt", "sensitive_exclusions": []},
     ),
+    (
+        "ping-unexpected-argument",
+        "ping",
+        {"path": "a.txt"},
+    ),
+    (
+        "ping-sensitive-exclusions-argument",
+        "ping",
+        {"sensitive_exclusions": []},
+    ),
     ("path-arg-nul", "fs_read", {"path": "a\x00b", "sensitive_exclusions": []}),
     ("path-arg-int", "fs_read", {"path": 3, "sensitive_exclusions": []}),
 )
@@ -540,6 +554,16 @@ def _add_valid_response(
 _add_valid_response("valid-success", result="file-body")
 _add_valid_response("valid-failure", outcome="failure", error="boom")
 _add_valid_response("valid-admitted", outcome="admitted", code="pin_ok")
+# Task 9: the ping op renders its result as a JSON-encoded object string
+# inside the existing string result field (the frame schema is unchanged).
+_add_valid_response(
+    "valid-ping-json-result",
+    result=(
+        '{"identity_chain":[["/home/me/proj",1,2,16877],["/home/me",1,3,16877],'
+        '["/",1,4,16877]],"canonical_path":"/home/me/proj",'
+        '"python_version":"3.12.11","bundle_sha256":"' + "ab" * 32 + '"}'
+    ),
+)
 # Only success forbids ``error`` and only failure forbids ``result``;
 # ``admitted`` may carry an error and success may omit its result.
 _add_valid_response("valid-admitted-with-error", outcome="admitted", error="late")

@@ -70,6 +70,7 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
     "git_log": {"sensitive_exclusions": []},
     "git_blame": {"path": "file.txt", "sensitive_exclusions": []},
     "git_branches": {"sensitive_exclusions": []},
+    "ping": {},
 }
 
 _WRITE_OPERATIONS = frozenset({"fs_write", "fs_edit", "fs_patch"})

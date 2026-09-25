@@ -89,6 +89,11 @@ WORKSPACE_OPERATIONS = frozenset(
         "git_log",
         "git_blame",
         "git_branches",
+        # The bootstrap probe (Task 9): dispatched before the root pin to
+        # capture the identity chain every other operation's request must
+        # carry. Over ssh the parent cannot stat the remote root, so ping
+        # is the source of request identity values.
+        "ping",
     }
 )
 WORKSPACE_WRITE_OPERATIONS = frozenset({"fs_write", "fs_edit", "fs_patch"})
@@ -194,6 +199,10 @@ ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
         frozenset({"sensitive_exclusions"}),
         {"sensitive_exclusions": "sensitive_exclusions"},
     ),
+    # Ping carries no operational arguments: the identity it reports is
+    # captured fresh from the root, never echoed from the request (a
+    # first-contact ping has no identity to echo yet).
+    "ping": (frozenset(), {}),
 }
 
 _REQUEST_KEYS = frozenset(REQUEST_FIELD_NAMES)
