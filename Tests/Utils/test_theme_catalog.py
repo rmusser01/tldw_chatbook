@@ -1,3 +1,4 @@
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,7 @@ from textual.theme import BUILTIN_THEMES, Theme
 
 from tldw_chatbook.css.Themes import theme_catalog as tc
 from tldw_chatbook.css.Themes.theme_catalog import (
+    BASE_KEYS,
     STRIP_KEYS,
     build_catalog,
     display_name,
@@ -14,6 +16,7 @@ from tldw_chatbook.css.Themes.theme_catalog import (
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 SHIPPED = {t.name: t for t in ALL_THEMES}
+_HEX6 = re.compile(r"^#[0-9A-F]{6}$")
 
 
 def _available(**extra):
@@ -81,6 +84,30 @@ def test_strip_is_seven_resolved_hex_colours():
     entry = next(e for e in build_catalog(_available(), set(), "textual-dark", "x") if e.id == "textual-dark")
     assert len(entry.strip) == len(STRIP_KEYS) == 7
     assert all(c.startswith("#") and len(c) == 7 and c == c.upper() for c in entry.strip)
+
+
+def test_every_colour_of_every_entry_is_uppercase_rrggbb():
+    """No key of any built entry may be an 8-digit alpha hex or an ANSI name.
+
+    deep_dive_cyberspace's `error` colour has alpha < 1
+    (`Color.hex` -> `"#FF33AACC"`), and ansi-dark/ansi-light resolve every key
+    to an ANSI colour name (`Color.hex` -> `"ansi_default"` etc, since those
+    colours are resolved against the terminal's own palette at render time
+    and have no RGB of their own). Both used to leak through `.upper()`
+    unparsed, which `ThemePreview.paint`'s `set_styles` silently drops --
+    highlighting one of those themes left the card showing the PREVIOUS
+    theme's colours under the new title.
+    """
+    entries = build_catalog(_available(), set(), "textual-dark", "textual-dark")
+    assert {e.id for e in entries} >= {"deep_dive_cyberspace", "ansi-dark", "ansi-light"}
+    bad = [
+        (e.id, key, value)
+        for e in entries
+        for key, value in e.colours
+        if not _HEX6.match(value)
+    ]
+    assert not bad, f"non-#RRGGBB colours leaked through: {bad}"
+    assert all(len(e.colours) == len(BASE_KEYS) for e in entries)
 
 
 def test_duplicate_display_names_get_id_suffix():

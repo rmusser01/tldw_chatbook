@@ -145,6 +145,26 @@ def display_name_for(picker, theme_id):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_ansi_theme_preview_paints_resolved_rgb(request, config_writes):
+    # ansi-dark's colours resolve to ANSI names ("ansi_default", ...), which
+    # have no RGB of their own; theme_catalog._colour_hex falls back to
+    # #808080 for those. Regression guard for fix round 1: highlighting an
+    # ANSI theme used to leave ThemePreview showing the PREVIOUS theme's
+    # colours, since Color.parse("ANSI_DEFAULT") silently failed inside
+    # ThemePreview.paint's own try/except.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("ansi-dark")
+        await pilot.pause()
+        entry = next(e for e in picker.entries if e.id == "ansi-dark")
+        panel = dict(entry.colours)["panel"]
+        rail = picker.query_one("#settings-theme-picker-preview-rail")
+        assert rail.styles.background.hex.upper() == panel
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_try_then_use_then_revert_restores_original(request, config_writes):
     app, picker = await _picker_app()
     async with app.run_test(size=(160, 45)) as pilot:

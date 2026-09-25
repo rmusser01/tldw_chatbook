@@ -65,11 +65,31 @@ def _colours(theme: Theme) -> tuple[tuple[str, str], ...]:
     pairs: list[tuple[str, str]] = []
     for key in BASE_KEYS:
         raw = getattr(theme, key, None) or generated.get(key)
-        try:
-            pairs.append((key, Color.parse(str(raw)).hex.upper() if raw else "#808080"))
-        except Exception:  # noqa: BLE001
-            pairs.append((key, "#808080"))
+        pairs.append((key, _colour_hex(raw)))
     return tuple(pairs)
+
+
+def _colour_hex(raw: Any) -> str:
+    """Resolve one theme colour to an uppercase 6-digit ``#RRGGBB``.
+
+    Every consumer (the picker's colour strips, ``ThemePreview.paint``, ...)
+    needs a plain RGB hex -- never one with an alpha suffix (``Color.hex``
+    returns 8 digits, e.g. ``#FF33AACC``, once alpha < 1) and never an ANSI
+    colour name (``Color.hex`` returns e.g. ``"ansi_default"`` for the
+    ansi-dark/ansi-light builtins, since those resolve against the terminal's
+    own palette at render time and have no RGB of their own to report). Use
+    ``hex6`` to always drop alpha, and fall back to neutral grey for ANSI
+    colours the same way an unset colour already falls back.
+    """
+    if not raw:
+        return "#808080"
+    try:
+        colour = Color.parse(str(raw))
+    except Exception:  # noqa: BLE001
+        return "#808080"
+    if colour.ansi is not None:
+        return "#808080"
+    return colour.hex6.upper()
 
 
 def _origin(name: str, user_names: Collection[str]) -> tuple[Origin, Literal["shipped", "textual"] | None]:
