@@ -4758,17 +4758,26 @@ def test_remote_root_authority_without_executor_fails_loud_at_composition(
 ):
     import tldw_chatbook.Tools.workspace_tool_executor as wte
 
-    def blow_up(captured_root, *args, **kwargs):
-        if "/srv" in str(captured_root):
-            raise AssertionError(
-                f"composition must not capture a remote root locally: {captured_root}"
-            )
+    def blow_up(*_args, **_kwargs):
+        raise AssertionError(
+            "composition must not capture any root locally in this test"
+        )
 
     monkeypatch.setattr(wte, "capture_directory_chain", blow_up)
     authority = _remote_authority(executor=None)
 
+    # Direct construction: the test helper's make_provider eagerly builds
+    # its default InProcessWorkspaceExecutor (setdefault evaluates the
+    # default), which would trip the unconditional capture tripwire for
+    # the provider's own LOCAL base root -- not what this test pins.
     with pytest.raises(TypeError, match="remote root reached laptop-disk path"):
-        make_provider(root=tmp_path, admitted_roots=(authority,))
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: ALLOW,
+            kill_switch=lambda: False,
+            workspace_executor=RecordingWorkspaceExecutor(),
+            admitted_roots=(authority,),
+        )
 
 
 def test_remote_agent_authority_admission_fails_loud_without_executor(

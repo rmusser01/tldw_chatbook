@@ -586,6 +586,12 @@ class WorkspaceToolExecutor:
         serialized from caller-supplied relative entries. The emitted
         ``WorkspaceToolRequest`` wire dict is shape-identical to a local
         one, so the remote worker (same bundle) parses it unchanged.
+
+        Hidden-path policy (controller-confirmed reading): remote READS
+        allow hidden components under the root -- ADR-032 parity with the
+        local builder's ``allow_hidden=True`` -- while remote WRITES
+        reject a ``.git`` path component, the one lexically-checkable
+        hidden-path rule the local side enforces.
         """
         try:
             chain = self._remote_identity_source()

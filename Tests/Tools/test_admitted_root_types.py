@@ -95,6 +95,36 @@ def test_display_uri_renders_remote_ssh_scheme() -> None:
     assert display_uri(root) == "ssh://devbox/srv/www"
 
 
+@pytest.mark.parametrize(
+    ("locator", "expected"),
+    [
+        # Real canonical locators (Task 5's locator_string) already carry
+        # the scheme -- they render verbatim, never double-prefixed.
+        ("ssh://devbox/srv/www", "ssh://devbox/srv/www"),
+        ("ssh://me@devbox/srv/www", "ssh://me@devbox/srv/www"),
+        # An explicit NON-default port survives verbatim.
+        ("ssh://devbox:2222/srv/www", "ssh://devbox:2222/srv/www"),
+        ("ssh://me@[::1]:2222/srv/www", "ssh://me@[::1]:2222/srv/www"),
+        # The redundant default port is stripped (locator_string rule).
+        ("ssh://devbox:22/srv/www", "ssh://devbox/srv/www"),
+        ("ssh://[::1]:22/srv/www", "ssh://[::1]/srv/www"),
+        # Hand-built colon forms: the empty-port authority normalizes
+        # away instead of rendering "ssh://devbox:/srv/www".
+        ("devbox:/srv/www", "ssh://devbox/srv/www"),
+        ("me@devbox:/srv/www", "ssh://me@devbox/srv/www"),
+        ("devbox:22/srv/www", "ssh://devbox/srv/www"),
+        # Path-less locator stays path-less.
+        ("ssh://devbox", "ssh://devbox"),
+    ],
+)
+def test_display_uri_normalizes_ssh_locator_forms(locator: str, expected: str) -> None:
+    root = RemoteRoot(
+        alias="proj", canonical_locator=locator, root="/srv/www", binding_id="b"
+    )
+
+    assert display_uri(root) == expected
+
+
 def test_local_root_path_passes_plain_paths_through_unchanged() -> None:
     plain = Path("/tmp/workspace").resolve()
 

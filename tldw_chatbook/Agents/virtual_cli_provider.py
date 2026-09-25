@@ -21,6 +21,7 @@ from tldw_chatbook.MCP.execution_log import (
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,
@@ -171,6 +172,21 @@ class VirtualCliProvider:
         if self._admitted_roots:
             usable_roots: dict[str, RunAdmittedWorkspaceRoot] = {}
             for alias, authority in self._admitted_roots.items():
+                if is_remote(authority.root) and authority.workspace_executor is None:
+                    # Phase 3a type boundary (task 15 review fix): without
+                    # an executor in the slot, the fallback below would
+                    # construct a local WorkspaceToolExecutor against the
+                    # root -- laptop-disk work. Checked BEFORE the try
+                    # (whose broad except would otherwise swallow the
+                    # failure into a silently revoked alias: the alias
+                    # vanishes from the schema with no log). Task 18's
+                    # composition always supplies the remote transport
+                    # executor for RemoteRoots; WITH one the registry is
+                    # executor-routed and stores the descriptor unresolved.
+                    raise TypeError(
+                        "remote root reached laptop-disk path: virtual-CLI "
+                        "per-alias executor construction"
+                    )
                 try:
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
                         authority.root,
@@ -326,6 +342,24 @@ class VirtualCliProvider:
             return bool(authority.guard(False))
         except Exception:  # noqa: BLE001 - invocation must fail closed
             return False
+
+    def _error_redaction_root(
+        self, authority: RunAdmittedWorkspaceRoot | None
+    ) -> Path | None:
+        """Error-path redaction root: same as success, but never re-raises.
+
+        Local roots get exactly the root the success path redacts against
+        (unchanged behavior). A REMOTE root returns ``None``: the success
+        path's loud unwrap already refused remote dispatch, and
+        re-raising from inside an ``except`` block would mask that
+        failure with a generic refusal -- error text carries no laptop
+        locator to strip anyway (a remote locator is not a laptop secret).
+        """
+        if authority is None:
+            return self._result_redaction_root
+        if is_remote(authority.root):
+            return None
+        return local_root_path(authority.root, site="virtual-CLI result redaction")
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
         if call.name != VIRTUAL_CLI_TOOL_NAME:
@@ -486,8 +520,16 @@ class VirtualCliProvider:
                     else self._registries_by_alias[authority.alias]
                 )
                 content = registry.execute(command, argv)
+                # Phase 3a boundary: unwrap the authority root for
+                # redaction -- a RemoteRoot raises loud here (Task 17,
+                # Phase 3c migrates redaction to the URI form) instead of
+                # reaching redact_root_locator's Path-only surface.
                 redaction_root = (
-                    self._result_redaction_root if authority is None else authority.root
+                    self._result_redaction_root
+                    if authority is None
+                    else local_root_path(
+                        authority.root, site="virtual-CLI result redaction"
+                    )
                 )
                 content = redact_root_locator(content, redaction_root)
                 return ToolResult(ok=True, content=_sanitize_result(content))
@@ -498,17 +540,13 @@ class VirtualCliProvider:
                     return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
                 error = redact_root_locator(
                     str(exc),
-                    self._result_redaction_root
-                    if authority is None
-                    else authority.root,
+                    self._error_redaction_root(authority),
                 )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 error = redact_root_locator(
                     str(exc) or repr(exc),
-                    self._result_redaction_root
-                    if authority is None
-                    else authority.root,
+                    self._error_redaction_root(authority),
                 )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
 

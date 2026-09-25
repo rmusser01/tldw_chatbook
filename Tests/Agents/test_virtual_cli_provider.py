@@ -1004,3 +1004,111 @@ def test_virtual_approved_execution_failure_is_distinct_from_authority_loss(
         result = provider.invoke("virtual_cli", args)
     assert not result.ok
     assert result.approval_decision == expected
+
+
+# -- Phase 3a (task 15, review fix): the virtual-CLI alias-loop boundary ----
+#
+# Same shape as local_tool_provider's alias loop: the fallback executor
+# construction is laptop-disk work, and the loop's broad ``except
+# Exception: continue`` would swallow a remote-root failure into a
+# silently revoked alias (missing from the schema, no log).
+
+
+def _remote_cli_authority(
+    executor: RecordingWorkspaceExecutor | None,
+) -> RunAdmittedWorkspaceRoot:
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    return RunAdmittedWorkspaceRoot(
+        workspace_id="workspace-1",
+        binding_id="binding-remote",
+        alias="binding-remote",
+        root=RemoteRoot(
+            alias="binding-remote",
+            canonical_locator="ssh://devbox/srv/www",
+            root="/srv/www",
+            binding_id="binding-remote",
+        ),
+        locator_fingerprint="fingerprint-remote",
+        root_identity=(("/srv/www", 99, 7, 0o40755),),
+        allow_write=False,
+        guard=lambda _write: True,
+        workspace_executor=executor,
+    )
+
+
+def test_remote_root_authority_without_executor_fails_loud_in_virtual_cli(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.Tools.workspace_tool_executor as wte
+
+    def blow_up(*_args, **_kwargs):
+        raise AssertionError(
+            "virtual-CLI composition must not capture any root locally here"
+        )
+
+    monkeypatch.setattr(wte, "capture_directory_chain", blow_up)
+    authority = _remote_cli_authority(executor=None)
+
+    with pytest.raises(TypeError, match="remote root reached laptop-disk path"):
+        VirtualCliProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: ALLOW,
+            local_tools_enabled=lambda: True,
+            kill_switch=lambda: False,
+            workspace_executor=RecordingWorkspaceExecutor(),
+            admitted_roots=(authority,),
+        )
+
+
+def test_virtual_cli_remote_authority_with_executor_is_executor_routed(
+    tmp_path, monkeypatch
+):
+    """With an executor in the slot the registry never resolves the root.
+
+    The remote registry stores the descriptor unresolved (no laptop
+    ``Path.resolve()``), dispatch projects onto the executor's closed
+    protocol, and the un-migrated result-redaction site fails loud
+    instead of silently mis-redacting against a descriptor.
+    """
+    import builtins
+
+    executor = RecordingWorkspaceExecutor()
+    provider = VirtualCliProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _hub: ALLOW,
+        local_tools_enabled=lambda: True,
+        kill_switch=lambda: False,
+        workspace_executor=RecordingWorkspaceExecutor(),
+        admitted_roots=(_remote_cli_authority(executor),),
+    )
+
+    schema = provider.load_schema("virtual_cli").parameters
+    assert schema["properties"]["root_alias"]["enum"] == ["binding-remote"]
+
+    real_open, real_lstat = builtins.open, os.lstat
+
+    def tripwire_open(file, *args, **kwargs):
+        if isinstance(file, (str, Path)) and str(file).startswith("/srv"):
+            raise AssertionError(f"laptop open() on remote path: {file}")
+        return real_open(file, *args, **kwargs)
+
+    def tripwire_lstat(path, *args, **kwargs):
+        if str(path).startswith("/srv"):
+            raise AssertionError(f"laptop lstat() on remote path: {path}")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", tripwire_open)
+    monkeypatch.setattr(os, "lstat", tripwire_lstat)
+
+    result = provider.invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."], "root_alias": "binding-remote"},
+    )
+
+    # Dispatch DID route through the remote-slot executor...
+    assert executor.calls == [("fs_list", {"path": "."}, "read")]
+    # ...and the un-migrated result-redaction site refused loud (no
+    # silent laptop IO, no silently mis-redacted success).
+    assert not result.ok
+    assert "remote root reached laptop-disk path" in (result.error or "")

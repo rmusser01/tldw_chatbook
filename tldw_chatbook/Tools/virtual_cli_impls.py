@@ -15,6 +15,7 @@ from .local_tool_impls import (
     read_file,
     stat_path,
 )
+from .remote_root_types import AdmittedRoot, RemoteRoot, local_root_path
 from .workspace_tool_executor import WorkspaceToolExecutor
 
 VIRTUAL_CLI_COMMANDS = (
@@ -174,20 +175,49 @@ def parse_request(command: str, argv: Sequence[str]) -> tuple[VirtualCliRequest,
 
 
 class VirtualCliRegistry:
-    """Parse fixed argv forms and dispatch through a pinned executor by default."""
+    """Parse fixed argv forms and dispatch through a pinned executor by default.
+
+    Phase 3a (task 15): the root slot accepts the
+    :data:`~tldw_chatbook.Tools.remote_root_types.AdmittedRoot` union. A
+    ``RemoteRoot`` is accepted ONLY with a pinned executor -- with one,
+    :meth:`execute` projects every command onto the closed executor
+    protocol and never consults the stored root, so the descriptor is
+    kept unresolved (``Path(root).resolve()`` would be laptop-disk work
+    against a remote path). Without an executor the fallback below runs
+    the workspace cores directly against ``self._root`` on the LAPTOP, so
+    a remote root refuses construction loudly instead.
+    """
 
     def __init__(
         self,
-        workspace_root: Path,
+        workspace_root: "Path | AdmittedRoot",
         *,
         workspace_executor: WorkspaceToolExecutor | None = None,
     ) -> None:
-        self._root = Path(workspace_root).resolve()
+        if isinstance(workspace_root, RemoteRoot):
+            if workspace_executor is None:
+                raise TypeError(
+                    "remote root reached laptop-disk path: virtual-CLI registry "
+                    "fallback dispatch"
+                )
+            self._remote_root: RemoteRoot | None = workspace_root
+            self._root: Path | None = None
+        else:
+            self._remote_root = None
+            self._root = local_root_path(
+                workspace_root, site="virtual-CLI registry root resolution"
+            ).resolve()
         self._workspace_executor = workspace_executor
 
     @property
     def workspace_root(self) -> Path:
-        return self._root
+        """The resolved laptop root; a remote registry has none and says so."""
+        if self._remote_root is not None:
+            raise TypeError(
+                "remote root reached laptop-disk path: virtual-CLI registry root "
+                "accessor"
+            )
+        return self._root  # type: ignore[return-value]  # narrowed above
 
     def execute(self, command: str, argv: Sequence[str]) -> str:
         request, args = parse_request(command, argv)

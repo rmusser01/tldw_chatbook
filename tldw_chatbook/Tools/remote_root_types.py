@@ -96,14 +96,43 @@ def display_uri(root: "Path | AdmittedRoot") -> str:
     """Render one admitted root as its model-facing URI.
 
     ``LocalRoot``/``Path`` → ``file://`` + the (absolute) local path;
-    ``RemoteRoot`` → ``ssh://`` + the canonical locator -- the form the
-    workspace context note shows (Task 18 consumes this).
+    ``RemoteRoot`` → the canonical SSH locator in ``ssh://`` form -- the
+    form the workspace context note shows (Task 18 consumes this). See
+    :func:`_ssh_display_uri` for the locator normalization rules.
     """
     if isinstance(root, RemoteRoot):
-        return f"ssh://{root.canonical_locator}"
+        return _ssh_display_uri(root.canonical_locator)
     if isinstance(root, LocalRoot):
         return root.path.as_uri()
     return Path(root).as_uri()
+
+
+def _ssh_display_uri(locator: str) -> str:
+    """Normalize one SSH locator spelling to its display URI.
+
+    A canonical locator (Task 5's ``locator_string``) already carries the
+    ``ssh://`` scheme with the default port omitted and explicit ports
+    kept -- it renders verbatim and is never double-prefixed. Hand-built
+    descriptors may carry the bare ``host:/path`` or ``host/path`` form,
+    or spell the default port explicitly; both normalize to the same
+    display form per ``locator_string``'s rule:
+
+    - a redundant default port (``host:22``) is stripped;
+    - a redundant EMPTY port (``host:``) is stripped, so
+      ``devbox:/srv/www`` renders ``ssh://devbox/srv/www`` rather than an
+      empty-port authority;
+    - an explicit non-default port (``host:2222``) survives verbatim,
+      bracketed IPv6 authorities included.
+    """
+    body = (
+        locator[len("ssh://") :] if locator.startswith("ssh://") else locator.lstrip("/")
+    )
+    authority, slash, path = body.partition("/")
+    if authority.endswith(":22"):
+        authority = authority[: -len(":22")]
+    elif authority.endswith(":"):
+        authority = authority[:-1]
+    return f"ssh://{authority}{slash}{path}"
 
 
 def local_root_path(root: "Path | AdmittedRoot", *, site: str) -> Path:
