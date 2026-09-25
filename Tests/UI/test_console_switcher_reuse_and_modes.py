@@ -26,6 +26,15 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSwitcherChoice,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
+async def _until_stage(predicate, stage):
+    try:
+        await _until(predicate)
+    except TimeoutError as exc:
+        raise AssertionError(f"Switcher did not reach {stage}") from exc
+
 
 def _luminance(rgb):
     channels = [value / 255 for value in rgb]
@@ -66,7 +75,7 @@ async def test_reopening_exact_conversation_reuses_runtime(
     host = ConsoleHarness(owner)
     async with host.run_test(size=(120, 50)) as pilot:
         chat = host.screen
-        await _until(lambda: chat.query("#console-native-composer"))
+        await _until_stage(lambda: chat.query("#console-native-composer"), "composer")
         store = chat._ensure_console_chat_store()
         prior = store.active_session_id
         first_id = None
@@ -78,25 +87,30 @@ async def test_reopening_exact_conversation_reuses_runtime(
                 initial_mode=mode,
                 initial_character_query="Exact",
             )
-            await _until(lambda: isinstance(host.screen, ConsoleSessionSwitcherModal))
+            await _until_stage(
+                lambda: isinstance(host.screen, ConsoleSessionSwitcherModal),
+                f"{mode.value} modal",
+            )
             modal = host.screen
-            await _until(
-                lambda modal=modal: bool(modal.query("#console-switcher-query"))
+            await _until_stage(
+                lambda modal=modal: bool(modal.query("#console-switcher-query")),
+                f"{mode.value} query",
             )
             if mode is SwitcherMode.HISTORY:
                 modal.query_one("#console-switcher-query", Input).value = "Exact"
-            await _until(
+            await _until_stage(
                 lambda modal=modal: (
                     not modal._query_pending
                     and bool(modal._entries)
                     and modal.query_one("#console-switcher-query", Input).value
                     == "Exact"
-                )
+                ),
+                f"{mode.value} Exact results",
             )
             assert modal._entries[0].target.conversation_id == "exact"
             assert modal._mode is mode
             await pilot.press("enter")
-            await _until(
+            await _until_stage(
                 lambda: (
                     host.screen is chat
                     and any(
@@ -104,7 +118,8 @@ async def test_reopening_exact_conversation_reuses_runtime(
                         and s.persisted_conversation_id == "exact"
                         for s in store.sessions()
                     )
-                )
+                ),
+                f"{mode.value} Console activation",
             )
             await pilot.pause()
             matches = [
@@ -215,6 +230,9 @@ async def test_history_reuse_refreshes_changed_workspace_scope(activation_librar
     host = ConsoleHarness(owner)
     async with host.run_test(size=(240, 64)) as pilot:
         chat = host.screen
+        if not chat.query_one("#console-right-rail").display:
+            await pilot.press("alt+i")
+            await pilot.pause()
         await _open_inspector_and_get_row(chat, pilot)
         store = chat._ensure_console_chat_store()
         prior = store.active_session_id
