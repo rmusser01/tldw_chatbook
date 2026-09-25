@@ -16214,7 +16214,12 @@ class ConsoleChatController:
                 CharacterCardChanged,
             )
 
-            app.call_from_thread(app.post_message, CharacterCardChanged(character_id))
+            # Textual's post_message is thread-safe off the app thread (it
+            # hops onto the event loop via call_soon_threadsafe -- see
+            # message_pump.py) and returns False once the app is closed;
+            # call_from_thread would instead block this worker thread with
+            # no timeout, and can hang at shutdown (task-32954 Task 5, R11).
+            app.post_message(CharacterCardChanged(character_id))
 
         return {"character_service": CharacterToolService(
             service_loader=_service, runtime_source_loader=_runtime_source,

@@ -47,3 +47,41 @@ def test_server_backend_session_refuses_via_the_service():
     result = json.loads(service.search({}))
     assert result["status"] == "unsupported"
     assert result["message"] == SERVER_REFUSAL
+
+
+class _PostRecordingApp:
+    """Records ``post_message`` calls; fails the test if the worker thread
+
+    is blocked via ``call_from_thread`` instead (R11: Textual's
+    ``post_message`` is already thread-safe -- see
+    ``textual.message_pump.MessagePump.post_message`` -- so the save path
+    must never route through the blocking, no-timeout ``call_from_thread``).
+    """
+
+    def __init__(self) -> None:
+        self.posted: list = []
+
+    def post_message(self, message) -> bool:
+        self.posted.append(message)
+        return True
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        raise AssertionError("_changed must post directly, not via call_from_thread")
+
+
+def test_changed_posts_character_card_changed_without_call_from_thread():
+    from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
+
+    controller, store = _make_controller()
+    session = store.create_session(runtime_backend="local")
+    app = _PostRecordingApp()
+    controller.app = app
+    wiring = controller._character_wiring(session.id)
+    service = wiring["character_service"]
+
+    service._on_changed(42)
+
+    assert len(app.posted) == 1
+    posted = app.posted[0]
+    assert isinstance(posted, CharacterCardChanged)
+    assert posted.character_id == 42

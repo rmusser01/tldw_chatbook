@@ -48,6 +48,7 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.character_events import CharacterCardChanged
 from ...Character_Chat.character_avatar import (
     AVATAR_IMAGE_SUFFIX_COPY as PERSONAS_AVATAR_IMAGE_SUFFIX_COPY,
     AVATAR_IMAGE_SUFFIXES as PERSONAS_AVATAR_IMAGE_SUFFIXES,
@@ -5228,6 +5229,32 @@ class PersonasScreen(BaseAppScreen):
             return None
         record["id"] = character_id
         return expected_server_id, record
+
+    async def _on_character_card_changed(self, message: CharacterCardChanged) -> None:
+        """Reload the shown character after a Console save; never drop edits.
+
+        ``message`` arrives via the app-level ``TldwCli.on_character_card_
+        changed`` forwarder (TASK-32954 Task 5): Textual delivers an
+        App-posted message to App handlers only, so this method is called
+        directly rather than through Textual's own dispatch (see
+        ``forward_model_catalog_refreshed`` for the identical constraint).
+        """
+        state = self.state
+        if (
+            state.selected_entity_kind != "character"
+            or str(state.selected_entity_id) != str(message.character_id)
+        ):
+            return
+        if self._character_editor_is_active():
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            if getattr(editor, "_dirty_posted", False):
+                self._notify(
+                    "This character was changed elsewhere. Your unsaved edits "
+                    "are kept; save or discard them to see the new version.",
+                    "warning",
+                )
+                return
+        await self._select_character(str(message.character_id), state.selected_entity_name)
 
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None

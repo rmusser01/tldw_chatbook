@@ -12585,6 +12585,24 @@ class TldwCli(
         if self.screen_stack and message.screen is self.screen:
             self._schedule_persona_buddy_overlay()
 
+    def on_character_card_changed(self, message: Any) -> None:
+        """Forward a Console character-card save to the active Personas screen.
+
+        Textual delivers an App-posted message to App handlers only (it
+        never bubbles down into a Screen's own handler -- see
+        ``forward_model_catalog_refreshed`` for the identical constraint),
+        so the active screen's handler is called directly instead.
+        """
+        from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+
+        screen = self.screen
+        if isinstance(screen, PersonasScreen):
+            screen.run_worker(
+                screen._on_character_card_changed(message),
+                group="personas-character-changed",
+                exclusive=True,
+            )
+
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
         if not self.screen_stack:
