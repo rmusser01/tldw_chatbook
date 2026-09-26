@@ -1223,6 +1223,109 @@ async def test_rename_confirmed_after_the_pane_is_gone_does_not_crash(request):
         assert path.exists()
 
 
+# -- TASK-32949: leaving the Settings screen with unsaved theme edits ---------
+
+
+async def _dirty_theme_editor(host, pilot, name="leave_test"):
+    from textual.widgets import Input
+
+    await _category(host, pilot, "Theme")
+    settings = host.screen
+    settings.query_one("#settings-theme-list").focus()
+    await pilot.press("c")
+    await pilot.pause(0.2)
+    editor = settings.query_one("#settings-theme-editor")
+    editor.query_one("#settings-theme-name", Input).value = name  # a real edit
+    await pilot.pause(0.2)
+    assert editor.is_modified
+    return settings, editor
+
+
+async def _leave(host, pilot, settings, button_id):
+    """Run the app's navigation hook and answer its prompt with ``button_id``."""
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    decision = settings.run_worker(settings.confirm_navigation(), exit_on_error=False)
+    await pilot.pause(0.2)
+    assert isinstance(host.screen, ThemeLeaveModal)
+    await pilot.click(f"#{button_id}")
+    await pilot.pause(0.2)
+    await decision.wait()
+    return decision.result
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_without_theme_edits_does_not_ask(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        assert await host.screen.confirm_navigation() is True
+        await _category(host, pilot, "Appearance")
+        assert await host.screen.confirm_navigation() is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_stay_keeps_the_theme_edit(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-stay") is False
+        assert host.screen is settings
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-editor-view"
+        assert editor.is_modified and editor.current_theme_name == "leave_test"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_discard_leaves_without_saving(request):
+    from tldw_chatbook.config import get_user_themes_dir
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-discard") is True
+        assert not (get_user_themes_dir() / "leave_test.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_save_writes_then_leaves(request):
+    from tldw_chatbook.config import get_user_themes_dir
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is True
+        assert (get_user_themes_dir() / "leave_test.toml").exists()
+        assert not editor.is_modified
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_refused_or_pending_save_stays(request):
+    from tldw_chatbook.config import get_user_themes_dir
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        # Refused: the reserved prefix.
+        settings, editor = await _dirty_theme_editor(host, pilot, name="custom_x")
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is False
+        assert host.screen is settings and editor.is_modified
+        # Pending: saving over another theme's file asks first.
+        (get_user_themes_dir() / "taken.toml").write_text(
+            '[theme]\nname = "taken"\n[colors]\nprimary = "#112233"\n', encoding="utf-8"
+        )
+        from textual.widgets import Input
+
+        editor.query_one("#settings-theme-name", Input).value = "taken"
+        await pilot.pause(0.2)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is False
+        assert isinstance(host.screen, ConfirmationDialog)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_appearance_summary_strips_control_characters(request, monkeypatch):

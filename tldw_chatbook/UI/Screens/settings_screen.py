@@ -23974,6 +23974,34 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    async def confirm_navigation(self) -> bool:
+        """Save / Discard / Stay before leaving Settings with an edited theme.
+
+        TASK-32949: the app awaits this before every screen switch -- tab
+        bar, command palette and shortcuts all post ``NavigateToScreen`` to
+        ``TldwCli.handle_screen_navigation`` -- and Settings is not a
+        reusable route, so leaving drops the editor's unsaved palette. Same
+        prompt and outcomes as a category switch (TASK-32941).
+
+        Returns:
+            True to let navigation proceed; False to stay on Settings ▸ Theme
+            (Stay, or a Save that was refused or waits on its overwrite
+            confirmation).
+        """
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return True
+        if not editor.is_modified:
+            return True
+        choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            editor.on_save_theme()
+            return not editor.is_modified
+        return True
+
     def _theme_editor_shown(self) -> bool:
         try:
             pane = self.query_one("#settings-theme-pane", ThemePane)
