@@ -41,7 +41,38 @@ Measured by the tier-2 review against `origin/dev d0face3ebe`; evidence in `qa/t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `chatterbox_isolated.py` deleted with evidence of zero references recorded in the notes
-- [ ] #2 `HiggsVoiceProfileManager` adopts `VoiceManagerBase`; the parallel CRUD exists once; higgs voice suites pass
-- [ ] #3 No native-adapter migrations are forced by this task (ADR-023 staging untouched)
+- [x] #1 `chatterbox_isolated.py` deleted with evidence of zero references recorded in the notes
+- [x] #2 `HiggsVoiceProfileManager` adopts `VoiceManagerBase`; the parallel CRUD exists once; higgs voice suites pass
+- [x] #3 No native-adapter migrations are forced by this task (ADR-023 staging untouched)
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Both quick wins already landed on `dev`; this task was stale as filed and is
+ticked here with the evidence, by the tier-2 code review (TASK-32901, slice
+S03/S04) rather than by new work.
+
+- **AC#1** — `ls tldw_chatbook/TTS/backends/ | grep -i isolated` → no match.
+  `chatterbox_isolated.py` is absent from the worktree; `grep -rn
+  chatterbox_isolated tldw_chatbook/ Tests/` → zero hits.
+- **AC#2** — `HiggsVoiceProfileManager(VoiceManagerBase)` at
+  `TTS/backends/higgs_voice_manager.py:52`, and its class docstring cites this
+  task. The parallel CRUD exists once: `load_profiles`, `save_profiles`,
+  `get_profile`, `update_profile` and `delete_profile` are defined only on
+  `VoiceManagerBase`; Higgs now defines only its engine-specific
+  `create_profile`/`list_profiles`/`export_profile`/`import_profile` plus its
+  own validator and backup hooks. The review found AC#1 satisfied and filed
+  AC#2 as outstanding — **that half of the finding was already stale too**.
+- **AC#3** — no adapter-registry or `legacy_bridge` route changed.
+
+**Correction to the review's S03/S04 delta note on AC#2.** It warned that
+adopting the base would *drop* Higgs's 300 s duration cap because the base had
+no bounds, and proposed `TTS/sample_audio_validation.py` as the adoption
+target. Higgs kept its own `_validate_audio_file` override, so no cap was
+lost. `sample_audio_validation` is the wrong target regardless: its
+`MAX_PLAYABLE_AUDIO_BYTES` is 8 MiB and it bounds audio this app *generated*,
+so pointing reference-audio validation at it would reject an ordinary
+few-minute user recording. The base instead gained a
+`max_reference_audio_bytes` bound (100 MB, matching Higgs's own) under
+TASK-32901, which is what `ChatterboxVoiceManager` was missing.
+<!-- SECTION:NOTES:END -->

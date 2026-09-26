@@ -299,6 +299,10 @@ def _pcm_16k_mono(
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # ffmpeg reads stdin by default; the input here is always a file
+            # path, so inheriting the worker's stdin only lets a stuck ffmpeg
+            # consume it.
+            stdin=subprocess.DEVNULL,
             check=True,
             # A malformed or adversarial container can park ffmpeg
             # indefinitely; bound it rather than wedge the worker.

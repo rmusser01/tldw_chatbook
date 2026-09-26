@@ -278,3 +278,6 @@ async def test_cancelled_tick_still_completes_the_started_heartbeat_write(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert write_completed.is_set()
+
+
+

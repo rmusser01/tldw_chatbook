@@ -154,6 +154,10 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
             ],
             check=True,
             capture_output=True,
+            # ffmpeg reads stdin by default; the input here is always a file
+            # path, so inheriting the parent's stdin only lets a stuck ffmpeg
+            # consume it.
+            stdin=subprocess.DEVNULL,
             # A malformed or adversarial container can park ffmpeg
             # indefinitely; bound it rather than wedge the worker.
             timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,

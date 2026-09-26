@@ -966,6 +966,14 @@ def _replace(operation, temporary, destination):
                 src_dir_fd=state.pins[temporary.parent],
                 dst_dir_fd=state.pins[destination.parent],
             )
+            # The rename itself is only durable once its directory entry is.
+            # One pin covers both ends: `state.pins` holds the single anchor
+            # directory, which is why the os.replace above can index it for
+            # both parents. A failure here falls into the BaseException
+            # handler below and is treated as an unresolved publication,
+            # which is what an unproven barrier is. Pinned is the only
+            # posture the config, settings, dictionary and MCP routes accept,
+            # so every route that writes user-owned files is covered.
             flush_directory(state.pins[destination.parent])
         else:
             os.replace(temporary, destination)
