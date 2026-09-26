@@ -1,6 +1,6 @@
 # ADR-095: Own Console conversation settings and explicit defaults separately
 
-Status: Accepted
+Status: Accepted (amended 2026-09-26: pristine open chats converge; `max_tokens` joins the quick mask)
 Date: 2026-08-27
 Related Task: TASK-22515
 Extends: ADR-006, ADR-033, and ADR-052
@@ -71,7 +71,8 @@ field provenance, compaction draft, and exact origin into the full Model view wi
 applying or discarding it. Conversation resume performs the same provider-first
 rebase before applying the saved safe snapshot.
 
-The quick model-profile field mask is temperature and streaming. The full Model
+The quick model-profile field mask is temperature, max_tokens, and streaming
+(amended 2026-09-26, D3; originally temperature and streaming). The full Model
 mask is every supported sampler, reasoning/thinking, token-limit, and streaming
 field it exposes. Blank profile values delete the exact override so lower-precedence
 defaults apply; the conversation still stores the effective value resolved at Apply
@@ -211,6 +212,107 @@ default and reserves source cloning for explicitly source-owned flows.
   orchestration and session-local durability record coordinate honest outcomes
   across the two owners.
 
+## Amendment 2026-09-26: pristine open chats converge; `max_tokens` joins the quick mask
+
+These are owner decisions D1 and D3 of the model-configuration redesign
+([spec](../docs/spec-2026-09-26-model-config-redesign.md); evidence in
+`qa/model-config-ux-review-2026-09-26/`).
+
+### D1: an untouched open chat converges to newly saved defaults
+
+This ADR already gives the saved defaults to "the initial pristine Console chat
+after startup". A chat the user has never touched is that same blank chat,
+seen from their seat. Today the only path that refreshes such a chat is the
+task-177 recovery, `_maybe_refresh_stale_default_console_settings` in
+`UI/Console_Modules/session.py`, and it runs only while the chat's provider is
+blocked (`:3786-3791`, `:3814`). A provider can read Ready without being
+reachable; keyless llama.cpp does even when its server is down. An untouched
+chat on such a provider kept its old provider, model and sampling after a
+Settings save, and nothing on screen said so.
+
+**Ruling: a pristine open chat converges to the saved defaults, whatever its
+readiness. A chat with any work keeps its settings and offers `Use saved
+defaults`.**
+
+"Pristine" uses the refresh's existing eligibility test, unchanged. The chat
+has no messages, no user work, and settings that still equal the canonical
+baseline captured when it was created (no edited fields).
+
+What changes:
+
+- **The readiness gates leave the refresh.** Three checks are removed:
+  - the early return when the current settings can already send;
+  - the `_CONSOLE_REFRESHABLE_BLOCKED_LABELS` filter;
+  - the requirement that the re-derived defaults can send.
+
+  A pristine chat now receives exactly what a blank chat created at that
+  moment would receive, whether or not those settings can send. This is the
+  blank-chat rule above, applied to a chat that is still blank.
+- **Two sentences now mean chats with work.** "Existing/open conversations do
+  not rebase" (Decision) and "Existing/open ... conversations remain
+  unchanged" (Consequences) now mean existing or open conversations that hold
+  any work.
+- **Chats with work get an explicit way in: `Use saved defaults`.** Chat
+  settings offers this action for the chat's current provider and model.
+  - It rebases the draft onto exactly what a newly created chat on that
+    provider and model would resolve (`build_default_console_session_settings`).
+    That is the full saved default chain, in precedence order: the model profile,
+    the saved Console provider defaults (`[console.provider_defaults.<provider>]`),
+    any applicable extra sources (ADR-147 registry params), `chat_defaults`, and
+    then the raw provider settings.
+  - It uses the controller's existing rebase path, and carries over no
+    deliberate edits.
+  - It changes only the draft. Nothing reaches the conversation until `Apply
+    to this chat`, which stays an ordinary Apply and writes no configuration.
+  - It never changes the provider or the model. Choosing a model stays the
+    switcher's job.
+- **Surfaces print the scope.** Every commit surface prints what it applies
+  to. The Settings save says that open chats with work keep their own
+  settings.
+
+What stays:
+
+- **Chats with work never rebase silently.** This covers chats with messages,
+  user work or edited settings. Duplicate, Branch, Continue and handoff chats
+  stay source-owned.
+- **Convergence keeps the chat's identity signals.** A Persona chat keeps its
+  Persona, and a provider change still posts the task-16475 notice.
+- **The refresh's other checks are untouched, including the creation-time
+  default-generation check.** A pristine chat created before a Console `Make
+  default for new chats` is still skipped. D1 did not address Console default
+  actions; extending convergence to them needs its own owner ruling.
+- **Everything else is unchanged:** Apply, both default actions, the snapshot
+  allowlist and the durability rules.
+
+### D3: `max_tokens` joins the quick default mask
+
+The redesigned quick surface, "Switch model", shows Max tokens as an editable
+value beside Temperature and Streaming. If the mask stayed at temperature and
+streaming, `Save as model default` would drop a visible edit without saying so.
+
+**Ruling: the quick model-profile field mask is `temperature`, `max_tokens` and
+`streaming`.**
+
+What changes:
+
+- **`QUICK_MODEL_DEFAULT_FIELDS` gains `max_tokens`**
+  (`Chat/console_settings_apply.py:19`). This applies to both default actions
+  on the quick surface: `Save as model default` and `Make default for new
+  chats`.
+- **The quick surface's editable fields and its default mask are the same
+  set.** A field becomes editable on the quick surface only together with an
+  amendment that adds it to this mask.
+- **A blank Max tokens deletes the exact profile override,** as blanks already
+  do for the other masked fields.
+
+What stays:
+
+- **`Apply to this chat`** still sends an empty default mask
+  (`Widgets/Console/console_model_popover.py:1388-1392`).
+- **The rest of the mask rules:** the full Model mask is unchanged, compaction
+  stays excluded from both default actions, and only full Settings `Make
+  default for new chats` may carry an endpoint.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-08-27-console-provider-apply-persistence-design.md)
@@ -218,3 +320,4 @@ default and reserves source cloning for explicitly source-owned flows.
 - [ADR-006: Provider-aware generation settings](006-provider-aware-generation-settings.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-052: Conversation memory and compaction policy](052-conversation-memory-and-compaction-policy.md)
+- [Model configuration redesign spec (2026-09-26 amendment)](../docs/spec-2026-09-26-model-config-redesign.md)
