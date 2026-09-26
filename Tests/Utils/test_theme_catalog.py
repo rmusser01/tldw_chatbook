@@ -234,11 +234,14 @@ def test_revert_restores_active_and_launch_default(writes):
 def test_revert_reports_whether_the_launch_default_was_restored(writes, monkeypatch):
     app = _FakeApp()
     change = tc.use_theme(app, "nord", persist=True)
-    assert tc.revert_theme(app, change) is True
-    assert tc.revert_theme(app, tc.use_theme(app, "nord", persist=False)) is True  # nothing to restore
+    assert tc.revert_theme(app, change) == (True, True)
+    assert tc.revert_theme(app, tc.use_theme(app, "nord", persist=False)) == (True, True)  # nothing to restore
+    change = tc.use_theme(app, "nord", persist=True)
+    monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+    assert tc.revert_theme(app, change) == (True, False)  # Qodo 4107495934
     change = tc.use_theme(app, "nord", persist=True)
     monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False))
-    assert tc.revert_theme(app, change) is False
+    assert tc.revert_theme(app, change)[0] is False
     assert app.theme == "textual-dark"
 
 

@@ -18,12 +18,18 @@ from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
 from ...Utils.input_validation import escape_markup
-from .themes import ALL_THEMES, printable
+from .themes import ALL_THEMES, UNREADABLE_ID_PREFIX, printable
 
-#: R40(a): an unreadable saved file's entry id, ``unreadable:<stem>`` -- its
-#: own id, so a broken ``nord.toml`` is listed next to shipped ``nord``.
-#: A registered theme literally named ``unreadable:<stem>`` wins the id.
-UNREADABLE_ID_PREFIX = "unreadable:"
+# R40(a): an unreadable saved file's entry id is ``unreadable:<stem>``
+# (UNREADABLE_ID_PREFIX) -- its own id, so a broken ``nord.toml`` is listed
+# next to shipped ``nord``. The prefix is reserved (themes.is_reserved_theme_
+# name), so no saved theme can take that id.
+
+#: Stand-in for a colour with no RGB of its own (unset, unparseable, ANSI).
+_NEUTRAL = "#808080"
+
+#: The shared suffix for a persisted change whose config-cache reload failed.
+CACHE_REFRESH_FAILED = "configuration refresh failed — reopen Settings to refresh"
 
 Origin = Literal["yours", "shipped", "textual"]
 STRIP_KEYS = ("background", "surface", "primary", "secondary", "accent", "success", "error")
@@ -91,15 +97,15 @@ def _colour_hex(raw: Any) -> str:
     colours the same way an unset colour already falls back.
     """
     if not raw:
-        return "#808080"
+        return _NEUTRAL
     try:
         # A saved theme holds Color objects (create_theme_from_dict), whose
         # str() -- "Color(17, 34, 51)" -- does not parse.
         colour = raw if isinstance(raw, Color) else Color.parse(str(raw))
     except Exception:  # noqa: BLE001
-        return "#808080"
+        return _NEUTRAL
     if colour.ansi is not None:
-        return "#808080"
+        return _NEUTRAL
     return colour.hex6.upper()
 
 
@@ -125,8 +131,9 @@ def build_catalog(
     """List every registered theme once, grouped yours → shipped → textual.
 
     ``unreadable`` maps each unreadable saved file's stem to its error; each
-    becomes a grey "yours" entry with id ``unreadable:<stem>`` (skipped in
-    the freak case a registered theme already has that id: ids are unique).
+    becomes a grey "yours" entry with id ``unreadable:<stem>`` (skipped if a
+    registered theme already has that id, so ids stay unique; the reserved
+    prefix keeps saved themes from ever taking one).
     """
     rows: list[tuple[str, Origin, Literal["shipped", "textual"] | None, Theme]] = []
     for name, theme in available.items():
@@ -159,7 +166,7 @@ def build_catalog(
             display_name=f"{printable(display_name(stem))} (unreadable)",
             origin="yours",
             dark=True,
-            colours=tuple((key, "#808080") for key in BASE_KEYS),
+            colours=tuple((key, _NEUTRAL) for key in BASE_KEYS),
             is_active=False,
             is_launch_default=False,
             error=error,
@@ -293,18 +300,32 @@ def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
     if change.caches_reloaded:
         return message, "information"
     return (
-        f"{message}; configuration refresh failed — reopen Settings to refresh",
+        f"{message}; {CACHE_REFRESH_FAILED}",
         "warning",
     )
 
 
-def revert_theme(app: Any, change: ThemeChange) -> bool:
-    """Undo ``change``; False when the launch default could not be restored."""
+def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
+    """Undo ``change``: restore the active theme and, if it was persisted,
+    the launch default.
+
+    Args:
+        app: The running app.
+        change: The pending change to undo.
+
+    Returns:
+        ``(restored, caches_reloaded)``: whether the launch default was
+        restored (always True when nothing was persisted), and whether the
+        config caches were refreshed after that write (Qodo 4107495934).
+
+    Raises:
+        textual.app.InvalidThemeError: the previous theme is no longer
+            registered.
+    """
     app.theme = change.previous_active
     if change.persisted:
-        persisted, _caches_reloaded = _persist_launch_default(app, change.previous_launch_default)
-        return persisted
-    return True
+        return _persist_launch_default(app, change.previous_launch_default)
+    return True, True
 
 
 def user_theme_names(directory: Path) -> set[str]:

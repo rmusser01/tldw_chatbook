@@ -1221,3 +1221,47 @@ async def test_rename_confirmed_after_the_pane_is_gone_does_not_crash(request):
         screen._handle_theme_rename_result("mine", "ours")
         await pilot.pause(0.1)
         assert path.exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_appearance_summary_strips_control_characters(request, monkeypatch):
+    """Qodo 4109320405: the launch default comes from a hand-editable config."""
+    from tldw_chatbook.css.Themes import theme_catalog
+
+    monkeypatch.setattr(theme_catalog, "current_launch_default", lambda: "gone\x1b]52;c;eA==\x07")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        text = str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        assert "launch default missing: gone?]52;c;eA==?" in text
+        assert text.isprintable(), repr(text)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edit_of_a_vanished_file_stays_on_the_picker(request):
+    """Qodo 4104047302: a failed load never opens the editor on the previous
+    palette under the previous name."""
+    from tldw_chatbook.config import get_user_themes_dir
+
+    themes = get_user_themes_dir()
+    themes.mkdir(parents=True, exist_ok=True)
+    path = themes / "mine.toml"
+    path.write_text('[theme]\nname = "mine"\n[colors]\nprimary = "#112233"\n', encoding="utf-8")
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    host = _host()
+    for theme in load_user_themes(themes):  # what startup registers
+        host.register_theme(theme)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        picker = host.screen.query_one("#settings-theme-picker")
+        picker.refresh_catalog(highlight="mine")
+        await pilot.pause()
+        assert picker.highlighted_id == "mine"
+        path.unlink()
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"

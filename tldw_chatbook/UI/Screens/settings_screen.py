@@ -9709,10 +9709,12 @@ class SettingsScreen(BaseAppScreen):
     def _appearance_theme_summary(self) -> str:
         """Read-only Theme row: the launch default and the active theme."""
         from ...css.Themes.theme_catalog import current_launch_default, display_name
+        from ...css.Themes.themes import printable
 
         # The running app (as the picker's use_theme does), not app_instance:
         # the two differ in harnesses, and the palette switches self.app.
-        launch = current_launch_default()
+        # Qodo 4109320405: config.toml is hand-editable; strip control chars.
+        launch = printable(current_launch_default())
         active = str(getattr(self.app, "theme", launch))
         registered = getattr(self.app, "available_themes", {}) or {}
         if launch not in registered:

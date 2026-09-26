@@ -742,3 +742,139 @@ async def test_one_listing_call_per_refresh(request, config_writes):
         picker.refresh_catalog()
         assert len(calls) == 1
         assert "unreadable:broken" in _option_ids(picker)
+
+
+# -- Qodo review fixes (TASK-32948) ------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_new_after_a_zero_match_filter_starts_from_the_active_theme(request, config_writes):
+    """Qodo 4104047326 / 4107495882: New is enabled with nothing listed, so it
+    must do something -- start from the theme on screen."""
+    picker = ThemePicker(id="settings-theme-picker")
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzzqq")
+        await pilot.pause()
+        assert picker.highlighted_id is None
+        picker.query_one("#settings-theme-picker-new", Button).press()
+        await pilot.pause()
+        assert app.edits == [("new", str(app.theme))]
+        # Clone/Edit still need a highlighted theme.
+        picker.request_edit("clone")
+        await pilot.pause()
+        assert len(app.edits) == 1
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_warns_when_the_config_refresh_fails(request, monkeypatch, config_writes):
+    """Qodo 4107495934: Revert surfaces ``caches_reloaded`` like Use does."""
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted)
+        await pilot.pause()
+        monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert (f"Reverted the theme; {tc.CACHE_REFRESH_FAILED}", "warning") in notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_launch_missing_notice_strips_control_characters(request, monkeypatch, config_writes):
+    """Qodo 4109320405: a hand-edited config value reaches the terminal."""
+    hostile = "gone\x1b]52;c;eA==\x07"
+    monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.current_launch_default", lambda: hostile)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: hostile)
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        notice = picker.query_one("#settings-theme-launch-missing")
+        assert notice.display
+        text = str(notice.render())
+        assert "Launch default missing: gone?]52;c;eA==?" in text
+        assert text.isprintable(), repr(text)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_switch_reaches_app_theme_config_and_toast(request):
+    """Qodo 4104047279: drive the real command palette (no mocked config
+    write): pick a theme, then check the running theme, the persisted
+    launch default in this test's private config.toml, and the toast."""
+    from typing import ClassVar
+
+    import toml
+    from textual.app import App
+    from textual.command import CommandPalette
+
+    from tldw_chatbook import config
+    from tldw_chatbook.app import ThemeProvider
+
+    class _PaletteApp(App):
+        COMMANDS: ClassVar = {ThemeProvider}
+
+    app = _PaletteApp()
+    notes = []
+    real_notify = app.notify
+    app.notify = lambda message, **kw: (notes.append((message, kw.get("severity"))), real_notify(message, **kw))
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_command_palette()
+        await pilot.pause()
+        assert isinstance(app.screen, CommandPalette)
+        await pilot.press(*"switch to monokai pro")
+        for _ in range(20):
+            await pilot.pause(0.05)
+        await pilot.press("enter")
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert app.theme == "monokai_pro"
+    saved = toml.load(config._get_effective_config_path())
+    assert saved["general"]["default_theme"] == "monokai_pro"
+    assert ("Monokai Pro is now your theme (was: Textual Dark)", "information") in notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_switches_reuse_the_last_listing(request, config_writes):
+    """Qodo 4107495860: a theme change only moves the active/launch markers,
+    so it must not re-scan the themes folder (the backup-scoped scan costs
+    ~6 ms per file -- 320 ms at 50 files, measured)."""
+    calls = []
+
+    def lister():
+        calls.append(1)
+        return {"mine"}, {}
+
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        calls.clear()
+        app.theme = "nord"  # e.g. the palette
+        await pilot.pause()
+        assert next(e for e in picker.entries if e.id == "nord").is_active
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "t")  # Try
+        await pilot.pause()
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert calls == []
+        picker.refresh_catalog()  # an explicit refresh (after a file action) still scans
+        assert calls == [1]

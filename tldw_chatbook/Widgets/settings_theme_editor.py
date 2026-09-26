@@ -25,15 +25,20 @@ from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ..Backup_Recovery import raw_participants as raw
 from ..Backup_Recovery.bootstrap import RecoveryRequired
+from ..Backup_Recovery.settings_file_participants import NOT_REGULAR
 from ..css.Themes.theme_catalog import (
+    CACHE_REFRESH_FAILED,
     UNREADABLE_ID_PREFIX,
     display_name,
     is_catalog_theme,
 )
 from ..css.Themes.themes import (
     ALL_THEMES,
+    PREVIEW_CHARS,
+    RESERVED_NAME_RULE,
     create_theme_from_dict,
     is_hex_colour,
+    is_reserved_theme_name,
     pinned_text_hues,
     printable,
     sanitize_theme_variables,
@@ -386,7 +391,10 @@ class SettingsThemeEditor(Vertical):
 
         Returns ``(name -> path, stem -> (path, short error))``. A file is
         unreadable when it is not TOML or ``theme_from_file_data`` rejects it
-        -- the same test the startup loader applies (``load_user_themes``).
+        -- the same test the startup loader applies (``load_user_themes``) --
+        when it is not a regular single-link file (never opened), or when a
+        later file claims the same name: startup registers the last one, so
+        the earlier is listed as a duplicate that can be seen and deleted.
 
         Raises:
             RecoveryRequired: backup/recovery holds the theme files, including
@@ -395,13 +403,17 @@ class SettingsThemeEditor(Vertical):
         files: dict[str, Path] = {}
         unreadable: dict[str, tuple[Path, str]] = {}
         with raw._scope(self, "theme_directory") as operation:
-            for theme_file in sorted(raw._check(operation).observed_files):
+            state = raw._check(operation)
+            for theme_file in sorted(state.rejected_files):
+                # Qodo 4109320408: refused by the backup layer, never opened.
+                unreadable[theme_file.stem] = (theme_file, state.rejected_files[theme_file])
+            for theme_file in sorted(state.observed_files):
                 theme_data: Any = None
                 try:
                     with raw._file(operation, theme_file, "r") as f:
                         theme_data = toml.load(f)
-                    theme_from_file_data(theme_data, theme_file.stem, theme_file.name)
-                    files[theme_data.get("theme", {}).get("name", theme_file.stem)] = theme_file
+                    # Qodo 4107495864: key by the name startup registers.
+                    name = theme_from_file_data(theme_data, theme_file.stem, theme_file.name).name
                 except RecoveryRequired:
                     raise
                 except Exception as e:
@@ -410,6 +422,13 @@ class SettingsThemeEditor(Vertical):
                     # WARNING: the picker re-lists on every theme change.
                     logger.warning(f"Unreadable user theme {printable(theme_file.name)}: {error}")
                     unreadable[theme_file.stem] = (theme_file, error)
+                    continue
+                if name in files:
+                    # Qodo 4107495872: file order is startup's order; the
+                    # last file registers the name, the earlier is shadowed.
+                    earlier = files[name]
+                    unreadable[earlier.stem] = (earlier, f"duplicate of '{printable(name)}'")
+                files[name] = theme_file
         return files, unreadable
 
     def user_theme_listing(self) -> tuple[dict[str, Path], dict[str, str]]:
@@ -505,20 +524,35 @@ class SettingsThemeEditor(Vertical):
         self._update_dark_mode_checkbox()
         self.is_modified = False
 
-    def load_user_theme(self, theme_name: str) -> None:
-        """Load a user-created theme from file."""
+    def load_user_theme(self, theme_name: str) -> bool:
+        """Load a saved theme file into the editor.
+
+        Args:
+            theme_name: The saved theme's ``[theme].name``.
+
+        Returns:
+            True once loaded; False (with a notice) when the name is invalid,
+            the files are paused, or no readable file holds it any more --
+            the editor then keeps its previous palette (Qodo 4104047302).
+        """
         try:
             validate_filename(theme_name)
         except ValueError as exc:
             self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
-            return
+            return False
 
         # R12: resolve by [theme].name, so a.toml holding name "b" loads as b.
         try:
             theme_path = self._user_theme_files().get(theme_name)
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
-            return
+            return False
+        if theme_path is None:
+            self.app.notify(
+                f"No saved custom theme named '{escape_markup(printable(theme_name))}'",
+                severity="warning",
+            )
+            return False
         if theme_path is not None:
             try:
                 with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
@@ -549,6 +583,8 @@ class SettingsThemeEditor(Vertical):
             except Exception as e:
                 logger.error(f"Failed to load user theme {printable(theme_name)}: {self._failure_reason(e)}")
                 self.app.notify(f"Failed to load theme: {escape_markup(self._failure_reason(e))}", severity="error")
+                return False
+        return True
 
     def _extract_theme_colors(self, theme: Theme) -> dict[str, str]:
         """Resolve a Theme's ten base colours as uppercase hex.
@@ -675,12 +711,20 @@ class SettingsThemeEditor(Vertical):
         without this they acted on the name from the last load. Programmatic
         loads set the box to the name already held, so the equality guard
         makes those echoes no-ops.
+
+        Qodo 4100998919: a real edit of the name marks the editor modified,
+        so Back and leaving Theme ask before dropping it. An echo of an
+        earlier programmatic set (load then clone queues two) is stale --
+        the box already holds a newer value -- and is ignored.
         """
+        if event.value != event.input.value:
+            return
         name = event.value.strip()
         if name != self.current_theme_name:
             # An emptied box clears the name too (PR #2375 review #6), so no
             # action can fall back to the previously loaded theme.
             self.current_theme_name = name
+            self.is_modified = True
 
     def _require_theme_name(self) -> str | None:
         """Return the current theme name if it is non-empty and file-safe.
@@ -780,18 +824,17 @@ class SettingsThemeEditor(Vertical):
         if theme_name in ["textual-dark", "textual-light"]:
             self.app.notify("Cannot overwrite built-in themes", severity="warning")
             return
+        if is_reserved_theme_name(theme_name):
+            self.app.notify(f"Invalid theme name: {RESERVED_NAME_RULE}", severity="warning")
+            return
 
         theme_data = self._theme_file_data(theme_name)
         # R12: a saved theme named ``theme_name`` may live in another file
         # (a.toml holding name "b"); write back to it, never a second file
         # claiming the same name.
-        try:
-            theme_path = self._user_theme_files().get(theme_name)
-        except RecoveryRequired:
-            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
-            return
+        theme_path = self._resolve_write_target(theme_name)
         if theme_path is None:
-            theme_path = self.custom_themes_path / f"{theme_name}.toml"
+            return
 
         # TASK-31258: writing over another saved theme is one keypress from
         # destroying it; re-saving the theme loaded from that very file is an
@@ -799,7 +842,10 @@ class SettingsThemeEditor(Vertical):
         if theme_path.exists() and (always_confirm or self._loaded_user_theme != theme_name):
 
             async def _confirmed_overwrite() -> None:
-                self._write_theme_file(theme_name, theme_path, theme_data)
+                # Qodo 4109320416: the file may have moved while asking.
+                target = self._resolve_write_target(theme_name)
+                if target is not None:
+                    self._write_theme_file(theme_name, target, theme_data)
 
             self.app.push_screen(
                 ConfirmationDialog(
@@ -816,6 +862,19 @@ class SettingsThemeEditor(Vertical):
             return
 
         self._write_theme_file(theme_name, theme_path, theme_data)
+
+    def _resolve_write_target(self, theme_name: str) -> Path | None:
+        """The file a write of ``theme_name`` goes to, re-read now (R12).
+
+        The file already holding the name, else ``<name>.toml``; None (with
+        the pause notice) while backup/recovery holds the files.
+        """
+        try:
+            theme_path = self._user_theme_files().get(theme_name)
+        except RecoveryRequired:
+            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+            return None
+        return theme_path or self.custom_themes_path / f"{theme_name}.toml"
 
     def _write_theme_file(
         self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
@@ -973,7 +1032,8 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return
         if saved:
-            self.load_user_theme(self.current_theme_name)
+            if not self.load_user_theme(self.current_theme_name):
+                return
         elif is_catalog_theme(self.current_theme_name):
             self.load_theme(self.current_theme_name)
         else:
@@ -1074,7 +1134,16 @@ class SettingsThemeEditor(Vertical):
         # its own id, so a broken nord.toml can't hide behind shipped nord.
         theme_path = files.get(name)
         if theme_path is None and name.startswith(UNREADABLE_ID_PREFIX):
-            theme_path = unreadable.get(name.removeprefix(UNREADABLE_ID_PREFIX), (None, ""))[0]
+            theme_path, reason = unreadable.get(name.removeprefix(UNREADABLE_ID_PREFIX), (None, ""))
+            if theme_path is not None and reason == NOT_REGULAR:
+                # The backup layer never writes through a link; say so rather
+                # than fail the unlink with its internal reason code.
+                self.app.notify(
+                    f"'{escape_markup(printable(theme_path.name))}' is a link, not a regular file; "
+                    "remove it outside the app",
+                    severity="warning",
+                )
+                return
 
         # File existence decides: anything saved in the user themes directory
         # is a user theme and deletable, even when its name shadows a shipped
@@ -1190,9 +1259,9 @@ class SettingsThemeEditor(Vertical):
             change = use_theme(self.app, "textual-dark", persist=True)
             if change.persisted:
                 self.post_message(self.LaunchDefaultChanged("textual-dark"))
-                self.app.notify(
+                self._notify_saved(
                     f"Deleted '{escape_markup(name)}'; launch default and theme reset to Textual Dark",
-                    severity="success",
+                    change.caches_reloaded,
                 )
             else:
                 self.app.notify(
@@ -1200,12 +1269,12 @@ class SettingsThemeEditor(Vertical):
                     severity="error",
                 )
         elif launch == name:
-            persisted, _ = persist_launch_default(self.app, "textual-dark")
+            persisted, caches_reloaded = persist_launch_default(self.app, "textual-dark")
             if persisted:
                 self.post_message(self.LaunchDefaultChanged("textual-dark"))
-                self.app.notify(
+                self._notify_saved(
                     f"Deleted '{escape_markup(name)}'; launch default reset to Textual Dark",
-                    severity="success",
+                    caches_reloaded,
                 )
             else:
                 self.app.notify(
@@ -1225,10 +1294,30 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Deleted theme '{escape_markup(name)}'", severity="success")
         self.post_message(self.ThemesChanged())
 
+    def _notify_saved(self, message: str, caches_reloaded: bool) -> None:
+        """A success toast, or a warning when the config reload failed
+        (Qodo 4107495906 / 4107495911; the ``use_theme_toast`` wording)."""
+        if caches_reloaded:
+            self.app.notify(message, severity="success")
+        else:
+            self.app.notify(f"{message}; {CACHE_REFRESH_FAILED}", severity="warning")
+
     def rename_user_theme(self, old: str, new: str) -> bool:
         """Rename the saved theme ``old`` to ``new``: file, registration,
-        running theme and launch default. False (with a notice) if nothing
-        changed."""
+        running theme and launch default.
+
+        Args:
+            old: The saved theme's current name (or an ``unreadable:`` id,
+                which is refused with its reason).
+            new: The new name, already stripped by the prompt.
+
+        Returns:
+            True once renamed (also when the old file could not be removed;
+            the user is told both files exist). False, with a notice, when
+            nothing changed: invalid, reserved or taken name, unreadable or
+            missing source, a pause, or a launch default that could not be
+            moved (the new file is then removed again).
+        """
         from ..css.Themes.theme_catalog import (
             current_launch_default,
             persist_launch_default,
@@ -1240,6 +1329,9 @@ class SettingsThemeEditor(Vertical):
             validate_filename(new)
         except ValueError as exc:
             self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
+            return False
+        if is_reserved_theme_name(new):
+            self.app.notify(f"Invalid theme name: {RESERVED_NAME_RULE}", severity="error")
             return False
         if new == old:
             return True
@@ -1298,6 +1390,31 @@ class SettingsThemeEditor(Vertical):
             )
             return False
 
+        # Qodo 4107495893: move the launch default while the old file still
+        # exists; if that write fails, take the new file back out so the
+        # next launch still finds the theme its config names.
+        caches_reloaded = True
+        if current_launch_default() == old:
+            # Spec §7 step 4: config only; the running theme is handled below.
+            persisted, caches_reloaded = persist_launch_default(self.app, new)
+            if not persisted:
+                try:
+                    with raw._scope(
+                        self, "theme_file", writing=True, selected_read=new_path
+                    ) as operation:
+                        raw._unlink(operation, new_path)
+                except (RecoveryRequired, OSError) as exc:
+                    logger.error(
+                        f"Could not remove '{new}' after a failed rename: {self._failure_reason(exc)}"
+                    )
+                self.app.notify(
+                    f"Could not rename '{escape_markup(old)}': the launch default could not be saved; "
+                    "check the config file",
+                    severity="error",
+                )
+                return False
+            self.post_message(self.LaunchDefaultChanged(new))
+
         # The new file exists; only now may the old one go.
         self.app.register_theme(theme)
         try:
@@ -1328,17 +1445,8 @@ class SettingsThemeEditor(Vertical):
             use_theme(self.app, new, persist=False)
         self._release_registration(old)
         retarget_pending_revert(self.app, old, new)
-        if current_launch_default() == old:
-            # Spec §7 step 4: config only; the running theme was handled above.
-            if persist_launch_default(self.app, new)[0]:
-                self.post_message(self.LaunchDefaultChanged(new))
-            else:
-                self.app.notify(
-                    "Could not save the launch default; check the config file",
-                    severity="error",
-                )
         self.post_message(self.ThemesChanged(highlight=new))
-        self.app.notify(f"Renamed '{escape_markup(old)}' to '{escape_markup(new)}'", severity="success")
+        self._notify_saved(f"Renamed '{escape_markup(old)}' to '{escape_markup(new)}'", caches_reloaded)
         return True
 
     def export_theme(self, name: str) -> None:
@@ -1434,7 +1542,10 @@ class SettingsThemeEditor(Vertical):
         if name in files or target.exists():
 
             async def _confirmed_replace() -> None:
-                self._write_import(name, target, data, theme)
+                # Qodo 4109320416: the file may have moved while asking.
+                current = self._resolve_write_target(name)
+                if current is not None:
+                    self._write_import(name, current, data, theme)
 
             self.app.push_screen(
                 ConfirmationDialog(
@@ -1495,7 +1606,10 @@ class SettingsThemeEditor(Vertical):
         for key, value in colors.items():
             # Spec §7 / R40(c): what the editor's colour fields accept.
             if not (isinstance(value, str) and self._validate_color_input(value)):
-                return f"{str(key)[:40]}: '{str(value)[:40]}' is not #RGB, #RRGGBB or #RRGGBBAA"
+                return (
+                    f"{str(key)[:PREVIEW_CHARS]}: '{str(value)[:PREVIEW_CHARS]}' "
+                    "is not #RGB, #RRGGBB or #RRGGBBAA"
+                )
         name = str(meta.get("name") or path.stem).strip() or path.stem
         try:
             validate_filename(name)
@@ -1504,6 +1618,8 @@ class SettingsThemeEditor(Vertical):
                 raise ValueError("'[' is not allowed")
             if not name.isprintable():
                 raise ValueError("control characters are not allowed")  # R39
+            if is_reserved_theme_name(name):
+                raise ValueError(RESERVED_NAME_RULE)
         except ValueError as exc:
             return f"Invalid theme name: {exc}"
         if name in ("textual-dark", "textual-light"):
