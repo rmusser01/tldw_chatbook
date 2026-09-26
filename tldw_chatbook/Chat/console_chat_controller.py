@@ -13012,7 +13012,9 @@ class ConsoleChatController:
             )
         settings_base = source_settings if preserve_snapshot else target_defaults
 
-        supported_fields = supported_generation_fields(target_provider, target_model)
+        supported_fields = supported_generation_fields(
+            target_provider_id, target_model, app_config
+        )
         exposed_supported_fields = exposed_fields & supported_fields
         profile = normalized_console_model_profile_overrides(
             app_config,

@@ -4425,7 +4425,10 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_unavailable_fields_render_single_summary_line():
+@private_profile_test
+async def test_settings_provider_unavailable_fields_render_single_summary_line(
+    request,
+):
     """task-189: gated fields collapse to one summary line instead of per-row
     'Unavailable for <provider>' placeholders."""
     app = _build_test_app()
@@ -8973,7 +8976,10 @@ async def test_settings_saves_each_mistral_entry_to_its_distinct_owner(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_openai_generation_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_openai_generation_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "o3"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {"o3": {}}}}
@@ -9115,7 +9121,10 @@ def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_anthropic_thinking_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_anthropic_thinking_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "Anthropic",
@@ -9201,6 +9210,44 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
             "streaming": False,
         },
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model"), [("moonshot", "kimi-k3"), ("zai", "glm-5.2")]
+)
+@private_profile_test
+async def test_settings_provider_category_saves_moonshot_and_zai_reasoning_effort(
+    request, monkeypatch, provider, model
+):
+    """TASK-33001.2: the Settings form reader used to blank reasoning effort
+    for every provider but OpenAI, so a Moonshot or Z.ai reasoning default
+    shown and edited in Settings was never saved. Both requests carry it for
+    reasoning-capable models, so the save now keeps it."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": model}
+    app.app_config["api_settings"] = {provider: {"model_defaults": {model: {}}}}
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        effort = screen.query_one("#settings-model-profile-reasoning-effort", Select)
+        assert effort.disabled is False
+        assert not screen.query_one(
+            "#settings-model-profile-reasoning-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+        effort.value = "high"
+        await pilot.pause()
+
+        await pilot.click("#settings-save-category")
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    saved = sections[f"api_settings.{provider}"]["model_defaults"][model]
+    assert saved["reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio
@@ -12836,6 +12883,49 @@ async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
         )
         assert "disabled right now" in status, status
         assert target_label in status, status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "field_id"),
+    (
+        ("Seed", "settings-model-profile-seed"),
+        ("Min P", "settings-model-profile-min-p"),
+    ),
+)
+@private_profile_test
+async def test_search_landing_on_a_row_hidden_for_the_provider_says_so(
+    request, query, field_id
+):
+    """TASK-33001.2: '/' for a sampler the Anthropic request drops opens
+    Providers & Models without focusing the hidden, disabled row, and the
+    status says the row is hidden for this provider -- not 'enable the option
+    that controls it', which no option can do."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search(query)
+        for _ in range(10):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        target = screen.query_one(f"#{field_id}")
+        assert target.disabled
+        focused = host.focused
+        assert focused is None or focused.id != field_id
+        status = str(
+            screen.query_one("#settings-category-search-status", Static).renderable
+        )
+        assert status == (
+            f"'{query}' is hidden for this provider and model: its requests "
+            "do not carry it."
+        ), status
 
 
 @pytest.mark.asyncio

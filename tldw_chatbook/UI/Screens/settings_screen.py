@@ -9373,10 +9373,19 @@ class SettingsScreen(BaseAppScreen):
             if widget.disabled or any(
                 getattr(node, "disabled", False) for node in widget.ancestors
             ):
+                # TASK-33001.2: a row hidden for the provider has no option
+                # that enables it.
+                hidden = any(
+                    node.has_class("settings-gated-profile-hidden")
+                    for node in widget.ancestors
+                )
                 self._set_static_text(
                     "#settings-category-search-status",
-                    f"'{field_label}' is disabled right now — its category is "
-                    "open; enable the option that controls it first.",
+                    f"'{field_label}' is hidden for this provider and model: "
+                    "its requests do not carry it."
+                    if hidden
+                    else f"'{field_label}' is disabled right now — its category "
+                    "is open; enable the option that controls it first.",
                 )
                 return
         expanded = False

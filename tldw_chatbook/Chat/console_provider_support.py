@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -157,10 +157,13 @@ _LOCAL_DROPPED_CONTROLS = frozenset(
 )
 
 #: Each generation field's ``chat_api_call`` request key(s): the generic names
-#: the Console request builders fill from that field
-#: (``ConsoleProviderGateway._chat_api_kwargs``). ``top_p`` rides both ``topp``
-#: and ``maxp``, so a provider map carrying either one forwards it (OpenAI's
-#: carries only ``maxp``). The only place this mapping is defined.
+#: the Console send builders fill from that field
+#: (``ConsoleProviderGateway._chat_api_kwargs_from_prepared`` for sends and
+#: tool rounds, ``_auxiliary_chat_api_kwargs`` for auxiliary calls; the table
+#: test in Tests/Chat/test_console_provider_support.py measures both).
+#: ``top_p`` rides both ``topp`` and ``maxp``, so a provider map carrying
+#: either one forwards it (OpenAI's carries only ``maxp``). The only place the
+#: support decision's field-to-key mapping is defined.
 GENERATION_FIELD_REQUEST_KEYS: dict[str, tuple[str, ...]] = {
     "temperature": ("temp",),
     "top_p": ("topp", "maxp"),
@@ -218,7 +221,9 @@ def _capability_generation_fields(
 
 
 def supported_generation_fields(
-    provider: str | None, model: str | None
+    provider: str | None,
+    model: str | None,
+    app_config: Mapping[str, object] | None = None,
 ) -> frozenset[str]:
     """Return the generation fields one provider/model request really carries.
 
@@ -232,6 +237,9 @@ def supported_generation_fields(
     Args:
         provider: Provider identity or config key selected by the draft.
         model: Selected model identifier, when one is chosen.
+        app_config: Config holding the ADR-146 endpoint registry. With it, a
+            ``custom-ep`` id is decided as its entry's family, the way the
+            gateway sends it; without it, a registry id has no map entry.
 
     Returns:
         Names of the supported fields, drawn from
@@ -239,6 +247,16 @@ def supported_generation_fields(
     """
     from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
 
+    if app_config is not None:
+        # Lazy: the registry imports this module via console_session_settings.
+        from tldw_chatbook.Chat.custom_endpoint_registry import (
+            entry_for,
+            family_execution_key,
+        )
+
+        entry = entry_for(app_config, provider)
+        if entry is not None:
+            provider = family_execution_key(entry.family)
     provider_key = provider_config_key(provider or "")
     capable = _capability_generation_fields(provider_key, model)
     request_keys = PROVIDER_PARAM_MAP.get(

@@ -16551,3 +16551,36 @@ every provider but OpenAI; read from the code, Moonshot and Z.ai reasoning
 edited in Settings was never saved, and a saved value was dropped by the next
 save). When you replace a duplicated projection, grep for every
 place that answers the question, not just the functions named after it.
+
+### A drift guard that drives an unreferenced builder stays green while production drifts (TASK-33001.2 fix round 1)
+
+**What happened.** TASK-33001.2's AC#7 table test, and the "never sent" halves
+of its AC#9/#10 tests, measured `ConsoleProviderGateway._chat_api_kwargs`. Their
+docstrings said "the real send path". `grep -rn "_chat_api_kwargs\b"
+tldw_chatbook` finds only the `def`: real sends build kwargs in
+`_chat_api_kwargs_from_prepared` and `_auxiliary_chat_api_kwargs`. The three
+builders carried identical lines that day, so every assertion was right, and
+the guard was still blind: after rewiring it to the production builders,
+dropping `"minp"` from `_chat_api_kwargs_from_prepared` fails 99 cases,
+dropping it from the auxiliary builder fails 11, and dropping it from the
+unreferenced builder fails none.
+
+**What to do.** Before a test claims to measure the real path, grep the
+production call sites of the function it drives, and run one mutant on the
+production function to prove the test sees it.
+
+### "CI-only" mounted Settings tests run locally under the file's own wrapper (TASK-33001.2 fix round 1)
+
+**What happened.** TASK-33001.2 rewrote three mounted pins in
+`Tests/UI/test_settings_configuration_hub.py` and reported them as CI-only,
+because they fail locally at `_build_test_app()` with ADR-126
+`RecoveryRequired: raw_source_selection_changed`. The same file already
+imports `private_profile_test` and uses it on 29 tests. Adding
+`@private_profile_test` and a `request` parameter ran all three locally
+(3 passed in 16 s), and restoring the old writer's `pop` made the Anthropic pin
+fail, so the wrapper runs the real assertions.
+
+**What to do.** When a Tests/UI case fails with `raw_source_selection_changed`
+in setup, check whether its file already uses `private_profile_test` before
+calling it CI-only. The wrapper adds isolation (a fresh profile in a child
+pytest); it does not bypass the gate.

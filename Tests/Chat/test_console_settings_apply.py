@@ -905,6 +905,44 @@ def test_rebase_preserves_registry_entry_provider_identity() -> None:
     assert rebased.settings.provider == "custom-ep:gpu-box"
 
 
+@pytest.mark.parametrize(
+    ("family", "dropped", "carried"),
+    [
+        ("ollama", {"min_p"}, {"top_k", "seed"}),
+        ("llama_cpp", set(), {"min_p", "reasoning_effort", "thinking_budget_tokens"}),
+        ("openai_compatible", set(), {"min_p", "reasoning_effort"}),
+    ],
+)
+def test_rebase_onto_a_named_endpoint_uses_its_family_request(
+    family, dropped, carried
+) -> None:
+    """TASK-33001.2 AC#3: a ``custom-ep`` id sends through its entry's family
+    (ADR-146, the gateway's ``family_execution_key``), so the draft carries
+    exactly the fields that family's request forwards -- an ollama box never
+    offers Min P, which the ollama request drops."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        supported_generation_fields,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import family_execution_key
+
+    app_config = _registry_entry_config()
+    app_config["custom_endpoints"]["gpu-box"]["family"] = family
+
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-test")),
+        provider="custom-ep:gpu-box",
+        model="model-a",
+        app_config=app_config,
+    )
+
+    fields = {field.name for field in rebased.field_drafts}
+    assert not fields & dropped
+    assert carried <= fields
+    assert fields == FULL_MODEL_DEFAULT_FIELDS & supported_generation_fields(
+        family_execution_key(family), "model-a"
+    )
+
+
 def test_remember_model_draft_keeps_registry_entry_provider_identity() -> None:
     """CE-001: remembered drafts key on the dashed registry id so the rebase
     target match and the popover's carried-source lookup agree with the

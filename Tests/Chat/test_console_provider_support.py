@@ -9,7 +9,13 @@ from tldw_chatbook.Chat.Chat_Functions import (
     PROVIDER_PARAM_MAP,
     project_chat_handler_kwargs,
 )
+from tldw_chatbook.Chat.console_prepared_request import (
+    build_console_request,
+    prepare_provider_request,
+    resolve_request_capacity,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     build_llamacpp_chat_payload,
@@ -318,15 +324,40 @@ _PROBE_VALUES: dict[str, object] = {
 }
 
 
+def production_send_kwargs(resolution: ConsoleProviderResolution) -> dict:
+    """The ``chat_api_call`` kwargs a real Console send builds for ``resolution``.
+
+    Main sends and tool rounds go through ``prepare_provider_request`` and
+    ``ConsoleProviderGateway._chat_api_kwargs_from_prepared``; this drives both.
+    """
+    prepared = prepare_provider_request(
+        build_console_request([{"role": "user", "content": "hi"}]),
+        wire_style="distinct_roles",
+        model=resolution.model or "probe-model",
+        provider=resolution.provider,
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        count_fn=lambda messages, _model: len(messages),
+    )
+    return ConsoleProviderGateway._chat_api_kwargs_from_prepared(resolution, prepared)
+
+
+def _forwarded(request) -> frozenset[str]:
+    """Fields whose probe value changes what ``request(**fields)`` delivers."""
+    unset = request()
+    return frozenset(
+        name
+        for name, value in _PROBE_VALUES.items()
+        if request(**{name: value}) != unset
+    )
+
+
 @cache
 def _fields_the_request_forwards(provider: str) -> frozenset[str]:
-    """Measure which fields reach the provider request, field by field.
+    """Measure which fields a real Console send delivers, field by field.
 
-    The Console sends direct llama.cpp providers through
-    ``build_llamacpp_chat_payload`` and every other provider through
-    ``chat_api_call`` (``_chat_api_kwargs`` then
-    ``project_chat_handler_kwargs``), so each path is driven for real. A field
-    is forwarded when setting it changes what the provider receives.
+    Direct llama.cpp providers send through ``build_llamacpp_chat_payload``;
+    every other provider through ``_chat_api_kwargs_from_prepared`` and the
+    ``chat_api_call`` projection (``project_chat_handler_kwargs``).
     """
 
     identity = resolve_console_provider_identity(provider)
@@ -342,27 +373,24 @@ def _fields_the_request_forwards(provider: str) -> frozenset[str]:
                 **{name: value for name, value in fields.items() if name in accepted},
             )
 
-    else:
-        base = ConsoleProviderResolution(
-            provider=provider,
-            base_url="",
-            model="probe-model",
-            ready=True,
-            execution_key=identity.execution_key,
-        )
+        return _forwarded(request)
 
-        def request(**fields: object) -> dict[str, object]:
-            kwargs = ConsoleProviderGateway._chat_api_kwargs(
-                replace(base, **fields),
-                [{"role": "user", "content": "hi"}],
-            )
-            return project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+    base = _probe_resolution(provider)
 
-    unset = request()
-    return frozenset(
-        name
-        for name, value in _PROBE_VALUES.items()
-        if request(**{name: value}) != unset
+    def request(**fields: object) -> dict[str, object]:
+        kwargs = production_send_kwargs(replace(base, **fields))
+        return project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+
+    return _forwarded(request)
+
+
+def _probe_resolution(provider: str) -> ConsoleProviderResolution:
+    return ConsoleProviderResolution(
+        provider=provider,
+        base_url="",
+        model="probe-model",
+        ready=True,
+        execution_key=resolve_console_provider_identity(provider).execution_key,
     )
 
 
@@ -383,6 +411,39 @@ def test_supported_generation_fields_match_what_the_request_forwards(
     assert supported == (
         support_module._capability_generation_fields(provider, model) & forwarded
     )
+
+
+@pytest.mark.parametrize(
+    "provider",
+    sorted(
+        provider
+        for provider in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        if not resolve_console_provider_identity(provider).uses_direct_llama_path
+    ),
+)
+def test_auxiliary_requests_forward_the_same_generation_fields(provider: str) -> None:
+    """AC#7: the auxiliary builder (``_auxiliary_chat_api_kwargs``) carries the
+    same resolution fields as a main send. Its max tokens come from the
+    request and it never streams, so those two are the only difference."""
+
+    base = _probe_resolution(provider)
+    auxiliary = AuxiliaryCompletionRequest(
+        resolution=base,
+        messages=({"role": "user", "content": "hi"},),
+        response_format=None,
+        max_output_tokens=64,
+    )
+
+    def request(**fields: object) -> dict[str, object]:
+        kwargs = ConsoleProviderGateway._auxiliary_chat_api_kwargs(
+            auxiliary, replace(base, **fields)
+        )
+        return project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+
+    assert _forwarded(request) == _fields_the_request_forwards(provider) - {
+        "max_tokens",
+        "streaming",
+    }
 
 
 def test_anthropic_hides_only_the_fields_its_request_drops() -> None:

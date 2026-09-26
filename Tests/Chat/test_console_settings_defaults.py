@@ -1840,11 +1840,13 @@ async def test_saved_value_for_a_field_the_request_drops_stays_and_is_never_sent
     A model default saved for them earlier stays in config untouched by a full
     save through the real writer (the locked mutation builder plus the literal
     merge ``apply_console_default_intent`` runs under its lock), and the real
-    send path (session defaults -> selection -> gateway -> ``chat_api_call``
-    projection) never delivers it to the provider.
+    send path (session defaults -> selection -> ``resolve_for_send`` ->
+    ``_chat_api_kwargs_from_prepared`` -> ``chat_api_call`` projection) never
+    delivers it to the provider.
     """
     import copy
 
+    from Tests.Chat.test_console_provider_support import production_send_kwargs
     from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
     from tldw_chatbook.Chat.console_chat_controller import (
         build_console_provider_selection_from_settings,
@@ -1906,7 +1908,7 @@ async def test_saved_value_for_a_field_the_request_drops_stays_and_is_never_sent
     )
     assert resolution.ready is True
     assert (resolution.min_p, resolution.seed) == (0.05, 7)
-    kwargs = gateway._chat_api_kwargs(resolution, [{"role": "user", "content": "hi"}])
+    kwargs = production_send_kwargs(resolution)
     projected = project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
 
     assert (projected["temp"], projected["topk"]) == (0.3, 20)

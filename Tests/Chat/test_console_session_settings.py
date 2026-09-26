@@ -2941,17 +2941,16 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
 
     Editing it after a real provider switch raises nothing and stays on the
     conversation draft, but the real model-default writer leaves it out and
-    the real ``chat_api_call`` projection never sends it.
+    the real send builder (``_chat_api_kwargs_from_prepared``) and
+    ``chat_api_call`` projection never send it.
     """
     from textual.widgets import Input
 
+    from Tests.Chat.test_console_provider_support import production_send_kwargs
     from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-    from tldw_chatbook.Chat.console_provider_gateway import (
-        ConsoleProviderGateway,
-        ConsoleProviderResolution,
-    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
     from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
     from tldw_chatbook.Chat.console_settings_defaults import (
         _build_locked_default_mutation,
@@ -3036,9 +3035,7 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
         min_p=draft.settings.min_p,
         temperature=draft.settings.temperature,
     )
-    kwargs = ConsoleProviderGateway._chat_api_kwargs(
-        resolution, [{"role": "user", "content": "hi"}]
-    )
+    kwargs = production_send_kwargs(resolution)
     assert kwargs["minp"] == 0.13
     projected = project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
     assert 0.13 not in projected.values()

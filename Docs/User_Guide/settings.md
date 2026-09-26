@@ -217,7 +217,9 @@ capability rules (reasoning and thinking follow the model, e.g. a Claude model
 that rejects a fixed thinking budget hides **Think budget**) narrowed to the
 fields that provider's request actually sends. A value saved earlier for a
 field that is now hidden stays in `config.toml` untouched, and it is never
-sent. Leave an override blank and save to remove it and inherit the
+sent. Searching **/** for a hidden field (say "seed" with Anthropic) opens
+this category and says the field is hidden for this provider and model. Leave
+an override blank and save to remove it and inherit the
 fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
 lets you keep editing or discard the draft. The section remembers whether
 you opened or closed it while moving between Settings categories; resizing or
@@ -1448,5 +1450,8 @@ request carries. Driven live at 211x44 on a scratch profile (Anthropic /
 claude-sonnet-4-5): Min P, Seed, Presence and Frequency are hidden and the
 summary reads "Hidden for Anthropic: Min P, Seed, Presence, Frequency,
 Reasoning, Summary, Verbosity."; Temperature, Top P, Top K, Response max
-tokens, Thinking, Think budget and Streaming stay. The rest of this page's
+tokens, Thinking, Think budget and Streaming stay. Fix round 1 (mounted
+tests, not driven live): "/" for a hidden field lands in Providers & Models
+with "'Seed' is hidden for this provider and model: its requests do not carry
+it."; Moonshot and Z.ai reasoning defaults now save. The rest of this page's
 content unchanged from the prior stamp.*
