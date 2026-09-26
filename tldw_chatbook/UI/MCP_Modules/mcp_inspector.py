@@ -3234,7 +3234,7 @@ class MCPInspector(VerticalScroll):
             return
         try:
             form = self.query_one("#mcp-inspector-test-form", MCPSchemaForm)
-            result_widget = self.query_one("#mcp-inspector-test-result", Static)
+            self.query_one("#mcp-inspector-test-result", Static)
             run_button = self.query_one("#mcp-inspector-test-run", Button)
         except NoMatches:
             self.app.notify(
@@ -3256,7 +3256,14 @@ class MCPInspector(VerticalScroll):
             # write here leads with "OK"/"Failed"/"Blocked · not run"; a
             # bare exception message read as if the whole panel were
             # broken rather than "fix your input and press Run again".
-            result_widget.update(f"Failed\n{_safe_tool_test_text(exc)}")
+            # A new attempt replaces the full outcome, including old raw output.
+            self.show_tool_result(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                ok=False,
+                text=str(exc),
+                profile_context=self._current_tool_profile_context,
+            )
             return
         run_button.disabled = True
         intent = "approve_once" if preview.rendered_gate == "ask" else "run"

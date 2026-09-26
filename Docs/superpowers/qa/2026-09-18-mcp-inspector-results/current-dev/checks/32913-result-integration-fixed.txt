@@ -1,0 +1,43 @@
+........................................................................ [ 25%]
+........................................................................ [ 51%]
+........................................................................ [ 76%]
+.................................................................        [100%]
+============================= slowest 25 durations =============================
+3.14s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.58s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2.52s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.09s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_failure_redacts_secrets_paths_and_bounds_text[failure1]
+2.01s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_failure_redacts_secrets_paths_and_bounds_text[failure0]
+2.00s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+1.74s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+1.63s call     Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update
+1.63s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+1.61s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+1.59s call     Tests/UI/test_mcp_workbench.py::test_raw_mode_tool_run_posts_parsed_json_to_service
+1.54s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_non_mapping_result_str_raises_does_not_crash
+1.52s call     Tests/UI/test_mcp_workbench.py::test_slow_tool_result_does_not_render_under_a_different_selected_tool
+1.48s call     Tests/UI/test_mcp_workbench.py::test_test_tool_repeated_cancellation_reclaims_abandoned_mint_and_tasks
+1.48s call     Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_builtin_uses_prepared_entry_point
+1.46s call     Tests/UI/test_mcp_workbench.py::test_collect_arguments_value_error_does_not_call_service
+1.45s call     Tests/UI/test_mcp_workbench.py::test_test_tool_never_started_outcome_omits_success_decision_note
+1.44s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_permission_error_renders_blocked_not_failed
+1.43s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_with_dict_shaped_args_is_redacted
+1.41s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed
+1.40s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+1.39s call     Tests/UI/test_mcp_workbench.py::test_test_tool_profile_changed_never_arms_refreshed_stale_authority
+1.37s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_non_str_dict_key_result_does_not_crash
+1.35s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure0]
+1.34s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_shaped_result
+281 passed, 364 deselected in 165.03s (0:02:45)
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-1ea6b6cc-1cc9-40cf-aaba-e71c533b55f5/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-1ea6b6cc-1cc9-40cf-aaba-e71c533b55f5/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-1ea6b6cc-1cc9-40cf-aaba-e71c533b55f5
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-1ea6b6cc-1cc9-40cf-aaba-e71c533b55f5'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-30b8be08-6a05-4b8e-b55e-92af617dde64/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-30b8be08-6a05-4b8e-b55e-92af617dde64/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-30b8be08-6a05-4b8e-b55e-92af617dde64
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-30b8be08-6a05-4b8e-b55e-92af617dde64'
+  warnings.warn(

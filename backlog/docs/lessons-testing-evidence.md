@@ -268,6 +268,14 @@ governance negative cases also needed to call the original assertion via
 otherwise made their expected failures disappear. Preserve the production guard,
 prove the baseline, and exercise negative controls after harness changes.
 
+**TASK-32913, 2026-09-22.** Selecting inspector result cases independently
+exposed 148 setup failures with the same source-change refusal. A mixed guidance
+run had imported the app during collection and masked the missing enrollment.
+The inspector harness now uses the existing module `bootstrap_profile` marker,
+matching the Workbench's collection-time source lifetime. Verify the first case
+alone as well as the related selection; do not use unrelated collection imports
+to make a recovery-admission failure disappear.
+
 **TASK-32777, 2026-09-18.** Five App startup hygiene cases hit the same
 collection-to-fixture profile change while checking cold provisioning. Four
 raised `raw_source_selection_changed`; the composition case swallowed it and

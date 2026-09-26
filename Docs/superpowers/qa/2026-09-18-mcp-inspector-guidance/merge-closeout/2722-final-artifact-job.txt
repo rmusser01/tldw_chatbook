@@ -1,0 +1,414 @@
+﻿2026-09-22T16:42:30.4804146Z Current runner version: '2.337.0'
+2026-09-22T16:42:30.4829406Z ##[group]Runner Image Provisioner
+2026-09-22T16:42:30.4830333Z Hosted Compute Agent
+2026-09-22T16:42:30.4830936Z Version: 20260828.587
+2026-09-22T16:42:30.4831650Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-22T16:42:30.4832400Z Build Date: 2026-08-28T16:44:25Z
+2026-09-22T16:42:30.4833090Z Worker ID: {db1a9a97-a941-47ce-bd4d-aea36c0547ab}
+2026-09-22T16:42:30.4833964Z Azure Region: westus2
+2026-09-22T16:42:30.4834567Z ##[endgroup]
+2026-09-22T16:42:30.4836096Z ##[group]Operating System
+2026-09-22T16:42:30.4836756Z Ubuntu
+2026-09-22T16:42:30.4837279Z 24.04.5
+2026-09-22T16:42:30.4837900Z LTS
+2026-09-22T16:42:30.4838747Z ##[endgroup]
+2026-09-22T16:42:30.4839432Z ##[group]Runner Image
+2026-09-22T16:42:30.4840080Z Image: ubuntu-24.04
+2026-09-22T16:42:30.4840658Z Version: 20260907.300.1
+2026-09-22T16:42:30.4842014Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-22T16:42:30.4843713Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+2026-09-22T16:42:30.4844744Z ##[endgroup]
+2026-09-22T16:42:30.4845914Z ##[group]GITHUB_TOKEN Permissions
+2026-09-22T16:42:30.4847873Z Contents: read
+2026-09-22T16:42:30.4848837Z Metadata: read
+2026-09-22T16:42:30.4849570Z ##[endgroup]
+2026-09-22T16:42:30.4852094Z Secret source: Actions
+2026-09-22T16:42:30.4853179Z Cache mode: write
+2026-09-22T16:42:30.4853945Z Prepare workflow directory
+2026-09-22T16:42:30.5191775Z Prepare all required actions
+2026-09-22T16:42:30.5240054Z Getting action download info
+2026-09-22T16:42:30.9234399Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-22T16:42:31.0435780Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-09-22T16:42:31.2257035Z Complete job name: Derived artifacts reproduce from their sources
+2026-09-22T16:42:31.3057937Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:42:31.3066809Z ##[group]Run actions/checkout@v4
+2026-09-22T16:42:31.3067556Z with:
+2026-09-22T16:42:31.3068016Z   repository: rmusser01/tldw_chatbook
+2026-09-22T16:42:31.3072194Z   token: ***
+2026-09-22T16:42:31.3072641Z   ssh-strict: true
+2026-09-22T16:42:31.3073088Z   ssh-user: git
+2026-09-22T16:42:31.3073535Z   persist-credentials: true
+2026-09-22T16:42:31.3074023Z   clean: true
+2026-09-22T16:42:31.3074473Z   sparse-checkout-cone-mode: true
+2026-09-22T16:42:31.3074997Z   fetch-depth: 1
+2026-09-22T16:42:31.3075433Z   fetch-tags: false
+2026-09-22T16:42:31.3075878Z   show-progress: true
+2026-09-22T16:42:31.3076320Z   lfs: false
+2026-09-22T16:42:31.3076829Z   submodules: false
+2026-09-22T16:42:31.3077276Z   set-safe-directory: true
+2026-09-22T16:42:31.3077790Z   allow-unsafe-pr-checkout: false
+2026-09-22T16:42:31.3079005Z ##[endgroup]
+2026-09-22T16:42:31.4084303Z Syncing repository: rmusser01/tldw_chatbook
+2026-09-22T16:42:31.4086295Z ##[group]Getting Git version info
+2026-09-22T16:42:31.4087097Z Working directory is '<home>/work/tldw_chatbook/tldw_chatbook'
+2026-09-22T16:42:31.4088179Z [command]/usr/bin/git version
+2026-09-22T16:42:31.4193756Z git version 2.55.0
+2026-09-22T16:42:31.4215657Z ##[endgroup]
+2026-09-22T16:42:31.4230653Z Temporarily overriding HOME='<home>/work/_temp/b0be8cf1-683e-48a4-8a14-553a0b4576b2' before making global git config changes
+2026-09-22T16:42:31.4233139Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T16:42:31.4235398Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:42:31.4291031Z Deleting the contents of '<home>/work/tldw_chatbook/tldw_chatbook'
+2026-09-22T16:42:31.4295682Z ##[group]Initializing the repository
+2026-09-22T16:42:31.4300053Z [command]/usr/bin/git init <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:42:31.4443132Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-22T16:42:31.4444950Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-22T16:42:31.4446653Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-22T16:42:31.4448040Z hint: call:
+2026-09-22T16:42:31.4449065Z hint:
+2026-09-22T16:42:31.4449830Z hint: 	git config --global init.defaultBranch <name>
+2026-09-22T16:42:31.4450713Z hint:
+2026-09-22T16:42:31.4451631Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-22T16:42:31.4452666Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-22T16:42:31.4453443Z hint:
+2026-09-22T16:42:31.4453904Z hint: 	git branch -m <name>
+2026-09-22T16:42:31.4454615Z hint:
+2026-09-22T16:42:31.4455290Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-22T16:42:31.4456352Z Initialized empty Git repository in <home>/work/tldw_chatbook/tldw_chatbook/.git/
+2026-09-22T16:42:31.4460565Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-09-22T16:42:31.4518935Z ##[endgroup]
+2026-09-22T16:42:31.4520562Z ##[group]Disabling automatic garbage collection
+2026-09-22T16:42:31.4524222Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-22T16:42:31.4557016Z ##[endgroup]
+2026-09-22T16:42:31.4558857Z ##[group]Setting up auth
+2026-09-22T16:42:31.4565072Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T16:42:31.4597557Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T16:42:31.5037544Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T16:42:31.5067524Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T16:42:31.5289592Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T16:42:31.5324691Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T16:42:31.5579004Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-22T16:42:31.5622093Z ##[endgroup]
+2026-09-22T16:42:31.5636827Z ##[group]Fetching the repository
+2026-09-22T16:42:31.5639565Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2f2ec4b4c48086c1431da3e66d41fbba047bb1ef:refs/remotes/pull/2722/merge
+2026-09-22T16:42:45.8090084Z From https://github.com/rmusser01/tldw_chatbook
+2026-09-22T16:42:45.8096258Z  * [new ref]           2f2ec4b4c48086c1431da3e66d41fbba047bb1ef -> pull/2722/merge
+2026-09-22T16:42:45.8100110Z ##[endgroup]
+2026-09-22T16:42:45.8101347Z ##[group]Determining the checkout info
+2026-09-22T16:42:45.8102632Z ##[endgroup]
+2026-09-22T16:42:45.8104061Z [command]/usr/bin/git sparse-checkout disable
+2026-09-22T16:42:45.8165136Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-22T16:42:45.8195840Z ##[group]Checking out the ref
+2026-09-22T16:42:45.8199321Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2722/merge
+2026-09-22T16:42:46.8672925Z Updating files:  37% (8933/23746)
+2026-09-22T16:42:47.0057001Z Updating files:  38% (9024/23746)
+2026-09-22T16:42:47.1029870Z Updating files:  39% (9261/23746)
+2026-09-22T16:42:47.2229276Z Updating files:  40% (9499/23746)
+2026-09-22T16:42:47.2561687Z Updating files:  41% (9736/23746)
+2026-09-22T16:42:47.3016513Z Updating files:  42% (9974/23746)
+2026-09-22T16:42:47.3297277Z Updating files:  43% (10211/23746)
+2026-09-22T16:42:47.3585728Z Updating files:  44% (10449/23746)
+2026-09-22T16:42:47.3892964Z Updating files:  45% (10686/23746)
+2026-09-22T16:42:47.4137968Z Updating files:  46% (10924/23746)
+2026-09-22T16:42:47.4368657Z Updating files:  47% (11161/23746)
+2026-09-22T16:42:47.4766394Z Updating files:  48% (11399/23746)
+2026-09-22T16:42:47.5049406Z Updating files:  49% (11636/23746)
+2026-09-22T16:42:47.5329605Z Updating files:  50% (11873/23746)
+2026-09-22T16:42:47.5532847Z Updating files:  51% (12111/23746)
+2026-09-22T16:42:47.5734607Z Updating files:  52% (12348/23746)
+2026-09-22T16:42:47.5965895Z Updating files:  53% (12586/23746)
+2026-09-22T16:42:47.6245980Z Updating files:  54% (12823/23746)
+2026-09-22T16:42:47.6480953Z Updating files:  55% (13061/23746)
+2026-09-22T16:42:47.6706830Z Updating files:  56% (13298/23746)
+2026-09-22T16:42:47.6981378Z Updating files:  57% (13536/23746)
+2026-09-22T16:42:47.7220951Z Updating files:  58% (13773/23746)
+2026-09-22T16:42:47.7516542Z Updating files:  59% (14011/23746)
+2026-09-22T16:42:47.7859759Z Updating files:  60% (14248/23746)
+2026-09-22T16:42:47.8174698Z Updating files:  61% (14486/23746)
+2026-09-22T16:42:47.8431582Z Updating files:  62% (14723/23746)
+2026-09-22T16:42:47.8460571Z Updating files:  62% (14926/23746)
+2026-09-22T16:42:47.8691126Z Updating files:  63% (14960/23746)
+2026-09-22T16:42:47.8898322Z Updating files:  64% (15198/23746)
+2026-09-22T16:42:47.9080909Z Updating files:  65% (15435/23746)
+2026-09-22T16:42:47.9359866Z Updating files:  66% (15673/23746)
+2026-09-22T16:42:47.9507101Z Updating files:  67% (15910/23746)
+2026-09-22T16:42:47.9664833Z Updating files:  68% (16148/23746)
+2026-09-22T16:42:47.9796020Z Updating files:  69% (16385/23746)
+2026-09-22T16:42:47.9943501Z Updating files:  70% (16623/23746)
+2026-09-22T16:42:48.0105817Z Updating files:  71% (16860/23746)
+2026-09-22T16:42:48.0258227Z Updating files:  72% (17098/23746)
+2026-09-22T16:42:48.0413073Z Updating files:  73% (17335/23746)
+2026-09-22T16:42:48.0565985Z Updating files:  74% (17573/23746)
+2026-09-22T16:42:48.0697232Z Updating files:  75% (17810/23746)
+2026-09-22T16:42:48.0845336Z Updating files:  76% (18047/23746)
+2026-09-22T16:42:48.0985395Z Updating files:  77% (18285/23746)
+2026-09-22T16:42:48.1153691Z Updating files:  78% (18522/23746)
+2026-09-22T16:42:48.1287508Z Updating files:  79% (18760/23746)
+2026-09-22T16:42:48.1542386Z Updating files:  80% (18997/23746)
+2026-09-22T16:42:48.1603567Z Updating files:  81% (19235/23746)
+2026-09-22T16:42:48.1735973Z Updating files:  82% (19472/23746)
+2026-09-22T16:42:48.1872584Z Updating files:  83% (19710/23746)
+2026-09-22T16:42:48.2017599Z Updating files:  84% (19947/23746)
+2026-09-22T16:42:48.2153186Z Updating files:  85% (20185/23746)
+2026-09-22T16:42:48.2283213Z Updating files:  86% (20422/23746)
+2026-09-22T16:42:48.2645583Z Updating files:  87% (20660/23746)
+2026-09-22T16:42:48.2975356Z Updating files:  88% (20897/23746)
+2026-09-22T16:42:48.3325633Z Updating files:  89% (21134/23746)
+2026-09-22T16:42:48.3581386Z Updating files:  90% (21372/23746)
+2026-09-22T16:42:48.3875592Z Updating files:  91% (21609/23746)
+2026-09-22T16:42:48.4147993Z Updating files:  92% (21847/23746)
+2026-09-22T16:42:48.4391536Z Updating files:  93% (22084/23746)
+2026-09-22T16:42:48.4683670Z Updating files:  94% (22322/23746)
+2026-09-22T16:42:48.5195343Z Updating files:  95% (22559/23746)
+2026-09-22T16:42:48.5387517Z Updating files:  96% (22797/23746)
+2026-09-22T16:42:48.5670244Z Updating files:  97% (23034/23746)
+2026-09-22T16:42:48.5934463Z Updating files:  98% (23272/23746)
+2026-09-22T16:42:48.6507931Z Updating files:  99% (23509/23746)
+2026-09-22T16:42:48.6509159Z Updating files: 100% (23746/23746)
+2026-09-22T16:42:48.6509615Z Updating files: 100% (23746/23746), done.
+2026-09-22T16:42:48.6745417Z Note: switching to 'refs/remotes/pull/2722/merge'.
+2026-09-22T16:42:48.6745886Z
+2026-09-22T16:42:48.6746206Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-22T16:42:48.6747662Z changes and commit them, and you can discard any commits you make in this
+2026-09-22T16:42:48.6748878Z state without impacting any branches by switching back to a branch.
+2026-09-22T16:42:48.6749405Z
+2026-09-22T16:42:48.6749742Z If you want to create a new branch to retain commits you create, you may
+2026-09-22T16:42:48.6750552Z do so (now or later) by using -c with the switch command. Example:
+2026-09-22T16:42:48.6751004Z
+2026-09-22T16:42:48.6751175Z   git switch -c <new-branch-name>
+2026-09-22T16:42:48.6751461Z
+2026-09-22T16:42:48.6751629Z Or undo this operation with:
+2026-09-22T16:42:48.6751892Z
+2026-09-22T16:42:48.6752039Z   git switch -
+2026-09-22T16:42:48.6752234Z
+2026-09-22T16:42:48.6752574Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-22T16:42:48.6753083Z
+2026-09-22T16:42:48.6753691Z HEAD is now at 2f2ec4b4 Merge 30a65af171a15a2a0d0a74d003f5be6ad8d5c857 into 5cdc9ddda00a4112ec06cf8b81fd23bd31d9edb7
+2026-09-22T16:42:48.6851109Z ##[endgroup]
+2026-09-22T16:42:48.6899317Z [command]/usr/bin/git log -1 --format=%H
+2026-09-22T16:42:48.6929931Z 2f2ec4b4c48086c1431da3e66d41fbba047bb1ef
+2026-09-22T16:42:48.7206679Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:42:48.7208757Z ##[group]Run actions/setup-python@v5
+2026-09-22T16:42:48.7209055Z with:
+2026-09-22T16:42:48.7209272Z   python-version: 3.12.11
+2026-09-22T16:42:48.7209529Z   check-latest: false
+2026-09-22T16:42:48.7212079Z   token: ***
+2026-09-22T16:42:48.7212301Z   update-environment: true
+2026-09-22T16:42:48.7212550Z   allow-prereleases: false
+2026-09-22T16:42:48.7212798Z   freethreaded: false
+2026-09-22T16:42:48.7213018Z ##[endgroup]
+2026-09-22T16:42:48.8578711Z ##[group]Installed versions
+2026-09-22T16:42:48.8601124Z Version 3.12.11 was not found in the local cache
+2026-09-22T16:42:48.8739122Z (node:2382) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T16:42:48.8740004Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T16:42:49.5916841Z Version 3.12.11 is available for downloading
+2026-09-22T16:42:49.5917995Z Download from "https://github.com/actions/python-versions/releases/download/3.12.11-15433310049/python-3.12.11-linux-24.04-x64.tar.gz"
+2026-09-22T16:42:50.3514990Z Extract downloaded archive
+2026-09-22T16:42:50.3679052Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C <home>/work/_temp/5ae3621e-8b6e-432e-9b12-61414f527ad6 -f <home>/work/_temp/71dd4d39-05d1-4e97-af09-e287dbffc685
+2026-09-22T16:42:52.3918621Z Execute installation script
+2026-09-22T16:42:52.4028775Z Check if Python hostedtoolcache folder exist...
+2026-09-22T16:42:52.4029203Z Create Python 3.12.11 folder
+2026-09-22T16:42:52.4042947Z Copy Python binaries to hostedtoolcache folder
+2026-09-22T16:42:52.9034005Z Create additional symlinks (Required for the UsePythonVersion Azure Pipelines task and the setup-python GitHub Action)
+2026-09-22T16:42:52.9074471Z Upgrading pip...
+2026-09-22T16:42:55.0429757Z Looking in links: <tmp>/tmplxman4be
+2026-09-22T16:42:55.0439746Z Requirement already satisfied: pip in /opt/hostedtoolcache/Python/3.12.11/x64/lib/python3.12/site-packages (25.0.1)
+2026-09-22T16:42:56.1014566Z Collecting pip
+2026-09-22T16:42:56.1493926Z Downloading pip-26.2.1-py3-none-any.whl.metadata (4.6 kB)
+2026-09-22T16:42:56.1614195Z Downloading pip-26.2.1-py3-none-any.whl (1.8 MB)
+2026-09-22T16:42:56.2307624Z ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 32.9 MB/s eta 0:00:00
+2026-09-22T16:42:56.2308298Z
+2026-09-22T16:42:56.2482709Z Installing collected packages: pip
+2026-09-22T16:42:56.2483849Z Attempting uninstall: pip
+2026-09-22T16:42:56.2506838Z Found existing installation: pip 25.0.1
+2026-09-22T16:42:56.2874757Z Uninstalling pip-25.0.1:
+2026-09-22T16:42:56.2940390Z Successfully uninstalled pip-25.0.1
+2026-09-22T16:42:57.1886294Z Successfully installed pip-26.2.1
+2026-09-22T16:42:57.2426439Z Create complete file
+2026-09-22T16:42:57.2464906Z Successfully set up CPython (3.12.11)
+2026-09-22T16:42:57.2466128Z ##[endgroup]
+2026-09-22T16:42:57.2694970Z ##[group]Run # Rebuilds both bundles into a temp dir and diffs them against the
+2026-09-22T16:42:57.2695601Z [36;1m# Rebuilds both bundles into a temp dir and diffs them against the[0m
+2026-09-22T16:42:57.2696082Z [36;1m# committed sheets, naming any drifted MODULE block.[0m
+2026-09-22T16:42:57.2696478Z [36;1mpython tldw_chatbook/css/check_bundle_sync.py[0m
+2026-09-22T16:42:57.2738838Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:42:57.2739111Z env:
+2026-09-22T16:42:57.2739392Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:42:57.2739855Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:42:57.2740335Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:42:57.2740725Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:42:57.2741133Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:42:57.2741555Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:42:57.2741894Z ##[endgroup]
+2026-09-22T16:43:01.2138294Z CSS bundle reproduces from its source modules.
+2026-09-22T16:43:01.2139240Z widget_defaults_self.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2139944Z widget_defaults_scoped.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2140597Z screen_css_self.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2141202Z screen_css_scoped.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2141854Z screen_agentic_library.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2142535Z screen_agentic_settings.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2143237Z screen_feature_evals.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2143898Z screen_feature_scheduling.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2144595Z screen_feature_workflows.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2145293Z screen_feature_watchlists.tcss reproduces from its Python sources.
+2026-09-22T16:43:01.2304336Z ##[group]Run # Downloads only the exact hash/size-pinned public inputs into a
+2026-09-22T16:43:01.2304923Z [36;1m# Downloads only the exact hash/size-pinned public inputs into a[0m
+2026-09-22T16:43:01.2305430Z [36;1m# temporary directory, runs the existing offline build there, and[0m
+2026-09-22T16:43:01.2305946Z [36;1m# compares its complete output closure with packaged static bytes.[0m
+2026-09-22T16:43:01.2306382Z [36;1mpython scripts/check_canvas_mermaid_assets.py[0m
+2026-09-22T16:43:01.2344352Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:43:01.2344606Z env:
+2026-09-22T16:43:01.2344876Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:01.2345359Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:43:01.2345802Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:01.2346189Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:01.2346608Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:01.2346999Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:43:01.2347320Z ##[endgroup]
+2026-09-22T16:43:03.6475313Z Canvas Mermaid assets reproduce: 6 outputs
+2026-09-22T16:43:03.6636049Z ##[group]Run # Prints path:line:context:expression:reason for every unapproved
+2026-09-22T16:43:03.6636640Z [36;1m# Prints path:line:context:expression:reason for every unapproved[0m
+2026-09-22T16:43:03.6637100Z [36;1m# occurrence of a historical profile-owned path root.[0m
+2026-09-22T16:43:03.6637525Z [36;1mpython scripts/check_profile_owned_path_inventory.py[0m
+2026-09-22T16:43:03.6674671Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:43:03.6674927Z env:
+2026-09-22T16:43:03.6675205Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:03.6675678Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:43:03.6676144Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:03.6676543Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:03.6676949Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:03.6677391Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:43:03.6677722Z ##[endgroup]
+2026-09-22T16:43:54.7341312Z profile-owned path census verified: 55 executable occurrence(s) across 23 file(s), all matched by 52 approved exceptions.
+2026-09-22T16:43:54.7555361Z ##[group]Run # On drift this prints the full committed-vs-rebuild report -- rows
+2026-09-22T16:43:54.7555948Z [36;1m# On drift this prints the full committed-vs-rebuild report -- rows[0m
+2026-09-22T16:43:54.7556431Z [36;1m# only-in-committed / only-in-rebuild / changed with[0m
+2026-09-22T16:43:54.7556887Z [36;1m# old_count/old_digest -> new_count/new_digest, sink-topology deltas,[0m
+2026-09-22T16:43:54.7557388Z [36;1m# and the exact next command. Read the rows before regenerating: the[0m
+2026-09-22T16:43:54.7557874Z [36;1m# artifact exists to make an unreviewed --write impossible to do by[0m
+2026-09-22T16:43:54.7558244Z [36;1m# accident.[0m
+2026-09-22T16:43:54.7558828Z [36;1mpython scripts/check_persistent_diagnostic_inventory.py[0m
+2026-09-22T16:43:54.7595017Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:43:54.7595271Z env:
+2026-09-22T16:43:54.7595534Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:54.7596006Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:43:54.7596451Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:54.7596830Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:54.7597214Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:43:54.7597595Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:43:54.7597915Z ##[endgroup]
+2026-09-22T16:45:48.5043747Z diagnostic inventory verified: 603 owners, 1360 TASK-492 calls, 55 TASK-31551 calls, 7690 TASK-494 calls, 14 sink files
+2026-09-22T16:45:48.5226413Z ##[group]Run # Same check backlog-guard.yml runs; carried here too so it is covered
+2026-09-22T16:45:48.5227021Z [36;1m# Same check backlog-guard.yml runs; carried here too so it is covered[0m
+2026-09-22T16:45:48.5227521Z [36;1m# by the one required status check rather than by a path-filtered[0m
+2026-09-22T16:45:48.5227910Z [36;1m# workflow nobody is gated on.[0m
+2026-09-22T16:45:48.5228220Z [36;1mpython scripts/check_backlog_task_ids.py[0m
+2026-09-22T16:45:48.5263757Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:45:48.5264010Z env:
+2026-09-22T16:45:48.5264287Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:48.5264762Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:45:48.5265198Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:48.5265587Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:48.5266007Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:48.5266399Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:45:48.5266727Z ##[endgroup]
+2026-09-22T16:45:49.3705645Z No duplicate task IDs across 4316 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+2026-09-22T16:45:49.3811204Z ##[group]Run # TASK-20971. Statically scans the CREATE TABLE statements in
+2026-09-22T16:45:49.3812241Z [36;1m# TASK-20971. Statically scans the CREATE TABLE statements in[0m
+2026-09-22T16:45:49.3813133Z [36;1m# DB/migrations/chachanotes_*.sql and in ChaChaNotes_DB.py's SQL[0m
+2026-09-22T16:45:49.3814330Z [36;1m# string literals, and fails when VALID_TABLES['chachanotes'] does[0m
+2026-09-22T16:45:49.3815198Z [36;1m# not list one of them (or lists one nothing creates). Prints the[0m
+2026-09-22T16:45:49.3816106Z [36;1m# exact lines to paste. No database is built; runtime is milliseconds,[0m
+2026-09-22T16:45:49.3817019Z [36;1m# so this does not move the ~90 s budget this job depends on.[0m
+2026-09-22T16:45:49.3817776Z [36;1mpython scripts/check_schema_table_allowlist.py[0m
+2026-09-22T16:45:49.3867047Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:45:49.3867379Z env:
+2026-09-22T16:45:49.3867656Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:49.3868152Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:45:49.3868895Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:49.3869285Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:49.3869692Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:49.3870113Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:45:49.3870448Z ##[endgroup]
+2026-09-22T16:45:50.0214436Z chachanotes: 116 declared tables, all present in VALID_TABLES['chachanotes'].
+2026-09-22T16:45:50.0357809Z ##[group]Run # TASK-21593. No DB module in this repo runs ANALYZE, so no user's
+2026-09-22T16:45:50.0359108Z [36;1m# TASK-21593. No DB module in this repo runs ANALYZE, so no user's[0m
+2026-09-22T16:45:50.0360093Z [36;1m# database has a sqlite_stat1 and the planner can ignore a textbook[0m
+2026-09-22T16:45:50.0361034Z [36;1m# index entirely -- TASK-21126 shipped 5 MB of dead index that way,[0m
+2026-09-22T16:45:50.0361871Z [36;1m# with a green "the index exists" test. This scans the CREATE INDEX[0m
+2026-09-22T16:45:50.0362629Z [36;1m# names in DB/ and fails when one is missing from[0m
+2026-09-22T16:45:50.0363421Z [36;1m# scripts/index_plan_pin_census.tsv, so adding an index has to stop[0m
+2026-09-22T16:45:50.0364336Z [36;1m# at "plan-pinned or pre-convention?". Pure text scan, no database[0m
+2026-09-22T16:45:50.0365230Z [36;1m# built; milliseconds, so it does not move this job's ~90 s budget.[0m
+2026-09-22T16:45:50.0366015Z [36;1mpython scripts/check_index_plan_pins.py[0m
+2026-09-22T16:45:50.0409450Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:45:50.0409713Z env:
+2026-09-22T16:45:50.0409984Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:50.0410435Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:45:50.0410883Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:50.0411273Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:50.0411682Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:50.0412075Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:45:50.0412400Z ##[endgroup]
+2026-09-22T16:45:51.2858863Z index plan pins: 304 index names declared under tldw_chatbook/DB, 304 census rows, 86 plan-pinned.
+2026-09-22T16:45:51.2859735Z check_index_plan_pins: OK
+2026-09-22T16:45:51.2986775Z ##[group]Run # TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime
+2026-09-22T16:45:51.2987407Z [36;1m# TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime[0m
+2026-09-22T16:45:51.2987911Z [36;1m# review were one defect class with no guard: a synchronous callable[0m
+2026-09-22T16:45:51.2988580Z [36;1m# handed to run_worker (Worker._run_async raises, exit_on_error[0m
+2026-09-22T16:45:51.2989046Z [36;1m# defaults to True, the app exits), and a query_one that resumes[0m
+2026-09-22T16:45:51.2989515Z [36;1m# after an await into a subtree something else removed. W001 is a[0m
+2026-09-22T16:45:51.2989999Z [36;1m# hard gate -- the tree has zero violations, so any new one is real.[0m
+2026-09-22T16:45:51.2990464Z [36;1m# W002 is a census ratchet over the 279 pre-existing post-await[0m
+2026-09-22T16:45:51.2990949Z [36;1m# lookups, because whether one can crash is not statically decidable[0m
+2026-09-22T16:45:51.2991665Z [36;1m# and failing on all of them would be a guard that gets muted. Pure[0m
+2026-09-22T16:45:51.2992058Z [36;1m# AST scan, stdlib only; seconds.[0m
+2026-09-22T16:45:51.2992409Z [36;1mpython scripts/check_textual_worker_contract.py[0m
+2026-09-22T16:45:51.3029968Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:45:51.3030404Z env:
+2026-09-22T16:45:51.3030867Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:51.3031661Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:45:51.3032463Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:51.3033035Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:51.3033456Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:45:51.3033858Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:45:51.3034185Z ##[endgroup]
+2026-09-22T16:46:16.5650310Z textual worker contract: no synchronous run_worker targets; 269 post-await DOM lookup(s) in 136 function(s), none new; 3 baseline lookup(s) resolved.
+2026-09-22T16:46:16.5854075Z ##[group]Run # ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is
+2026-09-22T16:46:16.5855063Z [36;1m# ADR-173 / TASK-32803.1. datetime.utcnow() (deprecated, naive) is[0m
+2026-09-22T16:46:16.5855924Z [36;1m# forbidden, and naive datetime.now().isoformat() writers are pinned[0m
+2026-09-22T16:46:16.5856803Z [36;1m# in scripts/timestamp_writer_census.tsv as a ratchet that only[0m
+2026-09-22T16:46:16.5857675Z [36;1m# shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new[0m
+2026-09-22T16:46:16.5858808Z [36;1m# or grown naive-timestamp writer. Pure AST scan, no database built.[0m
+2026-09-22T16:46:16.5859594Z [36;1mpython scripts/check_timestamp_writers.py[0m
+2026-09-22T16:46:16.5911418Z shell: /usr/bin/bash -e {0}
+2026-09-22T16:46:16.5911856Z env:
+2026-09-22T16:46:16.5912339Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:46:16.5913185Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib/pkgconfig
+2026-09-22T16:46:16.5914032Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:46:16.5914817Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:46:16.5915535Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.11/x64
+2026-09-22T16:46:16.5916275Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.11/x64/lib
+2026-09-22T16:46:16.5916891Z ##[endgroup]
+2026-09-22T16:46:36.4701920Z timestamp writers: 0 datetime.utcnow() site(s), 0 naive datetime.now().isoformat() occurrence(s) (0 pinned).
+2026-09-22T16:46:36.4702975Z check_timestamp_writers: OK
+2026-09-22T16:46:36.4976921Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:46:36.4978180Z Post job cleanup.
+2026-09-22T16:46:36.6240558Z (node:2532) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T16:46:36.6241548Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T16:46:36.6409905Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T16:46:36.6411168Z Post job cleanup.
+2026-09-22T16:46:36.7324199Z [command]/usr/bin/git version
+2026-09-22T16:46:36.7364928Z git version 2.55.0
+2026-09-22T16:46:36.7406133Z Temporarily overriding HOME='<home>/work/_temp/58c26c67-4623-46ec-96c9-c9469fee5cb0' before making global git config changes
+2026-09-22T16:46:36.7408356Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T16:46:36.7413619Z [command]/usr/bin/git config --global --add safe.directory <home>/work/tldw_chatbook/tldw_chatbook
+2026-09-22T16:46:36.7456104Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T16:46:36.7493898Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T16:46:36.7742637Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T16:46:36.7771165Z http.https://github.com/.extraheader
+2026-09-22T16:46:36.7782314Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-22T16:46:36.7816181Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T16:46:36.8082503Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T16:46:36.8119208Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T16:46:36.8532892Z Cleaning up orphan processes
+2026-09-22T16:46:36.8825911Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
