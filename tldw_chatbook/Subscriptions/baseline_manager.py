@@ -660,12 +660,10 @@ class BaselineManager:
         if not row:
             return None
 
-        # Decompress content if stored
-        if row["raw_html"]:
-            try:
-                zlib.decompress(row["raw_html"]).decode("utf-8")
-            except Exception:
-                row["raw_html"]
+        # ``ContentBaseline`` carries no decompressed-HTML field, so the
+        # stored ``raw_html`` blob is not read back here. A try/except that
+        # decompressed it and discarded both branches used to sit at this
+        # point (tier-2 S08 P3).
 
         # Parse key elements
         key_elements = {}
