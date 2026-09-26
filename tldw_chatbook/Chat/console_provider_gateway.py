@@ -3308,14 +3308,25 @@ class ConsoleProviderGateway:
             # target pins whatever the bridge recorded (for engine-driven
             # keys like the custom-hosted swap, the hyphenated execution
             # key), so both sides go through provider_config_key instead of
-            # normalizing only the resolution side.
-            provider_config_key(continuation_target.provider),
-            continuation_target.model,
-            normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
-        ) != (
-            provider_config_key(resolution.provider),
-            resolution.model or "",
-            normalize_generic_endpoint_for_compare(resolution.base_url),
+            # normalizing only the resolution side. The resolution accepts
+            # EITHER its execution key or its identity spelling: a swapped
+            # custom-ep selection carries the raw ``custom-ep:<slug>``
+            # identity on ``provider`` while checkpoints and targets are
+            # pinned under the execution key, so an identity-only
+            # comparison matched nothing (ADR-179, Qodo follow-up), and an
+            # execution-only comparison would refuse the deliberately
+            # split doubles that exercise displayable thinking replay
+            # alongside continuation history (the two provider families
+            # are disjoint; production resolutions keep the spellings
+            # equal everywhere else).
+            provider_config_key(continuation_target.provider)
+            not in {
+                provider_config_key(resolution.execution_key or resolution.provider),
+                provider_config_key(resolution.provider),
+            }
+            or continuation_target.model != (resolution.model or "")
+            or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
+            != normalize_generic_endpoint_for_compare(resolution.base_url)
         ):
             raise ContinuationConflictError(
                 "Continuation restore target mismatch."

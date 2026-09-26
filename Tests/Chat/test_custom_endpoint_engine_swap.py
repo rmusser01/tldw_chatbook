@@ -16,6 +16,7 @@ Stage coverage in this file:
 from __future__ import annotations
 
 import inspect
+import json
 from typing import get_args
 
 import pytest
@@ -1127,3 +1128,259 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
     assert resumed.provider == "custom-hosted"
     assert resumed.state == "active"
     assert resumed.checkpoint_revision == 1
+
+
+def _swap_console_resolution():
+    """The resolution the gateway builds for a swapped custom-ep selection.
+
+    ``provider`` keeps the raw selection identity (``custom-ep:<slug>``) and
+    ``execution_key`` carries the engine preset the swap routed onto -- the
+    exact field split ``_apply_custom_endpoint_engine_swap`` produces.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+    )
+
+    return ConsoleProviderResolution(
+        provider="custom-ep:paid",
+        base_url="https://custom.example/v1",
+        model="test-model",
+        ready=True,
+        readiness_key="custom",
+        execution_key="custom-hosted",
+        selected_provider="custom-ep:paid",
+        streaming=True,
+        continuation_protocol="chat_completions",
+    )
+
+
+def _complete_custom_hosted_checkpoint():
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "custom-hosted",
+            "protocol": "chat_completions",
+            "model": "test-model",
+            "api_base_url": "https://custom.example/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "prior visible",
+                    "reasoning_blocks": ["PRIOR-PRIVATE-REASONING"],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "get_time",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "17:00",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
+    """The controller's restore target must pin the execution-key spelling.
+
+    A swapped custom-ep selection resolves with the IDENTITY spelling on
+    ``provider`` (``custom-ep:<slug>``) but executes -- and pins
+    checkpoints -- under the EXECUTION key (``custom-hosted``, the registry
+    ``record.key``). ``_continuation_restore_target_for_resolution`` built
+    the target from ``provider_config_key(resolution.provider)``
+    (``custom_ep:paid``), a spelling no checkpoint ever pins, so the durable
+    resume/crash-recovery pre-gate (byte-exact by design) matched nothing.
+    The target must carry the execution key VERBATIM -- the same spelling
+    the bridge records -- falling back to the normalized provider only when
+    ``execution_key`` is empty.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _continuation_restore_target_for_resolution,
+    )
+    from tldw_chatbook.Chat.provider_continuation import (
+        validate_continuation_restore,
+    )
+
+    target = _continuation_restore_target_for_resolution(
+        _swap_console_resolution()
+    )
+    assert target is not None
+    assert target.provider == "custom-hosted"
+    assert target.model == "test-model"
+    assert target.protocol == "chat_completions"
+    assert target.api_base_url == "https://custom.example/v1"
+
+    # The engine writes checkpoints under the record.key spelling and the
+    # pre-gate compares byte-exactly: the pinned checkpoint must validate.
+    validate_continuation_restore(
+        _complete_custom_hosted_checkpoint(), target
+    )
+
+    # Engine presets keep identity == execution key, so their targets are
+    # unchanged by the preference (verify, not assume).
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+    )
+
+    preset = _continuation_restore_target_for_resolution(
+        ConsoleProviderResolution(
+            provider="Databricks",
+            base_url="https://databricks.example/serving-endpoints",
+            model="test-model",
+            ready=True,
+            readiness_key="databricks",
+            execution_key="databricks",
+            streaming=True,
+            continuation_protocol="chat_completions",
+        )
+    )
+    assert preset is not None
+    assert preset.provider == "databricks"
+
+    # Fallback: a resolution without an execution key (legacy doubles)
+    # keeps the normalized provider spelling, so existing consumers of
+    # that path are byte-identical.
+    legacy = _continuation_restore_target_for_resolution(
+        ConsoleProviderResolution(
+            provider="DeepSeek",
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-v4-flash",
+            ready=True,
+            execution_key="",
+            streaming=True,
+            continuation_protocol="responses",
+        )
+    )
+    assert legacy is not None
+    assert legacy.provider == "deepseek"
+
+
+def test_custom_endpoint_swap_target_prepares_through_the_gateway() -> None:
+    """The swapped selection's target must survive the gateway pin checks.
+
+    With the restore target correctly pinned to the execution key, the
+    completed custom-hosted checkpoint becomes selectable history: the
+    owner-group selection matches, and the gateway's ``prepare_chat_request``
+    -- which compares the target against the RESOLUTION's provider spelling
+    -- must accept it for the same custom-ep resolution instead of raising
+    ``ContinuationConflictError``. This is the send-path half of the seam:
+    the pre-gate fix activates this flow, so the comparisons downstream
+    must compare execution key to execution key.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _continuation_restore_target_for_resolution,
+    )
+    from tldw_chatbook.Chat.console_history_budget import (
+        ProviderContinuationSidecar,
+        provider_continuation_owner_groups,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+    )
+
+    resolution = _swap_console_resolution()
+    target = _continuation_restore_target_for_resolution(resolution)
+    assert target is not None
+    checkpoint = _complete_custom_hosted_checkpoint()
+    sidecar = (ProviderContinuationSidecar("a1", checkpoint),)
+
+    groups = provider_continuation_owner_groups(sidecar, target=target)
+    assert [group.owner_message_id for group in groups] == ["a1"]
+
+    gateway = ConsoleProviderGateway(environ={})
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        [
+            {
+                "role": "assistant",
+                "content": "prior visible",
+                "_owner": "a1",
+            },
+            {"role": "user", "content": "thanks, book it"},
+        ],
+        continuation_target=target,
+        continuation_sidecar=sidecar,
+        continuation_owner_key="_owner",
+    )
+    kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    forwarded = kwargs["provider_continuations"]
+    assert isinstance(forwarded, list)
+    assert len(forwarded) == 1
+    assert forwarded[0].provider == "custom-hosted"
+    assert "PRIVATE-REASONING" not in str(prepared.messages_payload)
+
+
+def _custom_hosted_target():
+    from tldw_chatbook.Chat.provider_continuation import ContinuationRestoreTarget
+
+    return ContinuationRestoreTarget(
+        provider="custom-hosted",
+        model="test-model",
+        protocol="chat_completions",
+        api_base_url="https://custom.example/v1",
+    )
+
+def test_custom_endpoint_swap_sidecar_history_survives_run_turn_pin(
+    tmp_path,
+) -> None:
+    """A swapped selection's pinned history must clear ``run_turn``'s pin.
+
+    ``AgentService.run_turn`` compares the sidecar's restore target against
+    ``provider_config_key(api_endpoint)``. The target pins the execution key
+    VERBATIM ("custom-hosted"), while ``api_endpoint`` -- the same execution
+    key -- normalizes to "custom_hosted"; the raw-vs-normalized comparison
+    made the activated custom-hosted history flow mismatch itself and raise
+    ``ContinuationConflictError`` before the provider was ever called. The
+    target side must go through ``provider_config_key`` too (the mirror of
+    the gateway's prepare-time comparison).
+    """
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+    )
+    from tldw_chatbook.Chat.console_history_budget import (
+        ProviderContinuationSidecar,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    script = [{"choices": [{"message": {"content": "finished"}}]}]
+    seen_payloads: list[list[dict]] = []
+
+    def chat_call(**kwargs: object) -> object:
+        seen_payloads.append(list(kwargs["messages_payload"]))  # type: ignore[arg-type]
+        return script.pop(0)
+
+    service = AgentService(
+        AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        registry,
+        chat_call=chat_call,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[
+            {"role": "assistant", "content": "prior visible", "_owner": "prior"},
+            {"role": "user", "content": "continue"},
+        ],
+        config=AgentConfig(model="test-model", system_prompt="s"),
+        api_endpoint="custom-hosted",
+        continuation_sidecar=(
+            ProviderContinuationSidecar("prior", _complete_custom_hosted_checkpoint()),
+        ),
+        continuation_target=_custom_hosted_target(),
+        continuation_owner_key="_owner",
+    )
+
+    assert outcome.status == "done"
+    assert len(seen_payloads) == 1
+    # The private reasoning never reaches the wire payload.
+    rendered = json.dumps(seen_payloads[0])
+    assert "PRIOR-PRIVATE-REASONING" not in rendered
+
+

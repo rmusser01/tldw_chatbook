@@ -8486,7 +8486,14 @@ class AgentService:
             sidecar
             and continuation_target is not None
             and (
-                continuation_target.provider,
+                # The target pins the EXECUTION key verbatim (the spelling
+                # the bridge records and checkpoints carry -- hyphenated for
+                # engine-driven keys like "custom-hosted"), while
+                # ``api_endpoint`` arrives normalized through
+                # ``provider_config_key``; normalize the target side too or
+                # every hyphenated execution key mismatches itself
+                # (ADR-179, Qodo follow-up).
+                provider_config_key(continuation_target.provider),
                 continuation_target.model,
             )
             != (provider_config_key(api_endpoint), config.model)

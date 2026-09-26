@@ -2088,6 +2088,21 @@ def _continuation_restore_target_for_resolution(
     continuation from being replayed against a different endpoint than the
     one that produced it. The two writers simply have to agree, and the
     checkpoint's writer is the one that defines the format.
+
+    The provider field follows the same writer-agreement rule (ADR-179,
+    Qodo follow-up): checkpoints are pinned under the EXECUTION key
+    (engine records use their ``record.key`` -- "custom-hosted" for a
+    swapped custom-ep selection -- and moonshot/zai/deepseek spell theirs
+    identically), and ``ConsoleAgentBridge`` records targets from
+    ``resolution.execution_key`` VERBATIM. Building the target from
+    ``provider_config_key(resolution.provider)`` instead pinned the
+    IDENTITY spelling ("custom_ep:paid" for ``custom-ep:paid``), which no
+    checkpoint ever carries, so the durable resume/crash-recovery pre-gate
+    byte-compared a spelling that could never match. ``execution_key`` is
+    therefore preferred verbatim; only a resolution with an EMPTY
+    execution key (legacy doubles) falls back to the normalized
+    ``provider`` spelling, which is byte-identical to the old behavior for
+    every checkpoint-producing provider.
     """
     protocol = getattr(resolution, "continuation_protocol", None) or getattr(
         resolution, "api_mode", None
@@ -2101,8 +2116,14 @@ def _continuation_restore_target_for_resolution(
         or not model
     ):
         return None
+    execution_key = getattr(resolution, "execution_key", None)
+    provider_value = (
+        str(execution_key)
+        if isinstance(execution_key, str) and execution_key
+        else provider_config_key(str(getattr(resolution, "provider", "")))
+    )
     return ContinuationRestoreTarget(
-        provider=provider_config_key(str(getattr(resolution, "provider", ""))),
+        provider=provider_value,
         model=str(model),
         protocol=str(protocol),
         api_base_url=base_url,

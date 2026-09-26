@@ -2103,7 +2103,15 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
         )
     with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
         gateway.prepare_chat_request(
-            dataclasses.replace(resolution, provider="moonshot"),
+            # The pin compares the EXECUTION key (ADR-179, Qodo follow-up):
+            # targets and checkpoints are pinned under it, and a swapped
+            # custom-ep selection legitimately carries a divergent identity
+            # on ``provider`` -- so the negative case flips the execution
+            # key, which is what a real different-provider resolution
+            # changes with it.
+            dataclasses.replace(
+                resolution, provider="moonshot", execution_key="moonshot"
+            ),
             messages,
             continuation_target=target,
             continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
