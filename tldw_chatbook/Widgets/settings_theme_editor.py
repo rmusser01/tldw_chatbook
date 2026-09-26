@@ -458,6 +458,30 @@ class SettingsThemeEditor(Vertical):
         """
         return self._scan_theme_files()[0]
 
+    def _refuse_link(self, stem: str, unreadable: dict[str, tuple[Path, str]]) -> bool:
+        """Refuse to touch ``<stem>.toml`` when it is a link (review follow-up 4).
+
+        The scan lists a symlinked, dangling or hard-linked file as
+        ``NOT_REGULAR``; writing there would replace the user's link (or
+        write through it). ``exists()`` is False for a dangling link, so
+        only the scan can tell.
+
+        Args:
+            stem: The file stem a write or delete would target.
+            unreadable: The scan's ``stem -> (path, reason)`` map.
+
+        Returns:
+            True, after a notice, when the file is a link; False otherwise.
+        """
+        if unreadable.get(stem, (None, ""))[1] != NOT_REGULAR:
+            return False
+        self.app.notify(
+            f"'{escape_markup(printable(stem))}.toml' is a link, not a regular file; "
+            "remove it outside the app",
+            severity="warning",
+        )
+        return True
+
     @classmethod
     def _theme_file_error(cls, exc: Exception, data: Any) -> str:
         """A short, path-free, printable (R39) reason a theme file can't be read."""
@@ -873,14 +897,18 @@ class SettingsThemeEditor(Vertical):
         """The file a write of ``theme_name`` goes to, re-read now (R12).
 
         The file already holding the name, else ``<name>.toml``; None (with
-        the pause notice) while backup/recovery holds the files.
+        a notice) while backup/recovery holds the files, or when that
+        ``<name>.toml`` is a link (``_refuse_link``).
         """
         try:
-            theme_path = self._user_theme_files().get(theme_name)
+            files, unreadable = self._scan_theme_files()
         except RecoveryRequired:
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return None
-        return theme_path or self.custom_themes_path / f"{theme_name}.toml"
+        theme_path = files.get(theme_name) or self.custom_themes_path / f"{theme_name}.toml"
+        if self._refuse_link(theme_path.stem, unreadable):
+            return None
+        return theme_path
 
     def _write_theme_file(
         self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
@@ -1140,15 +1168,11 @@ class SettingsThemeEditor(Vertical):
         # its own id, so a broken nord.toml can't hide behind shipped nord.
         theme_path = files.get(name)
         if theme_path is None and name.startswith(UNREADABLE_ID_PREFIX):
-            theme_path, reason = unreadable.get(name.removeprefix(UNREADABLE_ID_PREFIX), (None, ""))
-            if theme_path is not None and reason == NOT_REGULAR:
-                # The backup layer never writes through a link; say so rather
-                # than fail the unlink with its internal reason code.
-                self.app.notify(
-                    f"'{escape_markup(printable(theme_path.name))}' is a link, not a regular file; "
-                    "remove it outside the app",
-                    severity="warning",
-                )
+            stem = name.removeprefix(UNREADABLE_ID_PREFIX)
+            theme_path = unreadable.get(stem, (None, ""))[0]
+            # The backup layer never writes through a link; say so rather
+            # than fail the unlink with its internal reason code.
+            if self._refuse_link(stem, unreadable):
                 return
 
         # File existence decides: anything saved in the user themes directory
@@ -1361,6 +1385,8 @@ class SettingsThemeEditor(Vertical):
             return False
         shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
         new_path = self.custom_themes_path / f"{new}.toml"
+        if self._refuse_link(new_path.stem, unreadable):
+            return False
         if (
             new in BUILTIN_THEMES
             or new in shipped_names
@@ -1548,7 +1574,9 @@ class SettingsThemeEditor(Vertical):
             return None
         name, data, theme = parsed
         # R12: write back to the file that already claims the name.
-        target = files.get(name, self.custom_themes_path / f"{name}.toml")
+        target = self._resolve_write_target(name)
+        if target is None:
+            return None
         if name in files or target.exists():
 
             async def _confirmed_replace() -> None:

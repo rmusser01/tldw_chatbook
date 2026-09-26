@@ -987,3 +987,66 @@ async def test_non_regular_theme_file_is_one_unreadable_entry(request, tmp_path)
         assert "not a regular file" in app.notify.call_args.args[0]
         assert not isinstance(app.screen, ConfirmationDialog)
         assert (tmp_path / "linked.toml").is_symlink()
+
+
+def _links(themes_dir: Path) -> tuple[Path, Path, Path]:
+    """``linked.toml`` -> a real theme file outside the folder, and
+    ``gone.toml`` -> nothing (dangling). Returns (linked, gone, link target)."""
+    import os
+
+    outside = themes_dir.parent / "dotfiles_linked.toml"
+    outside.write_text(toml.dumps({"theme": {"name": "linked"}, "colors": MINE}), encoding="utf-8")
+    linked, gone = themes_dir / "linked.toml", themes_dir / "gone.toml"
+    os.symlink(outside, linked)
+    os.symlink(themes_dir.parent / "nowhere.toml", gone)
+    return linked, gone, outside
+
+
+def _links_untouched(linked: Path, gone: Path, outside: Path, before: str) -> None:
+    assert linked.is_symlink() and gone.is_symlink()
+    assert not gone.exists()  # still dangling: nothing was written through it
+    assert outside.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_save_as_import_and_rename_refuse_a_linked_target(request, tmp_path, config_writes):
+    """Review follow-up 4: a symlinked or dangling-symlink ``<name>.toml`` is
+    never replaced -- Save, Save as, Import and Rename refuse it by name."""
+    _write(tmp_path, "mine")
+    linked, gone, outside = _links(tmp_path)
+    before = outside.read_text(encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        _readable, unreadable = editor.user_theme_listing()
+        assert unreadable == {"gone": "not a regular file", "linked": "not a regular file"}
+        for name in ("linked", "gone"):
+            app.notify.reset_mock()
+            editor.save_as(name)
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            app.notify.reset_mock()
+            editor.query_one("#settings-theme-name", Input).value = name
+            await pilot.pause()
+            editor.on_save_theme()
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            app.notify.reset_mock()
+            assert editor.rename_user_theme("mine", name) is False
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            source = tmp_path.parent / f"import_{name}.toml"
+            source.write_text(toml.dumps({"theme": {"name": name}, "colors": MINE}), encoding="utf-8")
+            app.notify.reset_mock()
+            assert editor.import_theme(str(source)) is None
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+        _links_untouched(linked, gone, outside, before)
+        assert (tmp_path / "mine.toml").exists()
