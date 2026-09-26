@@ -16398,6 +16398,56 @@ the guard. Beware assertions guarded by more than one constant: clamped or
 precisely the shape that makes a mutation look like a valid control while being
 inert.
 
+## A Tests/UI failure can be caused by adding a config section, not by your feature
+
+**Incident (2026-09-22, PR #2807).** The UI Fast Lane went red on one PR and
+green on five siblings at the same `dev` base. Four tests failed, all with
+`RecoveryRequired: raw_source_selection_changed`, in
+`test_research_mode_strip.py` and `test_first_run_wizard_cancel_route.py`.
+The PR mounted a widget in `AppFooterStatus`, which **every screen composes**,
+and the failing tests were screen-navigation tests. The obvious causal story
+was right there, and it was wrong.
+
+The traceback's innermost application frame is `app.py`'s module scope --
+`APP_CONFIG = load_settings()` -- so the failure happens while
+`tldw_chatbook.app` is being **imported**, long before any screen mounts.
+`Tests/UI/conftest.py`'s autouse `_disable_model_catalog_refresh` is what
+first imports it (via `monkeypatch.setattr("tldw_chatbook.app...")`). By then
+the test has its own profile, while the `config` module is still bound to the
+session profile, so that load opens a bound config operation admission
+refuses. Instrumenting `_participant_state` showed it plainly: owner `config`,
+`state.selected` = the session profile, `binding[1]` = the per-test profile.
+
+The part worth remembering is what actually flipped the switch. The only
+production change in the PR that mattered was **seven lines of `[tamagotchi]`
+added to `CONFIG_TOML_CONTENT`** -- the shipped template. Removing just that
+block made the four tests pass. And the section's *content* is irrelevant:
+adding a dummy
+
+```toml
+[zzz_probe_section]
+enabled = false
+```
+
+to the template on otherwise-unmodified `dev` reproduces the identical four
+failures. Whether these tests pass depends on whether `load_settings()` still
+needs the config file at app-import time, and a new top-level section crosses
+that threshold.
+
+`Tests/UI/conftest.py` already carries the remedy -- `install_config_source`,
+applied to a hand-listed set of files -- so the fix is two more entries. Note
+the list cannot be generalised away: applying it to every file rebinds the
+config module before the test body runs, which breaks tests that select their
+own profile *inside* the body (`test_profile_owned_settings_paths.py`, measured
+as one new failure across the 851-test census).
+
+**What to do.** If a Tests/UI slice fails with `raw_source_selection_changed`,
+read the traceback for an `app.py` `<module>` frame before believing any story
+about screens or widgets. Then check whether your PR touches
+`CONFIG_TOML_CONTENT`: if it adds a section, reproduce with a dummy section on
+clean `dev` before touching your feature. Two green runs -- feature commit
+alone green, dummy section on `dev` red -- settle it in about five minutes and
+stop you from redesigning something that was never broken.
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`

@@ -1853,11 +1853,19 @@ class BaseEvalRunner(ABC):
             return False
 
     def _is_valid_xml(self, text: str) -> bool:
-        """Check if text is valid XML."""
-        try:
-            import xml.etree.ElementTree as ET
+        """Check if text is valid XML.
 
-            ET.fromstring(text.strip())
+        defusedxml, not stdlib ElementTree: `text` is MODEL OUTPUT, so a
+        poisoned corpus document can choose the XML the model emits. A
+        billion-laughs payload exhausts memory *during* a stdlib parse,
+        which `except Exception` cannot catch; defusedxml refuses at the
+        DTD and raises `EntitiesForbidden` (a `ValueError`), so the answer
+        is correctly "not valid XML".
+        """
+        try:
+            from defusedxml.ElementTree import fromstring
+
+            fromstring(text.strip())
             return True
         except Exception:
             return False

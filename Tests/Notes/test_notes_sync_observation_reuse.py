@@ -607,3 +607,40 @@ async def test_close_drops_the_reuse_cache(world: _World) -> None:
     assert world.adapter._observation_reuse
     world.adapter.close()
     assert not world.adapter._observation_reuse
+
+
+# ---------------------------------------------------------------------------
+# Cancellation: a pass abandoned mid-flight must leave no orphan bundle.
+# ---------------------------------------------------------------------------
+
+
+async def test_cancelled_observe_root_leaves_no_orphan_bundle(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An abandoned pass must not retain an observation bundle.
+
+    Every ``release_observation`` call site guards its ``finally`` on a value
+    derived from ``observe_root``'s return, so a pass cancelled before it
+    returns has no owner. Registering the bundle before the final await left
+    the token behind forever; eight of those exhausted the capacity limit and
+    wedged every root for the rest of the process.
+    """
+
+    real_to_thread = asyncio.to_thread
+
+    async def cancel_during_reuse_rebuild(func, /, *args, **kwargs):
+        if getattr(func, "__name__", "") == "build_reuse":
+            raise asyncio.CancelledError
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", cancel_during_reuse_rebuild)
+
+    for _ in range(runtime_module._OBSERVATION_BUNDLE_LIMIT):
+        with pytest.raises(asyncio.CancelledError):
+            await world.adapter.observe_root(world.root)
+
+    assert world.adapter._bundles == {}
+
+    monkeypatch.setattr(asyncio, "to_thread", real_to_thread)
+    # The root still plans: capacity was never consumed by the abandoned passes.
+    await _observe(world.adapter, world.root)

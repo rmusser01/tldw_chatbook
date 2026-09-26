@@ -125,6 +125,27 @@ def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, reques
         "test_personas_persona_visual_pack.py",
         "test_personas_visual_identity_pack.py",
         "test_personas_expression_generate.py",
+        # The line below is what first imports `tldw_chatbook.app`, and its
+        # module body runs `load_settings()`. These two reach that import with
+        # a per-test profile already selected but the `config` module still
+        # bound to the SESSION profile, so the load opens a bound config
+        # operation admission refuses -- `raw_source_selection_changed`.
+        #
+        # Membership is NOT a property of what a test asserts, which is why
+        # this list reads as arbitrary: it depends on whether `load_settings()`
+        # still needs the config FILE at app-import time, and that flips
+        # whenever `CONFIG_TOML_CONTENT` gains a top-level section. Verified:
+        # adding a dummy `[zzz_probe_section]` to the template on unmodified
+        # dev turns these two red, with nothing else changed. So a PR that adds
+        # a config section will be told it broke Tests/UI when what it really
+        # did was cross this threshold.
+        #
+        # Deliberately not applied to every file: these consumers must follow
+        # the profile selected BEFORE the fixture runs. Tests that select their
+        # own profile inside the body (`test_profile_owned_settings_paths.py`)
+        # break if the config module is rebound here -- measured, 1 failure.
+        "test_research_mode_strip.py",
+        "test_first_run_wizard_cancel_route.py",
     }:
         # These source-bound consumers must follow this test's newly selected
         # real config, before the fixture lazily imports the application.
