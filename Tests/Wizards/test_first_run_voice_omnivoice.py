@@ -129,6 +129,7 @@ async def test_custom_edit_survives_omnivoice_via_a_third_preset(
     [
         ("engine_missing", vs.OMNIVOICE_ENGINE_MISSING_COPY, False, False),
         ("model_missing", vs.OMNIVOICE_MODEL_MISSING_COPY, True, False),
+        ("path_invalid", vs.OMNIVOICE_PATH_INVALID_COPY, False, False),
         ("ready", vs.OMNIVOICE_READY_COPY, False, True),
     ],
 )
@@ -354,6 +355,102 @@ async def test_state_read_import_error_means_engine_missing(monkeypatch) -> None
         assert str(status.renderable) == vs.OMNIVOICE_ENGINE_MISSING_COPY
         install = step.query_one("#setup-voice-omnivoice-install", Button)
         assert not (install.display and not install.disabled)
+
+
+async def test_commit_default_with_an_invalid_configured_root(monkeypatch) -> None:
+    _state(monkeypatch, "path_invalid")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        assert await step.commit() == (False, vs.OMNIVOICE_PATH_INVALID_COPY)
+
+
+async def test_a_superseded_state_check_cannot_overwrite_the_current_one(
+    monkeypatch,
+) -> None:
+    """Enter OmniVoice (slow check), leave, re-enter (fast check): the first
+    check finishing last must not replace the newer result."""
+    import threading
+
+    release = threading.Event()
+    calls: list = []
+
+    def state(*_a, **_k):
+        calls.append(1)
+        if len(calls) == 1:
+            release.wait(5)
+            return "ready"
+        return "model_missing"
+
+    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause(0.1)
+        await _select_omnivoice(step, pilot)
+        assert step._omnivoice_state == "model_missing"
+        release.set()
+        await pilot.pause(0.3)
+        assert step._omnivoice_state == "model_missing"
+        status = step.query_one("#setup-voice-omnivoice-status", Static)
+        assert str(status.renderable) == vs.OMNIVOICE_MODEL_MISSING_COPY
+
+
+async def test_a_stale_state_check_leaves_other_services_alone(monkeypatch) -> None:
+    import threading
+
+    release = threading.Event()
+
+    def state(*_a, **_k):
+        release.wait(5)
+        return "ready"
+
+    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause(0.1)
+        release.set()
+        await pilot.pause(0.3)
+        assert step._omnivoice_state is None
+
+
+async def test_an_older_sample_finishing_playback_keeps_the_newer_status(
+    monkeypatch,
+) -> None:
+    _state(monkeypatch, "ready")
+    playing = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def sample(*_a, **_k):
+        return vs.VoiceSampleResult(b"RIFF....WAVE", "audio/wav", "wav", True)
+
+    class SlowPlayer:
+        async def play(self, _path):
+            playing.set()
+            await finish.wait()
+            return True
+
+    monkeypatch.setattr(vs, "run_omnivoice_sample", sample)
+    step = _step()
+    host = _Host(step)
+    host.audio_player = SlowPlayer()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-test", Button).press()
+        await asyncio.wait_for(playing.wait(), timeout=2)
+        step._test_generation += 1  # a newer test/control change took over
+        step.query_one("#setup-voice-status", Static).update("newer")
+        finish.set()
+        await pilot.pause(0.2)
+        assert str(step.query_one("#setup-voice-status", Static).renderable) == "newer"
 
 
 async def test_commit_default_saves_omnivoice_with_the_sampled_seed(monkeypatch) -> None:

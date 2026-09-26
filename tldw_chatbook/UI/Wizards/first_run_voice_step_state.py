@@ -14,6 +14,7 @@ import httpx
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_SEED_LIMIT
 from tldw_chatbook.TTS.openai_compatible_config import (
     is_loopback_openai_compatible_endpoint,
     normalize_openai_authentication_mode,
@@ -334,8 +335,12 @@ async def run_voice_sample(
 
 OMNIVOICE_MODEL_ID = "omnivoice-int8hq"
 OMNIVOICE_VOICE_ID = "default"
-_OMNIVOICE_SEED_LIMIT = 2**31
 
+OMNIVOICE_PATH_INVALID_COPY = (
+    "Your OmniVoice model folder setting points to a missing or incomplete model. "
+    "Fix or clear [OmniVoiceSettings] model_root (or OMNIVOICE_MODEL_ROOT), then "
+    "run setup again from Settings ▸ Diagnostics ▸ Run Setup Wizard."
+)
 OMNIVOICE_ENGINE_MISSING_COPY = (
     'OmniVoice needs its local engine: pip install "tldw_chatbook[omnivoice_tts]", '
     "then run setup again from Settings ▸ Diagnostics ▸ Run Setup Wizard."
@@ -371,9 +376,9 @@ def choose_omnivoice_seed(
     Returns:
         A non-negative 31-bit integer seed.
     """
-    if type(existing) is int and 0 <= existing < _OMNIVOICE_SEED_LIMIT:
+    if type(existing) is int and 0 <= existing < OMNIVOICE_SEED_LIMIT:
         return existing
-    return randbelow(_OMNIVOICE_SEED_LIMIT)
+    return randbelow(OMNIVOICE_SEED_LIMIT)
 
 
 def build_omnivoice_save_event(

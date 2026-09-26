@@ -4293,6 +4293,9 @@ class VoiceSetupStep(SetupStep):
         self._test_in_progress_generation: int | None = None
         self._sample_audio_path: Path | None = None
         self._omnivoice_state: str | None = None
+        # Bumped per state check and on leaving OmniVoice; a check applies
+        # only while it is still the latest one (a stale read is dropped).
+        self._omnivoice_state_generation = 0
         self._omnivoice_installing = False
         self._omnivoice_report: Any = None
         self._omnivoice_seed: int | None = None
@@ -4568,8 +4571,14 @@ class VoiceSetupStep(SetupStep):
                     voice_state.OMNIVOICE_CHECKING_COPY
                 )
                 self._refresh_sample_state()
-            self._load_omnivoice_state()
+            self._request_omnivoice_state()
+        else:
+            self._omnivoice_state_generation += 1
         self._invalidate_sample_evidence()
+
+    def _request_omnivoice_state(self) -> None:
+        self._omnivoice_state_generation += 1
+        self._load_omnivoice_state(self._omnivoice_state_generation)
 
     @work(
         thread=True,
@@ -4577,7 +4586,7 @@ class VoiceSetupStep(SetupStep):
         exclusive=True,
         exit_on_error=False,
     )
-    def _load_omnivoice_state(self) -> None:
+    def _load_omnivoice_state(self, generation: int) -> None:
         model_root = self._omnivoice_settings().get("model_root")
         try:
             state = omnivoice_setup_state(
@@ -4590,13 +4599,22 @@ class VoiceSetupStep(SetupStep):
         except Exception:
             logger.opt(exception=True).warning("OmniVoice setup state read failed")
             state = "model_missing"
-        self.app.call_from_thread(self._apply_omnivoice_state, state)
+        self.app.call_from_thread(self._apply_checked_omnivoice_state, generation, state)
+
+    def _apply_checked_omnivoice_state(self, generation: int, state: str) -> None:
+        if (
+            generation != self._omnivoice_state_generation
+            or self._preset != voice_state.VOICE_PRESET_OMNIVOICE
+        ):
+            return
+        self._apply_omnivoice_state(state)
 
     def _apply_omnivoice_state(self, state: str, message: str | None = None) -> None:
         self._omnivoice_state = state
         copy = {
             "engine_missing": voice_state.OMNIVOICE_ENGINE_MISSING_COPY,
             "model_missing": voice_state.OMNIVOICE_MODEL_MISSING_COPY,
+            "path_invalid": voice_state.OMNIVOICE_PATH_INVALID_COPY,
             "ready": voice_state.OMNIVOICE_READY_COPY,
         }[state]
         try:
@@ -4618,7 +4636,10 @@ class VoiceSetupStep(SetupStep):
             install.disabled = state != "model_missing" or self._omnivoice_installing
         except NoMatches:
             return
-        self._refresh_sample_state()
+        # Test and Hear is shared with the other services; only OmniVoice's
+        # own state may drive it.
+        if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
+            self._refresh_sample_state()
 
     @on(Button.Pressed, "#setup-voice-omnivoice-install")
     def _on_omnivoice_install(self, event: Button.Pressed) -> None:
@@ -4700,9 +4721,10 @@ class VoiceSetupStep(SetupStep):
         except NoMatches:
             pass
         if error is not None:
+            self._omnivoice_state_generation += 1  # drop any pre-install check
             self._apply_omnivoice_state("model_missing", message=error)
             return
-        self._load_omnivoice_state()
+        self._request_omnivoice_state()
 
     @on(InstallProgressed)
     def _omnivoice_install_progressed(self, event: InstallProgressed) -> None:
@@ -4821,7 +4843,7 @@ class VoiceSetupStep(SetupStep):
         super().on_show()
         self._refresh_sample_state()
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
-            self._load_omnivoice_state()
+            self._request_omnivoice_state()
 
     def _cancel_active_sample(self) -> None:
         if self._test_in_progress_generation is None:
@@ -5080,25 +5102,37 @@ class VoiceSetupStep(SetupStep):
         self, generation: int, text: str, speed: float, seed: int
     ) -> None:
         try:
-            result = await voice_state.run_omnivoice_sample(text, speed=speed, seed=seed)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            if generation == self._test_generation:
+            try:
+                result = await voice_state.run_omnivoice_sample(
+                    text, speed=speed, seed=seed
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if generation == self._test_generation:
+                    self._test_in_progress_generation = None
+                    self._update_voice_status_text(
+                        voice_state.OMNIVOICE_SAMPLE_FAILED_COPY
+                    )
+                    self._refresh_sample_state()
+                return
+            if generation != self._test_generation:
+                return
+            played = await self._play_sample(result)
+            # A newer test (or a control change) during playback owns the
+            # status now; this older result must not overwrite it.
+            if generation != self._test_generation:
+                return
+            self._test_in_progress_generation = None
+            self._update_voice_status_text(
+                "Verified. The sample is ready to hear."
+                if played
+                else "Verified, playback failed. Retry playback/test."
+            )
+            self._refresh_sample_state()
+        finally:
+            if self._test_in_progress_generation == generation:
                 self._test_in_progress_generation = None
-                self._update_voice_status_text(voice_state.OMNIVOICE_SAMPLE_FAILED_COPY)
-                self._refresh_sample_state()
-            return
-        if generation != self._test_generation:
-            return
-        self._test_in_progress_generation = None
-        played = await self._play_sample(result)
-        self._update_voice_status_text(
-            "Verified. The sample is ready to hear."
-            if played
-            else "Verified, playback failed. Retry playback/test."
-        )
-        self._refresh_sample_state()
 
     async def commit(self) -> tuple[bool, str]:
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
@@ -5149,6 +5183,8 @@ class VoiceSetupStep(SetupStep):
             return False, voice_state.OMNIVOICE_CHECKING_COPY
         if self._omnivoice_state == "engine_missing":
             return False, voice_state.OMNIVOICE_ENGINE_MISSING_COPY
+        if self._omnivoice_state == "path_invalid":
+            return False, voice_state.OMNIVOICE_PATH_INVALID_COPY
         if self._omnivoice_state != "ready":
             return False, voice_state.OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY
         request_id = self._next_save_request_id

@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.omnivoice_sampler import (
     OmniVoiceSamplingCancelled,
     run_diffusion_sampling,
 )
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_SEED_LIMIT
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.optional_deps import check_dependency, require_dependency
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -48,7 +49,7 @@ _FRAME_RATE = 75  # one codec frame = 320 samples at 24 kHz
 _HOP_LENGTH = _SAMPLE_RATE // _FRAME_RATE  # samples per codec frame
 _RTF_HEADROOM = 8.0  # observed worst case ~7; timeout budget multiplier
 _MIN_TIMEOUT_S = 30.0  # floor so short lines never race fixed per-step overhead
-_SEED_LIMIT = 2**31  # per-request seeds are non-negative 31-bit ints
+_SEED_LIMIT = OMNIVOICE_SEED_LIMIT  # per-request seeds are non-negative 31-bit ints
 
 # Post-processing shape (upstream generate() conventions, seconds/samples at 24 kHz)
 _EDGE_TRIM_MARGIN_S = 0.1  # silence retained around the first/last voiced sample
@@ -210,6 +211,9 @@ def managed_model_root() -> Path | None:
     Mirrors the parakeet managed-first lookup: only the synchronous,
     credential-free ``list_installed()`` surface; every failure (including a
     missing store) means "nothing managed yet", not a hard error.
+
+    Returns:
+        The installed artifact directory, or None when nothing is managed.
     """
     try:
         from tldw_chatbook.Model_Artifacts.service import ArtifactError

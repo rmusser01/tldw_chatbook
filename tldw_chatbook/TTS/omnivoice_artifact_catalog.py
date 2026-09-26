@@ -25,9 +25,12 @@ from tldw_chatbook.Model_Artifacts.service import (
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import (
         AcquisitionProgress,
+        ArtifactAcquisitionService,
         ArtifactSourceMap,
+        CredentialResolver,
         PreflightReport,
     )
+    from tldw_chatbook.Model_Artifacts.service import ModelArtifactService
 
 
 OMNIVOICE_ONNX_REPOSITORY = "ct03/omnivoice-onnx-int8hq"
@@ -216,7 +219,11 @@ def omnivoice_onnx_source_map() -> ArtifactSourceMap:
     }
 
 
-OmniVoiceSetupState = Literal["engine_missing", "model_missing", "ready"]
+OmniVoiceSetupState = Literal["engine_missing", "model_missing", "path_invalid", "ready"]
+
+# Per-request and saved OmniVoice seeds are non-negative 31-bit ints; the
+# engine, request admission and the setup wizard all share this bound.
+OMNIVOICE_SEED_LIMIT = 2**31
 
 
 def missing_omnivoice_modules() -> list[str]:
@@ -258,7 +265,9 @@ def omnivoice_setup_state(
         managed_root: Managed-artifact lookup (defaults to the engine's).
 
     Returns:
-        ``engine_missing``, ``model_missing`` or ``ready``.
+        ``engine_missing``; ``path_invalid`` when an explicit root (env or
+        config) fails its checks — it keeps winning over a managed install,
+        so a download cannot help; ``model_missing``; or ``ready``.
     """
     from tldw_chatbook.TTS.backends.omnivoice import (
         OmniVoiceModelError,
@@ -269,14 +278,17 @@ def omnivoice_setup_state(
 
     if (missing_modules or missing_omnivoice_modules)():
         return "engine_missing"
-    # Same precedence as TTS_Backends: the environment variable beats config.
-    configured = os.environ.get("OMNIVOICE_MODEL_ROOT") or model_root or ""
+    # Same resolution as TTS_Backends (os.getenv with the config default): a
+    # set-but-empty environment variable overrides config and means "managed".
+    configured = os.environ.get("OMNIVOICE_MODEL_ROOT", model_root or "")
     try:
         resolve_model_root(
             {"OMNIVOICE_MODEL_ROOT": configured},
             managed_root or managed_model_root,
         )
-    except (OmniVoiceModelError, OmniVoiceNotConfiguredError):
+    except OmniVoiceModelError:
+        return "path_invalid" if configured else "model_missing"
+    except OmniVoiceNotConfiguredError:
         return "model_missing"
     return "ready"
 
@@ -287,6 +299,12 @@ class OmniVoiceCatalog:
     def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
         """Return the OmniVoice descriptor for its exact reference.
 
+        Args:
+            ref: The artifact reference being looked up.
+
+        Returns:
+            The curated OmniVoice ONNX descriptor.
+
         Raises:
             KeyError: For any other reference.
         """
@@ -295,7 +313,11 @@ class OmniVoiceCatalog:
         return omnivoice_onnx_descriptor()
 
 
-def _acquisition(core, credential_resolver, free_bytes_probe):
+def _acquisition(
+    core: "ModelArtifactService | None",
+    credential_resolver: "CredentialResolver | None",
+    free_bytes_probe: "Callable[[Path], int] | None",
+) -> "tuple[ModelArtifactService, ArtifactAcquisitionService]":
     from tldw_chatbook.Model_Artifacts.acquisition import (
         ArtifactAcquisitionService,
         EnvConfigCredentialResolver,
@@ -314,9 +336,17 @@ def _acquisition(core, credential_resolver, free_bytes_probe):
 
 
 async def run_omnivoice_preflight(
-    *, core=None, credential_resolver=None, free_bytes_probe=None
+    *,
+    core: "ModelArtifactService | None" = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: "Callable[[Path], int] | None" = None,
 ) -> "PreflightReport":
     """Plan the OmniVoice model install (sizes, disk, consent data).
+
+    Args:
+        core: Artifact store service (defaults to the managed store).
+        credential_resolver: Download credentials (defaults to env/config).
+        free_bytes_probe: Free-disk probe override (tests).
 
     Returns:
         The preflight report the consent dialog renders.
@@ -332,12 +362,19 @@ async def run_omnivoice_preflight(
 async def run_omnivoice_provision(
     report: "PreflightReport",
     *,
-    core=None,
-    credential_resolver=None,
-    free_bytes_probe=None,
+    core: "ModelArtifactService | None" = None,
+    credential_resolver: "CredentialResolver | None" = None,
+    free_bytes_probe: "Callable[[Path], int] | None" = None,
     progress: "Callable[[AcquisitionProgress], None] | None" = None,
 ) -> Path:
     """Download, verify and activate the OmniVoice model after consent.
+
+    Args:
+        report: The consented preflight report from ``run_omnivoice_preflight``.
+        core: Artifact store service (defaults to the managed store).
+        credential_resolver: Download credentials (defaults to env/config).
+        free_bytes_probe: Free-disk probe override (tests).
+        progress: Callback receiving download/verify progress.
 
     Returns:
         The installed artifact directory.

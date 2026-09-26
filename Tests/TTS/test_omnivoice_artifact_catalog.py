@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.TTS import omnivoice_artifact_catalog as cat
+
 
 def test_descriptor_shape() -> None:
     from tldw_chatbook.TTS import omnivoice_artifact_catalog as cat
@@ -87,8 +89,6 @@ def test_registered_in_the_shared_curated_registry() -> None:
     )
 
 
-from tldw_chatbook.TTS import omnivoice_artifact_catalog as cat
-
 
 def _tree(root: Path) -> Path:
     for rel in cat.OMNIVOICE_ONNX_REQUIRED_PATHS:
@@ -163,15 +163,34 @@ class TestOmnivoiceSetupState:
         monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(broken_env_root))
         assert cat.omnivoice_setup_state(
             str(configured_root), missing_modules=list, managed_root=lambda: None
-        ) == "model_missing"
+        ) == "path_invalid"
 
-    def test_setup_state_broken_model_root_is_model_missing(self, tmp_path: Path) -> None:
+    def test_setup_state_broken_model_root_is_path_invalid(self, tmp_path: Path) -> None:
+        """An explicit root keeps winning over a managed install, so a broken
+        one must not be reported as a downloadable missing model -- even
+        when a complete managed artifact is already installed."""
         partial = tmp_path / "partial"
         partial.mkdir()
+        managed = _tree(tmp_path / "managed")
         for model_root in (str(tmp_path / "does-not-exist"), str(partial), "bad\x00root"):
             assert cat.omnivoice_setup_state(
-                model_root, missing_modules=list, managed_root=lambda: None
-            ) == "model_missing"
+                model_root, missing_modules=list, managed_root=lambda: managed
+            ) == "path_invalid"
+
+    def test_setup_state_empty_env_overrides_config_like_the_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TTS_Backends uses os.getenv(name, configured): a set-but-empty
+        OMNIVOICE_MODEL_ROOT beats a configured root and means "managed"."""
+        configured = _tree(tmp_path / "configured")
+        monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", "")
+        assert cat.omnivoice_setup_state(
+            str(configured), missing_modules=list, managed_root=lambda: None
+        ) == "model_missing"
+        managed = _tree(tmp_path / "managed")
+        assert cat.omnivoice_setup_state(
+            str(configured), missing_modules=list, managed_root=lambda: managed
+        ) == "ready"
 
 
 def test_catalog_serves_only_the_omnivoice_descriptor() -> None:
