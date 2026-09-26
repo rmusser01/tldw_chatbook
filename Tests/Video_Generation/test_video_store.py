@@ -2013,3 +2013,30 @@ def test_evicted_pairs_reported_for_tombstoning(tmp_path):
     _write(store, "msg-9", "clip-x")
     report = store.enforce_retention()
     assert report.evicted == (("msg-9", "clip-x"),)
+
+
+def test_published_video_bytes_are_fsynced_before_the_rename(store, monkeypatch):
+    """The inode `_atomic_publish` renames into place must be fsynced first.
+
+    `flush()` only reaches the page cache. This store's model is "the file IS
+    the artefact", so without the fsync a crash between the rename and
+    writeback leaves a published video of zero or partial length under a name
+    the store reports as complete.
+    """
+    synced: list[tuple[int, int]] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd):
+        info = os.fstat(fd)
+        synced.append((info.st_dev, info.st_ino))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    # `_atomic_publish` directly: `save()`'s surrounding lifetime bookkeeping
+    # needs the Backup_Recovery profile gate, which a clean worktree refuses.
+    target = store._root / "msg-fsync" / "a-red-dragon.mp4"
+    store._atomic_publish(b"video-bytes", target, expected_size=len(b"video-bytes"))
+
+    published = target.stat()
+    assert (published.st_dev, published.st_ino) in synced
+    assert target.read_bytes() == b"video-bytes"

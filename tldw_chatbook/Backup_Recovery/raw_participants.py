@@ -899,7 +899,29 @@ def _file(operation, path, mode):
             if not text.closed or not native.closed:
                 state.uncertain = True
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+            # Bookkeeping for a wrapper that is now provably closed, and it
+            # must not hang off the fsync below. `_retire` gates on
+            # `state.files`, so a writeback error leaving a closed wrapper
+            # listed as live permanently refuses to release this operation's
+            # pins and leases -- and it does so without setting `uncertain`,
+            # i.e. outside the module's one deliberate fail-closed signal.
+            # Rejecting an unprovable write is intended; wedging retirement on
+            # stale bookkeeping is not.
             state.files.remove(text)
+            if mode in {"w", "a"}:
+                # Durability, not atomicity. Closing the wrapper only hands the
+                # bytes to the OS; `_replace` then publishes a name that can
+                # point at an inode with no committed blocks while the old
+                # content is already unlinked -- a crash there loses BOTH. Every
+                # writer through this helper is a whole-file read-modify-write
+                # of a single store (note templates, prompt history, eval
+                # config), so the loss is the whole store, not one record.
+                # Raising here is the right direction: an unprovable write must
+                # not be published.
+                # ponytail: file fsync only, no parent-directory fsync -- that
+                # residual loses at most the newest publish (the destination
+                # keeps its previous, intact inode), not the file's contents.
+                os.fsync(fd)
     finally:
         # closefd=False makes descriptor lifetime independent of wrapper GC.
         if native is not None and not native.closed:
