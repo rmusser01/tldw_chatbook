@@ -450,13 +450,13 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
 | Phase | Parent | Depends on | Closes | Absorbs or links |
 |---|---|---|---|---|
 | Root-cause fixes | TASK-33001 | — | C7(a); C8(1) data; C3 double append; C8(3); C1 first-run gap; C1(b) convergence (D1) | absorbs task-14812 |
-| Field table and honest copy | TASK-33002 | — | C1(a); C3 pipe dump; C7(d); label drift | absorbs task-486 |
-| Density tokens and CSS root fixes | TASK-33003 | — | C5(a–c); C8(2); C8(4) | absorbs task-25890; covers task-32465 for these surfaces only |
+| Field table and honest copy | TASK-33002 | Root-cause fixes | C1(a); C3 pipe dump; C7(d); label drift | absorbs task-486 |
+| Density tokens and CSS root fixes | TASK-33003 | — | C5(a–c); C8(2); C8(4) | absorbs task-25890 (task-32465 stays open: these surfaces render no radio groups) |
 | Switch model | TASK-33004 | Root-cause fixes; Field table; Density tokens | C6; C7(b); C7(a) in the UI; D3 | absorbs task-338, task-32859, task-194 |
-| Shared readiness evidence and key check | TASK-33005 | — | C2; C3 labelling (D2) | respects task-24454 and task-32804.3; coordinates with task-32806.1 (not absorbed) |
-| Chat settings layout | TASK-33006 | Field table; Density tokens; Switch model | C8(1) in the UI; C1(b) "Use saved defaults" | new work (task-32864 excludes this modal) |
-| Settings ▸ Providers & Models reorder | TASK-33007 | Field table; Density tokens; Shared readiness evidence | C4; C1(a) "Applies to" row | absorbs task-31202 and the card slice of task-1378 |
-| First run, connect in place | TASK-33008 | Switch model; Settings reorder | C1 recovery dead end (D4) | absorbs task-32572; then run task-1379 |
+| Shared readiness evidence and key check | TASK-33005 | Root-cause fixes; Field table; Switch model | C2; C3 labelling (D2) | respects task-24454 and task-32804.3; coordinates with task-32806.1 (not absorbed) |
+| Chat settings layout | TASK-33006 | Root-cause fixes; Field table; Density tokens; Switch model; Shared readiness evidence | C8(1) in the UI; C1(b) "Use saved defaults" | new work (task-32864 excludes this modal) |
+| Settings ▸ Providers & Models reorder | TASK-33007 | Root-cause fixes; Field table; Density tokens; Switch model; Shared readiness evidence | C4; C1(a) "Applies to" row | absorbs task-31202 and the card slice of task-1378 |
+| First run, connect in place | TASK-33008 | Root-cause fixes; Switch model; Shared readiness evidence; Settings reorder | C1 recovery dead end (D4) | absorbs task-32572; then run task-1379 |
 
 **Root-cause fixes.** No layout change.
 - Guard `chat_defaults.model` by provider (rule 1). Add the missing test for
@@ -572,7 +572,13 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
    "when supported", but every editable field on the quick surface must be in
    the quick mask (ADR-095 amendment), and D3 added only `max_tokens`.
    Mockup (a) already leaves Thinking out.
-4. **task-194 closes with Switch model.** task-194 is about popover display
+4. **Shared readiness evidence waits for Root-cause fixes, Field table and
+   Switch model.** Its key check writes the labelled result rows that Field
+   table builds, and its local probe runs when the switcher opens. Chat settings
+   layout and Settings reorder then wait for it, because both show its
+   readiness vocabulary. The table above is generated from the parent tasks'
+   `dependencies:` metadata, which is the authority for ordering.
+5. **task-194 closes with Switch model.** task-194 is about popover display
    names, and Switch model rebuilds the popover's rows. Field table fixes the
    chips.
 
