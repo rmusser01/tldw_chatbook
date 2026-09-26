@@ -778,3 +778,178 @@ async def test_custom_hosted_send_composes_reasoning_effort(
     assert "chat_template_kwargs" not in payload
     assert payload["min_p"] == 0.05
     assert payload["top_k"] == 40
+
+
+# --- Stage 4: continuation round-trips for engine-driven keys (Qodo #3) ---
+
+
+@pytest.mark.asyncio
+async def test_custom_hosted_resolution_derives_continuation_protocol() -> None:
+    """The engine swap's resolution carries the record's continuation
+    protocol, so a custom-hosted session enters the restore path like the
+    legacy kimi/zai sessions instead of skipping the protocol check."""
+    resolved = await _resolve(_entry_config())
+    assert resolved.execution_key == "custom-hosted"
+    assert resolved.continuation_protocol == "chat_completions"
+
+
+def test_engine_kwargs_forward_continuation_checkpoints() -> None:
+    """Qodo finding 3 (ADR-179): the prepared kwargs projection forwards
+    provider_continuations for engine-driven execution keys (the kimi/zai
+    gateway continuation test pattern, run against the databricks preset).
+
+    NOTE: the custom-hosted family shares this forwarding code path (the
+    same ``_ENGINE_EXECUTION_KEYS`` membership drives it), but its FULL
+    gateway restore is blocked by a provider-spelling seam outside this
+    wave: the engine writes checkpoints under ``record.key``
+    ("custom-hosted", the ``_PAIRINGS`` spelling) while the gateway's
+    restore-target check compares the normalized underscore spelling
+    (``provider_config_key`` -> "custom_hosted"). The engine-level
+    custom-hosted round-trip is pinned below instead; see the Qodo fix-wave
+    report.
+    """
+    from tldw_chatbook.Chat.console_history_budget import (
+        ProviderContinuationSidecar,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRestoreTarget,
+    )
+
+    provider = "databricks"
+    model = "databricks-gpt-4o"
+    base_url = "https://dbc-1.cloud.databricks.com/openai/v1"
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": provider,
+            "protocol": "chat_completions",
+            "model": model,
+            "api_base_url": base_url,
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "answer",
+                    "reasoning_blocks": [],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=base_url,
+        model=model,
+        ready=True,
+        readiness_key=provider,
+        execution_key=provider,
+        api_key="PRIVATE-API-KEY-CANARY",
+        streaming=True,
+        continuation_protocol="chat_completions",
+    )
+    gateway = ConsoleProviderGateway(environ={})
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        [
+            {"_owner": "a1", "role": "assistant", "content": "answer"},
+            {"_owner": "u2", "role": "user", "content": "next"},
+        ],
+        continuation_target=ContinuationRestoreTarget(
+            provider=provider,
+            model=model,
+            protocol="chat_completions",
+            api_base_url=base_url,
+        ),
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_owner_key="_owner",
+    )
+    kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+
+    forwarded = kwargs["provider_continuations"]
+    assert isinstance(forwarded, list)
+    assert len(forwarded) == 1
+    assert forwarded[0].provider == "databricks"
+    assert forwarded[0].state == "complete"
+    assert "PRIVATE-API-KEY-CANARY" not in str(forwarded)
+
+
+def test_custom_hosted_handler_round_trips_continuation_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The custom-hosted engine handler EMITS a canonical checkpoint: a
+    tool-call turn round-trips through the canonical format under the
+    record's key/protocol.
+
+    NOTE (Qodo fix wave): restoring a custom-hosted checkpoint end-to-end
+    is blocked by a pre-existing provider-spelling seam, NOT by the
+    forwarding fix: the canonical checkpoint provider is the hyphenated
+    ``record.key`` ("custom-hosted", the ``_PAIRINGS`` spelling), while
+    ``canonical_connection_identity`` only accepts underscore spellings,
+    so ``validate_continuation_restore`` rejects every custom-hosted
+    checkpoint before the gateway comparison (which itself normalizes to
+    "custom_hosted") is even reached. The gateway forwarding itself is
+    exercised end-to-end for the databricks preset above; custom-hosted
+    rides the same ``_ENGINE_EXECUTION_KEYS`` membership (asserted in the
+    Stage 2 constant test). Reported to the controller in the fix-wave
+    report.
+    """
+    import tldw_chatbook.LLM_Calls.hosted_provider_engine as engine
+
+    canned = {
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_time",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+    }
+
+    def fake_post(**kwargs: object) -> object:
+        return canned
+
+    monkeypatch.setattr(
+        engine, "resolve_hosted_request", lambda record, **_kwargs: _resolution()
+    )
+    monkeypatch.setattr(engine, "owned_json_post", fake_post)
+    handler = build_hosted_chat_handler(CUSTOM_HOSTED)
+    result = handler(
+        input_data=_messages(),
+        api_key="entry-key",
+        api_key_resolved=True,
+        streaming=False,
+    )
+    checkpoint = result.provider_continuation
+    assert checkpoint is not None
+    assert checkpoint.provider == "custom-hosted"
+    assert checkpoint.protocol == "chat_completions"
+    assert checkpoint.state == "active"
+    assert checkpoint.checkpoint_revision == 1
+    assert len(checkpoint.rounds) == 1
+    assert checkpoint.rounds[0].calls[0].name == "get_time"

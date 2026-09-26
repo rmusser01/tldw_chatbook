@@ -4348,11 +4348,19 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        engine_record = RECORDS_BY_KEY.get(identity.execution_key)
+        # Engine-driven presets derive the protocol from their record
+        # (Qodo finding 3, ADR-179): without it the prepare-time restore
+        # check was skipped and checkpoints never round-tripped.
         continuation_protocol = (
             "chat_completions"
             if identity.execution_key in {"moonshot", "zai"}
             else api_mode
             if identity.execution_key == "deepseek"
+            else engine_record.continuation_protocol
+            if engine_record is not None
+            and engine_record.engine_driven
+            and engine_record.continuation_protocol is not None
             else None
         )
         request_timeout: float | None = None
@@ -6894,6 +6902,17 @@ class ConsoleProviderGateway:
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
             kwargs["api_base_url"] = resolution.base_url or None
+        if (
+            resolution.execution_key in _ENGINE_EXECUTION_KEYS
+            and request.continuation_groups
+        ):
+            # Engine-driven presets (ADR-179, Qodo finding 3): continuation
+            # checkpoints ride to the handler for every engine key (the
+            # custom-hosted branch above cannot carry them on its own), so a
+            # restored round-trip reaches the engine's continuation seam.
+            kwargs["provider_continuations"] = [
+                group.checkpoint for group in request.continuation_groups
+            ]
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod

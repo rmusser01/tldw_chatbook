@@ -1870,6 +1870,17 @@ def test_provider_resolution_rejects_incoherent_thinking_capability(
             "chat_completions",
         ),
         (
+            # Qodo finding 3 (ADR-179): engine-driven presets derive the
+            # continuation protocol from their registry record, so a
+            # Databricks round-trip restores checkpoints like kimi/zai.
+            "Databricks",
+            "databricks",
+            "databricks-gpt-4o",
+            "https://dbc-1.cloud.databricks.com",
+            None,
+            "chat_completions",
+        ),
+        (
             "ZAI",
             "zai",
             "glm-4.5",
