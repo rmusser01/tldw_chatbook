@@ -378,6 +378,7 @@ async def test_service_row_fits_at_80_columns(monkeypatch) -> None:
         painted = html.unescape(
             "".join(re.findall(r">([^<>]*)</text>", host.export_screenshot()))
         ).replace("\xa0", " ")
-        # Each service label must start legibly (clipping eats the tail).
-        for label in ("PocketTTS", "Official", "Custom", "OmniVoice"):
+        # Every service label paints whole — clipping would end it in "…".
+        for label in ("PocketTTS", "OpenAI", "Custom", "OmniVoice"):
             assert label in painted
+            assert f"{label[:6]}…" not in painted

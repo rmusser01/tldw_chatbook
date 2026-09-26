@@ -4336,11 +4336,11 @@ class VoiceSetupStep(SetupStep):
                     value=True,
                 )
                 yield SetupRadioButton(
-                    "Official OpenAI",
+                    "OpenAI",
                     id="setup-voice-preset-official",
                 )
                 yield SetupRadioButton(
-                    "Custom compatible",
+                    "Custom",
                     id="setup-voice-preset-custom",
                 )
                 yield SetupRadioButton("OmniVoice", id="setup-voice-preset-omnivoice")
@@ -4988,6 +4988,16 @@ class VoiceSetupStep(SetupStep):
 
     async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
         audio_player = getattr(self.app, "audio_player", None)
+        if audio_player is None:
+            # First run: no Speech screen has created the shared player yet
+            # (speech_playback_mixin creates it lazily the same way).
+            try:
+                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
+
+                audio_player = self.app.audio_player = AsyncAudioPlayer()
+            except Exception:
+                logger.debug("Voice sample player unavailable (category=playback)")
+                return False
         play = getattr(audio_player, "play", None)
         if not callable(play):
             return False

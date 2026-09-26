@@ -1109,6 +1109,49 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
 
 
 @pytest.mark.asyncio
+async def test_voice_playback_creates_the_app_audio_player_on_first_use(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """First run: no Speech screen has created app.audio_player yet."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    played: list = []
+
+    async def sample(*_args, **_kwargs):
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    class FakeAsyncPlayer:
+        async def play(self, path):
+            played.append(path)
+            return True
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.AsyncAudioPlayer", FakeAsyncPlayer
+    )
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+    assert getattr(app, "audio_player", None) is None
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause(0.1)
+
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert "playback failed" not in status
+        assert isinstance(app.audio_player, FakeAsyncPlayer)
+        assert played == [step._sample_audio_path]
+
+
+@pytest.mark.asyncio
 async def test_voice_playback_cancellation_cleans_new_file(
     monkeypatch,
     tmp_path,

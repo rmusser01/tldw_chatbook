@@ -1091,6 +1091,12 @@ SmartContentTree Tree > .selected-node {
     padding: $ds-space-0 $ds-space-2 $ds-space-1 $ds-space-2;
 }
 
+/* A bare Vertical defaults to 1fr, which collapses to one row inside the
+ * scrolling step body and clips the install button and progress bar. */
+#setup-voice-omnivoice-panel {
+    height: auto;
+}
+
 .setup-voice-segmented {
     layout: horizontal;
     height: $ds-size-3;
