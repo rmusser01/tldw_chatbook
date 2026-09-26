@@ -316,6 +316,46 @@ async def test_commit_default_without_model_is_refused(monkeypatch) -> None:
         assert await step.commit() == (False, vs.OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY)
 
 
+async def test_commit_default_names_the_engine_when_the_engine_is_missing(
+    monkeypatch,
+) -> None:
+    _state(monkeypatch, "engine_missing")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        assert await step.commit() == (False, vs.OMNIVOICE_ENGINE_MISSING_COPY)
+
+
+async def test_commit_default_while_state_is_still_checking(monkeypatch) -> None:
+    _state(monkeypatch, "ready")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step._omnivoice_state = None
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        assert await step.commit() == (False, vs.OMNIVOICE_CHECKING_COPY)
+
+
+async def test_state_read_import_error_means_engine_missing(monkeypatch) -> None:
+    """A broken engine import must not offer a model download that can't help."""
+
+    def broken(*_a, **_k):
+        raise ImportError("onnxruntime is broken")
+
+    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", broken)
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        status = step.query_one("#setup-voice-omnivoice-status", Static)
+        assert str(status.renderable) == vs.OMNIVOICE_ENGINE_MISSING_COPY
+        install = step.query_one("#setup-voice-omnivoice-install", Button)
+        assert not (install.display and not install.disabled)
+
+
 async def test_commit_default_saves_omnivoice_with_the_sampled_seed(monkeypatch) -> None:
     _state(monkeypatch, "ready")
     seeds: list = []

@@ -4583,6 +4583,10 @@ class VoiceSetupStep(SetupStep):
             state = omnivoice_setup_state(
                 model_root if isinstance(model_root, str) else None
             )
+        except ImportError:
+            # The engine's own imports are broken; a model download can't help.
+            logger.opt(exception=True).warning("OmniVoice setup state read failed")
+            state = "engine_missing"
         except Exception:
             logger.opt(exception=True).warning("OmniVoice setup state read failed")
             state = "model_missing"
@@ -5014,7 +5018,11 @@ class VoiceSetupStep(SetupStep):
             prior_path = self._sample_audio_path
             played = play(sample_path)
             if asyncio.iscoroutine(played):
-                await played
+                played = await played
+            if played is False:
+                # AsyncAudioPlayer reports "no OS player found" as False.
+                sample_path.unlink(missing_ok=True)
+                return False
             if prior_path is not None:
                 prior_path.unlink(missing_ok=True)
             self._sample_audio_path = sample_path
@@ -5137,6 +5145,10 @@ class VoiceSetupStep(SetupStep):
     async def _commit_omnivoice(self) -> tuple[bool, str]:
         if not self.query_one("#setup-voice-default", Checkbox).value:
             return True, ""
+        if self._omnivoice_state is None:
+            return False, voice_state.OMNIVOICE_CHECKING_COPY
+        if self._omnivoice_state == "engine_missing":
+            return False, voice_state.OMNIVOICE_ENGINE_MISSING_COPY
         if self._omnivoice_state != "ready":
             return False, voice_state.OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY
         request_id = self._next_save_request_id

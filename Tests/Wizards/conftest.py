@@ -7,6 +7,12 @@ class _SilentAudioPlayer:
     async def play(self, _path):
         return True
 
+    async def stop(self):
+        return None
+
+    async def cleanup(self):
+        return None
+
 
 @pytest.fixture(autouse=True)
 def _silent_audio_player(monkeypatch):
