@@ -781,3 +781,209 @@ async def test_export_stale_name_notice_is_printable(request, tmp_path, monkeypa
             text = _terminal_text(app.notify.call_args.args[0])
             assert text.isprintable(), repr(text)
         assert not list(tmp_path.glob("Downloads/*"))
+
+
+# -- Qodo review fixes (TASK-32948) ------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_name_only_edit_marks_the_editor_modified(request, tmp_path):
+    """Qodo 4100998919: a Name-box edit alone must make Back/leave prompt."""
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # Programmatic load then clone (the picker's open_editor) stays clean:
+        # the load's stale Name-box echo must not count as an edit.
+        editor.load_theme("nord")
+        editor.on_clone_theme()
+        await pilot.pause()
+        assert editor.is_modified is False
+        editor.query_one("#settings-theme-name", Input).value = "renamed"
+        await pilot.pause()
+        assert editor.current_theme_name == "renamed"
+        assert editor.is_modified is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_load_user_theme_reports_whether_it_loaded(request, tmp_path):
+    """Qodo 4104047302: a failed load returns False instead of silently
+    leaving the previous palette in place."""
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.load_user_theme("mine") is True
+        assert editor.load_user_theme("gone") is False
+        await pilot.pause()
+        assert "gone" in app.notify.call_args.args[0]
+        assert editor.current_theme_name == "mine"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_keys_by_the_normalised_registered_name(request, tmp_path):
+    """Qodo 4107495864: the listing uses the name startup registers."""
+    for stem, name in (("a", " b "), ("c", 123), ("d", "")):
+        path = tmp_path / f"{stem}.toml"
+        path.write_text(toml.dumps({"theme": {"name": name}, "colors": MINE}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.list_user_theme_names() == {"b", "123", "d"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_second_file_claiming_a_name_is_listed_as_a_duplicate(request, tmp_path):
+    """Qodo 4107495872: both files stay visible; the one startup registers
+    (the last in file order) is the readable one."""
+    _write(tmp_path, "a", name="x")
+    _write(tmp_path, "b", name="x")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"x": tmp_path / "b.toml"}
+        assert unreadable == {"a": "duplicate of 'x'"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reserved_name_prefixes_are_refused_everywhere(request, tmp_path, config_writes):
+    """Qodo 4104047299 / 4109320402: ``custom_`` and ``unreadable:`` names."""
+    _write(tmp_path, "mine")
+    _write(tmp_path, "custom_old")
+    source = tmp_path.parent / "import_me.toml"
+    source.write_text(toml.dumps({"theme": {"name": "custom_x"}, "colors": MINE}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        _readable, unreadable = editor.user_theme_listing()
+        assert unreadable == {"custom_old": "reserved name"}
+        for name in ("custom_ocean", "unreadable:x"):
+            app.notify.reset_mock()
+            editor.save_as(name)
+            await pilot.pause()
+            assert "reserved" in app.notify.call_args.args[0]
+            app.notify.reset_mock()
+            assert editor.rename_user_theme("mine", name) is False
+            assert "reserved" in app.notify.call_args.args[0]
+        app.notify.reset_mock()
+        assert editor.import_theme(str(source)) is None
+        assert "reserved" in app.notify.call_args.args[0]
+        assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["custom_old.toml", "mine.toml"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_rolls_back_when_the_launch_default_cannot_be_saved(
+    request, tmp_path, monkeypatch
+):
+    """Qodo 4107495893: the launch default moves before the old file goes."""
+    _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "mine")
+    monkeypatch.setattr(
+        theme_catalog,
+        "_apply_config_mutation",
+        lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False),
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.rename_user_theme("mine", "ours") is False
+        await pilot.pause()
+        assert (tmp_path / "mine.toml").exists()
+        assert not (tmp_path / "ours.toml").exists()
+        assert app.notify.call_args.kwargs.get("severity") == "error"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_and_delete_warn_when_the_config_refresh_fails(
+    request, tmp_path, monkeypatch
+):
+    """Qodo 4107495906 / 4107495911: ``caches_reloaded`` is surfaced."""
+    _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "mine")
+    monkeypatch.setattr(
+        theme_catalog,
+        "_apply_config_mutation",
+        lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False),
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.rename_user_theme("mine", "ours") is True
+        await pilot.pause()
+        assert "configuration refresh failed" in app.notify.call_args.args[0]
+        assert app.notify.call_args.kwargs.get("severity") == "warning"
+        _launch_default(monkeypatch, "ours")
+        await _confirm_delete(pilot, app, editor, "ours")
+        assert "configuration refresh failed" in app.notify.call_args.args[0]
+        assert app.notify.call_args.kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tmp_path, config_writes):
+    """Qodo 4109320416: a file renamed on disk while the dialog is up is the
+    one written; the stale path is not recreated."""
+    _write(tmp_path, "mine")
+    source = tmp_path.parent / "mine_import.toml"
+    source.write_text(toml.dumps({"theme": {"name": "mine"}, "colors": {**MINE, "primary": "#445566"}}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(str(source)) is None
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        (tmp_path / "mine.toml").rename(tmp_path / "moved.toml")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert not (tmp_path / "mine.toml").exists()
+        assert toml.load(tmp_path / "moved.toml")["colors"]["primary"] == "#445566"
+
+        editor.save_as("mine")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        (tmp_path / "moved.toml").rename(tmp_path / "moved_again.toml")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["moved_again.toml"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_non_regular_theme_file_is_one_unreadable_entry(request, tmp_path):
+    """Qodo 4109320408: a symlinked or hard-linked ``*.toml`` is refused
+    (never read) but no longer makes the whole folder unavailable."""
+    import os
+
+    _write(tmp_path, "mine")
+    outside = _write(tmp_path.parent, "outside")
+    os.symlink(outside, tmp_path / "linked.toml")
+    os.link(outside, tmp_path / "hard.toml")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {"hard": "not a regular file", "linked": "not a regular file"}
+        # Delete is refused with a reason (the backup layer never unlinks
+        # through a link) and no dialog.
+        editor.request_delete("unreadable:linked")
+        await pilot.pause()
+        assert "not a regular file" in app.notify.call_args.args[0]
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert (tmp_path / "linked.toml").is_symlink()

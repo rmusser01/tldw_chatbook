@@ -9,6 +9,9 @@ from tldw_chatbook.Utils.platform_files import os
 from . import bootstrap
 from .profile_paths import lexical_path
 
+#: The listing's reason for a theme file the directory scan refuses to observe.
+NOT_REGULAR = "not a regular file"
+
 ROUTES = {
     "eval_config",
     "note_templates",
@@ -162,7 +165,14 @@ def preflight(state, route, attempt):
             import stat
 
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise bootstrap.RecoveryRequired("raw_not_regular")
+                if route != "theme_directory":
+                    raise bootstrap.RecoveryRequired("raw_not_regular")
+                # A symlinked/hard-linked theme is still never observed,
+                # leased or opened (raw._file refuses it too); it is recorded
+                # so the listing shows it as one unreadable entry instead of
+                # the whole folder reading as unavailable.
+                state.rejected_files[path] = NOT_REGULAR
+                continue
             state.observed_files[path] = (info.st_dev, info.st_ino)
     members = tuple(state.observed_files)
     if route == "pet" and state.writing:

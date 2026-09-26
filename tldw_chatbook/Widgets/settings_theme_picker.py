@@ -22,6 +22,7 @@ from textual.widgets.option_list import Option
 from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
+    CACHE_REFRESH_FAILED,
     ThemeChange,
     ThemeEntry,
     build_catalog,
@@ -32,6 +33,7 @@ from ..css.Themes.theme_catalog import (
     use_theme_toast,
     user_theme_names,
 )
+from ..css.Themes.themes import printable
 from ..Utils.input_validation import escape_markup
 from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
 from .theme_preview import ThemePreview
@@ -223,11 +225,25 @@ class ThemePicker(Vertical):
     def on_mount(self) -> None:
         self._sync_revert_chip()
         self.query_one("#settings-theme-empty").display = False
-        self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_catalog())
+        self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_catalog(rescan=False))
         self.refresh_catalog(highlight=str(self.app.theme))
 
     # -- catalog -------------------------------------------------------
-    def refresh_catalog(self, highlight: str | None = None) -> None:
+    def refresh_catalog(self, highlight: str | None = None, *, rescan: bool = True) -> None:
+        """Rebuild the list from the registered themes and the saved files.
+
+        Args:
+            highlight: The theme id to highlight; default keeps the current.
+            rescan: False reuses the last good listing of the themes folder.
+                A theme switch (Use, Try, Revert, the palette) only moves
+                the active/launch markers, and the backup-scoped scan costs
+                ~6 ms per file on the UI thread (Qodo 4107495860). While the
+                files are paused it rescans anyway, to notice the resume.
+        """
+        if not rescan and self.files_available:
+            user_names, unreadable = self._last_user_names, self._last_unreadable
+            self._rebuild(user_names, unreadable, highlight)
+            return
         try:
             user_names, unreadable = self._list_themes()
             self.files_available = True
@@ -240,6 +256,11 @@ class ThemePicker(Vertical):
             logger.warning(f"Could not list saved themes: {exc.strerror or type(exc).__name__}")
             user_names, unreadable = set(), {}
             self.files_available = True
+        self._rebuild(user_names, unreadable, highlight)
+
+    def _rebuild(
+        self, user_names: set[str], unreadable: Mapping[str, str], highlight: str | None
+    ) -> None:
         self.entries = build_catalog(
             self.app.available_themes,
             user_names,
@@ -258,7 +279,8 @@ class ThemePicker(Vertical):
         notice = self.query_one("#settings-theme-launch-missing", Static)
         missing = launch not in self.app.available_themes
         notice.display = missing
-        notice.update(f"Launch default missing: {launch} — Use any theme to fix it" if missing else "")
+        # Qodo 4109320405: a hand-edited config value may carry ESC.
+        notice.update(f"Launch default missing: {printable(launch)} — Use any theme to fix it" if missing else "")
 
     def _render_list(self, highlight: str | None) -> None:
         query = self.query_one("#settings-theme-filter", Input).value.strip().casefold()
@@ -447,15 +469,17 @@ class ThemePicker(Vertical):
             return
         change, self._revert = self._revert, None
         try:
-            restored = revert_theme(self.app, change)
+            restored, caches_reloaded = revert_theme(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
             self.app.notify(f"Could not revert the theme: {escape_markup(exc)}", severity="error")
         else:
             if not restored:
                 self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
+            elif not caches_reloaded:
+                self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
         self._sync_revert_chip()
-        self.refresh_catalog()
+        self.refresh_catalog(rescan=False)
 
     # -- actions -------------------------------------------------------
     def use_highlighted(self) -> None:
@@ -465,13 +489,24 @@ class ThemePicker(Vertical):
         self._switch(persist=False)
 
     def request_edit(self, mode: Literal["clone", "new", "edit"]) -> None:
-        if self.highlighted_id is None:
-            return
-        if not self._highlighted_readable():
+        """Ask the pane to open the editor on the highlighted theme.
+
+        Args:
+            mode: ``clone``/``edit`` need a highlighted, readable theme
+                (``edit`` also one of yours, with files available). ``new``
+                with nothing highlighted (a filter matched nothing) starts
+                from the running theme (Qodo 4104047326).
+        """
+        theme_id = self.highlighted_id
+        if theme_id is None:
+            if mode != "new":
+                return
+            theme_id = str(self.app.theme)
+        elif not self._highlighted_readable():
             return
         if mode == "edit" and not self._can_manage_files():
             return
-        self.post_message(self.EditRequested(self.highlighted_id, mode))
+        self.post_message(self.EditRequested(theme_id, mode))
 
     def request_rename(self) -> None:
         if self._can_manage_files() and self._highlighted_readable():
@@ -520,7 +555,7 @@ class ThemePicker(Vertical):
         else:
             message, severity = use_theme_toast(theme_id, change)
             self.app.notify(message, severity=severity)
-        self.refresh_catalog(highlight=theme_id)
+        self.refresh_catalog(highlight=theme_id, rescan=False)
 
 
 class ThemePane(ContentSwitcher):
@@ -564,7 +599,11 @@ class ThemePane(ContentSwitcher):
         picker = self.query_one(ThemePicker)
         entry = next((e for e in picker.entries if e.id == theme_id), None)
         if entry is not None and entry.origin == "yours":
-            editor.load_user_theme(theme_id)
+            if not editor.load_user_theme(theme_id):
+                # Qodo 4104047302: never open on the previous palette; the
+                # load said why, and the listing may be stale.
+                picker.refresh_catalog()
+                return
         else:
             editor.load_theme(theme_id)
         if mode == "clone":

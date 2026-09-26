@@ -24,6 +24,32 @@ from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
 
 
+#: Longest slice of untrusted file text (a key or value) quoted in a message.
+PREVIEW_CHARS = 40
+
+#: The picker's id for an unreadable saved file: ``unreadable:<stem>``.
+UNREADABLE_ID_PREFIX = "unreadable:"
+
+#: Qodo 4104047299 / 4109320402: prefixes no saved theme may use. Apply
+#: registers the working palette as ``custom_<name>`` (process-only), and the
+#: picker lists a broken file as ``unreadable:<stem>``; a saved theme with
+#: either prefix would be hidden by, or hide, those.
+RESERVED_THEME_PREFIXES = ("custom_", UNREADABLE_ID_PREFIX)
+RESERVED_NAME_RULE = "names starting with 'custom_' or 'unreadable:' are reserved"
+
+
+def is_reserved_theme_name(name: str) -> bool:
+    """Whether ``name`` starts with a prefix the app keeps for itself.
+
+    Args:
+        name: A theme name, already stripped.
+
+    Returns:
+        True for ``custom_...`` and ``unreadable:...`` names.
+    """
+    return name.startswith(RESERVED_THEME_PREFIXES)
+
+
 _HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})")
 
 
@@ -212,7 +238,7 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
         else:
             # Name only (truncated), never the value: file content must not
             # reach the persistent log verbatim.
-            logger.warning(f"Theme {printable(source)}: dropping invalid variable {str(key)[:40]!r}")
+            logger.warning(f"Theme {printable(source)}: dropping invalid variable {str(key)[:PREVIEW_CHARS]!r}")
     return safe
 
 
@@ -255,8 +281,9 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
 
     Raises:
         ValueError: ``[colors]`` holds a key that is not a base colour or a
-            value that is not ``#RGB``/``#RRGGBB``/``#RRGGBBAA`` (R41), or the name has
-            control characters (R39).
+            value that is not ``#RGB``/``#RRGGBB``/``#RRGGBBAA`` (R41), the name has
+            control characters (R39), or the name is reserved
+            (``is_reserved_theme_name``).
             R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
             used to pass and then crash ``to_color_system().generate()``.
     """
@@ -265,10 +292,12 @@ def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> The
     if not raw_name.isprintable():
         raise ValueError("name has control characters")  # R39
     name = raw_name.strip() or fallback_name
+    if is_reserved_theme_name(name):
+        raise ValueError("reserved name")
     colors = dict(data.get("colors", {}) or {})
     for key, value in colors.items():
         if key not in THEME_COLOUR_KEYS:
-            raise ValueError(f"{printable(str(key)[:40])} is not a theme colour")
+            raise ValueError(f"{printable(str(key)[:PREVIEW_CHARS])} is not a theme colour")
         # R41: create_theme_from_dict skips an unparseable colour, so an
         # ESC-laden secondary used to load and reach Edit's colour Input.
         if not is_hex_colour(value):
