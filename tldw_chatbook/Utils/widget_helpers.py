@@ -8,6 +8,10 @@ from textual.message import Message
 from textual.widget import Widget
 from typing import Optional, List
 
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import (  # noqa: E402
+    missing_omnivoice_modules,
+)
+
 
 class FeatureNotAvailableDialog(Container):
     """A dialog widget to show when optional features are not available."""
@@ -271,27 +275,6 @@ def alert_ocr_not_available(parent) -> None:
         extra_name="ocr_docext",
         additional_info="Multiple OCR backends are available. At least one is required.",
     )
-
-
-def missing_omnivoice_modules() -> List[str]:
-    """Return the OmniVoice runtime modules that are not installed.
-
-    Probed with ``find_spec`` (no import), so the alert names exactly the
-    packages that are missing rather than the whole ``omnivoice_tts`` extra.
-
-    Returns:
-        The missing module names, in install order.
-    """
-    from importlib.util import find_spec
-
-    missing: List[str] = []
-    for module_name in ("onnxruntime", "tokenizers"):
-        try:
-            if find_spec(module_name) is None:
-                missing.append(module_name)
-        except (ImportError, ValueError):
-            missing.append(module_name)
-    return missing
 
 
 def alert_voice_cloning_not_available(parent: Widget) -> None:

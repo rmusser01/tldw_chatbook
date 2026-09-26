@@ -9,7 +9,9 @@ surfaced at consent.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Literal
 
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
@@ -21,7 +23,11 @@ from tldw_chatbook.Model_Artifacts.service import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Model_Artifacts.acquisition import ArtifactSourceMap
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionProgress,
+        ArtifactSourceMap,
+        PreflightReport,
+    )
 
 
 OMNIVOICE_ONNX_REPOSITORY = "ct03/omnivoice-onnx-int8hq"
@@ -208,3 +214,140 @@ def omnivoice_onnx_source_map() -> ArtifactSourceMap:
             file.path: _source_url(file.path) for file in omnivoice_onnx_files()
         }
     }
+
+
+OmniVoiceSetupState = Literal["engine_missing", "model_missing", "ready"]
+
+
+def missing_omnivoice_modules() -> list[str]:
+    """Return the OmniVoice runtime modules that are not installed.
+
+    Probed with ``find_spec`` (no import).
+
+    Returns:
+        The missing module names, in install order.
+    """
+    from importlib.util import find_spec
+
+    missing: list[str] = []
+    for module_name in ("onnxruntime", "tokenizers"):
+        try:
+            if find_spec(module_name) is None:
+                missing.append(module_name)
+        except (ImportError, ValueError):
+            missing.append(module_name)
+    return missing
+
+
+def omnivoice_setup_state(
+    model_root: str | None,
+    *,
+    missing_modules: Callable[[], list[str]] | None = None,
+    managed_root: Callable[[], Path | None] | None = None,
+) -> OmniVoiceSetupState:
+    """Report what OmniVoice still needs before it can speak here.
+
+    Resolves the model exactly as the engine does (``OMNIVOICE_MODEL_ROOT``
+    from the environment, else the configured ``model_root``, else the
+    active managed artifact). Does
+    filesystem work — call it off the UI thread.
+
+    Args:
+        model_root: ``[OmniVoiceSettings] model_root`` (blank/None = managed).
+        missing_modules: Dependency probe (defaults to ``missing_omnivoice_modules``).
+        managed_root: Managed-artifact lookup (defaults to the engine's).
+
+    Returns:
+        ``engine_missing``, ``model_missing`` or ``ready``.
+    """
+    from tldw_chatbook.TTS.backends.omnivoice import (
+        OmniVoiceModelError,
+        OmniVoiceNotConfiguredError,
+        managed_model_root,
+        resolve_model_root,
+    )
+
+    if (missing_modules or missing_omnivoice_modules)():
+        return "engine_missing"
+    # Same precedence as TTS_Backends: the environment variable beats config.
+    configured = os.environ.get("OMNIVOICE_MODEL_ROOT") or model_root or ""
+    try:
+        resolve_model_root(
+            {"OMNIVOICE_MODEL_ROOT": configured},
+            managed_root or managed_model_root,
+        )
+    except (OmniVoiceModelError, OmniVoiceNotConfiguredError):
+        return "model_missing"
+    return "ready"
+
+
+class OmniVoiceCatalog:
+    """Catalog exposing only the curated OmniVoice ONNX descriptor."""
+
+    def descriptor(self, ref: ArtifactRef) -> ArtifactDescriptor:
+        """Return the OmniVoice descriptor for its exact reference.
+
+        Raises:
+            KeyError: For any other reference.
+        """
+        if ref != omnivoice_onnx_reference():
+            raise KeyError(ref)
+        return omnivoice_onnx_descriptor()
+
+
+def _acquisition(core, credential_resolver, free_bytes_probe):
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactAcquisitionService,
+        EnvConfigCredentialResolver,
+    )
+    from tldw_chatbook.Model_Artifacts.store import managed_service
+
+    service = core if core is not None else managed_service()
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
+    )
+    return service, ArtifactAcquisitionService(
+        service, credential_resolver=resolver, free_bytes_probe=free_bytes_probe
+    )
+
+
+async def run_omnivoice_preflight(
+    *, core=None, credential_resolver=None, free_bytes_probe=None
+) -> "PreflightReport":
+    """Plan the OmniVoice model install (sizes, disk, consent data).
+
+    Returns:
+        The preflight report the consent dialog renders.
+    """
+    _service, acquisition = _acquisition(core, credential_resolver, free_bytes_probe)
+    return await acquisition.preflight(
+        omnivoice_onnx_reference(),
+        OmniVoiceCatalog(),
+        sources=omnivoice_onnx_source_map(),
+    )
+
+
+async def run_omnivoice_provision(
+    report: "PreflightReport",
+    *,
+    core=None,
+    credential_resolver=None,
+    free_bytes_probe=None,
+    progress: "Callable[[AcquisitionProgress], None] | None" = None,
+) -> Path:
+    """Download, verify and activate the OmniVoice model after consent.
+
+    Returns:
+        The installed artifact directory.
+    """
+    service, acquisition = _acquisition(core, credential_resolver, free_bytes_probe)
+    installed = await acquisition.provision(
+        omnivoice_onnx_reference(),
+        report.grant(),
+        OmniVoiceCatalog(),
+        sources=omnivoice_onnx_source_map(),
+        progress=progress,
+    )
+    return service.artifact_path(installed)

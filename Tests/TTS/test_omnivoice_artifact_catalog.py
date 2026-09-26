@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 
 def test_descriptor_shape() -> None:
@@ -82,3 +85,110 @@ def test_registered_in_the_shared_curated_registry() -> None:
         registry.sources(cat.omnivoice_onnx_reference())
         == (cat.omnivoice_onnx_source_map()[cat.omnivoice_onnx_reference()])
     )
+
+
+from tldw_chatbook.TTS import omnivoice_artifact_catalog as cat
+
+
+def _tree(root: Path) -> Path:
+    for rel in cat.OMNIVOICE_ONNX_REQUIRED_PATHS:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(b"x")
+    return root
+
+
+def test_setup_state_engine_missing_wins() -> None:
+    state = cat.omnivoice_setup_state(
+        None, missing_modules=lambda: ["onnxruntime"], managed_root=lambda: None
+    )
+    assert state == "engine_missing"
+
+
+def test_setup_state_model_missing_without_any_root() -> None:
+    assert cat.omnivoice_setup_state(
+        None, missing_modules=list, managed_root=lambda: None
+    ) == "model_missing"
+
+
+def test_setup_state_ready_from_configured_root(tmp_path: Path) -> None:
+    root = _tree(tmp_path / "m")
+    assert cat.omnivoice_setup_state(
+        str(root), missing_modules=list, managed_root=lambda: None
+    ) == "ready"
+
+
+def test_setup_state_ready_from_managed_root(tmp_path: Path) -> None:
+    root = _tree(tmp_path / "m")
+    assert cat.omnivoice_setup_state(
+        "", missing_modules=list, managed_root=lambda: root
+    ) == "ready"
+
+
+def test_setup_state_env_model_root_wins_like_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine prefers OMNIVOICE_MODEL_ROOT from the environment; the
+    wizard must too, or an env-configured user is told to download 1.1 GB."""
+    root = _tree(tmp_path / "env-root")
+    monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(root))
+    assert cat.omnivoice_setup_state(
+        "", missing_modules=list, managed_root=lambda: None
+    ) == "ready"
+
+
+def test_setup_state_broken_model_root_is_model_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OMNIVOICE_MODEL_ROOT", raising=False)
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    for model_root in (str(tmp_path / "does-not-exist"), str(partial), "bad\x00root"):
+        assert cat.omnivoice_setup_state(
+            model_root, missing_modules=list, managed_root=lambda: None
+        ) == "model_missing"
+
+
+def test_catalog_serves_only_the_omnivoice_descriptor() -> None:
+    catalog = cat.OmniVoiceCatalog()
+    assert catalog.descriptor(cat.omnivoice_onnx_reference()).model_id == "omnivoice-onnx-int8hq"
+    with pytest.raises(KeyError):
+        catalog.descriptor(object())
+
+
+async def test_wrappers_pass_the_pinned_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list = []
+
+    class FakeAcquisition:
+        def __init__(self, service, **kwargs):
+            calls.append(("init", service))
+
+        async def preflight(self, ref, catalog, *, sources):
+            calls.append(("preflight", ref, type(catalog).__name__, sources))
+            return "REPORT"
+
+        async def provision(self, ref, grant, catalog, *, sources, progress=None):
+            calls.append(("provision", ref, grant, sources, progress))
+            return ref
+
+    class FakeReport:
+        def grant(self):
+            return "GRANT"
+
+    class FakeService:
+        def artifact_path(self, ref):
+            return Path("/managed/omnivoice")
+
+    import tldw_chatbook.Model_Artifacts.acquisition as acquisition
+
+    monkeypatch.setattr(acquisition, "ArtifactAcquisitionService", FakeAcquisition)
+    service = FakeService()
+    ref = cat.omnivoice_onnx_reference()
+    sources = cat.omnivoice_onnx_source_map()
+
+    assert await cat.run_omnivoice_preflight(core=service, credential_resolver=object()) == "REPORT"
+    path = await cat.run_omnivoice_provision(
+        FakeReport(), core=service, credential_resolver=object(), progress=print
+    )
+    assert path == Path("/managed/omnivoice")
+    assert calls[1] == ("preflight", ref, "OmniVoiceCatalog", sources)
+    assert calls[3] == ("provision", ref, "GRANT", sources, print)
