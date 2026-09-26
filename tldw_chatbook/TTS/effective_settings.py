@@ -27,6 +27,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_VOICES,
     LEGACY_REQUEST_OPTION_KEYS,
 )
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_SEED_LIMIT
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
@@ -884,6 +885,16 @@ def _validated_options(
         if key == "num_steps":
             # OmniVoice diffusion steps; same bound as the Settings field.
             if type(option) is not int or not 1 <= option <= 128:
+                raise TTSEffectiveResolutionError(
+                    code="invalid_selection",
+                    axis="provider_options",
+                    source=source,
+                )
+            normalized[key] = option
+            continue
+        if key == "seed":
+            # OmniVoice per-request sampling seed (non-negative 31-bit int).
+            if type(option) is not int or not 0 <= option < OMNIVOICE_SEED_LIMIT:
                 raise TTSEffectiveResolutionError(
                     code="invalid_selection",
                     axis="provider_options",

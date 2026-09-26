@@ -302,6 +302,7 @@ _TTS_SETTING_BINDINGS = {
             "guidance_scale",
             "max_reference_duration",
             "language",
+            "seed",
         )
     },
 }

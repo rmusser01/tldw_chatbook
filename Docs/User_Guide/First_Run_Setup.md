@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-09 (task-31820: honest skip/continue copy — a keyed provider without a credential refuses Next until a key is supplied or you go Back; Escape remains the universal out).
+> Verified against: feat/wizard-omnivoice-tts, 2026-09-26 (task-32958: OmniVoice as a fourth Voice service — live at 80×24 and 200×60: install through the consent dialog, a Whisper-checked local sample, saved as the default with a seed; Test and Hear now plays on a real first run for every service).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 most steps can be skipped (Next moves on without configuring it; the one
@@ -45,7 +45,7 @@ navigation buttons — fix it and press Next again, or go Back.
 | Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
-| Voice | Spoken replies (sample + "Test and Hear"; endpoint/model under Advanced) | Settings ▸ Speech & TTS |
+| Voice | Spoken replies — PocketTTS, OmniVoice (local, installs its model here), Official OpenAI or a compatible endpoint; sample + "Test and Hear" (endpoint/model under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The Tools step is the only place in setup that turns a tool on, and it says
@@ -65,6 +65,13 @@ the voice settings; the step reports the result itself and refuses to move on
 if the save failed, so setup never raises a pop-up notification over a later
 step's buttons. On terminals smaller than about 100×30 the wizard shows a
 one-line nudge — everything still works, steps just scroll.
+
+Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
+tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
+through the same consent dialog as the model browser, and tests a sample on
+this computer. Saving it as the default also saves a fixed voice seed, but the
+default voice can still vary between replies — create a voice profile in Voice
+Cloning for a consistent voice.
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a

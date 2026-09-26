@@ -261,6 +261,7 @@ EXPECTED_OPTIONS = {
         "num_steps",
         "guidance_scale",
         "max_reference_duration",
+        "seed",
     ),
 }
 EXPECTED_DISPLAY_NAMES = {

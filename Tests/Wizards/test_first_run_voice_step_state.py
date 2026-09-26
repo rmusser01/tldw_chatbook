@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import wave
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -9,6 +11,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_QUICK,
     setup_draft_checkpoint,
 )
+from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
     VOICE_PRESET_CUSTOM,
     VOICE_PRESET_OFFICIAL_OPENAI,
@@ -257,3 +260,72 @@ def test_setup_recovery_checkpoints_every_non_secret_voice_value_only() -> None:
         "use_as_default": True,
     }
     assert secret not in repr(draft)
+
+
+def _wav_bytes() -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * 2400)
+    return buffer.getvalue()
+
+
+def test_choose_seed_keeps_existing_valid_seed() -> None:
+    assert vs.choose_omnivoice_seed(987654, randbelow=lambda n: 1) == 987654
+
+
+@pytest.mark.parametrize("existing", [None, "", -1, 2**31, True, "12", 3.5])
+def test_choose_seed_generates_when_missing_or_invalid(existing) -> None:
+    assert vs.choose_omnivoice_seed(existing, randbelow=lambda n: n - 1) == 2**31 - 1
+
+
+def test_omnivoice_save_event_shape() -> None:
+    event = vs.build_omnivoice_save_event(speed=1.0, seed=42, request_id=3)
+    assert dict(event.settings) == {"OMNIVOICE_SEED": 42}
+    prefs = event.preferences
+    assert (prefs.provider_id, prefs.model_id, prefs.voice_id, prefs.response_format) == (
+        "omnivoice", "omnivoice-int8hq", "default", "wav"
+    )
+    assert event.commit_defaults_after_handoff is True
+    assert event.request_id == 3
+
+
+class _FakeService:
+    def __init__(self, chunks):
+        self.chunks, self.requests = chunks, []
+
+    async def generate_audio_stream(self, request, internal_model_id, progress_sink=None):
+        self.requests.append((request, internal_model_id))
+        for chunk in self.chunks:
+            yield chunk
+
+
+async def test_sample_uses_shared_service_with_the_seed() -> None:
+    body = _wav_bytes()
+    service = _FakeService([body[:100], body[100:]])
+    result = await vs.run_omnivoice_sample("Hello.", speed=1.0, seed=42, service=service)
+    request, internal = service.requests[0]
+    assert internal == "local_omnivoice_default"
+    assert request.extra_params == {"seed": 42}
+    assert (request.model, request.voice, request.response_format) == (
+        "omnivoice-int8hq", "default", "wav"
+    )
+    assert result.body == body and result.response_format == "wav" and result.playable
+
+
+async def test_sample_rejects_non_wav_and_oversize() -> None:
+    with pytest.raises(ValueError):
+        await vs.run_omnivoice_sample("Hi", speed=1.0, seed=1, service=_FakeService([b"ID3mp3"]))
+    with pytest.raises(ValueError):
+        await vs.run_omnivoice_sample(
+            "Hi", speed=1.0, seed=1, service=_FakeService([_wav_bytes()]), max_response_bytes=10
+        )
+    with pytest.raises(ValueError):
+        await vs.run_omnivoice_sample("   ", speed=1.0, seed=1, service=_FakeService([_wav_bytes()]))
+
+
+def test_resume_schema_accepts_preset() -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        STEP_VOICE, _SETUP_DRAFT_FIELD_TYPES,
+    )
+    assert _SETUP_DRAFT_FIELD_TYPES[STEP_VOICE]["preset"] is str
