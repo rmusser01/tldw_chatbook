@@ -2787,9 +2787,11 @@ async def test_settings_modal_provider_switch_takes_the_target_providers_own_mod
                 "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
             },
         },
+        # The configured model is NOT the catalog's first entry, so a
+        # snap-to-first-catalog-model regression cannot pass.
         providers_models={
             "llama_cpp": ["local-gguf"],
-            "anthropic": ["claude-sonnet-5"],
+            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
         },
         context_estimate=estimate,
         can_save=True,
@@ -2804,6 +2806,133 @@ async def test_settings_modal_provider_switch_takes_the_target_providers_own_mod
 
         assert modal._draft.settings.provider == "anthropic"
         assert modal._draft.settings.model == "claude-sonnet-5"
+
+
+@pytest.mark.asyncio
+async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_model() -> (
+    None
+):
+    """TASK-33001.1: the mounted Alt+M popover, wired as chat_screen wires it.
+
+    The REAL controller rebase and the REAL ``ChatScreen._console_default_readiness``
+    drive a provider switch under the shipped OpenAI/gpt-5.6-terra defaults.
+    llama.cpp -> Anthropic fills Anthropic's own model; Anthropic -> Moonshot
+    (a key, no configured model, a non-empty catalog) leaves the model empty and
+    the popover reads as needing one instead of borrowing any model.
+    """
+    from types import SimpleNamespace
+
+    from textual.widgets import Input
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import (
+        ConsoleSettingsDraftState,
+        ConsoleSettingsFieldDraft,
+        ConsoleSettingsFieldProvenance,
+        ConsoleSettingsOrigin,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_model_popover import (
+        ConsoleModelPopover,
+    )
+    from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+
+    app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8080", "model": "local-gguf"},
+            "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
+            "moonshot": {"api_key": "sk-test-moonshot"},
+        },
+    }
+    screen = SimpleNamespace(_provider_readiness_app_config=lambda: app_config)
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
+    initial_draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+    popover = ConsoleModelPopover(
+        origin=ConsoleSettingsOrigin("session-a", None, 0),
+        app_config=app_config,
+        initial_draft=initial_draft,
+        providers_models={
+            "llama_cpp": ["local-gguf"],
+            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
+            "moonshot": ["kimi-k3"],
+        },
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=lambda state, **kwargs: (
+            ConsoleChatController.rebase_console_settings_draft(
+                object(), state, **kwargs
+            )
+        ),
+        live_committer=lambda _submission: pytest.fail("nothing may be applied"),
+        default_readiness_resolver=lambda provider, model: (
+            ChatScreen._console_default_readiness(screen, provider, model)
+        ),
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(popover, callback=app.capture)
+        await pilot.pause()
+        picker = popover.query_one("#console-popover-model-search", ModelSearchPicker)
+        picker_input = picker.query_one("#model-search-picker-input", Input)
+        provider_select = popover.query_one("#console-popover-provider", Select)
+
+        provider_select.value = "anthropic"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert popover._draft.settings.provider == "anthropic"
+        assert popover._draft.settings.model == "claude-sonnet-5"
+        assert picker.value == "claude-sonnet-5"
+        assert picker_input.value == "claude-sonnet-5"
+
+        provider_select.value = "moonshot"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # AC#3: no model, and nothing borrowed -- not gpt-5.6-terra, not
+        # Anthropic's model, not the first catalog entry.
+        assert popover._draft.settings.provider == "moonshot"
+        assert popover._draft.settings.model is None
+        assert picker.value is None
+        assert picker_input.value == ""
+        assert picker_input.placeholder == "Choose or search models"
+        target = popover.query_one("#console-popover-defaults-target", Static)
+        assert str(target.renderable) == "Defaults target: moonshot/No model"
+        block = popover.query_one("#console-popover-new-chat-default-block", Static)
+        assert str(block.renderable) == "Unavailable: choose a model first."
+        assert popover.query_one(
+            "#console-popover-make-new-chat-default", Button
+        ).disabled
+
+        popover.query_one("#console-popover-apply", Button).press()
+        await pilot.pause()
+
+        error = popover.query_one("#console-popover-error", Static)
+        assert error.display is True
+        assert str(error.renderable) == "Choose a model."
+        assert app.results == []
+        assert app.screen is popover
 
 
 @pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])

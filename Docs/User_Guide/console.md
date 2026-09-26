@@ -442,10 +442,14 @@ provider, model, and temperature without the full modal.
 
 Switching the provider, here or in the full modal, picks that provider's
 own model: its `model`, `api_model` or `default_model` in
-`[api_settings.<provider>]`. Your default model (`[chat_defaults] model`)
-only comes along when you switch to your default provider. A provider with
-no configured model gets no model, and Console asks you to choose one; it
-never borrows another provider's model.
+`[api_settings.<provider>]`, or, for a custom endpoint, the first model
+listed in that endpoint's entry. Your default model (`[chat_defaults]
+model`) only comes along when you switch to your default provider. A
+provider with no configured model gets no model, and Console asks you to
+choose one. In the popover, the model field shows its "Choose or search
+models" placeholder, **Apply to this chat** answers "Choose a model.", and
+**Defaults…** says "Unavailable: choose a model first." It never borrows
+another provider's model.
 
 #### QwenCloud in Console
 
@@ -825,3 +829,15 @@ evidence is headless: real-path rebase tests in
 `Tests/Chat/test_console_settings_apply.py` for both editors' field sets, and
 a mounted Conversation settings modal driving the real controller rebase in
 `Tests/Chat/test_console_session_settings.py`. Not re-checked live.)*
+
+*Re-verified live on feat/model-config-p1-root-fixes — 2026-09-26
+(TASK-33001.1 fix round 1). A scratch profile from the shipped template
+(OpenAI / `gpt-5.6-terra` defaults), driven in tmux: in the **Alt+M**
+popover, OpenAI → Anthropic filled `claude-sonnet-5`, and Anthropic →
+llama.cpp (shipped `model = ""`) left the model field on its "Choose or
+search models" placeholder with "No models reported for this provider. Use
+Custom ID if needed." **Apply to this chat** showed "Choose a model." and
+the chat stayed on OpenAI / `gpt-5.6-terra`; **Defaults…** read "Defaults
+target: llama_cpp/No model" and "Unavailable: choose a model first." A
+mounted popover test (`Tests/Chat/test_console_session_settings.py`) pins
+the same states. The full modal was not driven live.)*
