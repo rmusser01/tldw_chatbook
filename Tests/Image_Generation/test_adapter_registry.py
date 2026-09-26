@@ -42,7 +42,11 @@ def test_comfyui_adapter_spec_is_lazy(monkeypatch):
         imports.append(module_name)
         raise AssertionError("adapter import must remain lazy")
 
-    monkeypatch.setattr(registry.importlib, "import_module", forbidden_import)
+    # ADR-176: the resolution skeleton lives in Media_Generation; the
+    # laziness contract is unchanged, the patch seam follows the skeleton.
+    from tldw_chatbook.Media_Generation import adapter_registry as media_registry
+
+    monkeypatch.setattr(media_registry.importlib, "import_module", forbidden_import)
     reg = registry.ImageAdapterRegistry(
         config_override={"enabled_backends": ["comfyui"], "default_backend": None}
     )
