@@ -117,6 +117,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.Chat.provider_continuation import (
@@ -175,6 +176,174 @@ class HostedProviderResolution:
     seed: int | None = None
     stop: object = None
     response_format: object = None
+
+
+class HostedProviderSettings(BaseModel):
+    """Typed view of one provider's ``api_settings`` table (Qodo finding 10).
+
+    Pydantic boundary at :func:`resolve_hosted_request`'s settings seam:
+    the fields whose types the resolver already fails closed on (credential
+    spellings, the base-URL alias family, model, streaming, and the
+    transport trio). The type semantics are the resolver's EXISTING ones,
+    reproduced with ``mode="before"`` validators -- bools are never numbers
+    or strings, numeric strings never coerce, an int timeout becomes a
+    float -- so translating a ``ValidationError`` at each decision point
+    keeps every pinned error byte-identical. ``extra="ignore"`` keeps the
+    unambiguous-table semantics: unknown keys stay invisible here.
+
+    Validation happens ONE FIELD AT A TIME at the field's existing decision
+    point (never up front), so error precedence and copy are unchanged;
+    downstream consumers read typed values instead of raw table entries.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    api_key: str | None = None
+    api_key_env_var: str | None = None
+    api_base_url: str | None = None
+    api_base: str | None = None
+    base_url: str | None = None
+    api_url: str | None = None
+    endpoint: str | None = None
+    model: str | None = None
+    streaming: bool | None = None
+    timeout: float | None = None
+    retries: int | None = None
+    retry_delay: float | None = None
+
+    @field_validator(
+        "api_key",
+        "api_key_env_var",
+        "api_base_url",
+        "api_base",
+        "base_url",
+        "api_url",
+        "endpoint",
+        "model",
+        mode="before",
+    )
+    @classmethod
+    def _string_or_none(cls, value: object) -> object:
+        if value is None or isinstance(value, str):
+            return value
+        raise ValueError("not-a-string")
+
+    @field_validator(
+        "api_base_url",
+        "api_base",
+        "base_url",
+        "api_url",
+        "endpoint",
+        mode="before",
+    )
+    @classmethod
+    def _alias_string_skips_non_strings(cls, value: object) -> object:
+        # Alias semantics are the shared helper's: a non-string alias value
+        # is SKIPPED (the next alias is consulted), never an error.
+        if value is None or isinstance(value, str):
+            return value
+        return None
+
+    @field_validator("streaming", mode="before")
+    @classmethod
+    def _strict_bool_or_none(cls, value: object) -> object:
+        if value is None or type(value) is bool:
+            return value
+        raise ValueError("not-a-boolean")
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _positive_number_or_none(cls, value: object) -> object:
+        return cls._number_or_none(value, positive=True)
+
+    @field_validator("retry_delay", mode="before")
+    @classmethod
+    def _nonnegative_number_or_none(cls, value: object) -> object:
+        return cls._number_or_none(value, positive=False)
+
+    @field_validator("retries", mode="before")
+    @classmethod
+    def _nonnegative_integer_or_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if type(value) is not int or value < 0:
+            raise ValueError("not-a-nonnegative-integer")
+        return value
+
+    @classmethod
+    def _number_or_none(cls, value: object, *, positive: bool) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("not-numeric")
+        if not math.isfinite(float(value)) or (
+            value <= 0 if positive else value < 0
+        ):
+            raise ValueError("not-in-range")
+        return value
+
+
+#: Decision-point copy for each boundary field's failure kinds; keyed by
+#: (field, marker). These reproduce the resolver's existing messages
+#: byte-for-byte -- the tests are the contract (Qodo finding 10).
+_SETTINGS_FIELD_ERROR_COPY: dict[tuple[str, str], str] = {
+    ("api_key", "not-a-string"): "api_key is invalid.",
+    ("api_key_env_var", "not-a-string"): "api_key_env_var is invalid.",
+    ("model", "not-a-string"): "model is invalid.",
+    ("streaming", "not-a-boolean"): "streaming must be a boolean.",
+    ("timeout", "not-numeric"): "timeout must be numeric.",
+    ("timeout", "not-in-range"): "timeout must be positive and finite.",
+    ("retries", "not-a-nonnegative-integer"): (
+        "retries must be a non-negative integer."
+    ),
+    ("retry_delay", "not-numeric"): "retry_delay must be numeric.",
+    ("retry_delay", "not-in-range"): "retry_delay must be non-negative.",
+}
+
+
+def _typed_setting(
+    record: ProviderRecord, settings: Mapping[str, object], field_name: str
+) -> object:
+    """Return one typed settings-table value at its existing decision point.
+
+    Validates the single field through the :class:`HostedProviderSettings`
+    boundary and returns the typed value (``None`` when the table does not
+    carry the field). A ``ValidationError`` is translated into the exact
+    ``configuration_error`` copy the resolver already raised for that
+    field and failure kind, so callers keep byte-identical errors.
+
+    Args:
+        record: Registry preset driving the error copy's prefix.
+        settings: One provider's ``api_settings`` table.
+        field_name: Boundary field being consumed.
+
+    Returns:
+        The typed value, or ``None`` when the field is absent.
+
+    Raises:
+        ChatConfigurationError: When the field's value fails the boundary
+            type/constraint checks, with the field's existing copy.
+    """
+    if field_name not in settings:
+        return None
+    try:
+        view = HostedProviderSettings.model_validate(
+            {field_name: settings.get(field_name)}
+        )
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        marker = str(error.get("msg", "")).removeprefix("Value error, ")
+        copy_key = (field_name, marker)
+        if field_name == "api_key" or field_name == "api_key_env_var":
+            message = (
+                f"api_settings.{record.key}.{_SETTINGS_FIELD_ERROR_COPY[copy_key]}"
+            )
+        else:
+            message = _SETTINGS_FIELD_ERROR_COPY[copy_key]
+        raise _validators_for(record).configuration_error(
+            f"{record.display_name} {message}"
+        ) from None
+    return getattr(view, field_name)
 
 
 def resolve_hosted_request(
@@ -258,6 +427,14 @@ def resolve_hosted_request(
         ):
             if legacy_name in settings and canonical_name not in settings:
                 transport_settings[canonical_name] = settings[legacy_name]
+    for transport_name in ("timeout", "retries", "retry_delay"):
+        # Pydantic boundary (Qodo finding 10): the settings-sourced
+        # transport values enter as typed values; failures surface here
+        # with the exact copy the transport validators already raised.
+        if transport_name in settings:
+            transport_settings[transport_name] = _typed_setting(
+                record, settings, transport_name
+            )
     if explicit_timeout is not None:
         transport_settings["timeout"] = explicit_timeout
     if explicit_retries is not None:
@@ -335,7 +512,10 @@ def _resolve_string(
         value: object = explicit
         supplied = True
     elif name in settings:
-        value = settings.get(name)
+        # Pydantic boundary (Qodo finding 10): the settings-sourced value
+        # is typed before use; a type failure raises the same copy the
+        # isinstance check below always produced.
+        value = _typed_setting(record, settings, name)
         supplied = True
     else:
         value = default
@@ -417,12 +597,20 @@ def _resolve_api_key(
     # environment now beats the stored settings key.
     stored_key: str | None = None
     if "api_key" in settings:
-        stored_key = resolve_provider_api_key(settings.get("api_key"))
+        # Pydantic boundary: type failures surface with the stored-key copy
+        # the placeholder check below already raised.
+        stored_key = resolve_provider_api_key(
+            _typed_setting(record, settings, "api_key")
+        )
         if stored_key is None:
             raise validators.configuration_error(
                 f"{record.display_name} api_settings.{record.key}.api_key is invalid."
             )
-    env_name = settings.get("api_key_env_var", record.api_key_env_var)
+    env_name: object = record.api_key_env_var
+    if "api_key_env_var" in settings:
+        # Pydantic boundary: a non-string, non-None configured name keeps
+        # its existing fail-closed copy.
+        env_name = _typed_setting(record, settings, "api_key_env_var")
     names: tuple[str, ...] = ()
     if isinstance(env_name, str):
         if env_name.strip():
@@ -465,7 +653,15 @@ def _resolve_base_url(
     validators = _validators_for(record)
     candidate: object = explicit
     if candidate is None:
-        candidate = configured_workspace_base_url(settings)
+        # Pydantic boundary (Qodo finding 10): the alias family is typed
+        # first -- non-string alias values skip (the shared helper's
+        # semantics, preserved by the model's alias validator) -- and the
+        # first configured alias resolves from the typed view.
+        typed_aliases = {
+            alias: _typed_setting(record, settings, alias)
+            for alias in ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
+        }
+        candidate = configured_workspace_base_url(typed_aliases)
     if candidate is None and isinstance(record.default_base_url, str):
         candidate = record.default_base_url
     if candidate is None:
@@ -503,7 +699,11 @@ def _resolve_streaming(
     default: object,
 ) -> bool:
     validators = _validators_for(record)
-    value = settings.get("streaming", default)
+    # Pydantic boundary: the settings-sourced streaming flag is typed
+    # first; a non-bool raises the same boolean copy.
+    value = _typed_setting(record, settings, "streaming")
+    if value is None:
+        value = default
     if type(value) is not bool:
         raise validators.configuration_error(
             f"{record.display_name} streaming must be a boolean."

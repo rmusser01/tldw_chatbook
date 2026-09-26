@@ -336,3 +336,86 @@ def test_resolve_hosted_request_malformed_settings_fail_closed(
 
     assert exc_info.value.provider == "databricks"
     assert "must-not-rescue" not in str(exc_info.value)
+
+
+# --- Pydantic settings boundary (Qodo finding 10) ---
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("api_key", 123, "Databricks api_settings.databricks.api_key is invalid."),
+        (
+            "api_key_env_var",
+            7,
+            "Databricks api_settings.databricks.api_key_env_var is invalid.",
+        ),
+        ("model", 42, "Databricks model is invalid."),
+        ("streaming", "yes", "Databricks streaming must be a boolean."),
+        ("timeout", True, "Databricks timeout must be numeric."),
+        ("timeout", -5, "Databricks timeout must be positive and finite."),
+        ("retries", 1.5, "Databricks retries must be a non-negative integer."),
+        ("retry_delay", "5", "Databricks retry_delay must be numeric."),
+        ("retry_delay", -1, "Databricks retry_delay must be non-negative."),
+    ],
+)
+def test_settings_boundary_translates_validation_errors_byte_for_byte(
+    field: str, value: object, message: str
+) -> None:
+    """The Pydantic boundary's translated copy is exactly the copy the
+    hand-rolled validators raised -- the tests are the contract."""
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import _typed_setting
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        _typed_setting(DATABRICKS, {field: value}, field)
+    assert str(exc_info.value.message) == message
+    assert exc_info.value.provider == "databricks"
+
+
+def test_settings_boundary_yields_typed_values_and_skips_unknown_keys() -> None:
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedProviderSettings,
+        _typed_setting,
+    )
+
+    assert HostedProviderSettings.model_config.get("extra") == "ignore"
+    settings: dict[str, object] = {
+        "api_key": "k",
+        "timeout": 12,  # int is a valid float setting (never coerced FROM str)
+        "retries": 3,
+        "retry_delay": 5,
+        "streaming": False,
+        "api_base_url": "https://config.cloud.databricks.com",
+        "api_base": "https://shadowed.example",  # lower-precedence alias
+        "totally_unknown": {"nested": True},  # extra: ignored
+    }
+    assert _typed_setting(DATABRICKS, settings, "timeout") == 12.0
+    assert type(_typed_setting(DATABRICKS, settings, "timeout")) is float
+    assert _typed_setting(DATABRICKS, settings, "retries") == 3
+    assert _typed_setting(DATABRICKS, settings, "streaming") is False
+    # Unknown keys are not boundary fields and never reach the model
+    # (extra="ignore" keeps the unambiguous-table semantics).
+    assert "totally_unknown" not in HostedProviderSettings.model_fields
+    assert HostedProviderSettings.model_validate(settings).timeout == 12.0
+    # The alias family resolves first-alias-wins from the typed view.
+    resolution = resolve_hosted_request(
+        DATABRICKS, app_config=_config({"databricks": settings}), environ={}
+    )
+    assert resolution.base_url == "https://config.cloud.databricks.com/openai/v1"
+
+
+def test_settings_boundary_nonstring_alias_value_skips_not_fails() -> None:
+    # A non-string alias value is skipped (the shared helper's semantics,
+    # preserved by the model): the next alias is consulted.
+    settings: dict[str, object] = {
+        "api_base_url": 123,
+        "base_url": "https://fallback-alias.cloud.databricks.com",
+    }
+    resolution = resolve_hosted_request(
+        DATABRICKS,
+        explicit_api_key="k",
+        app_config=_config({"databricks": settings}),
+        environ={},
+    )
+    assert (
+        resolution.base_url == "https://fallback-alias.cloud.databricks.com/openai/v1"
+    )
