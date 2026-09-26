@@ -28,7 +28,7 @@ from .restore_plan import (
     recheck_targets,
     retained_config_names,
 )
-from .space import require_capacity
+from .space import held_capacity, require_capacity
 
 
 def _mkdirs(path, root):
@@ -47,10 +47,13 @@ def _copy(source, destination, cancel):
         create_private_file(destination) as fd,
         os.fdopen(os.dup(fd), "wb") as output,
     ):
+        # Resolved once: `require_capacity` re-walks and re-pins every path
+        # component on each call, and this loop runs once per 64 KiB.
+        capacity = held_capacity(destination.parent)
         before = reader._identity(os.fstat(stream.fileno()))
         while chunk := stream.read(64 * 1024):
             reader._check(cancel)
-            require_capacity({destination.parent: len(chunk)})
+            capacity(len(chunk))
             digest.update(chunk)
             total += len(chunk)
             output.write(chunk)
@@ -586,6 +589,9 @@ def stage_restore(
                         create_private_file(target) as fd,
                         os.fdopen(os.dup(fd), "wb") as output,
                     ):
+                        # Same hoist as `_copy`: one path walk, not one per
+                        # 64 KiB member chunk.
+                        capacity = held_capacity(stage)
                         for chunk in reader._member_chunks(
                             stream, info, offsets[info.filename], cancel
                         ):
@@ -596,7 +602,7 @@ def stage_restore(
                                 or streamed > limits.expanded_bytes
                             ):
                                 raise ValueError("expanded_limit")
-                            require_capacity({stage: total - streamed})
+                            capacity(total - streamed)
                             output.write(chunk)
                             digest.update(chunk)
                     if size != payload.size or digest.hexdigest() != payload.sha256:

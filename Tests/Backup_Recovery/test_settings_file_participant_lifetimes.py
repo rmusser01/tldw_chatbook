@@ -55,8 +55,9 @@ def test_theme_constructor_has_no_directory_effect_during_pause(
     )
     pause = storage._begin_local_pause()
     try:
-        with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
-            SettingsThemeEditor()
+        # TASK-32942: the refusal degrades (the tree says the files are
+        # unavailable) instead of crashing Settings' compose.
+        SettingsThemeEditor()
         assert not (tmp_path / "new").exists()
     finally:
         pause.resume()
@@ -377,7 +378,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
         monkeypatch.setattr(themes.toml, "dump", fail)
         editor.on_save_theme()
         assert editor.is_modified
-        assert "user:mine" not in _user_theme_labels(editor)
+        assert "mine" not in _user_theme_labels(editor)
         assert not (editor.custom_themes_path / "mine.toml").exists()
         assert not list(editor.custom_themes_path.glob("*.tmp"))
         monkeypatch.setattr(themes.toml, "dump", original)
@@ -390,7 +391,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
             pause.resume()
         editor.on_save_theme()
         assert not editor.is_modified
-        assert "user:mine" in _user_theme_labels(editor)
+        assert "mine" in _user_theme_labels(editor)
         assert (editor.custom_themes_path / "mine.toml").exists()
 
 

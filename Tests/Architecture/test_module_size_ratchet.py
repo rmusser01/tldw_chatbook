@@ -67,6 +67,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7807,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
+    # though both are larger in CLASS terms than every row above them
+    # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
+    # and profile_repository.py is within 456 file lines of the smallest
+    # governed row. Pinned at their exact measurement, like every row here.
+    "tldw_chatbook/TTS/profile_repository.py": 6304,
+    "tldw_chatbook/TTS/TTS_Generation.py": 4046,
     # Added by the tier-2 review (S06 P2 [D3]): the largest module in the
     # repo with no row -- 1,217 methods on one class, rank 8 repo-wide,
     # while rank 9 (`personas_screen.py`) was already pinned. The

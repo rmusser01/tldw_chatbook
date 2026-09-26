@@ -82,10 +82,48 @@ the current `2026-07-28` profile. Batch requests are accepted only with
 The retired `ingest_media` placeholder is absent. Use Library Import for
 persistent URL or file ingestion.
 
-- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
+- **Built-in tools (11):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `create_character`, `update_character`, `get_conversation_history`, `export_conversation`
+
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (21):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`
+
+### Character card authoring
+
+Character authoring uses the same local card service as Personas. For example:
+
+```json
+{"name":"Ada","fields":{"description":"A patient tutor","tags":["math"]}}
+```
+
+Pass that object to `create_character`. The result contains `id`, `name`, and
+`version`. To edit it, call `update_character` with:
+
+```json
+{"character_id":42,"expected_version":1,"fields":{"description":"A curious tutor"}}
+```
+
+Use the actual id/version returned by your create call or `list_characters`.
+A stale version or duplicate name returns `error_code: "conflict"`; reread the
+roster and review the change before retrying. Omitted fields stay unchanged;
+empty text or an empty list clears that field. Null values and empty patches
+are rejected.
+
+Supported fields are `name` (update only), `description`, `personality`,
+`scenario`, `system_prompt`, `post_history_instructions`, `first_message`,
+`message_example`, `creator_notes`, `alternate_greetings`, `tags`, `creator`,
+`character_version`, and `extensions`. Existing card validation and length
+limits apply. Image fields, unknown fields, and delete/restore are unsupported.
+
+Both tools are persistent writes and require approval when Allow is inherited.
+An explicit per-tool Allow in MCP Permissions grants access. External stdio
+clients cannot display an approval card: they receive `permission_required`
+until an operator grants the tool under the built-in `tldw_chatbook` server.
+Revocation and the MCP kill switch apply on the next call. Restored MCP settings
+must also complete the normal recovery review before writes can run.
+
+Cancellation or timeout can return before an already-started database write
+finishes. Check the character roster before retrying.
 
 ### Standalone behavior and controls
 
@@ -93,7 +131,7 @@ persistent URL or file ingestion.
 keyword search; `true` or omission follows the active RAG profile's `plain`,
 `semantic`, or `hybrid` search mode.
 
-All 24 Library tools are excluded from the standalone stdio catalog. They
+All 21 Library tools are excluded from the standalone stdio catalog. They
 remain behind the in-app gated and logged direct Library action; raw in-app
 `tools/call` is refused.
 

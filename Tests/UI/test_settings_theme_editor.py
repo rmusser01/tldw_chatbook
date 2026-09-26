@@ -1136,3 +1136,319 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
         await pilot.pause()
         restored = app.available_themes[shipped.name]
         assert str(getattr(restored, "primary", "")).upper() != "#123456"
+
+
+def _shipped_variables(name: str) -> dict:
+    """A shipped theme's own extra variables (the two per-palette text tints
+    are re-derived for every palette, so they are not carried)."""
+    from tldw_chatbook.css.Themes.themes import _READABLE_TEXT_HUES
+
+    theme = next(t for t in ALL_THEMES if getattr(t, "name", None) == name)
+    return {k: v for k, v in theme.variables.items() if k not in _READABLE_TEXT_HUES}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_clone_save_reload_keeps_shipped_variables(
+    request, tmp_path
+):
+    """TASK-32940: a shipped theme's AA variables survive Clone -> Save ->
+    reload (startup loader and editor) -> Apply."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    expected = _shipped_variables("apricot")
+    assert "text-muted" in expected
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("apricot")
+        await pilot.pause()
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+
+        [saved] = [t for t in load_user_themes(tmp_path) if t.name == "apricot_copy"]
+        assert {k: saved.variables.get(k) for k in expected} == expected
+        assert {k: app.available_themes["apricot_copy"].variables.get(k) for k in expected} == expected
+
+        editor.load_theme("textual-dark")
+        editor.load_user_theme("apricot_copy")
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        applied = app.available_themes[app.theme]
+        assert {k: applied.variables.get(k) for k in expected} == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_apply_unmodified_catalog_theme_uses_catalog_name(
+    request, tmp_path
+):
+    """TASK-32940: applying a shipped theme untouched selects it by name, with
+    no lossy custom_ copy registered."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("apricot")
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "apricot"
+        assert "custom_apricot" not in app.available_themes
+
+        # An edited palette still applies as the custom_ copy; the carried
+        # variables were tuned for the old palette, so Textual re-derives
+        # them (review #2).
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "custom_apricot"
+        applied = app.available_themes["custom_apricot"].variables
+        assert "text-muted" not in applied
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_survives_backup_recovery_pause(
+    request, tmp_path, monkeypatch
+):
+    """TASK-32942: a RecoveryRequired from the raw theme-directory scope must
+    not crash the editor; the tree says the files are unavailable."""
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import raw_participants
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    @contextmanager
+    def paused_scope(*_args, **_kwargs):
+        raise RecoveryRequired("process_pause_still_active")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(raw_participants, "_scope", paused_scope)
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.is_mounted
+        labels = _user_theme_labels(editor)
+        assert any("backup/recovery" in label for label in labels)
+
+
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_tree_lists_every_textual_builtin(request, tmp_path):
+    """task-32945: Built-in lists all of Textual's themes, not just two."""
+    from textual.theme import BUILTIN_THEMES
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        builtin = next(n for n in tree.root.children if str(n.label) == "Built-in")
+        assert [str(c.label) for c in builtin.children] == list(BUILTIN_THEMES)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_empty_your_themes_says_none_yet(request, tmp_path):
+    """task-32945: an empty 'Your themes' node says so; selecting it is inert."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        user_node = tree.root.children[0]
+        assert [str(c.label) for c in user_node.children] == ["(none yet)"]
+        name_before = editor.current_theme_name
+        tree.select_node(user_node.children[0])
+        await pilot.pause()
+        assert editor.current_theme_name == name_before
+        assert editor.is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_preview_accent_row_renders_brackets(
+    request, tmp_path
+):
+    """task-32946: '[ Send ]' was parsed as markup and vanished."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        row = editor.query_one("#settings-theme-preview-accent")
+        assert "[ Send ]" in str(row.render())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_invalid_colour_names_the_format(request, tmp_path):
+    """task-32946: one spelling of the invalid state, with a format hint."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#12"
+        await pilot.pause()
+        assert str(editor.color_swatches["primary"].render()) == "Invalid — use #RRGGBB"
+        editor._update_color_swatch("error", "#GGGGGG")
+        assert str(editor.color_swatches["error"].render()) == "Invalid — use #RRGGBB"
+
+
+def _saved_variables(themes_dir, name: str) -> dict:
+    import toml
+
+    return dict(toml.load(themes_dir / f"{name}.toml").get("variables", {}) or {})
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_load_user_theme_drops_malformed_variables(
+    request, tmp_path
+):
+    """Review #1: the editor's file loader shares load_user_themes' validator,
+    so a hostile [variables] entry is never carried into Apply/Save."""
+    (tmp_path / "hostile.toml").write_text(
+        '[theme]\nname = "hostile"\ndark = true\n[colors]\nprimary = "#9966FF"\n'
+        '[variables]\ntext-muted = "red; } Screen { display: none"\n'
+        'footer-key-foreground = 12\nfooter-background = "#101010"\n',
+        encoding="utf-8",
+    )
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("hostile")
+        await pilot.pause()
+        assert editor._theme_variables == {"footer-background": "#101010"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_palette_edit_drops_carried_variables(
+    request, tmp_path
+):
+    """Review #2: carried AA variables belong to the loaded palette; once the
+    base colours or dark flag change, Textual re-derives them instead."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("modern_dark_dracula")
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert "text-muted" in _saved_variables(tmp_path, "modern_dark_dracula_copy")
+
+        editor.load_theme("modern_dark_dracula")
+        editor.on_clone_theme()
+        editor.query_one("#settings-theme-name", Input).value = "dracula_light"
+        editor.current_theme_name = "dracula_light"
+        editor.color_inputs["background"].value = "#FFFFFF"
+        editor.query_one("#settings-theme-dark-mode", Checkbox).value = False
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert "text-muted" not in _saved_variables(tmp_path, "dracula_light")
+        assert "text-muted" not in app.available_themes["dracula_light"].variables
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert "text-muted" not in app.available_themes[app.theme].variables
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_clone_keeps_hand_set_status_hue(
+    request, tmp_path
+):
+    """Review #3: pastel_dreams sets text-error by hand (kept); its
+    text-primary was pinned by the AA fix (re-derived, not carried)."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("pastel_dreams")
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        saved = _saved_variables(tmp_path, "pastel_dreams_copy")
+        assert saved.get("text-error") == "#87575e"
+        assert "text-primary" not in saved
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_delete_user_file_shadowing_builtin_restores_it(
+    request, tmp_path
+):
+    """Review #4: deleting a saved nord.toml hands Textual's nord back rather
+    than unregistering it."""
+    from textual.theme import BUILTIN_THEMES
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("nord")
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert (tmp_path / "nord.toml").exists()
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert not (tmp_path / "nord.toml").exists()
+        assert app.available_themes.get("nord") is BUILTIN_THEMES["nord"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_your_themes_placeholder_tracks_save_and_delete(
+    request, tmp_path
+):
+    """Review #5: the "(none yet)" leaf goes when the first theme is saved and
+    comes back when the last one is deleted."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        assert _user_theme_labels(editor) == {"(none yet)"}
+        editor.query_one("#settings-theme-name", Input).value = "mine"
+        editor.current_theme_name = "mine"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert _user_theme_labels(editor) == {"mine"}
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert _user_theme_labels(editor) == {"(none yet)"}

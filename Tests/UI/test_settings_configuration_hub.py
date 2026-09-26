@@ -5345,19 +5345,19 @@ async def test_settings_keyboard_category_focus_survives_selection_recompose():
 
 
 @pytest.mark.asyncio
-async def test_settings_jk_category_navigation_arms_from_non_category_focus():
-    """task-1373: j/k moves category focus without first focusing the rail."""
+@private_profile_test
+async def test_settings_jk_category_navigation_is_rail_scoped(request):
+    """task-1373 arms j/k without first focusing a category button; task-32944
+    narrows it: from the rail or from no focus, never from the detail pane
+    (j on a Theme-editor Tree/swatch/button used to yank focus to the rail)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
-        open_theme = screen.query_one("#settings-open-appearance", Button)
-        open_theme.focus()
+        pilot.app.set_focus(None)
         await pilot.pause()
-
-        assert open_theme.has_focus
 
         await pilot.press("j")
         focused = pilot.app.focused
@@ -5372,9 +5372,97 @@ async def test_settings_jk_category_navigation_arms_from_non_category_focus():
         assert isinstance(focused, Button)
         assert focused.id == "settings-category-overview"
 
+        open_theme = screen.query_one("#settings-open-appearance", Button)
+        open_theme.focus()
+        await pilot.pause()
+
+        await pilot.press("j")
+        await pilot.press("k")
+
+        assert open_theme.has_focus
+
 
 @pytest.mark.asyncio
-async def test_settings_jk_never_steals_keys_from_text_input():
+@private_profile_test
+async def test_settings_jk_leaves_theme_editor_focus_alone(request):
+    """task-32944: j/k on the theme Tree or a preset swatch stays in the editor."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        for selector in ("#settings-theme-tree", ".color-preset-swatch"):
+            target = editor.query(selector).first()
+            target.focus()
+            await pilot.pause()
+
+            await pilot.press("j")
+            await pilot.press("k")
+            focused = pilot.app.focused
+
+            assert not (
+                isinstance(focused, Button)
+                and focused.has_class("settings-category-button")
+            ), selector
+            assert focused is not None and editor in focused.ancestors_with_self
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_f6_cycles_rail_detail_inspector(request):
+    """task-32943: the footer's F6 'next pane' works on Settings (it toasted
+    'No workbench pane focus target is available'); shift+F6 reverses."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        rail = screen.query_one("#settings-category-pane")
+        detail = screen.query_one("#settings-detail-pane")
+        inspector = screen.query_one("#settings-impact-pane")
+        screen.query_one("#settings-category-appearance", Button).focus()
+        await pilot.pause()
+
+        def pane_of_focus():
+            focused = pilot.app.focused
+            for pane in (rail, detail, inspector):
+                if focused is not None and pane in focused.ancestors_with_self:
+                    return pane
+            return None
+
+        # F6 is the app-global binding (app.py) delegating to this action;
+        # the harness app has no such binding, so call the delegate directly.
+        seen = [pane_of_focus()]
+        for _ in range(3):
+            screen.action_focus_next_workbench_pane()
+            await pilot.pause()
+            seen.append(pane_of_focus())
+        assert seen[0] is rail
+        assert seen[1] is detail
+        assert seen[-1] is rail
+        assert None not in seen
+
+        await pilot.press("shift+f6")
+        await pilot.pause()
+        assert pane_of_focus() is seen[-2]
+        # Landing on the rail focuses the active category, not the filter box.
+        await pilot.press("shift+f6")
+        await pilot.pause()
+        if pane_of_focus() is detail:
+            await pilot.press("shift+f6")
+            await pilot.pause()
+        assert pilot.app.focused.id == "settings-category-appearance"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_jk_never_steals_keys_from_text_input(request):
     """task-1373: printable keys stay typed when a text input has focus."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -5394,7 +5482,8 @@ async def test_settings_jk_never_steals_keys_from_text_input():
 
 
 @pytest.mark.asyncio
-async def test_settings_jk_never_steals_keys_from_select():
+@private_profile_test
+async def test_settings_jk_never_steals_keys_from_select(request):
     """task-1373: j/k does not move category focus from a Select or its overlay."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -5432,7 +5521,8 @@ async def test_settings_jk_never_steals_keys_from_select():
 
 
 @pytest.mark.asyncio
-async def test_settings_focus_surfaces_tooltip_in_focus_help_line():
+@private_profile_test
+async def test_settings_focus_surfaces_tooltip_in_focus_help_line(request):
     """task-2835: keyboard focus mirrors the control's hover-only tooltip."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -12901,42 +12991,101 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
         assert model.state.validated_revision is None
 
 
-def test_settings_appearance_theme_options_include_registered_user_themes():
-    """TASK-31250: themes registered with the app (saved user themes) are offered."""
+def test_settings_appearance_theme_options_include_registered_user_themes(
+    tmp_path, monkeypatch
+):
+    """TASK-31250: themes registered with the app (saved user themes) are offered.
+
+    task-32945: "(saved)" only when a file exists in the user themes dir;
+    Textual's own built-ins say "(Textual)" instead.
+    """
     import types
 
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+
+    (tmp_path / "ocean.toml").write_text('[theme]\nname = "ocean"\n', encoding="utf-8")
+    monkeypatch.setattr(settings_module, "_theme_save_target", lambda: tmp_path)
     stub = types.SimpleNamespace(
         _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
         app_instance=types.SimpleNamespace(
-            available_themes={"textual-dark": object(), "ocean": object()}
+            available_themes={
+                "textual-dark": object(),
+                "ocean": object(),
+                "catppuccin-macchiato": object(),
+                "solarized-light": object(),
+                "registered-elsewhere": object(),
+            }
         ),
     )
     options = SettingsScreen._appearance_theme_options(stub)
     assert ("Ocean (saved)", "ocean") in options
+    assert ("Catppuccin Macchiato (Textual)", "catppuccin-macchiato") in options
+    assert ("Solarized Light (Textual)", "solarized-light") in options
+    assert ("Registered Elsewhere", "registered-elsewhere") in options
+    assert not any("(saved)" in label for label, value in options if value != "ocean")
+    labels = [label for label, _value in options]
+    assert len(labels) == len(set(labels))
     assert [value for _label, value in options].count("textual-dark") == 1
 
 
+async def _dirty_theme_editor(screen, pilot):
+    await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+    for _ in range(6):
+        await pilot.pause()
+    editor = screen.query_one("#settings-theme-editor")
+    editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+    for _ in range(6):
+        await pilot.pause()
+    assert screen.theme_editor_modified is True
+    return editor
+
+
+async def _leave_theme_and_choose(screen, pilot, button_id: str) -> None:
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    screen._select_category(SettingsCategoryId.APPEARANCE.value)
+    for _ in range(6):
+        await pilot.pause()
+    assert isinstance(pilot.app.screen, ThemeLeaveModal)
+    assert screen.active_category == SettingsCategoryId.THEME.value
+    await pilot.click(button_id)
+    await pilot.app.workers.wait_for_complete()
+    for _ in range(6):
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
-async def test_theme_dirty_flag_clears_when_leaving_the_category():
-    """TASK-31252: leaving Theme drops the in-progress edit, so the rail marker
-    and inspector row must not keep saying 'unsaved' on the next visit."""
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_stay_keeps_category_and_edit(request):
+    """TASK-32941: leaving Theme with edits asks first; Stay keeps both."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-theme")
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
-        for _ in range(6):
-            await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
-        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
-        for _ in range(6):
-            await pilot.pause()
-        assert screen.theme_editor_modified is True
+        editor = await _dirty_theme_editor(screen, pilot)
 
-        screen._select_category(SettingsCategoryId.APPEARANCE.value)
-        for _ in range(6):
-            await pilot.pause()
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-stay")
+        assert screen.active_category == SettingsCategoryId.THEME.value
+        assert screen.theme_editor_modified is True
+        assert editor.is_mounted
+        assert editor.query_one("#settings-theme-color-primary", Input).value == "#123456"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_discard_clears_the_dirty_flag(request):
+    """TASK-31252 + TASK-32941: Discard leaves, and the rail marker and
+    inspector row stop saying 'unsaved' on the next visit."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _dirty_theme_editor(screen, pilot)
+
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-discard")
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
         assert screen.theme_editor_modified is False
 
         screen._select_category(SettingsCategoryId.THEME.value)
@@ -12945,6 +13094,29 @@ async def test_theme_dirty_flag_clears_when_leaving_the_category():
             await pilot.pause()
         note = screen.query_one("#settings-theme-unsaved-note", Static)
         assert "No" in str(note.renderable)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_leave_with_unsaved_edits_save_writes_then_leaves(request):
+    """TASK-32941: Save stores the theme file, then leaves the category."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        editor = await _dirty_theme_editor(screen, pilot)
+        name_input = editor.query_one("#settings-theme-name", Input)
+        name_input.disabled = False
+        name_input.value = "leave_saved"
+        await pilot.pause()
+        saved_path = editor.custom_themes_path / "leave_saved.toml"
+
+        await _leave_theme_and_choose(screen, pilot, "#settings-theme-leave-save")
+        assert saved_path.exists()
+        assert "#123456" in saved_path.read_text(encoding="utf-8")
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        assert screen.theme_editor_modified is False
 
 
 def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):

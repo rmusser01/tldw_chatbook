@@ -266,13 +266,20 @@ def test_builtin_tools_use_form_except_for_nested_spec_schemas():
         "create_note",
         "search_notes",
         "list_characters",
+        "create_character",
+        "update_character",
         "get_conversation_history",
         "export_conversation",
     }
     assert {tool["name"] for tool in tools} == (
         legacy_tool_names | set(LIBRARY_TOOL_DESCRIPTORS)
     )
-    raw_tool_names = {"library_save_chunk_spec", "library_rechunk_media"}
+    raw_tool_names = {
+        "library_save_chunk_spec",
+        "library_rechunk_media",
+        "create_character",
+        "update_character",
+    }
     assert {
         tool["name"] for tool in tools if parse_schema(tool["inputSchema"]) is None
     } == raw_tool_names
@@ -280,7 +287,13 @@ def test_builtin_tools_use_form_except_for_nested_spec_schemas():
         parsed = parse_schema(tool["inputSchema"])
         if tool["name"] in raw_tool_names:
             assert parsed is None
-            assert tool["inputSchema"]["properties"]["spec"]["type"] == "object"
+            field = (
+                "fields"
+                if tool["name"] in {"create_character", "update_character"}
+                else "spec"
+            )
+            field_type = tool["inputSchema"]["properties"][field]["type"]
+            assert field_type == "object" or field_type == ["object", "null"]
         else:
             assert parsed is not None, tool["name"]
 
