@@ -99,32 +99,28 @@ direct `self._prompts.X(...)` call-site edit instead of a delegation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
-from types import SimpleNamespace
-from typing import Any, Literal, Optional, TYPE_CHECKING
 import asyncio
 import inspect
 import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from loguru import logger
 
+from ...Chat.console_command_grammar import CommandParse
+from ...Chat.console_provider_endpoints import (
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
+from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_LIBRARY,
 )
-from ..Navigation.pending_handoff_store import HandoffChannel
-from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.screen_state_store import ConsolePromptTargetProjection
-from ...Chat.console_command_grammar import CommandParse
-from ...Utils.fts5_match_forms import quote_fts5_prefix
-from ...Chat.console_provider_endpoints import (
-    normalize_generic_endpoint_for_compare,
-    safe_endpoint_display,
-)
-from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
 from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
 from ...Prompt_Management.prompt_improvement_models import (
@@ -139,6 +135,7 @@ from ...Prompt_Management.prompt_variables import (
     compile_prompt_variables,
     fingerprint_system_text,
 )
+from ...Utils.fts5_match_forms import quote_fts5_prefix
 from ...Widgets.Console.console_composer_bar import (
     ComposerDraftSnapshot,
     ComposerTransactionValidationError,
@@ -148,6 +145,8 @@ from ...Widgets.Console.console_prompt_improve_view import (
 )
 from ...Widgets.Console.console_prompt_picker_modal import (
     MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
+)
+from ...Widgets.Console.console_prompt_picker_modal import (
     ConsolePromptPickerModal,
 )
 from ...Widgets.Console.console_prompts_modal import (
@@ -162,6 +161,9 @@ from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import HandoffChannel
+from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 
 #: One browse page of the Console prompt picker. Behaviour-defining: the
 #: modal's paging controls, its "no more results" state, and the Library's
@@ -348,7 +350,21 @@ class _ConsolePromptSource:
     async def update_draft(
         self, *, draft_id: int, content: str, expected_version: int
     ) -> Any:
-        """Conditionally update one local Draft Shelf entry."""
+        """Conditionally update one local Draft Shelf entry.
+
+        Args:
+            draft_id: Positive local draft identifier.
+            content: Exact replacement text.
+            expected_version: Version observed when the editor opened.
+
+        Returns:
+            The scope service's normalized updated draft.
+
+        Raises:
+            ValueError: If the Draft Shelf source is unavailable or input is
+                invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+        """
 
         method = self._require(
             "update_prompt_draft", "Local Prompt Draft Shelf is unavailable."
@@ -361,7 +377,20 @@ class _ConsolePromptSource:
         )
 
     async def delete_draft(self, *, draft_id: int, expected_version: int) -> Any:
-        """Conditionally hard-delete one local Draft Shelf entry."""
+        """Conditionally hard-delete one local Draft Shelf entry.
+
+        Args:
+            draft_id: Positive local draft identifier.
+            expected_version: Version observed when the editor opened.
+
+        Returns:
+            The scope service's deletion confirmation.
+
+        Raises:
+            ValueError: If the Draft Shelf source is unavailable or input is
+                invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+        """
 
         method = self._require(
             "delete_prompt_draft", "Local Prompt Draft Shelf is unavailable."
@@ -373,17 +402,62 @@ class _ConsolePromptSource:
         )
 
     async def list_draft_collections(self) -> Any:
-        """Return optional local Library collection targets for promotion."""
+        """Return every local Library collection target for promotion.
+
+        Returns:
+            A collection response containing all bounded pages in deterministic
+            backend order, or the unmodified non-mapping backend response.
+
+        Raises:
+            ValueError: If local Prompt collections are unavailable.
+        """
 
         method = self._require(
             "list_prompt_collections", "Local Prompt collections are unavailable."
         )
-        return await method(mode="local", limit=100, offset=0)
+        limit = 100
+        offset = 0
+        collections: list[Any] = []
+        total: int | None = None
+        while True:
+            response = await method(mode="local", limit=limit, offset=offset)
+            if not isinstance(response, Mapping):
+                return response
+            page = response.get("collections", ())
+            if not isinstance(page, (list, tuple)):
+                return response
+            collections.extend(page)
+            raw_total = response.get("total")
+            total = raw_total if type(raw_total) is int and raw_total >= 0 else total
+            if not page or (total is not None and len(collections) >= total):
+                break
+            next_offset = offset + len(page)
+            if next_offset <= offset or (total is None and len(page) < limit):
+                break
+            offset = next_offset
+        return {
+            "collections": collections,
+            "limit": limit,
+            "offset": 0,
+            "total": total if total is not None else len(collections),
+        }
 
     async def assign_draft_collection(
         self, *, prompt_id: int, collection_ids: tuple[int, ...]
     ) -> Any:
-        """Assign a promoted local Prompt to its optional collection."""
+        """Assign a promoted local Prompt to its optional collection.
+
+        Args:
+            prompt_id: Positive identifier of the newly promoted Prompt.
+            collection_ids: Local collection identifiers to replace onto it.
+
+        Returns:
+            The scope service's normalized membership response.
+
+        Raises:
+            ValueError: If local collection assignment is unavailable or input
+                is invalid.
+        """
 
         method = self._require(
             "replace_prompt_collection_memberships",

@@ -750,6 +750,62 @@ class ConsoleSwitcherQueryInput(BaseModel):
     query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
 
 
+class PromptDraftShelfInput(BaseModel):
+    """Strict exact-text boundary for one locally persisted Prompt draft.
+
+    Attributes:
+        content: Nonblank, bounded, NUL-free Unicode text preserved verbatim.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    content: str
+
+    @field_validator("content", mode="plain")
+    @classmethod
+    def _validate_exact_content(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("Prompt draft content must be text")
+        if len(value) > CONSOLE_DRAFT_MAX_LENGTH:
+            raise ValueError(
+                "Prompt draft content exceeds the Console draft length limit"
+            )
+        if not value.strip():
+            raise ValueError("Prompt draft content must contain non-whitespace text")
+        if "\x00" in value:
+            raise ValueError("Prompt draft content must not contain NUL")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Prompt draft content must be valid Unicode") from exc
+        return value
+
+
+def validate_prompt_draft_shelf_content(value: object) -> str:
+    """Validate a shelf payload without trimming or rewriting its text.
+
+    Args:
+        value: Candidate unsent Prompt draft content.
+
+    Returns:
+        The exact validated content.
+
+    Raises:
+        ValueError: If content is non-text, blank, oversized, contains NUL, or
+            cannot be encoded as UTF-8.
+    """
+
+    try:
+        return PromptDraftShelfInput.model_validate({"content": value}).content
+    except (PydanticValidationError, TypeError):
+        raise ValueError(
+            "Prompt draft content must be nonblank valid Unicode text without NUL, "
+            f"at most {CONSOLE_DRAFT_MAX_LENGTH} characters."
+        ) from None
+
+
 class ConsoleCharacterQueryInput(ConsoleSwitcherQueryInput):
     """Character Keyword input constrained to the repository's raw query cap."""
 
@@ -1869,4 +1925,3 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
-

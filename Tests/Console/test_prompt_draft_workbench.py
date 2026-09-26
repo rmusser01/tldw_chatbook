@@ -530,3 +530,25 @@ async def test_promotion_assigns_optional_collection_and_keeps_shelf_entry():
         assert 7 in backend.drafts
         status = modal.query_one("#console-prompt-draft-status", Static)
         assert "saved to Library" in str(status.render())
+
+
+@pytest.mark.asyncio
+async def test_promotion_refuses_blank_editor_content_without_creating_library_prompt():
+    backend = _Backend()
+    modal = _modal(backend)
+    app = _ProductionCssApp()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        await modal.open_artifact("draft_shelf:7")
+        await pilot.pause()
+
+        modal.query_one("#console-prompt-draft-content", TextArea).text = "  \n"
+        modal.query_one("#console-prompt-draft-library-name", Input).value = "Reusable"
+        await pilot.click("#console-prompt-draft-promote")
+        await pilot.pause()
+
+        assert backend.save_calls == []
+        status = modal.query_one("#console-prompt-draft-status", Static)
+        assert "content" in str(status.render()).lower()

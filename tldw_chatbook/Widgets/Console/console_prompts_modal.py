@@ -2298,6 +2298,12 @@ class ConsolePromptsModal(
                 "Add a Prompt name before saving to Library.", error=True
             )
             return
+        if not editor.content.strip():
+            editor.show_status(
+                "Draft content must contain non-whitespace text before saving to Library.",
+                error=True,
+            )
+            return
         try:
             saved = await _maybe_await(
                 self._save(

@@ -20,12 +20,27 @@ class ConsolePromptDraftEditor(VerticalScroll):
         collection_options: Sequence[tuple[str, int]] = (),
         **kwargs: Any,
     ) -> None:
+        """Initialize one Draft Shelf editor.
+
+        Args:
+            content: Exact persisted draft text used to seed the editor.
+            collection_options: Display-name and local-ID pairs for optional
+                Library promotion.
+            **kwargs: Textual widget configuration forwarded to ``VerticalScroll``.
+        """
+
         super().__init__(**kwargs)
         self._content = str(content)
         self._collection_options = tuple(collection_options)
         self._delete_armed = False
 
     def compose(self) -> ComposeResult:
+        """Compose exact-text editing and Library-promotion controls.
+
+        Yields:
+            Textual widgets for the editor, status, actions, and promotion form.
+        """
+
         yield Static(
             "Edit the saved draft, insert it at the current composer caret, or "
             "promote it to a reusable local Library Prompt.",
@@ -70,38 +85,66 @@ class ConsolePromptDraftEditor(VerticalScroll):
 
     @property
     def content(self) -> str:
-        """Return the current exact editor text."""
+        """Return the current exact editor text.
+
+        Returns:
+            The unmodified TextArea content.
+        """
 
         return self.query_one("#console-prompt-draft-content", TextArea).text
 
     @property
     def library_name(self) -> str:
-        """Return the trimmed promotion name."""
+        """Return the trimmed promotion name.
+
+        Returns:
+            The user-entered local Prompt name without surrounding whitespace.
+        """
 
         return self.query_one("#console-prompt-draft-library-name", Input).value.strip()
 
     @property
     def selected_collection_id(self) -> int | None:
-        """Return the selected local collection, if any."""
+        """Return the selected local collection, if any.
+
+        Returns:
+            A positive local collection ID or ``None`` for no collection.
+        """
 
         value = self.query_one("#console-prompt-draft-library-collection", Select).value
         return value if type(value) is int else None
 
     @property
     def delete_armed(self) -> bool:
-        """Return whether the next delete press confirms deletion."""
+        """Return whether the next delete press confirms deletion.
+
+        Returns:
+            ``True`` while the destructive second press is armed.
+        """
 
         return self._delete_armed
 
     def show_status(self, message: str, *, error: bool = False) -> None:
-        """Show concise action feedback in the editor."""
+        """Show concise action feedback in the editor.
+
+        Args:
+            message: Plain user-visible status text.
+            error: Whether to apply the error presentation class.
+
+        Returns:
+            None.
+        """
 
         status = self.query_one("#console-prompt-draft-status", Static)
         status.update(message)
         status.set_class(error, "error")
 
     def arm_delete(self) -> None:
-        """Require the immediately following delete press to confirm."""
+        """Require the immediately following delete press to confirm.
+
+        Returns:
+            None.
+        """
 
         self._delete_armed = True
         button = self.query_one("#console-prompt-draft-delete", Button)
@@ -109,7 +152,11 @@ class ConsolePromptDraftEditor(VerticalScroll):
         self.show_status("Deletion is permanent. Press Delete again to confirm.")
 
     def reset_delete_confirmation(self) -> None:
-        """Cancel a pending delete confirmation after any intervening action."""
+        """Cancel a pending delete confirmation after an intervening action.
+
+        Returns:
+            None.
+        """
 
         if not self._delete_armed:
             return
