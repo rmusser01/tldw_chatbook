@@ -1490,3 +1490,25 @@ async def test_quit_without_theme_edits_does_not_prompt(request, monkeypatch):
         await tldw._confirm_and_quit()
         assert past_screen_check == [True]  # the screen let the quit through
         assert _leave_modals(host) == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, monkeypatch):
+    """Review follow-up 7: a real ``NavigateToScreen`` through the real
+    ``TldwCli.handle_screen_navigation`` asks, and Stay vetoes the switch."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        tldw, switched = _real_app_on(host, settings, monkeypatch)
+        nav = host.run_worker(tldw.handle_screen_navigation(NavigateToScreen("console")), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.2)
+        await nav.wait()
+        assert switched == []
+        assert host.screen is settings and editor.is_modified
