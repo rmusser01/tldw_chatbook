@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-25 20:55'
+updated_date: '2026-09-26 08:11'
 labels:
   - console
   - prompts
@@ -57,4 +57,5 @@ Detailed plan: Docs/superpowers/plans/2026-09-25-console-prompt-draft-shelf.md
 - Addressed PR review with snapshot-consistent draft reads, shared exact-text Pydantic validation, one UI-neutral shelf-capacity contract, complete bounded collection pagination, blank-promotion refusal, and expanded public Draft Shelf API docstrings. The migration remains an inline Prompts DB step because `DB/migrations/README.md` explicitly assigns Prompts to the module-level migration convention; moving only v4-to-v5 would split that established runner.
 - Verified with 35 focused Draft Shelf/runtime-policy tests, 56 Prompts schema/history tests, 8 design-token governance tests, Ruff checks, byte compilation, and `git diff --check`. Live Console UAT covered the Menu and command routes, keep behavior, source browsing, keyboard selection, caret insertion, two-press deletion, and narrow scrolling; promotion is covered by automated UI/service tests. A broader Prompts DB sweep passed 302 tests with the timing-dependent `test_concurrent_updates_to_same_prompt` deselected after confirming it failed 5/5 on the exact base commit; the incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The legacy broad UI fixture remains blocked on the existing `RecoveryRequired("raw_source_selection_changed")` baseline, while its changed Menu ordering is covered by the focused Console path and live UAT.
 - After rebasing the PR onto current `dev`, the review regression group passed 7 tests red-to-green, the full focused Draft Shelf/runtime-policy group passed 42 tests, and Prompts migration/history plus design-token governance passed 64 tests. Import/F821 checks and `git diff --check` also passed; a fresh bytecode-only rerun could not allocate its temporary cache because the host volume was full, while the executed test groups imported and exercised the changed modules successfully.
+- The protected Perf Guard then exposed one UI-ready module over ADR-097's fixed ceiling. Root-cause tracing showed the new editor and save-choice dialog were imported by boot-resident Console modules even though both are interaction-only. Their imports now resolve on first use, a subprocess closure regression pins that boundary, and the exact 21-test Perf Guard group passes at 1030/1031 modules alongside the 64 Draft Shelf/runtime-policy and 64 Prompts-history/design-token groups.
 <!-- SECTION:NOTES:END -->
