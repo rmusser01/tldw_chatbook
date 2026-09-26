@@ -440,6 +440,13 @@ Models ▸ Custom endpoints**.
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
 
+Switching the provider, here or in the full modal, picks that provider's
+own model: its `model`, `api_model` or `default_model` in
+`[api_settings.<provider>]`. Your default model (`[chat_defaults] model`)
+only comes along when you switch to your default provider. A provider with
+no configured model gets no model, and Console asks you to choose one; it
+never borrows another provider's model.
+
 #### QwenCloud in Console
 
 QwenCloud behaves like the other hosted providers: select it once, use the
@@ -808,3 +815,13 @@ detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
 credentials stripped). Corrected from the source, not from a capture — this
 sweep drove no Console profile with a local server running, and does not
 claim to have seen the third button.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-26 (TASK-33001.1,
+provider switch picks that provider's own model). Switching llama.cpp to
+Anthropic under the shipped `[chat_defaults]` pair (OpenAI /
+`gpt-5.6-terra`) used to fill `gpt-5.6-terra`; it now fills Anthropic's own
+configured model, or no model with a "Missing model" readiness block. The
+evidence is headless: real-path rebase tests in
+`Tests/Chat/test_console_settings_apply.py` for both editors' field sets, and
+a mounted Conversation settings modal driving the real controller rebase in
+`Tests/Chat/test_console_session_settings.py`. Not re-checked live.)*

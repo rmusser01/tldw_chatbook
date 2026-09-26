@@ -306,6 +306,112 @@ def test_explicit_provider_alias_is_canonicalized_for_read_only_resolution() -> 
     assert config["chat_defaults"]["provider"] == "llama_cpp"
 
 
+def test_chat_defaults_model_does_not_follow_an_explicit_other_provider() -> None:
+    """TASK-33001.1: chat_defaults.model belongs to chat_defaults.provider.
+
+    An explicit provider that is not the chat-defaults provider takes its own
+    configured model, never the global default model (shipped OpenAI pair).
+    """
+    config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {"anthropic": {"model": "claude-sonnet-5"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider="anthropic",
+    )
+
+    assert effective.provider == "anthropic"
+    assert effective.model == "claude-sonnet-5"
+    assert effective.model_source == "provider_fallback"
+
+
+def test_explicit_other_provider_without_a_model_borrows_no_model() -> None:
+    config = {"chat_defaults": {"provider": "openai", "model": "gpt-5.6-terra"}}
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider="moonshot",
+    )
+
+    assert effective.provider == "moonshot"
+    assert effective.model is None
+    assert effective.model_source == "none"
+
+
+@pytest.mark.parametrize(
+    ("defaults_provider", "explicit_provider"),
+    [
+        ("openai", "OpenAI"),
+        ("OpenAI-Compatible", "openai"),
+        ("custom-ep:paid", "custom-ep:paid"),
+        ("custom-ep:paid", "custom_ep:paid"),
+    ],
+    ids=["case", "legacy-alias", "registry-id", "registry-config-key-spelling"],
+)
+def test_chat_defaults_model_follows_its_own_provider_under_canonical_identity(
+    defaults_provider: str, explicit_provider: str
+) -> None:
+    config = {
+        **_registry_config(),
+        "chat_defaults": {"provider": defaults_provider, "model": "chosen-model"},
+        "api_settings": {"openai": {"model": "legacy-model"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider=explicit_provider,
+    )
+
+    assert effective.model == "chosen-model"
+    assert effective.model_source == "chat_defaults"
+
+
+def test_new_chats_resolve_the_chat_defaults_pair() -> None:
+    """TASK-33001.1 AC#5: the startup chat and Ctrl+T keep their pair.
+
+    Drives the real ``ConsoleSessionController._default_console_session_settings``
+    (Ctrl+T) fed by the real ``ChatScreen._effective_console_provider_model``,
+    and the real blank-chat builder (startup).
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        blank_console_session_settings,
+    )
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {
+            "openai": {"model": "legacy-model"},
+            "anthropic": {"model": "claude-sonnet-5"},
+        },
+    }
+
+    def ctrl_t(control_provider, control_model):
+        screen = SimpleNamespace(
+            _persisted_chat_defaults=lambda: config["chat_defaults"],
+            _console_control_provider=control_provider,
+            _console_control_model=control_model,
+        )
+        session = SimpleNamespace(
+            _effective_console_provider_model=lambda: (
+                ChatScreen._effective_console_provider_model(screen)
+            ),
+            _provider_readiness_app_config=lambda: config,
+        )
+        settings = ConsoleSessionController._default_console_session_settings(session)
+        return settings.provider, settings.model
+
+    startup = blank_console_session_settings(config)
+    assert (startup.provider, startup.model) == ("openai", "gpt-5.6-terra")
+    assert ctrl_t(None, None) == ("openai", "gpt-5.6-terra")
+    assert ctrl_t("anthropic", "claude-opus-5") == ("anthropic", "claude-opus-5")
+
+
 def test_effective_chat_configuration_is_frozen_and_slotted() -> None:
     effective = session_settings.resolve_effective_chat_configuration(
         {"chat_defaults": {"provider": "openai", "model": "gpt-test"}}
@@ -350,8 +456,10 @@ def test_qwencloud_default_settings_use_canonical_fields_with_alias_fallbacks() 
 def test_qwencloud_public_builders_fail_closed_for_malformed_canonical_settings() -> (
     None
 ):
+    # TASK-33001.1: chat_defaults.model applies only to chat_defaults.provider,
+    # so the safe default names its provider.
     config = {
-        "chat_defaults": {"model": "safe-default"},
+        "chat_defaults": {"provider": "qwencloud", "model": "safe-default"},
         "api_settings": {
             "qwencloud": ["not", "a", "table"],
             "QwenCloud": {
@@ -377,8 +485,9 @@ def test_qwencloud_public_builders_fail_closed_for_malformed_canonical_settings(
 
 
 def test_qwencloud_public_builders_fail_closed_for_malformed_alias_only() -> None:
+    # TASK-33001.1: the safe default names its provider (see above).
     config = {
-        "chat_defaults": {"model": "safe-default"},
+        "chat_defaults": {"provider": "qwencloud", "model": "safe-default"},
         "api_settings": {"QwenCloud": "not-a-table"},
     }
 
@@ -2649,6 +2758,52 @@ async def _request_settings_close(pilot, source: str) -> None:
     else:
         await pilot.click(offset=(0, 0))
     await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_provider_switch_takes_the_target_providers_own_model() -> (
+    None
+):
+    """TASK-33001.1: the Conversation settings modal's provider switch runs the
+    REAL controller rebase and fills the target provider's own model -- never
+    the chat-defaults model that belongs to another provider."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    def real_rebase(state, **kwargs):
+        return ConsoleChatController.rebase_console_settings_draft(
+            object(), state, **kwargs
+        )
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
+    estimate = ConsoleSettingsContextEstimate(
+        used_tokens=None, token_limit=None, label="unavailable"
+    )
+    modal = ConsoleSettingsModal(
+        settings=settings,
+        app_config={
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+                "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
+            },
+        },
+        providers_models={
+            "llama_cpp": ["local-gguf"],
+            "anthropic": ["claude-sonnet-5"],
+        },
+        context_estimate=estimate,
+        can_save=True,
+        draft_rebaser=real_rebase,
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        await pilot.pause()
+
+        assert modal._draft.settings.provider == "anthropic"
+        assert modal._draft.settings.model == "claude-sonnet-5"
 
 
 @pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])

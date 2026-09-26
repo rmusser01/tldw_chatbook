@@ -6,7 +6,11 @@ import pytest
 import tldw_chatbook.Chat.console_settings_apply as settings_apply
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_console_settings_readiness,
+    validate_console_session_settings,
+)
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -741,6 +745,100 @@ def test_rebase_keyed_a_b_a_drafts_restore_deliberate_a_edits() -> None:
         dirty=True,
         checked=True,
     )
+
+
+# The shipped chat_defaults pair (config.py [chat_defaults]).
+_SHIPPED_CHAT_DEFAULTS = {"provider": "OpenAI", "model": "gpt-5.6-terra"}
+
+
+@pytest.mark.parametrize(
+    "exposed_fields",
+    [QUICK_MODEL_DEFAULT_FIELDS, FULL_MODEL_DEFAULT_FIELDS],
+    ids=["alt-m-popover", "conversation-settings-modal"],
+)
+def test_rebase_local_to_cloud_without_a_model_takes_the_target_providers_model(
+    exposed_fields: frozenset[str],
+) -> None:
+    """TASK-33001.1: llama.cpp -> Anthropic must not inherit gpt-5.6-terra."""
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")),
+        provider="anthropic",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8080",
+                    "model": "local-gguf",
+                },
+                "anthropic": {"model": "claude-sonnet-5"},
+            },
+        },
+        exposed_fields=exposed_fields,
+    )
+
+    assert rebased.settings.provider == "anthropic"
+    assert rebased.settings.model == "claude-sonnet-5"
+
+
+def test_rebase_cloud_to_cloud_without_a_model_takes_the_target_providers_model() -> (
+    None
+):
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-5")),
+        provider="deepseek",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {
+                "anthropic": {"model": "claude-sonnet-5"},
+                "deepseek": {"api_model": "deepseek-v4-flash"},
+            },
+        },
+    )
+
+    assert rebased.settings.provider == "deepseek"
+    assert rebased.settings.model == "deepseek-v4-flash"
+
+
+def test_rebase_to_a_provider_with_no_model_needs_one_and_borrows_none() -> None:
+    # A stored key and no model: readiness must name the missing model.
+    app_config = {
+        "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+        "api_settings": {"moonshot": {"api_key": "sk-test-moonshot"}},
+    }
+
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra")),
+        provider="moonshot",
+        model=None,
+        app_config=app_config,
+    )
+
+    assert rebased.settings.provider == "moonshot"
+    assert rebased.settings.model is None
+    assert "Model is required." in validate_console_session_settings(
+        rebased.settings, app_config=app_config
+    )
+    readiness = build_console_settings_readiness(
+        rebased.settings, app_config=app_config, environ={}
+    )
+    assert readiness.blocker == "model_missing"
+
+
+def test_rebase_onto_the_chat_defaults_provider_keeps_the_default_model() -> None:
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-5")),
+        provider="openai",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {"openai": {"model": "legacy-model"}},
+        },
+    )
+
+    assert rebased.settings.provider == "openai"
+    assert rebased.settings.model == "gpt-5.6-terra"
 
 
 def _registry_entry_config() -> dict[str, object]:
