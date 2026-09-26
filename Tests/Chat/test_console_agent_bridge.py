@@ -11795,6 +11795,90 @@ def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently(
     assert resolution.base_url == ""
 
 
+def _swapped_custom_ep_parent_resolution():
+    """A parent resolution as the gateway resolves a swapped
+    ``openai_compatible`` registry entry (ADR-179 Phase 2 Task 6): raw
+    identity on ``provider``/``selected_provider``, engine execution key on
+    ``execution_key``, legacy readiness key alongside."""
+    return ConsoleProviderResolution(
+        provider="custom-ep:paid",
+        base_url="https://paid.example.com/v1",
+        model="paid-model",
+        ready=True,
+        readiness_key="custom",
+        execution_key="custom-hosted",
+        selected_provider="custom-ep:paid",
+    )
+
+
+def _unknown_provider_resolution(selection):
+    """Mirror of the real gateway's answer for an unselectable key: the
+    ``custom-hosted`` engine spelling resolves not-ready with "Unknown
+    provider" (it is execution-only, never a standalone provider id)."""
+    return ConsoleProviderResolution(
+        provider=selection.provider,
+        base_url="",
+        model=selection.explicit_model,
+        ready=False,
+        visible_copy=(
+            "custom_hosted is not ready: Unknown provider. Choose a "
+            "supported provider or add api_key under "
+            "[api_settings.custom_hosted]."
+        ),
+        readiness_key=selection.provider,
+        execution_key=selection.provider,
+    )
+
+
+def test_swapped_custom_ep_bridge_send_naming_execution_key_is_same_target(
+    monkeypatch,
+):
+    """The bridge-level send carries the plan's flattened execution key
+    (``api_endpoint="custom-hosted"``) while the parent's identity is
+    ``custom-ep:paid``: SAME target -- the parent resolution streams, and
+    the execution-only spelling is never re-resolved as a standalone
+    provider (the real gateway answers that "Unknown provider")."""
+    # Env-first read keeps the streamed-turn watchdog off this machine's
+    # config.toml (a recovery-required config would otherwise poison the
+    # turn with an unrelated RecoveryRequired error).
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "0")
+    gateway = _RoutingGateway(resolver=_unknown_provider_resolution)
+    parent = _swapped_custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-hosted",
+            model="paid-model",
+            messages_payload=[{"role": "user", "content": "ordinary send"}],
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    assert resolution.base_url == "https://paid.example.com/v1"
+
+
+def test_bare_custom_hosted_as_an_actual_selection_still_fails_cleanly():
+    """Under a parent whose execution key is NOT the engine spelling, naming
+    bare ``custom-hosted`` is a routed call to an unselectable provider and
+    fails loudly through chat_call's error channel -- exactly as before."""
+    gateway = _RoutingGateway(resolver=_unknown_provider_resolution)
+    parent = _routing_parent_resolution()
+    with (
+        _streaming_adapter(parent, gateway) as adapter,
+        pytest.raises(RuntimeError, match="custom-hosted"),
+    ):
+        adapter.chat_call(
+            api_endpoint="custom-hosted",
+            model="some-model",
+            messages_payload=[{"role": "user", "content": "name the engine key"}],
+            streaming=False,
+        )
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.stream_calls == []
+
+
 def test_routed_child_keeps_live_usage_scope_and_provider_counts():
     events = []
     terminal = ProviderToolCalls((), ProviderTurnMetadata(
