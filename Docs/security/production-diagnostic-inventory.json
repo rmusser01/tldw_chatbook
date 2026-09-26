@@ -379,8 +379,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 80,
-      "diagnostic_digest": "6ba34901a7b73518a58c",
+      "call_count": 88,
+      "diagnostic_digest": "2e58c49d016a9de23d51",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2465,6 +2465,27 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 10,
+      "diagnostic_digest": "fed19a3536371c29ee23",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_worker_bundle.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "94d9e21545fd34ce293c",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_workspace_executor.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 12,
+      "diagnostic_digest": "10df07334e0ecdaacf66",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_workspace_transport.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "9a0a07e58bf145aec1a7",
       "owner": "TASK-492",
@@ -2486,8 +2507,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "5929bf300cfb7fa947a2",
+      "call_count": 9,
+      "diagnostic_digest": "ff72e345f0152ead161c",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/workspace_file_roots.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -3550,8 +3571,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "5e1f7cc53ac0791f1349",
+      "call_count": 1,
+      "diagnostic_digest": "c6ebb5567719fb888d11",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/sensitive_paths.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4103,8 +4124,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "053063d2d2e501a6d535",
+      "call_count": 12,
+      "diagnostic_digest": "2533f6bd53b98703a253",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Workspaces/registry_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4117,8 +4138,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 400,
-      "diagnostic_digest": "2c2024237c18594ad8ff",
+      "call_count": 401,
+      "diagnostic_digest": "c6d3d8f6a789b7971bf0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4385,6 +4406,20 @@
         }
       ],
       "path": "tldw_chatbook/Chat/attachment_core.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "dc480264ebaf7878",
+          "method": "warning",
+          "path_expressions": [
+            "binding_id"
+          ],
+          "scope": "_remote_instruction_io_for_selection",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Chat/console_chat_controller.py"
     },
     {
       "candidates": [
@@ -9249,6 +9284,62 @@
     {
       "candidates": [
         {
+          "call_digest": "7d057cd12d6b9fcc",
+          "method": "error",
+          "path_expressions": [
+            "user_path"
+          ],
+          "scope": "validate_path",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "8cf6b9c9afd5a866",
+          "method": "warning",
+          "path_expressions": [
+            "base_directory"
+          ],
+          "scope": "validate_path",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "ef2a971669d1b106",
+          "method": "warning",
+          "path_expressions": [
+            "full_path",
+            "user_path"
+          ],
+          "scope": "validate_path",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "fb98ba9c8fe67e4b",
+          "method": "warning",
+          "path_expressions": [
+            "full_path"
+          ],
+          "scope": "validate_path",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Tools/remote_worker_bundle.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "d9c6449488abd9ee",
+          "method": "debug",
+          "path_expressions": [
+            "path"
+          ],
+          "scope": "_unlink_quietly",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Tools/remote_workspace_transport.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "e2efba9e08eac427",
           "method": "info",
           "path_expressions": [
@@ -10096,20 +10187,6 @@
         }
       ],
       "path": "tldw_chatbook/Utils/secure_temp_files.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "e4f0700f3a6620af",
-          "method": "debug",
-          "path_expressions": [
-            "path_str"
-          ],
-          "scope": "_resolved",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Utils/sensitive_paths.py"
     },
     {
       "candidates": [
@@ -11230,11 +11307,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 593,
-    "path_privacy_candidate_calls": 685,
+    "owner_files": 596,
+    "path_privacy_candidate_calls": 690,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
-    "task_492_calls": 1360,
-    "task_494_calls": 7505
+    "task_492_calls": 1393,
+    "task_494_calls": 7499
   }
 }

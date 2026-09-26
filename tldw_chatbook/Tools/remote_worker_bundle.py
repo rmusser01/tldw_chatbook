@@ -696,7 +696,7 @@ Every one of those is resolved through the app's OWN accessors at call
 time, never a hardcoded literal: ``config.toml``'s location honors the
 ``TLDW_CONFIG_PATH`` override (``config._get_effective_config_path()``),
 the MCP permission store and its companions live under
-``config.get_user_data_dir()`` (never under the ``~/.config/tldw_cli/``
+``config.get_user_data_dir()`` (never under the legacy config-directory
 literal a first look at ``app.py`` might suggest -- see
 ``_sensitive_single_file_paths()``), and the SQLite DB paths honor
 ``[database]`` overrides and the active user folder (see
@@ -4784,4 +4784,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("16b0a0df371930e696209bad94e2c8980545e6d8d22b45fbc57ca6bf3c7a3066")
+BUNDLE_SHA256 = _enter_worker_exchange("84cec2c845961f228251330f1238b78194f5dce0bf2adbe40d9db4e1c80e24cf")
