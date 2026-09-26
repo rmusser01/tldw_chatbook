@@ -853,7 +853,7 @@ async def test_palette_switch_reaches_app_theme_config_and_toast(request):
 async def test_theme_switches_reuse_the_last_listing(request, config_writes):
     """Qodo 4107495860: a theme change only moves the active/launch markers,
     so it must not re-scan the themes folder (the backup-scoped scan costs
-    ~6 ms per file -- 320 ms at 50 files, measured)."""
+    ~5-6.6 ms per file -- a 254 ms median at 50 files, measured)."""
     calls = []
 
     def lister():
