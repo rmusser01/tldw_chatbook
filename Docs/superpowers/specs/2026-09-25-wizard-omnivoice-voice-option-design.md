@@ -80,7 +80,7 @@ Skip, decline, and failures never block Next.
      `OMNIVOICE_SEED` (no endpoint/credential keys) and whose preferences
      are `provider_id="omnivoice"`, model `omnivoice-int8hq`, voice
      `default`, format `wav`, `commit_defaults_after_handoff=True`.
-   - `run_omnivoice_sample(text, *, speed, service)`: synthesizes through
+   - `run_omnivoice_sample(text, *, speed, seed, service)`: synthesizes through
      the app's TTS service —
      `service.generate_audio_stream(build_legacy_speech_request(...))`,
      the path briefing audio uses — so the shared cached backend is used
@@ -105,7 +105,11 @@ The Speech step, the model browser and the engine are unchanged.
 When OmniVoice is saved as default the wizard writes a fixed seed so the
 default voice does not change per reply. Rule: if `[OmniVoiceSettings]
 seed` is already set, keep it (a re-run never changes an existing voice);
-otherwise generate one random integer in `[0, 2**31)` at commit time.
+otherwise generate one random integer in `[0, 2**31)` the first time the
+step needs it. The **Test and Hear sample uses the same seed** (passed per
+request as `extra_params["seed"]`, which the engine and request admission
+accept), so the voice the user hears is the voice they save. (Added during
+planning: without this the sample would use a different random voice.)
 **Plan task 1 measures it with the real model** (one seed, several
 different sentences: median F0 spread and Whisper intelligibility). If the
 voice holds, ship the seed. If it does not, keep the seed (still reduces
