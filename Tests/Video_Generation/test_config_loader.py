@@ -131,6 +131,20 @@ def test_allow_uploads_defaults_off_and_parses(monkeypatch):
     assert cfg2.minimax_video_allow_uploads is True
 
 
+def test_allow_uploads_accepts_a_toml_integer(monkeypatch):
+    """`allow_uploads = 1` must set the gate, as it does for image generation.
+
+    The local `_coerce_bool` this module used matched strings only, so a TOML
+    integer silently fell through to the default -- the user set an
+    outbound-upload gate and nothing happened. The shared
+    `Utils.Utils.coerce_bool_flag` accepts `(str, int)`.
+    """
+    cfg = _load_config_with_section(monkeypatch, {"minimax": {"allow_uploads": 1}})
+    assert cfg.minimax_video_allow_uploads is True
+    off = _load_config_with_section(monkeypatch, {"minimax": {"allow_uploads": 0}})
+    assert off.minimax_video_allow_uploads is False
+
+
 def test_retention_choice_and_clamps(monkeypatch):
     from tldw_chatbook.Video_Generation import config as c
     cfg = _load_config_with_section(monkeypatch, {"retention": "bogus", "max_store_mb": 0})
@@ -172,3 +186,71 @@ def test_flat_backend_key_under_video_generation_warns_with_nested_replacement(m
     matches = [m for m in messages if "minimax_video_default_model" in m]
     assert len(matches) == 1
     assert "[video_generation.minimax] default_model" in matches[0]
+
+
+def _load_capturing_warnings(monkeypatch, section: dict):
+    """Load the config with a loguru WARNING sink attached; return (cfg, messages)."""
+    from loguru import logger as loguru_logger
+    messages, sink_id = _capture_warnings()
+    try:
+        cfg = _load_config_with_section(monkeypatch, section)
+    finally:
+        loguru_logger.remove(sink_id)
+    return cfg, messages
+
+
+@pytest.mark.parametrize(
+    "section, needle",
+    (
+        ({"confirm_cost_estimate": "yess"}, "[video_generation] confirm_cost_estimate"),
+        ({"minimax": {"allow_uploads": "yess"}}, "[video_generation.minimax] allow_uploads"),
+        ({"minimax": {"allow_uploads": 2.5}}, "[video_generation.minimax] allow_uploads"),
+    ),
+)
+def test_malformed_boolean_flag_is_surfaced_not_swallowed(monkeypatch, section, needle):
+    """A typo'd gate must not read like an unset one (Qodo PR#2805: "Malformed
+    video flags stay hidden").
+
+    `coerce_bool_flag` substitutes the default for anything outside its
+    vocabulary, so `allow_uploads = "yess"` silently left the outbound-upload
+    gate shut with no hint that the setting was rejected. Config loading still
+    must never raise -- the module's one convention for malformed boundary data
+    is a `logger.warning` naming the section and key (same as the flat-key scan).
+    """
+    from tldw_chatbook.Video_Generation import config as c
+
+    cfg, messages = _load_capturing_warnings(monkeypatch, section)
+
+    # Default still applied -- loading never raises.
+    assert cfg.confirm_cost_estimate is c.DEFAULT_CONFIRM_COST_ESTIMATE
+    assert cfg.minimax_video_allow_uploads is False
+
+    matches = [m for m in messages if needle in m]
+    assert len(matches) == 1, messages
+    assert "yess" in matches[0] or "2.5" in matches[0]
+
+
+@pytest.mark.parametrize(
+    "section, field, expected",
+    (
+        ({}, "confirm_cost_estimate", True),                              # absent -> default
+        ({"confirm_cost_estimate": False}, "confirm_cost_estimate", False),
+        ({"confirm_cost_estimate": 0}, "confirm_cost_estimate", False),    # explicit int 0
+        ({"confirm_cost_estimate": "off"}, "confirm_cost_estimate", False),
+        ({"minimax": {"allow_uploads": 0}}, "minimax_video_allow_uploads", False),
+        ({"minimax": {"allow_uploads": False}}, "minimax_video_allow_uploads", False),
+        ({"minimax": {"allow_uploads": 1}}, "minimax_video_allow_uploads", True),
+    ),
+)
+def test_absent_or_deliberately_set_flag_never_warns(monkeypatch, section, field, expected):
+    """Negative control: "absent" and "explicitly set" are not malformed.
+
+    A guard written as `if not value` would treat `0`/`False`/`""` as absent
+    (or, worse, as malformed) -- a bug class this repo has hit before. The
+    value must land AND the load must stay quiet.
+    """
+    cfg, messages = _load_capturing_warnings(monkeypatch, section)
+
+    assert getattr(cfg, field) is expected
+    noisy = [m for m in messages if "not a recognized boolean" in m]
+    assert noisy == []
