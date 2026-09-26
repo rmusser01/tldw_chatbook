@@ -4923,6 +4923,15 @@ AppFooterStatus {
 }
 
 
+AppFooterStatus #footer-tamagotchi {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: transparent;
+    border: none;
+}
+
+
 
 .loading-state-container {
     width: $ds-width-full;

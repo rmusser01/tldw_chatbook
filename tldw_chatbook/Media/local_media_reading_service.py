@@ -41,6 +41,9 @@ PRIMARY_CHUNK_FAMILY: Any = object()
 # key ``LocalRAGAdminService.count_chunks_by_engine_version`` reports.
 _PRIMARY_FAMILY_LABEL = "primary"
 _LEGACY_ENGINE_LABEL = "legacy"
+#: Bound for the digest-retention `DELETE ... IN (...)` list. Stays under
+#: SQLITE_MAX_VARIABLE_NUMBER on every build, including the 999 of older ones.
+_DIGEST_PURGE_CHUNK = 500
 
 
 _LOCAL_READING_AUX_SCHEMA: tuple[str, ...] = (
@@ -6462,12 +6465,21 @@ class LocalMediaReadingService:
         ]
         if not expired_ids:
             return
-        placeholders = ", ".join("?" for _ in expired_ids)
+        # One `IN (...)` over every expired id raised
+        # `OperationalError: too many SQL variables` the moment a schedule
+        # accumulated more expired outputs than SQLITE_MAX_VARIABLE_NUMBER
+        # (999 on older builds) -- and since nothing was then deleted, every
+        # later run hit the same wall: the schedule was permanently wedged and
+        # its output table never shrank again. Chunk well under the old limit.
         with db.transaction() as conn:
-            conn.execute(
-                f"DELETE FROM local_reading_digest_outputs WHERE id IN ({placeholders})",
-                expired_ids,
-            )
+            for start in range(0, len(expired_ids), _DIGEST_PURGE_CHUNK):
+                chunk = expired_ids[start : start + _DIGEST_PURGE_CHUNK]
+                placeholders = ", ".join("?" for _ in chunk)
+                conn.execute(
+                    "DELETE FROM local_reading_digest_outputs "
+                    f"WHERE id IN ({placeholders})",
+                    chunk,
+                )
 
     @staticmethod
     def _normalize_digest_datetime(value: str | datetime | None) -> datetime:
