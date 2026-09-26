@@ -210,8 +210,8 @@ def test_truncation_guard_requires_contiguous_coverage(env):
     # page ever read) -- the tail must be re-read, now contiguous, to
     # actually unlock.
     tool, *_ = env
-    bound = cts.CHARACTER_FIELD_READ_BOUND
-    text = "x" * (bound * 2 + 17)  # exactly 3 pages: [0,8000) [8000,16000) [16000,16017)
+    bound = cts.CHARACTER_FIELD_PAGE_BOUND  # field= page size ("x" escapes 1:1)
+    text = "x" * (bound * 2 + 17)  # exactly 3 pages: [0,b) [b,2b) [2b,2b+17)
     saved = j(tool.save({"name": "Long3", "description": text}))
 
     tool.get({"id": saved["id"], "field": "description", "offset": 0})       # page 1
@@ -409,3 +409,159 @@ def test_approval_summary_has_no_field_text():
     )
     flat = json.dumps(summary)
     assert "SECRET TEXT" not in flat and "description" in flat and "/tmp/a.png" in flat
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (TASK-32954): C1 / I2 / M1 / M2
+# ---------------------------------------------------------------------------
+
+_RUNTIME_CHAR_CAP = 16_000   # RunBudget.max_tool_result_chars default (head-first cut)
+_PROVIDER_BYTE_CAP = 32 * 1024  # LocalToolProvider._MAX_RESULT_BYTES
+
+# Worst-case escaping: quotes and backslashes (2 chars each), newlines/tabs
+# (2), control chars (6: \u0001), and 4-byte emoji (1 char, 4 UTF-8 bytes).
+_NASTY = '"\\\n\t\x01🙂é' * 4000
+
+
+def _assert_fits(result: str) -> None:
+    assert len(result) < _RUNTIME_CHAR_CAP, len(result)
+    assert len(result.encode("utf-8")) < _PROVIDER_BYTE_CAP
+
+
+def _page_all(tool, cid, field, first):
+    parts, offset = [first["text"]], first.get("next_offset")
+    while offset is not None:
+        raw = tool.get({"id": cid, "field": field, "offset": offset})
+        _assert_fits(raw)
+        page = j(raw)
+        parts.append(page["text"])
+        offset = page.get("next_offset")
+    return "".join(parts)
+
+
+def test_every_get_result_fits_the_runtime_caps_and_reassembles(env):
+    # C1: the runtime cuts every tool result head-first at 16,000 chars and
+    # the provider at 32 KB; a result bigger than that silently loses text
+    # the guard would still count as read.
+    tool, *_ = env
+    text_fields = [f for f in cts.EDITABLE_FIELDS
+                   if f not in ("name", "creator", "character_version",
+                                "alternate_greetings", "tags")]
+    card = {f: _NASTY[: 5_000 + 997 * n] for n, f in enumerate(text_fields)}
+    card["name"] = "Nasty"
+    card["creator"] = _NASTY[:500]  # schema max 500
+    card["character_version"] = _NASTY[:100]  # schema max 100
+    card["alternate_greetings"] = [_NASTY[:3_000], _NASTY[:2_000]]
+    card["tags"] = ["t\"ag🙂"] * 30
+    saved = j(tool.save(card))
+    assert saved["status"] == "saved", saved
+    raw = tool.get({"id": saved["id"]})
+    _assert_fits(raw)
+    full = j(raw)
+    stored = {f: cts._text(card.get(f)) for f in cts.EDITABLE_FIELDS}
+    for f in cts.EDITABLE_FIELDS:
+        assert _page_all(tool, saved["id"], f, full["fields"][f]) == stored[f], f
+
+
+def test_reviewer_probe_card_blocks_system_prompt_until_contiguous(env):
+    # C1 probe: 5k/4k/3k/3k/6k/20k fields -> the old full-card result was
+    # 29,466 chars with system_prompt past the 16,000-char cut, yet paging
+    # system_prompt at 8000 and 16000 only unlocked a replace.
+    tool, *_ = env
+    saved = j(tool.save({
+        "name": "Probe", "description": "d" * 5_000, "personality": "p" * 4_000,
+        "scenario": "s" * 3_000, "first_message": "f" * 3_000,
+        "message_example": "m" * 6_000, "system_prompt": "S" * 20_000,
+    }))
+    cid, ver = saved["id"], saved["version"]
+    raw = tool.get({"id": cid})
+    _assert_fits(raw)
+    sp = j(raw)["fields"]["system_prompt"]
+    assert sp["truncated"] is True
+    tool.get({"id": cid, "field": "system_prompt", "offset": 8_000})
+    tool.get({"id": cid, "field": "system_prompt", "offset": 16_000})
+    blocked = j(tool.save({"id": cid, "expected_version": ver, "system_prompt": "new"}))
+    assert blocked["status"] == "read_full_field_first"
+    _page_all(tool, cid, "system_prompt", sp)
+    ok = j(tool.save({"id": cid, "expected_version": ver, "system_prompt": "new"}))
+    assert ok["status"] == "saved"
+
+
+def test_six_k_field_is_flagged_truncated_and_guarded(env):
+    # C1: a 6k field was under the old 8k bound ("needs no record") but the
+    # runtime cut it ~900 chars in with no truncated flag.
+    tool, *_ = env
+    saved = j(tool.save({"name": "Six", "message_example": "m" * 6_000}))
+    cid, ver = saved["id"], saved["version"]
+    field = j(tool.get({"id": cid}))["fields"]["message_example"]
+    assert field["truncated"] is True and field["next_offset"] == len(field["text"])
+    blocked = j(tool.save({"id": cid, "expected_version": ver, "message_example": "x"}))
+    assert blocked["status"] == "read_full_field_first"
+    _page_all(tool, cid, "message_example", field)
+    assert j(tool.save({"id": cid, "expected_version": ver,
+                        "message_example": "x"}))["status"] == "saved"
+
+
+def test_escaping_heavy_short_field_is_still_guarded(env):
+    # A field under the raw-length bound whose JSON escaping pushes it over
+    # the full-card budget is truncated there, so it must be guarded too.
+    tool, *_ = env
+    text = "\x01" * (cts.CHARACTER_FIELD_READ_BOUND - 1)
+    saved = j(tool.save({"name": "Esc", "scenario": text}))
+    assert j(tool.get({"id": saved["id"]}))["fields"]["scenario"]["truncated"] is True
+    blocked = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                           "scenario": "x"}))
+    assert blocked["status"] == "read_full_field_first"
+
+
+def test_update_approval_summary_names_the_character_after_a_read(env):
+    # I2 (spec §4.3): the card names the character, not "#12" -- and the
+    # approval path makes no DB call.
+    tool, *_ = env
+    saved = j(tool.save({"name": "Aria"}))
+    tool.get({"id": saved["id"]})
+
+    def _no_db():
+        raise AssertionError("approval summary must not touch the DB")
+
+    tool._service_loader = _no_db
+    summary = tool.approval_summary({"id": saved["id"], "expected_version": 1,
+                                     "description": "x"})
+    assert summary["character"] == "Aria"
+    assert tool.approval_summary({"id": 999, "description": "x"})["character"] == "#999"
+
+
+def test_approval_summary_names_survive_a_new_turn(env):
+    # The service is rebuilt per turn; names live on the per-session guard.
+    tool, local, _db, changed, state = env
+    saved = j(tool.save({"name": "Aria"}))
+    tool.search({})
+    next_turn = cts.CharacterToolService(
+        service_loader=lambda: local, runtime_source_loader=lambda: state["source"],
+        read_guard=tool._guard, on_changed=changed.append)
+    assert next_turn.approval_summary({"id": saved["id"]})["character"] == "Aria"
+
+
+def test_approval_summary_survives_a_broken_image_config(monkeypatch):
+    # M1: image_backend_configured() reads config; a failure there must not
+    # break the approval card.
+    def _boom():
+        raise RuntimeError("config boom")
+
+    monkeypatch.setattr(cts, "image_backend_configured", _boom)
+    summary = cts.save_approval_summary({"name": "Aria", "avatar": {"source": "generate"}})
+    assert "unknown backend" in summary["avatar"]
+
+
+def test_avatar_only_update_that_fails_reports_not_saved(env, tmp_path):
+    # M2: nothing was written, so the result must not say "saved".
+    tool, _local, db, changed, _ = env
+    saved = j(tool.save({"name": "Aria"}))
+    changed.clear()
+    bad = tmp_path / "fake.png"
+    bad.write_text("nope")
+    out = j(tool.save({"id": saved["id"], "expected_version": saved["version"],
+                       "avatar": {"source": "file", "path": str(bad)}}))
+    assert out["status"] == "avatar_failed" and out["message"]
+    assert db.get_character_card_by_id(saved["id"])["version"] == saved["version"]
+    assert changed == []

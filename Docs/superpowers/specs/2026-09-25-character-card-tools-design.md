@@ -170,6 +170,12 @@ Args: `id`; optional `field` + `offset` to page one long field. Returns every
 editable field, `version`, `has_avatar` (never image bytes). Each long field is
 bounded with `truncated: true` and `next_offset`; truncated fields are recorded
 for the truncation guard.
+Every result is sized to fit the agent runtime's head-first tool-result cut
+(`RunBudget.max_tool_result_chars`, 16,000 chars by default) and the local
+provider's 32 KB cap, measured after JSON escaping: the full card gives each
+field ~1,000 chars (`CHARACTER_FIELD_READ_BOUND`, also the guard threshold),
+and a `field` page ~12,000 (`CHARACTER_FIELD_PAGE_BOUND`). Text the model never
+received is never counted as read (final review C1).
 
 Editable fields (from `CharacterCreateRequest`/`CharacterUpdateRequest`):
 `name`, `description`, `personality`, `scenario`, `first_message`,

@@ -1649,16 +1649,21 @@ class LocalToolProvider:
         # `pending_gate_for()` already verified the spec exists; None here
         # (impossible for its calls) still degrades to "" via the getattr.
         spec = self._specs.get(name)
+        approval_arguments: Mapping[str, Any] = args
+        if self._specs[name].approval_arguments is not None:
+            try:
+                approval_arguments = self._specs[name].approval_arguments(args)
+            except Exception:  # noqa: BLE001 - a summary failure must not break the gate
+                # Never fall back to the raw args: the summary exists to keep
+                # full field text off the card.
+                logger.warning("Local tool approval summary failed")
+                approval_arguments = {"summary": "unavailable"}
         gate = MCPPendingCall(
             llm_name=name,
             server_key=LOCAL_SERVER_KEY,
             tool_name=name,
             server_label=LOCAL_SERVER_LABEL,
-            arguments=dict(
-                self._specs[name].approval_arguments(args)
-                if self._specs[name].approval_arguments is not None
-                else args
-            ),
+            arguments=dict(approval_arguments),
             rationale=rationale,
             description=str(getattr(spec, "description", "") or "")[
                 :TOOL_DESCRIPTION_CAPTURE_CAP
@@ -4472,10 +4477,7 @@ def _default_specs(
         # reasoning as ask_user/todo_*), and only when the gate is on
         # (default ON, spec §3.3 -- deliberate exception like ask_user's,
         # since every save still asks via the mutates floor regardless).
-        from tldw_chatbook.Tools.character_tool_service import (
-            EDITABLE_FIELDS,
-            save_approval_summary,
-        )
+        from tldw_chatbook.Tools.character_tool_service import EDITABLE_FIELDS
 
         text_field = {"type": "string", "maxLength": 100_000}
         list_field = {"type": "array", "items": {"type": "string", "maxLength": 50_000},
@@ -4532,7 +4534,7 @@ def _default_specs(
                 approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
                 execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
                 tags=("mutates",),
-                approval_arguments=save_approval_summary,
+                approval_arguments=character_service.approval_summary,
             ),
         ])
     return specs

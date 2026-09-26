@@ -70,3 +70,41 @@ def test_hub_lists_character_gate_default_on(monkeypatch):
     gate = next(g for g in btg.all_tool_gates() if g.key == ltp.CHARACTER_TOOLS_GATE_KEY)
     assert gate.enabled is True and gate.group == "local"
     assert ("tools", ltp.CHARACTER_TOOLS_GATE_KEY) in btg._gate_key_pairs()
+
+
+def test_save_approval_uses_the_services_bound_summary(tmp_path, monkeypatch):
+    # Final review I2: the card names the character via the service's
+    # session name map, so the provider must register the bound method.
+    monkeypatch.setattr(ltp, "get_cli_setting", lambda s, k, d=None: d, raising=False)
+    service = _service()
+    p = _provider(tmp_path, character_service=service)
+    assert p._specs["character_save"].approval_arguments == service.approval_summary
+
+
+def test_approval_summary_failure_still_builds_a_gate_without_raw_args(tmp_path):
+    # Final review M1: a raising approval_arguments must not break the
+    # approval build, and must never fall back to the raw (full-text) args.
+    from Tests.Agents.test_local_tool_provider import ASK, make_provider
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalApprovalEffect,
+        LocalToolSpec,
+    )
+
+    def _boom(_args):
+        raise RuntimeError("summary boom")
+
+    spec = LocalToolSpec(
+        name="summarised",
+        description="d",
+        parameters={"type": "object", "properties": {}, "additionalProperties": True},
+        handler=lambda args: "ran",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+        approval_arguments=_boom,
+    )
+    provider = make_provider(state=ASK, root=tmp_path, specs=[spec])
+    gate, resolve_failed = provider._resolve_pending_gate(
+        "summarised", {"secret": "FULL TEXT"}, provider.hub_tool_for("summarised")
+    )
+    assert gate is not None and resolve_failed is False
+    assert "FULL TEXT" not in str(gate.arguments)

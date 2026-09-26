@@ -29,7 +29,6 @@ from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
 _LOGGER = logging.getLogger(__name__)
 
-CHARACTER_FIELD_READ_BOUND = 8_000
 _SEARCH_DESCRIPTION_CHARS = 160
 _SEARCH_TAGS_MAX = 20
 _SEARCH_TAG_CHARS = 64
@@ -38,6 +37,28 @@ EDITABLE_FIELDS: tuple[str, ...] = (
     "message_example", "system_prompt", "post_history_instructions",
     "creator_notes", "creator", "character_version", "alternate_greetings", "tags",
 )
+
+# Result budgets (final review C1). The agent runtime cuts every tool result
+# head-first at ``RunBudget.max_tool_result_chars`` (default 16,000 chars) and
+# ``LocalToolProvider`` caps it at 32 KB of UTF-8: text past either cut never
+# reaches the model, yet the truncation guard would count it as read. So every
+# ``character_get`` result is sized to fit both, measured AFTER JSON escaping
+# (a quote costs 2 chars, a control char 6, an emoji 4 UTF-8 bytes).
+# ponytail: sized for the default 16,000-char runtime cap; an [agents] budget
+# configured below ~15,000 would cut results again -- pass the live cap in if
+# that ever becomes a supported setting for Console runs.
+_RESULT_CHAR_CAP = 16_000
+_RESULT_BYTE_CAP = 32 * 1024
+_RESULT_OVERHEAD = 2_000  # envelope + 13 field keys + truncated/next_offset
+#: Full-card mode: each field's serialized-length budget, so all 13 fields
+#: plus the envelope fit the cap. Also the truncation-guard threshold: a field
+#: the full card cannot show whole may only be updated after contiguous
+#: ``field=`` paging has covered it.
+CHARACTER_FIELD_READ_BOUND = (_RESULT_CHAR_CAP - _RESULT_OVERHEAD) // len(EDITABLE_FIELDS)
+_CARD_FIELD_BYTES = (_RESULT_BYTE_CAP - _RESULT_OVERHEAD) // len(EDITABLE_FIELDS)
+#: ``field=`` page mode: one field's serialized-length budget per page.
+CHARACTER_FIELD_PAGE_BOUND = 12_000
+_FIELD_PAGE_BYTES = 24_000
 SERVER_REFUSAL = (
     "Character editing is local-only; switch this chat to local to create or "
     "edit characters."
@@ -67,6 +88,9 @@ class CharacterReadGuard:
     def __init__(self) -> None:
         self._full: set[tuple[int, int, str]] = set()
         self._covered_end: dict[tuple[int, int, str], int] = {}
+        #: id -> name seen by search/get/save this session, for the approval
+        #: card (spec §4.3) without a DB call on the approval path.
+        self.names: dict[int, str] = {}
 
     def record_full(self, character_id: int, version: int, field: str) -> None:
         """Unconditionally mark a field as fully read (explicit override)."""
@@ -85,8 +109,8 @@ class CharacterReadGuard:
 
         Args:
             offset: Start of the page just read.
-            end: End of the page just read (``min(offset + BOUND,
-                total_len)``).
+            end: End of the page just read (what actually reached the
+                model -- see ``_page_end``).
             total_len: The field's full length at this version.
         """
         key = (character_id, version, field)
@@ -104,6 +128,24 @@ class CharacterReadGuard:
 
 def _json(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _page_end(text: str, offset: int, max_chars: int, max_bytes: int) -> int:
+    """End index of the longest ``text[offset:]`` prefix whose JSON-escaped
+    form fits ``max_chars`` characters and ``max_bytes`` UTF-8 bytes."""
+    chars = size = 0
+    for index in range(offset, len(text)):
+        piece = json.dumps(text[index], ensure_ascii=False)[1:-1]
+        chars += len(piece)
+        size += len(piece.encode("utf-8", errors="surrogatepass"))
+        if chars > max_chars or size > max_bytes:
+            return index
+    return len(text)
+
+
+def _card_truncates(text: str) -> bool:
+    """Would full-card ``character_get`` cut this field short?"""
+    return _page_end(text, 0, CHARACTER_FIELD_READ_BOUND, _CARD_FIELD_BYTES) < len(text)
 
 
 def _outcome(status: str, message: str, *, retryable: bool = False, **extra: Any) -> str:
@@ -192,7 +234,10 @@ def save_approval_summary(arguments: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(avatar, Mapping):
         source = avatar.get("source")
         if source == "generate":
-            backend = image_backend_configured() or "none configured"
+            try:
+                backend = image_backend_configured() or "none configured"
+            except Exception:  # noqa: BLE001 - a config read must not break the approval card
+                backend = "unknown backend"
             summary["avatar"] = f"generate with {backend} (paid backends may cost money)"
         elif source == "file":
             summary["avatar"] = f"file: {avatar.get('path')}"
@@ -226,6 +271,22 @@ class CharacterToolService:
 
     def save(self, arguments: object) -> str:
         return self._run(self._save, arguments)
+
+    def approval_summary(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """``save_approval_summary`` naming an update's character (spec §4.3).
+
+        The name comes from what this session's search/get/save already saw
+        -- no DB call on the approval path; ``#id`` only when unknown.
+        """
+        summary = save_approval_summary(arguments)
+        if summary["action"] == "update":
+            try:
+                name = self._guard.names.get(_character_id(arguments))
+            except _InvalidArgument:
+                name = None
+            if name:
+                summary["character"] = name[:80]
+        return summary
 
     def _run(self, fn: Callable[[Mapping[str, Any]], str], arguments: object) -> str:
         args = arguments if isinstance(arguments, Mapping) else {}
@@ -267,6 +328,8 @@ class CharacterToolService:
             rows = list(service.list_characters(limit=limit + 1, offset=offset) or [])
             page_rows = rows[:limit]
             has_more = len(rows) > limit
+        for r in page_rows:
+            self._remember_name(r)
         items = [
             {
                 "id": r["id"], "name": r.get("name"),
@@ -285,25 +348,33 @@ class CharacterToolService:
         return _json({"status": "ok", "items": items, **extra})
 
     # -- get ----------------------------------------------------------------
+    def _remember_name(self, record: Mapping[str, Any]) -> None:
+        if record.get("id") is not None and record.get("name"):
+            self._guard.names[int(record["id"])] = str(record["name"])
+
     def _load(self, character_id: int) -> dict[str, Any] | None:
         try:
-            return self._service_loader().get_character(character_id)
+            card = self._service_loader().get_character(character_id)
         except ValueError:
             return None
+        if card is not None:
+            self._remember_name(card)
+        return card
 
-    def _field_page(self, card: Mapping[str, Any], field: str, offset: int) -> dict[str, Any]:
+    def _field_page(
+        self, card: Mapping[str, Any], field: str, offset: int, max_chars: int, max_bytes: int
+    ) -> dict[str, Any]:
         text = _text(card.get(field))
         total_len = len(text)
         if offset > total_len:
             raise _InvalidArgument("offset must be <= the field's length")
-        end = offset + CHARACTER_FIELD_READ_BOUND
+        end = _page_end(text, offset, max_chars, max_bytes)
         page: dict[str, Any] = {"text": text[offset:end]}
-        actual_end = min(end, total_len)
         if end < total_len:
             page["truncated"] = True
             page["next_offset"] = end
         self._guard.record_page(
-            int(card["id"]), int(card["version"]), field, offset, actual_end, total_len
+            int(card["id"]), int(card["version"]), field, offset, end, total_len
         )
         return page
 
@@ -320,8 +391,11 @@ class CharacterToolService:
             if offset < 0:
                 raise _InvalidArgument("offset must be >= 0")
             return _json({"status": "ok", "id": character_id, "version": card["version"],
-                          "field": field, **self._field_page(card, field, offset)})
-        fields = {f: self._field_page(card, f, 0) for f in EDITABLE_FIELDS}
+                          "field": field,
+                          **self._field_page(card, field, offset,
+                                             CHARACTER_FIELD_PAGE_BOUND, _FIELD_PAGE_BYTES)})
+        fields = {f: self._field_page(card, f, 0, CHARACTER_FIELD_READ_BOUND, _CARD_FIELD_BYTES)
+                  for f in EDITABLE_FIELDS}
         return _json({"status": "ok", "id": character_id, "version": card["version"],
                       "has_avatar": bool(card.get("image")), "fields": fields})
 
@@ -357,7 +431,7 @@ class CharacterToolService:
                 return _outcome("stale_version",
                                 "The card changed since you read it; re-read with character_get.")
             for f in changes:
-                if (len(_text(current.get(f))) > CHARACTER_FIELD_READ_BOUND
+                if (_card_truncates(_text(current.get(f)))
                         and not self._guard.permits(character_id, expected, f)):
                     return _outcome("read_full_field_first",
                                     f"Read the full '{f}' field with character_get before changing it.")
@@ -381,6 +455,12 @@ class CharacterToolService:
                     clear_image, avatar_status = True, "saved"
             else:
                 avatar_status = f"failed: {outcome.reason}"
+
+        if not creating and not payload and not clear_image:
+            # Nothing to write (final review M2): never report "saved".
+            if isinstance(avatar_req, Mapping) and avatar_status.startswith("failed"):
+                return _outcome("avatar_failed", f"Nothing saved; avatar {avatar_status}")
+            raise _InvalidArgument("nothing to change: give at least one field or an avatar")
 
         if creating:
             try:
@@ -413,6 +493,8 @@ class CharacterToolService:
                 return _outcome("stale_version",
                                 "The card changed since you read it; re-read with character_get.")
         saved_id = int(record["id"])
+        self._remember_name({"id": saved_id,
+                             "name": changes.get("name") or record.get("name")})
         if self._on_changed is not None:
             try:
                 self._on_changed(saved_id)
