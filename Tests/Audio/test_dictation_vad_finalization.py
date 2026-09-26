@@ -661,3 +661,76 @@ def test_resolved_preroll_reaches_the_recorder(monkeypatch):
 
     assert recorder is built[0]
     assert recorder.kwargs["vad_preroll_ms"] == 480
+
+
+# --------------------------------------------------------------------------
+# `dictation.buffer_duration_ms` -- tier-2 review S07. It was the ONE of five
+# config reads in the same constructor with no validation, and the only one
+# that feeds a device parameter: `chunk_size=int(buffer_duration_ms * 16)`
+# lands in PortAudio's `frames_per_buffer`/`blocksize`. A TOML string survived
+# to `int("500" * 16)` (a 48-digit chunk size); `0` or a negative gave
+# `chunk_size <= 0`. The SAME field is clamped on the UI path
+# (`set_buffer_duration`, `max(100, min(2000, ...))`) and was unvalidated on
+# the config path. Mirrors the four sibling resolvers' coverage, `nan`/`inf`
+# included -- both are valid TOML floats.
+# --------------------------------------------------------------------------
+
+
+def _stub_buffer_duration_setting(monkeypatch, value) -> None:
+    """Make `get_cli_setting` report `value` for the buffer-duration key only."""
+    from tldw_chatbook.Audio import dictation_service_lazy
+
+    def _get(section: str, key: Any = None, default: Any = None) -> Any:
+        if key is not None and not isinstance(key, str):
+            key, default = None, key
+        path = section if key is None else f"{section}.{key}"
+        if path == "dictation.buffer_duration_ms":
+            return value
+        return default
+
+    monkeypatch.setattr(dictation_service_lazy, "get_cli_setting", _get)
+
+
+@pytest.mark.parametrize("good", [250, 10, 1, 2000])
+def test_a_configured_buffer_duration_is_honored(monkeypatch, good):
+    """Including sub-100 values: the floor here is positivity, not the UI's 100.
+
+    `test_dictation_lazy_transcription.py` drives the real service at 10 ms to
+    pace its cadence, so clamping the config path to `set_buffer_duration`'s
+    100..2000 UI range would have broken a correct caller.
+    """
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_buffer_duration_setting(monkeypatch, good)
+    assert LazyLiveDictationService._resolve_buffer_duration_ms() == good
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        float("nan"),
+        float("inf"),
+        "nan",
+        "inf",
+        "not-a-number",
+        None,
+        0,
+        -1,
+        2001,
+        [],
+        # TOML booleans: `int(True)` is 1, which the old hand-rolled `int()`
+        # resolver accepted as a 1 ms buffer (Qodo, PR #2811).
+        True,
+        False,
+    ],
+)
+def test_an_invalid_buffer_duration_falls_back_to_the_default(monkeypatch, bad):
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    _stub_buffer_duration_setting(monkeypatch, bad)
+    resolved = LazyLiveDictationService._resolve_buffer_duration_ms()
+    assert resolved == LazyLiveDictationService.BUFFER_DURATION_MS
+    # The only reason this resolver exists: the value becomes a device
+    # parameter, so it must always be usable as one.
+    assert 1 <= resolved <= 2000
+    assert isinstance(int(resolved * 16), int) and int(resolved * 16) > 0

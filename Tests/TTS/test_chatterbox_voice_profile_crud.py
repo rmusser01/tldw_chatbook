@@ -108,3 +108,66 @@ def test_delete_never_escapes_the_samples_root(manager, sample, tmp_path):
         with pytest.raises(ValueError, match="invalid_voice_name"):
             manager.delete_profile(malicious)
         assert sentinel.read_text() == "keep", malicious
+
+
+def test_create_refuses_an_oversized_reference_before_copying_it(
+    manager, sample, monkeypatch, tmp_path
+):
+    """Chatterbox had no size bound on a user-picked reference file.
+
+    Tier-2 review S03/S04: `VoiceManagerBase.validate_audio_file` checked
+    existence and extension only, and `create_profile` then hands the file to
+    `loose_voice_lifetime.copy`, which reads it WHOLE into memory in one
+    `stream.read()`. Higgs carried a 100 MB bound; Chatterbox, which inherits
+    the base unchanged, carried none, so a user picking a multi-GB container
+    OOMs the TUI. The bound is checked here on the base so both managers and
+    any future subclass get it.
+    """
+    monkeypatch.setattr(type(manager), "max_reference_audio_bytes", 512)
+    oversized = _write_wav(tmp_path / "big.wav")
+    assert oversized.stat().st_size > 512
+
+    ok, message = manager.create_profile("too-big", str(oversized))
+
+    assert ok is False
+    assert "too large" in message.lower()
+    # Nothing was copied: the profile directory must not exist.
+    assert not (manager.voice_samples_dir / "too-big").exists()
+    assert manager.load_profiles() == {}
+
+
+def test_a_source_that_grows_after_validation_is_refused_at_copy_time(
+    manager, sample, monkeypatch
+):
+    """Qodo review on PR #2811: the byte ceiling was a pre-copy `stat` only.
+
+    `validate_audio_file` checks a size snapshot, then `create_profile`
+    reopens the source and reads it whole into one in-memory payload. A
+    source that grew or was replaced in between bypassed the ceiling
+    entirely. The bound is now enforced against the opened source.
+    """
+    monkeypatch.setattr(type(manager), "max_reference_audio_bytes", 4096)
+    assert sample.stat().st_size <= 4096  # passes validation as it stands
+
+    from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
+
+    def grow_then_copy(receiver, source, destination):
+        # The race, made deterministic: the file is replaced between the
+        # caller's `stat` and this reopen.
+        Path(source).write_bytes(b"\x00" * 8192)
+        return original_copy(receiver, source, destination)
+
+    original_copy = voice_files.copy
+    monkeypatch.setattr(voice_files, "copy", grow_then_copy)
+
+    ok, message = manager.create_profile("grown", str(sample))
+
+    assert not ok, "an oversized source was copied whole into memory"
+    assert "exceeds" in message
+
+
+def test_an_ordinary_sample_is_still_copied(manager, sample):
+    """Anti-vacuity: the bound rejects the oversized case, not every case."""
+    ok, message = manager.create_profile("ordinary", str(sample))
+    assert ok, message
+    assert (manager.voice_samples_dir / "ordinary" / "reference.wav").exists()

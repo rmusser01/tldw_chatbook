@@ -30,6 +30,10 @@ except ImportError:
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 
+# The shared boundary validator (`_resolve_buffer_duration_ms`). Already in
+# this module's import graph via `..config`, so it costs nothing new here.
+from ..Utils.input_validation import validate_bounded_integer
+
 # One catalogue of local providers, shared with the Console's resolver. Import
 # free of heavy dependencies by design (`find_spec` only), so this costs
 # nothing here and cannot drift from what the resolver picks.
@@ -99,6 +103,17 @@ class LazyLiveDictationService:
 
     # Audio buffer settings
     BUFFER_DURATION_MS = 500  # Default, now configurable
+    #: Behavioural ceiling on the buffer duration, enforced identically on the
+    #: config path (`_resolve_buffer_duration_ms`) and the UI path
+    #: (`set_buffer_duration`). Above it, `chunk_size = duration * 16` becomes
+    #: an absurd per-buffer allocation in the recorder. Named because the two
+    #: paths must not drift: a value one accepted and the other rejected would
+    #: mean the Input's clamp and config disagreed about the same key.
+    MAX_BUFFER_DURATION_MS = 2000
+    #: The UI Input's own floor -- an ergonomics choice, not a device
+    #: constraint, which is why the config path's floor is 1 (see
+    #: `_resolve_buffer_duration_ms`).
+    MIN_UI_BUFFER_DURATION_MS = 100
     MIN_SPEECH_DURATION_MS = 300
 
     #: How long `stop_dictation()` waits for the processing thread to drain
@@ -321,9 +336,7 @@ class LazyLiveDictationService:
         self._load_privacy_settings()
 
         # Buffer configuration
-        self.buffer_duration_ms = get_cli_setting(
-            "dictation.buffer_duration_ms", self.BUFFER_DURATION_MS
-        )
+        self.buffer_duration_ms = self._resolve_buffer_duration_ms()
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
         self.silence_threshold_seconds = self._resolve_silence_threshold()
         self.vad_aggressiveness = self._resolve_vad_aggressiveness()
@@ -487,6 +500,60 @@ class LazyLiveDictationService:
             )
             return cls.VAD_PREROLL_MS
         return preroll_ms
+
+    @classmethod
+    def _resolve_buffer_duration_ms(cls) -> int:
+        """Read `dictation.buffer_duration_ms`, falling back to the default.
+
+        This value is not advisory: `_ensure_audio_service` passes
+        `chunk_size=int(buffer_duration_ms * 16)` straight through to the
+        recorder, where it becomes PortAudio's `frames_per_buffer`/`blocksize`.
+        Unvalidated, a TOML string survived to `int("500" * 16)` -- a 48-digit
+        chunk size -- and `0`/negative gave `chunk_size <= 0`. The identical
+        clamp already guarded the UI path (`set_buffer_duration`); only the
+        config path was open.
+
+        The ceiling is `MAX_BUFFER_DURATION_MS`, shared with
+        `set_buffer_duration` (and the owning widget's documented
+        100..MAX_BUFFER_DURATION_MS Input range): above it, `chunk_size` becomes an
+        absurd per-buffer allocation. The FLOOR is deliberately 1, not
+        `set_buffer_duration`'s 100 -- 100 ms is a UI ergonomics choice, not a
+        device constraint, and a smaller buffer is perfectly usable (
+        `Tests/Audio/test_dictation_lazy_transcription.py` drives the real
+        service at 10 ms to pace its cadence). What must never reach the
+        recorder is a non-integer, a `nan`/`inf`, or a value that makes
+        `chunk_size <= 0`.
+
+        Returns:
+            A positive buffer duration in milliseconds, at most
+            `MAX_BUFFER_DURATION_MS`.
+        """
+        raw = get_cli_setting("dictation.buffer_duration_ms", cls.BUFFER_DURATION_MS)
+        try:
+            # The shared boundary validator, not a hand-rolled `int()` plus
+            # range test: it already rejects every shape this resolver has to
+            # survive -- `bool` (`int(True)` is 1), `nan`/`inf` (valid TOML
+            # floats), the strings `"nan"`/`"inf"`, and anything that is not
+            # integer text -- and is the same callable the Pydantic boundary
+            # models in `input_validation` use as a `field_validator`.
+            #
+            # An ABSENT key is not malformed: `get_cli_setting` hands back
+            # `BUFFER_DURATION_MS`, which validates and returns silently. Only
+            # a value that is genuinely PRESENT and unusable -- `0`, `-1`,
+            # `2001`, `"500ms"` -- warns. Never collapse the two with a
+            # falsiness test: a configured `0` must be reported, not ignored.
+            return validate_bounded_integer(
+                raw, minimum=1, maximum=cls.MAX_BUFFER_DURATION_MS
+            )
+        except ValueError:
+            logger.warning(
+                "dictation.buffer_duration_ms must be an integer of 1..{} "
+                "(got {!r}); using {}",
+                cls.MAX_BUFFER_DURATION_MS,
+                raw,
+                cls.BUFFER_DURATION_MS,
+            )
+            return cls.BUFFER_DURATION_MS
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
@@ -1435,8 +1502,9 @@ class LazyLiveDictationService:
         in-memory value.
         """
         self.buffer_duration_ms = max(
-            100, min(2000, duration_ms)
-        )  # Clamp between 100-2000ms
+            self.MIN_UI_BUFFER_DURATION_MS,
+            min(self.MAX_BUFFER_DURATION_MS, duration_ms),
+        )
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):
