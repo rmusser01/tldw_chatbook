@@ -35,20 +35,16 @@ import logging
 import time
 from typing import List, Set, Callable
 from urllib.parse import urlparse, urljoin
-# TASK-32894: `defusedxml` is a CORE dependency (`pyproject.toml`, "engine xml
-# security parsing"), so the fallback arm is a belt-and-braces guard for a
-# broken install, not an optional-feature gate -- same shape as
-# `Subscriptions/monitoring_engine.py` and `watchlist_opml_service.py`. The
-# exposure is ENTITY EXPANSION (billion laughs), not XXE: stdlib
-# ElementTree already ignores external entities but happily expands
-# internal ones, so a small document becomes gigabytes inside the parser.
-try:
-    import defusedxml.ElementTree as ET
-except ImportError:  # pragma: no cover - defusedxml is a core dependency
-    import xml.etree.ElementTree as ET
 
 #
 # Third-Party Libraries
+# defusedxml, not stdlib ElementTree: this module only PARSES (a
+# fetched sitemap), never builds. `MAX_FETCH_BYTES_SITEMAP` does not
+# bound an entity-expansion payload -- amplification is the point --
+# and defusedxml re-exports `ParseError`, so the existing handler is
+# unchanged. `EntitiesForbidden` subclasses `ValueError`.
+import defusedxml.ElementTree as ET
+
 # Handle optional aiohttp dependency
 try:
     import aiohttp

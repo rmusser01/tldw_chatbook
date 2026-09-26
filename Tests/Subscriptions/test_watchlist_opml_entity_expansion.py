@@ -47,7 +47,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: task fixed, and each is filed for its own change rather than fixed here
 #: (TASK-19558 was scoped to the seams the holistic review named).
 #:
-#: The census is repo-wide precisely so that an EIGHTH such module cannot be
+#: The census is repo-wide precisely so that a NEW such module cannot be
 #: added silently -- it fails immediately, and the author must either harden
 #: it or write down here what reaches it and why it is being left open.
 #: `test_known_unhardened_entries_are_still_unhardened` deletes the register
@@ -253,14 +253,17 @@ def _unhardened_modules() -> dict[str, list[tuple[int, str]]]:
 
 
 def test_no_module_parses_xml_without_defusedxml() -> None:
-    """Repo-wide, so an EIGHTH unhardened parser cannot appear silently.
+    """Repo-wide, so a NEW unhardened parser cannot appear silently.
 
     The first version of this census was scoped to `Subscriptions/`, which
     made it green and inert: it could never red on anything, and the note
-    saying the other seven were "deliberately not allowlisted so widening
+    saying the others were "deliberately not allowlisted so widening
     turns them red" described a widening that had not happened. The register
     above is the honest form -- the census covers the whole package, and the
-    seven known-open modules are named with what reaches them.
+    known-open modules are named with what reaches them. Three of the
+    original seven (Evals/eval_runner, Web_Scraping/Article_Extractor_Lib,
+    Web_Scraping/Article_Scraper/crawler) were hardened by the tier-2
+    review and their entries deleted here, as designed.
     """
     offenders = {
         key: hits
@@ -279,7 +282,7 @@ def test_no_module_parses_xml_without_defusedxml() -> None:
 def test_known_unhardened_entries_are_still_unhardened() -> None:
     """A register entry for a module that no longer needs it is stale.
 
-    Without this, fixing one of the seven leaves a permanent hole in the
+    Without this, fixing one of them leaves a permanent hole in the
     census: the module would stay skipped, and a LATER regression in the
     same file would never red.
     """

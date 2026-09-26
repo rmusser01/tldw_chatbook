@@ -32,6 +32,7 @@ Dependencies:
 
 #
 # Import necessary libraries
+import asyncio
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -39,32 +40,22 @@ import json
 import os
 import random
 from typing import Any, Dict, List, Union, Optional, Tuple
+from urllib.parse import urljoin, urlparse
+from xml.dom import minidom
+# Stdlib ElementTree for document BUILDING only (`Element`/
+# `SubElement`/`tostring`/`ElementTree` have no defusedxml
+# counterparts, and a tree we construct ourselves carries no
+# attacker-controlled input). Every PARSE of foreign bytes goes
+# through `_safe_fromstring`/`_safe_parse` below -- the shape
+# `Subscriptions/watchlist_opml_service.py` established. A fetched
+# sitemap is a billion-laughs vector that `MAX_FETCH_BYTES_SITEMAP`
+# cannot bound, because amplification is the whole point.
+import xml.etree.ElementTree as xET
 
 #
 # 3rd-Party Imports
-import asyncio
-from urllib.parse import urljoin, urlparse
-from xml.dom import minidom
-# Stdlib ElementTree is kept for document BUILDING only
-# (`Element`/`SubElement`/`tostring`/`ElementTree` have no defusedxml
-# counterparts, and a tree we constructed ourselves has no
-# attacker-controlled input). Every PARSE of foreign bytes goes through
-# `_safe_parse`/`_safe_fromstring` below.
-import xml.etree.ElementTree as xET
-
-# TASK-32894: `defusedxml` is a CORE dependency (`pyproject.toml`, "engine xml
-# security parsing"), so the fallback arm is a belt-and-braces guard for a
-# broken install, not an optional-feature gate -- same shape as
-# `Subscriptions/monitoring_engine.py` and `watchlist_opml_service.py`. The
-# exposure is ENTITY EXPANSION (billion laughs), not XXE: stdlib
-# ElementTree already ignores external entities but happily expands
-# internal ones, so a small document becomes gigabytes inside the parser.
-try:
-    from defusedxml.ElementTree import fromstring as _safe_fromstring
-    from defusedxml.ElementTree import parse as _safe_parse
-except ImportError:  # pragma: no cover - defusedxml is a core dependency
-    from xml.etree.ElementTree import fromstring as _safe_fromstring
-    from xml.etree.ElementTree import parse as _safe_parse
+from defusedxml.ElementTree import fromstring as _safe_fromstring
+from defusedxml.ElementTree import parse as _safe_parse
 
 #
 # External Libraries
@@ -104,7 +95,6 @@ async_playwright = None
 sync_playwright = None
 
 import requests  # noqa: E402
-from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
@@ -184,6 +174,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter  # n
 from tldw_chatbook.Logging_Config import logging  # noqa: E402
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
 from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
+from tldw_chatbook.Utils.path_validation import validate_path_simple  # noqa: E402
 from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
 from tldw_chatbook.Utils.egress import (  # noqa: E402
     EgressBlockedError,
@@ -1139,7 +1130,9 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             user-intended. Applied to the sitemap fetch alone.
 
     Returns:
-        The scraped articles, or ``[]`` if the sitemap could not be fetched.
+        The scraped articles, or ``[]`` if the sitemap could not be fetched
+        or could not be parsed (malformed, or refused by the hardened
+        parser).
     """
     # Fetch and PARSE only. `ValueError` is a broad net -- it is how
     # defusedxml's `EntitiesForbidden` refusal arrives, since that is not an

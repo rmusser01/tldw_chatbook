@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 ReminderScheduleKind = Literal["one_time", "recurring"]
@@ -189,3 +189,23 @@ class NotificationStreamEvent(BaseModel):
     event: str
     data: dict
     event_id: str | None = None
+
+
+class ServerNotificationStreamEvent(BaseModel):
+    """The same wire event as `NotificationStreamEvent`, id-named.
+
+    Both models parse `/api/v1/notifications/stream`. `_sse_request`
+    emits the SSE id under the key `event_id`; this model calls the
+    field `id`, so without the alias the key was dropped (`extra`
+    defaults to ignore) and `.id` was always `None` -- `Last-Event-ID`
+    resumption was structurally impossible on this path.
+
+    `data` is deliberately wider than the sibling's required `dict`:
+    this model is the tolerant reader of the pair.
+    """
+
+    event: str
+    id: str | None = Field(
+        default=None, validation_alias=AliasChoices("id", "event_id")
+    )
+    data: dict[str, Any] | str | None = None
