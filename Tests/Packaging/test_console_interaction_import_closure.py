@@ -63,12 +63,32 @@ result = redact_pii_value_with_custom_rules('plain text', ruleset)
 assert result.available and result.value == 'plain text'
 assert 'tldw_chatbook.Chat.console_trace_regex_worker' not in sys.modules
 """,
+        """
+import sys
+import tldw_chatbook.UI.Screens.chat_screen
+
+deferred = (
+    'tldw_chatbook.Widgets.Console.console_prompt_draft_editor',
+    'tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog',
+)
+assert not [name for name in deferred if name in sys.modules]
+
+from tldw_chatbook.Widgets.Console.console_prompt_draft_editor import (
+    ConsolePromptDraftEditor,
+)
+from tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog import (
+    ConsolePromptDraftSaveDialog,
+)
+assert ConsolePromptDraftEditor.__name__ == 'ConsolePromptDraftEditor'
+assert ConsolePromptDraftSaveDialog.__name__ == 'ConsolePromptDraftSaveDialog'
+""",
     ],
     ids=[
         "closed-environment-rail",
         "vllm-handoff-contract",
         "non-anthropic-readiness",
         "no-custom-pii-rules",
+        "prompt-draft-modals",
     ],
 )
 def test_console_services_load_only_on_first_use(tmp_path: Path, code: str) -> None:

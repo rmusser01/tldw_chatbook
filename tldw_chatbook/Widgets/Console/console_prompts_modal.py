@@ -7,7 +7,7 @@ import inspect
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from textual import on
 from textual.app import ComposeResult
@@ -42,7 +42,6 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 )
 
 from .console_composer_bar import ComposerDraftSnapshot
-from .console_prompt_draft_editor import ConsolePromptDraftEditor
 from .console_prompt_improve_view import (
     SYSTEM_ANALYSIS_ABSENT_DISCLOSURE,
     SYSTEM_ANALYSIS_ABSENT_TOOLTIP,
@@ -59,6 +58,9 @@ from .console_prompts_state import (
     PromptModalMode,
     PromptSource,
 )
+
+if TYPE_CHECKING:
+    from .console_prompt_draft_editor import ConsolePromptDraftEditor
 
 _PER_PAGE = 10
 _OUTCOME_FIRST_OPTIONAL_BLOCK_IDS = frozenset(
@@ -520,6 +522,8 @@ class ConsolePromptsModal(
             else:
                 await self._mount_compatibility(body)
         elif mode == "draft_edit":
+            from .console_prompt_draft_editor import ConsolePromptDraftEditor
+
             record = self._selected_record or {}
             await body.mount(
                 ConsolePromptDraftEditor(
@@ -1862,7 +1866,7 @@ class ConsolePromptsModal(
         event.stop()
         self.mark_dirty()
         try:
-            self.query_one(ConsolePromptDraftEditor).reset_delete_confirmation()
+            self._draft_editor().reset_delete_confirmation()
         except NoMatches:
             pass
 
@@ -2167,9 +2171,15 @@ class ConsolePromptsModal(
         """Disarm hard deletion after any non-delete editor interaction."""
 
         try:
-            self.query_one(ConsolePromptDraftEditor).reset_delete_confirmation()
+            self._draft_editor().reset_delete_confirmation()
         except NoMatches:
             pass
+
+    def _draft_editor(self) -> ConsolePromptDraftEditor:
+        """Return the first-use Draft Shelf editor mounted for edit mode."""
+        from .console_prompt_draft_editor import ConsolePromptDraftEditor
+
+        return self.query_one(ConsolePromptDraftEditor)
 
     def _replace_cached_draft_row(self, updated: Mapping[str, Any]) -> None:
         """Keep the shelf row truthful when returning after an in-place update."""
@@ -2193,7 +2203,7 @@ class ConsolePromptsModal(
             self.browse_result = replace(self.browse_result, items=tuple(items))
 
     async def _update_selected_draft(self) -> None:
-        editor = self.query_one(ConsolePromptDraftEditor)
+        editor = self._draft_editor()
         editor.reset_delete_confirmation()
         if self._update_draft is None:
             editor.show_status("Draft update is unavailable.", error=True)
@@ -2235,7 +2245,7 @@ class ConsolePromptsModal(
         editor.show_status("Draft updated.")
 
     async def _insert_selected_draft(self) -> None:
-        editor = self.query_one(ConsolePromptDraftEditor)
+        editor = self._draft_editor()
         editor.reset_delete_confirmation()
         if self._insert_draft is None:
             editor.show_status("Insert is unavailable.", error=True)
@@ -2258,7 +2268,7 @@ class ConsolePromptsModal(
         self.dismiss_safe_once(None)
 
     async def _delete_selected_draft(self) -> None:
-        editor = self.query_one(ConsolePromptDraftEditor)
+        editor = self._draft_editor()
         if not editor.delete_armed:
             editor.arm_delete()
             return
@@ -2290,7 +2300,7 @@ class ConsolePromptsModal(
         self.call_after_refresh(self._browse_widget_focus_search)
 
     async def _promote_selected_draft(self) -> None:
-        editor = self.query_one(ConsolePromptDraftEditor)
+        editor = self._draft_editor()
         editor.reset_delete_confirmation()
         name = editor.library_name
         if not name:

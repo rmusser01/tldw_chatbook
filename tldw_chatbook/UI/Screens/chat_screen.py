@@ -661,10 +661,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
-from ...Widgets.Console.console_prompt_draft_save_dialog import (
-    ConsolePromptDraftSaveDialog,
-    PromptDraftSaveChoice,
-)
 from ...Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
     PromptComparisonResult,
@@ -714,6 +710,9 @@ if TYPE_CHECKING:
         ConsoleSettingsDraftSnapshot,
         ConsoleSettingsModal,
         ConsoleSettingsResult,
+    )
+    from tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog import (
+        PromptDraftSaveChoice,
     )
     from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
         WorkspaceActionChosen,
@@ -10995,6 +10994,10 @@ class ChatScreen(BaseAppScreen):
 
     def action_save_console_prompt_draft(self) -> None:
         """Ask whether to keep or clear the composer after a local draft save."""
+        from ...Widgets.Console.console_prompt_draft_save_dialog import (
+            ConsolePromptDraftSaveDialog,
+        )
+
         composer = self._console_composer_or_none()
         if composer is None or not composer.draft_text().strip():
             self.app_instance.notify(
@@ -11007,7 +11010,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _handle_console_prompt_draft_save_choice(
-        self, choice: PromptDraftSaveChoice | None
+        self, choice: "PromptDraftSaveChoice | None"
     ) -> None:
         if choice is None:
             self._focus_console_composer_if_needed(force=True)
