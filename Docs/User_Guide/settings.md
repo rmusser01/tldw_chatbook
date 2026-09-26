@@ -581,9 +581,13 @@ A full editor with its own save model. **Theme Library**: a **Name** box (live
 for anything but the two Textual built-ins), a **Dark theme** On/Off toggle,
 the **New / Clone / Delete / Export** row, and a **Themes** tree that lists
 **Your themes** first and open, then **Built-in**, then the **Shipped themes**
-catalog collapsed. Selecting a theme in the tree only loads it for editing; it
+catalog collapsed. **Built-in** lists every theme Textual ships (Textual
+Dark/Light, Nord, Gruvbox, the Catppuccin, Rosé Pine and Solarized families,
+and so on); **Your themes** shows "(none yet)" until you save one.
+Selecting a theme in the tree only loads it for editing; it
 never changes the running app. **Actions** come next: **Apply** applies the
-palette **for this session only** and writes nothing; **Save** stores it as a
+palette **for this session only** and writes nothing (a shipped or built-in
+theme applied without edits is selected by its own name); **Save** stores it as a
 TOML file in your profile's `themes/` folder and registers it at once, so it
 appears in **Appearance** → **Theme** and in the palette's "Theme: Switch
 to…" list without a restart (built-ins can't be overwritten, and saving over
@@ -594,13 +598,28 @@ loads at startup. Appearance reflects that saved default immediately while
 retaining any explicitly staged theme choice or other unsaved Appearance edits.
 **Color Palette** is ten hex boxes, Primary through Error,
 each with a swatch showing the colour and its hex; an invalid value marks the
-box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
+box and the swatch reads "Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in
 the **Presets fill** box (Primary by default), by click or by focusing a swatch
 and pressing Enter or Space. The **Live Preview** is a Console-shaped stub that
 repaints as you type. **New** starts a theme from the palette currently loaded;
 **Clone** does the same and appends `_copy` to the name. **Delete** removes a
 saved theme after confirmation; **Export** writes it to your Downloads folder
-and asks before replacing an earlier export.
+and asks before replacing an earlier export. A theme cloned from a shipped one
+keeps that theme's extra readability colours (muted text, footer keys, input
+selection) through Apply, Save and Export — they are stored in a `[variables]`
+table in the TOML. They are tuned for that palette, so once you change any base
+colour or the dark flag they are dropped and derived from your colours instead.
+A `[variables]` entry that is not a colour (or `auto NN%`, or a text style) is
+skipped with a warning when the theme loads. Deleting a saved theme that
+reuses a shipped or built-in name (say `nord`) brings the original back. Leaving Theme with unsaved edits asks **Stay**, **Discard**,
+or **Save** (Escape stays); Save that needs an overwrite confirmation or a
+valid name keeps you on Theme. While a backup or recovery holds the theme
+files, **Your themes** reads "Theme files unavailable while backup/recovery is
+in progress" instead of listing them. The card's buttons are bracketed
+chips — Apply, Save, Reset and Delete keep their colour as label and brackets,
+and a focused button fills with that colour — and each preset swatch is framed
+by thin side rules that thicken into brackets when it has focus, so a preset
+close to the card colour still reads as a cell.
 
 ### Interface — Splash Screen
 
@@ -940,7 +959,9 @@ a note on what would have to exist before Settings could own a default.
    save the draft — the theme is applied at the next launch. If you built the
    theme yourself in the **Theme** editor, press **Save** there and then **Set
    as launch default**; saved themes also appear in **Appearance** → **Theme**
-   as "<Name> (saved)".
+   as "<Name> (saved)". Textual's own themes are listed there as
+   "<Name> (Textual)"; "(saved)" appears only when a theme file of that name
+   is in your profile's `themes/` folder.
 4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
@@ -983,12 +1004,13 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |
-| j / k / ↑ / ↓ | Move up and down the rail (while a category row has focus) |
+| ↑ / ↓ | Move up and down the rail (while a category row has focus) |
+| j / k | Move up and down the rail — while the rail has focus, or with nothing focused. Inert in the detail and inspector panes, so they never pull focus out of an editor (task-32944) |
+| F6 / Shift+F6 | Cycle focus rail → detail pane → Scope Inspector → rail (reverse with Shift+F6). The rail lands on the active category; a pane with nothing focusable is skipped |
 | Enter | Open the focused category; in the filter, jump to the top match; on an action button, press it |
 | a / c / b | RAG only — set active, clone, backfill. See [RAG defaults](settings/rag.md) |
 
-**F6 does nothing on this screen.** Settings has no pane-cycle target, so it
-only shows a notice — use **Tab**, the rail keys, or the mouse. **F1** opens
+**F1** opens
 the active category's help: a "How this category works" section (its save
 contract, scope, runtime owner, whether writes are allowed, boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
@@ -1085,6 +1107,9 @@ saved in the editor now registers at once, appears in Appearance → Theme and
 the palette, and loads at the next launch via **Set as launch default**;
 swatches, the Dark toggle and the preset target are painted; Actions sit above
 the palette; the rest of this page's content unchanged from the prior stamp).*
+*Interface — Theme amended on fix/theme-harden — 2026-09-24 (tasks 32940-32942:
+shipped-theme variables carried, leave guard, backup-pause state; covered by
+automated tests, not re-driven live).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
 menu now leaves the strip scrolled so "F4 Settings" is visible and
@@ -1156,3 +1181,15 @@ this page's content unchanged from the prior stamp.)*
 (task-32290): the model `shell_exec` card's session choice is labelled
 **All shell · session** (`_RAW_SHELL_DECISION_OPTIONS`), not the longer
 sentence this page quoted.*
+
+*Verified against `fix/theme-keyboard-labels` (off dev @ 6ddc582839) —
+2026-09-24 (tasks 32943–32946): F6/Shift+F6 cycle the three panes; j/k are
+rail-scoped; Appearance labels Textual themes "(Textual)" and only file-backed
+themes "(saved)"; the Theme tree's Built-in group lists all Textual themes;
+the invalid-colour swatch reads "Invalid — use #RRGGBB". Pinned by pilot tests,
+not driven live.*
+
+*Verified against `fix/theme-contrast` @ dev 6ddc582839 — 2026-09-24
+(task-32947): Theme card chips, swatch frames and the Dark-theme off glyph
+measured from painted cells at 190x55 under textual-dark, textual-light,
+gruvbox_dark and solarized_light.*
