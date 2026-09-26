@@ -36,12 +36,14 @@ async def test_reuse_validates_saved_identity_before_selecting_runtime(
         assert target == "native:other"
         return None if missing else {"conversation": {"id": target}, "messages": []}
 
-    async def open_runtime(target):
+    async def open_runtime(target, *, resume_if=None):
+        assert resume_if is None
         store.active_session_id = target.removeprefix("native:")
         return True
 
     owner = SimpleNamespace(
         app_instance=SimpleNamespace(notify=Mock()),
+        _begin_manual_read_visit=None,
         _ensure_console_chat_store=lambda: store,
         _capture_console_draft_switch_snapshot=lambda: None,
         _restore_console_session_after_failed_open=AsyncMock(),
@@ -74,6 +76,7 @@ def test_mode_title_and_selected_class_agree_without_app(mode, widened, expected
     }
     owner = SimpleNamespace(
         query_one=lambda selector, _kind: widgets[selector],
+        query=lambda _selector: (),
         _active_results=(),
         _mode=mode,
         _widened_to_history=widened,
@@ -119,6 +122,8 @@ async def test_warm_open_scope_error_is_nonfatal_but_activation_failures_restore
 
     owner = SimpleNamespace(
         _screen=None,
+        _begin_manual_read_visit=None,
+        _complete_manual_read_visit=None,
         app_instance=SimpleNamespace(
             notify=lambda *args, **kwargs: notices.append(args)
         ),
