@@ -23,7 +23,11 @@ from textual.widgets import Button, Markdown, Switch
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import, see docstring
 from tldw_chatbook.Library.library_skills_state import build_skills_list_state
+from tldw_chatbook.UI.Library_Modules import library_skills_builtin_controller as lsbc
 from tldw_chatbook.UI.Library_Modules import library_skills_controller as lsc
+from tldw_chatbook.UI.Library_Modules.library_skills_builtin_controller import (
+    LibrarySkillsBuiltinController,
+)
 from tldw_chatbook.UI.Library_Modules.library_skills_controller import (
     LibrarySkillsController,
 )
@@ -66,7 +70,11 @@ def test_builtin_activation_opens_preview_not_editor():
     fake = SimpleNamespace(
         _flush_library_skill_save=flush,
         _skills_controller=SimpleNamespace(
-            _open_library_skill_builtin_preview=lambda n: calls.append(f"preview:{n}")
+            builtin=SimpleNamespace(
+                _open_library_skill_builtin_preview=lambda n: calls.append(
+                    f"preview:{n}"
+                )
+            )
         ),
         _reset_library_skill_editor_state=lambda: calls.append("editor-reset"),
         run_worker=lambda *a, **k: calls.append("editor-fetch"),
@@ -98,14 +106,9 @@ def _controller_stand_in(**extra: Any) -> SimpleNamespace:
         is_mounted=False,
         **extra,
     )
-    fake._refresh_library_skill_builtin_preview = (
-        lambda *a, **k: LibrarySkillsController._refresh_library_skill_builtin_preview(
-            fake, *a, **k
-        )
-    )
-    fake._library_skill_preview_is_current = (
-        lambda *a: LibrarySkillsController._library_skill_preview_is_current(fake, *a)
-    )
+    # R14: the built-in cluster lives on its own controller, bound to the
+    # skills controller (here, this stand-in).
+    fake.builtin = LibrarySkillsBuiltinController(fake)
     fake._claim_library_skill_detail_generation = (
         lambda: LibrarySkillsController._claim_library_skill_detail_generation(fake)
     )
@@ -114,11 +117,12 @@ def _controller_stand_in(**extra: Any) -> SimpleNamespace:
 
 def test_open_preview_sets_preview_view_and_never_the_editor(monkeypatch):
     monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    monkeypatch.setattr(lsbc, "_sync_library_canvas", lambda *a, **k: True)
     fake = _controller_stand_in()
     fake._library_skill_detail_loading = False
     fake._library_skill_detail_error = ""
     fake._library_skill_detail_retryable = False
-    LibrarySkillsController._open_library_skill_builtin_preview(fake, NAME)
+    fake.builtin._open_library_skill_builtin_preview(NAME)
     assert fake._library_skills_view == "preview"
     assert fake._selected_skill_name == NAME
     assert fake.calls[0] == "reset"
@@ -154,7 +158,7 @@ def test_customize_seeds_only_that_builtin_and_refreshes(blocked, needs_review):
         ),
         _run_library_service_call=_direct_call,
     )
-    asyncio.run(LibrarySkillsController._customize_library_skill_builtin(fake, NAME))
+    asyncio.run(fake.builtin._customize_library_skill_builtin(NAME))
     assert seeded == [{"names": [NAME], "mode": "local"}]
     assert "reset" in fake.calls and "refresh" in fake.calls
     notice = next(m for m in fake.calls if isinstance(m, tuple) and m[0] == "notify")[1]
@@ -165,15 +169,16 @@ def test_customize_seeds_only_that_builtin_and_refreshes(blocked, needs_review):
 def test_enabled_switch_updates_memory_and_persists(monkeypatch):
     saved: list[Any] = []
     monkeypatch.setattr(
-        lsc, "save_setting_to_cli_config", lambda *a: saved.append(a) or True
+        lsbc, "save_setting_to_cli_config", lambda *a: saved.append(a) or True
     )
     monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    monkeypatch.setattr(lsbc, "_sync_library_canvas", lambda *a, **k: True)
     config: dict[str, Any] = {"skills": {"disabled_builtins": ["other"]}}
     fake = _controller_stand_in(app_instance=SimpleNamespace(app_config=config))
     fake._library_skill_builtin_preview = {"name": NAME, "enabled": True}
 
     asyncio.run(
-        LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, False)
+        fake.builtin._set_library_skill_builtin_enabled(NAME, False)
     )
     assert config["skills"]["disabled_builtins"] == ["other", NAME]
     assert saved == [("skills", "disabled_builtins", ["other", NAME])]
@@ -181,7 +186,7 @@ def test_enabled_switch_updates_memory_and_persists(monkeypatch):
     assert "refresh" in fake.calls
 
     asyncio.run(
-        LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, True)
+        fake.builtin._set_library_skill_builtin_enabled(NAME, True)
     )
     assert config["skills"]["disabled_builtins"] == ["other"]
     assert saved[-1] == ("skills", "disabled_builtins", ["other"])
@@ -231,6 +236,7 @@ def test_disabled_builtin_row_is_badged_disabled():
 
 def test_preview_enabled_state_comes_from_config_and_reads_disabled(monkeypatch):
     monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    monkeypatch.setattr(lsbc, "_sync_library_canvas", lambda *a, **k: True)
     calls: list[Any] = []
 
     async def get_skill(name, **kwargs):
@@ -248,7 +254,7 @@ def test_preview_enabled_state_comes_from_config_and_reads_disabled(monkeypatch)
     fake._library_skills_view = "preview"
     fake._library_skill_detail_generation = 3
     asyncio.run(
-        LibrarySkillsController._refresh_library_skill_builtin_preview(fake, NAME, 3)
+        fake.builtin._refresh_library_skill_builtin_preview(NAME, 3)
     )
     assert calls == [{"mode": "local", "include_disabled_builtins": True}]
     assert fake._library_skill_builtin_preview == {
@@ -273,7 +279,7 @@ def test_customize_that_copied_nothing_says_so():
         ),
         _run_library_service_call=_direct_call,
     )
-    asyncio.run(LibrarySkillsController._customize_library_skill_builtin(fake, NAME))
+    asyncio.run(fake.builtin._customize_library_skill_builtin(NAME))
     notices = [m[1] for m in fake.calls if isinstance(m, tuple) and m[0] == "notify"]
     assert notices and not notices[0].startswith("Copied")
     assert "Nothing was copied" in notices[0]
@@ -293,16 +299,17 @@ def test_rapid_enabled_toggles_leave_disk_matching_memory(monkeypatch):
         saved.append(list(value))
         return True
 
-    monkeypatch.setattr(lsc, "save_setting_to_cli_config", slow_first_save)
+    monkeypatch.setattr(lsbc, "save_setting_to_cli_config", slow_first_save)
     monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    monkeypatch.setattr(lsbc, "_sync_library_canvas", lambda *a, **k: True)
     config: dict[str, Any] = {"skills": {"disabled_builtins": []}}
     fake = _controller_stand_in(app_instance=SimpleNamespace(app_config=config))
     fake._library_skill_builtin_preview = {"name": NAME, "enabled": True}
 
     async def both() -> None:
         await asyncio.gather(
-            LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, False),
-            LibrarySkillsController._set_library_skill_builtin_enabled(fake, NAME, True),
+            fake.builtin._set_library_skill_builtin_enabled(NAME, False),
+            fake.builtin._set_library_skill_builtin_enabled(NAME, True),
         )
 
     asyncio.run(both())
@@ -313,6 +320,7 @@ def test_rapid_enabled_toggles_leave_disk_matching_memory(monkeypatch):
 @pytest.mark.parametrize(("source", "expected"), [("builtin", "preview"), ("local", "editor")])
 def test_review_link_routes_builtin_only_names_to_preview(monkeypatch, source, expected):
     monkeypatch.setattr(lsc, "_sync_library_canvas", lambda *a, **k: True)
+    monkeypatch.setattr(lsbc, "_sync_library_canvas", lambda *a, **k: True)
     opened: list[str] = []
 
     async def flush() -> bool:
@@ -327,10 +335,7 @@ def test_review_link_routes_builtin_only_names_to_preview(monkeypatch, source, e
         _flush_library_skill_save=flush,
         _refresh_library_skill_detail=lambda name: asyncio.sleep(0),
     )
-    fake._open_library_skill_builtin_preview = lambda n: opened.append("preview")
-    fake._library_skill_is_builtin_only = (
-        lambda n: LibrarySkillsController._library_skill_is_builtin_only(fake, n)
-    )
+    fake.builtin._open_library_skill_builtin_preview = lambda n: opened.append("preview")
     asyncio.run(
         LibrarySkillsController._open_library_skill_editor_for_review(fake, NAME)
     )

@@ -565,13 +565,7 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    # 2026-09-25, TASK-32954 (built-in skills): a new feature cluster, not
-    # creep -- the built-in row's read-only preview (open/refresh), Customize
-    # (seed one copy, honest nothing-copied notice), the Enabled switch
-    # (in-memory `[skills] disabled_builtins` + serialized persist) and the
-    # review-link route to the preview. Skills-surface behaviour, so it lives
-    # with the Skills controller rather than on LibraryScreen. 3142 -> 3344.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3344,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
@@ -602,6 +596,11 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # PR #2754 reviews: initial pin includes finite workers, reader reveal, typed builders and normalized exports.
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 806
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
+
+# 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in
+# skills cluster (read-only preview, Customize, Enabled switch, review-link
+# route), split out so `library_skills_controller.py` stays within its budget.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py"] = 253
 
 
 @lru_cache(maxsize=None)
