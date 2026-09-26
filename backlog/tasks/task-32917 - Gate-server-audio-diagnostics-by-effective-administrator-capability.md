@@ -4,7 +4,7 @@ title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
 created_date: '2026-09-23 20:15'
-updated_date: '2026-09-26 00:35'
+updated_date: '2026-09-26 01:02'
 labels: []
 dependencies: []
 references:
@@ -45,6 +45,8 @@ Qodo wildcard review resolved by server can_run_audio_diagnostics capability. Re
 2026-09-25: prior PR Fast Lane failed in two unchanged MCP Workbench UI tests; both passed locally and their files were identical across old/new dev and PR. A failed-job rerun was queued when dev advanced to 461668df0 (ingestion-only merge). Rebased onto that dev; all four prior commits unchanged by range-diff, 22 focused audio/API tests passed with one pre-existing from_config bootstrap test deselected, diff check clean. New required CI will decide merge readiness.
 
 2026-09-25: rebased PR #2822 onto Chatbook dev 50f6096db after the tier-2 P2 Notes/Library/Media merge. All five prior PR commits are patch-identical by range-diff. The 22 focused audio/API tests passed (one pre-existing from_config bootstrap failure deselected), and git diff --check is clean. Await the required latest-head derived-artifact gate.
+
+2026-09-25: rebased PR #2822 onto Chatbook dev 1b61ee2c0 after the off-by-default Tamagotchi merge. All six prior PR commits are patch-identical by range-diff; 22 focused tests passed with one pre-existing from_config bootstrap failure deselected; git diff --check is clean. Latest-head required CI must rerun.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
