@@ -117,7 +117,10 @@ def test_resolve_hosted_request_uses_canonical_precedence_and_record_defaults() 
         retry_delay=0.5,
         streaming=False,
     )
-    assert configured.api_key == "config-key"
+    # Qodo finding 4: the engine follows the repo precedence rule
+    # (env -> config -> defaults), so a USABLE env key beats the stored
+    # settings key (the configured env name wins over the canonical one).
+    assert configured.api_key == "renamed-env-key"
 
     explicit = resolve_hosted_request(
         DATABRICKS,

@@ -28,6 +28,10 @@ engine and presets design, "Data flow" step 2):
   payload layer; a user-supplied blank model still fails closed here.
 - Credentials and endpoint are resolved before the model so missing-key and
   missing-URL errors surface with their actionable copy first.
+- Credential precedence follows the repo rule (env vars -> config.toml ->
+  defaults; Qodo finding 4): the env chain beats a USABLE stored
+  ``api_key``, while a present-but-unusable stored key still fails closed.
+  zai/moonshot keep their own legacy stored-key-first order.
 - ``record.auth_scheme`` gates credential strictness (Phase 2, Task 3):
   ``"bearer"`` (the default) keeps the hard key requirement, while
   ``"bearer_optional"`` lets keyless endpoints (ADR-146 custom endpoints)
@@ -370,6 +374,14 @@ def _resolve_api_key(
     ``bearer_optional`` records (the transport then sends no Authorization
     header at all) and still fails closed for strict ``bearer`` records.
 
+    Otherwise the chain follows the repo precedence rule (env vars ->
+    config.toml -> defaults; Qodo finding 4): explicit, then the env
+    candidates (the configured name plus the record's canonical
+    candidates), then the stored settings ``api_key``. A present-but-
+    unusable stored key still fails closed with the settings-path error
+    even when the environment would have won -- a placeholder the user
+    typed is surfaced, never silently shadowed.
+
     ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
     stored value, or an unresolved env chain, is an actionable configuration
     error. ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute:
@@ -389,22 +401,27 @@ def _resolve_api_key(
             f"{record.display_name} explicit API key is invalid."
         )
     if explicit is not None:
-        resolved = resolve_provider_api_key(explicit)
-        if resolved is not None:
-            return resolved
+        resolved_explicit = resolve_provider_api_key(explicit)
+        if resolved_explicit is not None:
+            return resolved_explicit
         if not (optional and isinstance(explicit, str)):
             raise validators.configuration_error(
                 f"{record.display_name} explicit API key is invalid."
             )
         # bearer_optional: an explicit blank ("no key configured") defers to
         # the settings/env chain instead of winning with an unusable value.
+    # Precedence (repo rule: env vars -> config.toml -> defaults; Qodo
+    # finding 4): a present-but-unusable stored key still fails closed
+    # first -- a placeholder the user typed is an error to surface, never a
+    # value to silently shadow -- but between two USABLE credentials the
+    # environment now beats the stored settings key.
+    stored_key: str | None = None
     if "api_key" in settings:
-        resolved = resolve_provider_api_key(settings.get("api_key"))
-        if resolved is None:
+        stored_key = resolve_provider_api_key(settings.get("api_key"))
+        if stored_key is None:
             raise validators.configuration_error(
                 f"{record.display_name} api_settings.{record.key}.api_key is invalid."
             )
-        return resolved
     env_name = settings.get("api_key_env_var", record.api_key_env_var)
     names: tuple[str, ...] = ()
     if isinstance(env_name, str):
@@ -419,9 +436,11 @@ def _resolve_api_key(
             "is invalid."
         )
     for candidate in dict.fromkeys((*names, *record.api_key_env_candidates)):
-        resolved = resolve_provider_api_key(environ.get(candidate))
-        if resolved is not None:
-            return resolved
+        env_key = resolve_provider_api_key(environ.get(candidate))
+        if env_key is not None:
+            return env_key
+    if stored_key is not None:
+        return stored_key
     if optional:
         return ""
     raise validators.configuration_error(
