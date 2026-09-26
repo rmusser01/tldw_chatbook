@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Literal
 from urllib.parse import urlsplit
@@ -28,6 +30,7 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
 VOICE_PRESET_POCKET_TTS = "pocket_tts"
 VOICE_PRESET_OFFICIAL_OPENAI = "official_openai"
 VOICE_PRESET_CUSTOM = "custom"
+VOICE_PRESET_OMNIVOICE = "omnivoice"
 
 POCKET_TTS_ENDPOINT = "http://127.0.0.1:8765/v1/audio/speech"
 OFFICIAL_OPENAI_TTS_ENDPOINT = "https://api.openai.com/v1/audio/speech"
@@ -326,4 +329,140 @@ async def run_voice_sample(
         content_type=content_type,
         response_format=draft.response_format,
         playable=True,
+    )
+
+
+OMNIVOICE_MODEL_ID = "omnivoice-int8hq"
+OMNIVOICE_VOICE_ID = "default"
+_OMNIVOICE_SEED_LIMIT = 2**31
+
+OMNIVOICE_ENGINE_MISSING_COPY = (
+    'OmniVoice needs its local engine: pip install "tldw_chatbook[omnivoice_tts]", '
+    "then run setup again from Settings ▸ Diagnostics ▸ Run Setup Wizard."
+)
+OMNIVOICE_MODEL_MISSING_COPY = "Downloads the OmniVoice model (1.1 GB, one time)."
+# task-1 measured SEED_STABLE = False: a fixed seed does not keep the voice
+# stable across sentences, so the ready copy points users at Voice Cloning.
+OMNIVOICE_READY_COPY = (
+    "OmniVoice is installed — runs offline on this computer. Replies may vary "
+    "in voice until you create a voice profile in Voice Cloning."
+)
+OMNIVOICE_CHECKING_COPY = "Checking the OmniVoice model…"
+OMNIVOICE_GENERATING_COPY = "Generating locally (first run loads the model)…"
+OMNIVOICE_SAMPLE_FAILED_COPY = (
+    "Couldn't play a test sample — you can still save and test later in Speech Lab."
+)
+OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY = (
+    "Install the OmniVoice model first, or uncheck Use as default."
+)
+
+
+def choose_omnivoice_seed(
+    existing: object, *, randbelow: Callable[[int], int] = secrets.randbelow
+) -> int:
+    """Return the seed that fixes OmniVoice's default voice.
+
+    A valid configured seed is kept so a re-run never changes the voice.
+
+    Args:
+        existing: ``[OmniVoiceSettings] seed`` as configured (any type).
+        randbelow: Random source (injected by tests).
+
+    Returns:
+        A non-negative 31-bit integer seed.
+    """
+    if type(existing) is int and 0 <= existing < _OMNIVOICE_SEED_LIMIT:
+        return existing
+    return randbelow(_OMNIVOICE_SEED_LIMIT)
+
+
+def build_omnivoice_save_event(
+    *,
+    speed: float,
+    seed: int,
+    request_id: int | None = None,
+    reply_to: object | None = None,
+) -> STTSSettingsSaveEvent:
+    """Build the save event that makes OmniVoice the default voice.
+
+    Args:
+        speed: Default speaking rate.
+        seed: The voice seed (from ``choose_omnivoice_seed``).
+        request_id: Correlates the save result.
+        reply_to: Widget receiving the save result.
+
+    Returns:
+        A settings event carrying only ``OMNIVOICE_SEED`` plus defaults.
+    """
+    return STTSSettingsSaveEvent(
+        {"OMNIVOICE_SEED": seed},
+        preferences=TTSPreferencesSnapshot(
+            provider_id=VOICE_PRESET_OMNIVOICE,
+            model_mode="exact",
+            model_id=OMNIVOICE_MODEL_ID,
+            voice_mode="exact",
+            voice_id=OMNIVOICE_VOICE_ID,
+            response_format="wav",
+            speed=speed,
+        ),
+        request_id=request_id,
+        reply_to=reply_to,
+        commit_defaults_after_handoff=True,
+        notify_outcome=False,
+    )
+
+
+async def run_omnivoice_sample(
+    text: str,
+    *,
+    speed: float,
+    seed: int,
+    service: object | None = None,
+    max_response_bytes: int = 8 * 1024 * 1024,
+) -> VoiceSampleResult:
+    """Synthesize one sample through the app's shared TTS service.
+
+    Uses the same legacy request path as briefing audio, so the cached
+    backend is reused (no second engine) and the seed matches the save.
+
+    Args:
+        text: Sample text (1–500 characters after trimming).
+        speed: Speaking rate.
+        seed: The voice seed the save will persist.
+        service: TTS service (defaults to the app's bound service).
+        max_response_bytes: Upper bound on the returned audio.
+
+    Returns:
+        A playable WAV sample.
+
+    Raises:
+        ValueError: Invalid text, oversize audio, or non-WAV audio.
+    """
+    from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
+
+    request, internal_model_id = build_legacy_speech_request(
+        provider_id=VOICE_PRESET_OMNIVOICE,
+        model_id=OMNIVOICE_MODEL_ID,
+        voice=OMNIVOICE_VOICE_ID,
+        text=validate_voice_sample_text(text),
+        response_format="wav",
+        speed=speed,
+    )
+    request.extra_params = {"seed": seed}
+    if service is None:
+        from tldw_chatbook.TTS.TTS_Generation import get_tts_service
+
+        service = await get_tts_service()
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in service.generate_audio_stream(request, internal_model_id):
+        total += len(chunk)
+        if total > max_response_bytes:
+            raise ValueError("The TTS sample exceeded the response limit.")
+        chunks.append(bytes(chunk))
+    body = b"".join(chunks)
+    if not (body.startswith(b"RIFF") and body[8:12] == b"WAVE"):
+        raise ValueError("OmniVoice returned audio that could not be played.")
+    return VoiceSampleResult(
+        body=body, content_type="audio/wav", response_format="wav", playable=True
     )
