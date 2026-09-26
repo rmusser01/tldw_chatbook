@@ -123,22 +123,47 @@ class ThemeOptionList(OptionList):
 
 class ThemePicker(Vertical):
     class EditRequested(Message):
+        """Open the editor on a theme (Clone, New or Edit).
+
+        Args:
+            theme_id: The source theme.
+            mode: How the editor opens it.
+        """
+
         def __init__(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
             self.theme_id = theme_id
             self.mode = mode
             super().__init__()
 
     class RenameRequested(Message):
+        """Rename… pressed on a saved theme; the screen prompts for the name.
+
+        Args:
+            theme_id: The saved theme to rename.
+        """
+
         def __init__(self, theme_id: str) -> None:
             self.theme_id = theme_id
             super().__init__()
 
     class DeleteRequested(Message):
+        """Delete pressed; the screen confirms, the editor deletes.
+
+        Args:
+            theme_id: The saved theme, or an ``unreadable:<stem>`` id.
+        """
+
         def __init__(self, theme_id: str) -> None:
             self.theme_id = theme_id
             super().__init__()
 
     class ExportRequested(Message):
+        """Export pressed on a saved theme; the editor writes the copy.
+
+        Args:
+            theme_id: The saved theme to export.
+        """
+
         def __init__(self, theme_id: str) -> None:
             self.theme_id = theme_id
             super().__init__()
@@ -483,9 +508,11 @@ class ThemePicker(Vertical):
 
     # -- actions -------------------------------------------------------
     def use_highlighted(self) -> None:
+        """Use: switch to the highlighted theme and save it as the launch default."""
         self._switch(persist=True)
 
     def try_highlighted(self) -> None:
+        """Try: switch to the highlighted theme for this session only."""
         self._switch(persist=False)
 
     def request_edit(self, mode: Literal["clone", "new", "edit"]) -> None:
@@ -509,23 +536,32 @@ class ThemePicker(Vertical):
         self.post_message(self.EditRequested(theme_id, mode))
 
     def request_rename(self) -> None:
+        """Post ``RenameRequested`` for a readable saved theme while files are available."""
         if self._can_manage_files() and self._highlighted_readable():
             self.post_message(self.RenameRequested(self.highlighted_id))
 
     def request_delete(self) -> None:
+        """Post ``DeleteRequested`` for a saved theme, readable or not, while files are available."""
         if self._can_manage_files():
             self.post_message(self.DeleteRequested(self.highlighted_id))
 
     def request_export(self) -> None:
+        """Post ``ExportRequested`` for a readable saved theme while files are available."""
         if self._can_manage_files() and self._highlighted_readable():
             self.post_message(self.ExportRequested(self.highlighted_id))
 
     def request_import(self) -> None:
+        """Post ``ImportRequested`` unless backup/recovery holds the files."""
         if self.files_available:
             self.post_message(self.ImportRequested())
 
     def show_export_result(self, path: Path) -> None:
-        """A saved theme was just exported to ``path`` (spec §7)."""
+        """Show where a saved theme was just exported, with Copy path (spec §7).
+
+        Args:
+            path: The written file's full path (the one notice allowed to
+                show a path, R16).
+        """
         self._export_path = path
         self.query_one("#settings-theme-export-path", Static).update(f"Exported to {path}")
         self.query_one("#settings-theme-export-result").display = True

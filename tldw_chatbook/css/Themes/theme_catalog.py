@@ -43,6 +43,21 @@ _SHIPPED_NAMES = frozenset(t.name for t in ALL_THEMES if getattr(t, "name", None
 
 @dataclass(frozen=True)
 class ThemeEntry:
+    """One picker row: a registered theme, or an unreadable saved file.
+
+    Attributes:
+        id: The registered theme name, or ``unreadable:<stem>``.
+        display_name: The printable label shown in the list.
+        origin: ``yours``, ``shipped`` or ``textual``.
+        dark: Whether the theme is dark.
+        colours: ``(key, #RRGGBB)`` pairs for the colour strip and card.
+        is_active: The running theme.
+        is_launch_default: The theme the config starts with.
+        overrides: For a saved theme that shadows a catalog name, which
+            catalog it shadows.
+        error: A short, path-free reason when the saved file is unreadable.
+    """
+
     id: str
     display_name: str
     origin: Origin
@@ -62,6 +77,14 @@ class ThemeEntry:
 
 
 def display_name(theme_id: str) -> str:
+    """Turn a theme id into a title-case label.
+
+    Args:
+        theme_id: A theme name such as ``gruvbox-dark`` or ``my_theme``.
+
+    Returns:
+        The id with ``_`` and ``-`` as spaces, title-cased.
+    """
     return theme_id.replace("_", " ").replace("-", " ").title()
 
 

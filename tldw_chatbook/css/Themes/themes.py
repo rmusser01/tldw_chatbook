@@ -54,9 +54,18 @@ _HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})")
 
 
 def is_hex_colour(value: object) -> bool:
-    """``value`` is ``#RGB``, ``#RRGGBB`` or ``#RRGGBBAA`` -- the only colours
-    a theme file or the editor's colour fields accept (R41). ``#RRGGBBAA`` is
-    what the editor writes for a translucent colour (``Color.hex``)."""
+    """Whether ``value`` is a colour a theme file may hold (R41).
+
+    ``#RGB``, ``#RRGGBB`` and ``#RRGGBBAA`` are the only colours a theme file
+    or the editor's colour fields accept; ``#RRGGBBAA`` is what the editor
+    writes for a translucent colour (``Color.hex``).
+
+    Args:
+        value: Any parsed TOML value.
+
+    Returns:
+        True only for a ``str`` in one of those three forms.
+    """
     return isinstance(value, str) and _HEX_COLOUR.fullmatch(value) is not None
 
 
@@ -118,7 +127,15 @@ _PINNED_ATTR = "_tldw_pinned_text_hues"
 
 
 def pinned_text_hues(theme: Theme) -> set[str]:
-    """The readable text-* keys the AA guard generated for ``theme``."""
+    """The readable text-* keys the AA guard generated for ``theme``.
+
+    Args:
+        theme: A theme that may have passed through
+            ``ensure_readable_text_hues``.
+
+    Returns:
+        The generated ``text-*`` variable names; empty when none were pinned.
+    """
     return set(getattr(theme, _PINNED_ATTR, ()))
 
 
@@ -258,8 +275,13 @@ _DARK_FALSE = frozenset({"false", "0", "no", "off"})
 def theme_file_dark(value: object) -> bool:
     """A theme file's ``[theme].dark``: R31, ``dark = "false"`` is light.
 
-    Real bools are kept; the strings false/0/no/off and true/1/yes/on
-    (any case) coerce; anything else is dark (the default).
+    Args:
+        value: The raw ``[theme].dark`` value.
+
+    Returns:
+        A real bool as given; False for the strings false/0/no/off (any
+        case, surrounding space ignored); True for anything else, the
+        default.
     """
     if isinstance(value, bool):
         return value
