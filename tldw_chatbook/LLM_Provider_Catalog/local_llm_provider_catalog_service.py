@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 )
 from tldw_chatbook.Chat.provider_readiness import (
     configured_provider_credential_source,
+    configured_workspace_base_url,
     get_provider_readiness,
     provider_config_key,
     resolve_provider_credential,
@@ -58,9 +59,13 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
 )
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    resolve_hosted_engine_request,
+)
 from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
 from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from ..config import (
     LOCAL_PROVIDERS,
@@ -73,7 +78,14 @@ from ..config import (
 
 DiscoveryClient = Callable[..., Awaitable[ModelDiscoveryResult]]
 SettingsLoader = Callable[[], Mapping[str, Any]]
-_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
+# Providers whose endpoint+credential resolve through their exact hosted-send
+# resolver instead of generic api_settings endpoint echo. databricks is the
+# engine-driven member (ADR-179): its record preset resolves the workspace
+# host (appending the /openai/v1 suffix) and the DATABRICKS-token credential
+# exactly the chat path's engine handler does.
+_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"}) | {
+    key for key, record in RECORDS_BY_KEY.items() if record.engine_driven
+}
 
 
 class LocalLLMProviderCatalogService:
@@ -270,12 +282,52 @@ class LocalLLMProviderCatalogService:
                 app_config=config,
                 environ=self.environ,
             )
-        else:
+        elif provider_key == "zai":
             resolution = resolve_zai_request(
                 app_config=config,
                 environ=self.environ,
             )
+        else:
+            # Engine-driven presets (databricks, ADR-179): resolve through
+            # the same public engine seam the chat path dispatches through,
+            # so discovery's base URL (incl. the /openai/v1 suffix append)
+            # and credential match a real send exactly. The first configured
+            # base-URL alias is passed as the explicit base (Qodo finding 2)
+            # so a URL spelled ``base_url``/``api_base``/``api_url``/
+            # ``endpoint`` discovers against the same endpoint readiness
+            # accepted and the send path pins.
+            resolution = resolve_hosted_engine_request(
+                RECORDS_BY_KEY[provider_key],
+                explicit_base_url=self._explicit_endpoint_for_engine(
+                    provider_key, config
+                ),
+                app_config=config,
+                environ=self.environ,
+            )
         return resolution.base_url, resolution.api_key
+
+    def _explicit_endpoint_for_engine(
+        self,
+        provider_key: str,
+        config: Mapping[str, Any],
+    ) -> str | None:
+        """Return the settings table's alias-resolved URL, if any.
+
+        Args:
+            provider_key: Engine preset key being discovered.
+            config: Combined saved/staged configuration mapping.
+
+        Returns:
+            The first configured base-URL alias from the provider's
+            settings table, or ``None`` when none is configured.
+        """
+        try:
+            provider_settings = self._provider_settings_for_key(
+                config, provider_key
+            )
+        except ProviderSettingsError:
+            return None
+        return configured_workspace_base_url(provider_settings)
 
     def _resolve_endpoint(
         self,

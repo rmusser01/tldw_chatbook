@@ -113,6 +113,7 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     connection_probe_availability,
 )
 from tldw_chatbook.Chat.provider_readiness import (
+    PROVIDERS_REQUIRING_BASE_URL_KEYS,
     configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
@@ -7309,6 +7310,14 @@ class ConsoleSettingsModal(
         if self._custom_endpoint_entry_for(provider) is not None:
             return True
         provider_key = provider_config_key(provider)
+        # ADR-179: databricks has no shipped base URL (the workspace host
+        # is per-account), so no [api_settings] endpoint alias will ever
+        # appear for a fresh install -- yet readiness blocks with
+        # workspace-URL copy until api_base_url is configured. The modal
+        # must collect exactly what readiness requires, or the user would
+        # face a blocker the visible form cannot resolve.
+        if provider_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+            return True
         provider_settings = self._provider_settings(provider_key)
         return provider_key in URL_BASED_PROVIDER_KEYS or any(
             key in provider_settings

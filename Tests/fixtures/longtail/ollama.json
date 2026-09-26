@@ -1,0 +1,83 @@
+{
+  "server": "ollama",
+  "base_url": "http://127.0.0.1:8902",
+  "chat_response": {
+    "id": "chatcmpl-337",
+    "object": "chat.completion",
+    "created": 1790283280,
+    "model": "qwen2.5:0.5b",
+    "system_fingerprint": "fp_ollama",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Alright, I'm ready to help! How can I assist you today?"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 32,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens": 16,
+      "total_tokens": 48
+    }
+  },
+  "tool_call_response": {
+    "id": "chatcmpl-626",
+    "object": "chat.completion",
+    "created": 1790283280,
+    "model": "qwen2.5:0.5b",
+    "system_fingerprint": "fp_ollama",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_d4dir5z3",
+              "index": 0,
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Tokyo\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 159,
+      "prompt_tokens_details": {
+        "cached_tokens": 18
+      },
+      "completion_tokens": 21,
+      "total_tokens": 180
+    }
+  },
+  "stream_events": [
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Ok\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"!\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Is\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" there\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" anything\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" I\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" can\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" help\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" you\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" with\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"?\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-531\",\"object\":\"chat.completion.chunk\",\"created\":1790283280,\"model\":\"qwen2.5:0.5b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
+    "[DONE]"
+  ],
+  "models_response": null,
+  "captured_at": "2026-09-24T20:54:40+00:00",
+  "capture_cmd": "curl -s http://127.0.0.1:8902/v1/chat/completions -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"Say ok.\"}],\"max_tokens\":32,\"model\":\"qwen2.5:0.5b\"}'"
+}

@@ -41,8 +41,16 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         # OpenAI shape and translate canonical assistant/tool continuation.
         # Joined Console tests exercise the real dispatcher and HTTP boundary.
         "qwencloud",
+        # ADR-179 Phase 2 Task 6: the whole custom execution family (the
+        # legacy slots and the swapped engine key) forwards OpenAI tools
+        # and returns the raw OpenAI-compatible response shape. Kept as
+        # literals (not the shared custom-keys constant) because this
+        # module is deliberately pure -- no provider imports; membership
+        # is guarded by the registry parity test
+        # (NATIVE_TOOLS_PROVIDERS == provider_registry.NATIVE_TOOLS_KEYS).
         "custom-openai-api",
         "custom-openai-api-2",
+        "custom-hosted",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
         # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
         # back to OpenAI shape — live-gated against the real API 2026-07-17
@@ -60,6 +68,18 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         # extra — live-gated 2026-07-17
         # (Docs/superpowers/qa/cohere-native-2026-07/).
         "cohere",
+        # ADR-179 Task 12: the hosted engine preset forwards ``tools`` and
+        # returns the raw OpenAI-compatible response shape (Databricks AI
+        # Gateway external models); confirmed (or honestly disabled) at the
+        # Task 14 live gate.
+        "databricks",
+        # ADR-179 Phase 2 Task 5: the inference-cloud engine presets
+        # (together/fireworks/cerebras) advertise OpenAI-shaped tools and
+        # tool-history through the same strict engine closure; confirmed (or
+        # honestly disabled) at the Task 7 live probes.
+        "together",
+        "fireworks",
+        "cerebras",
     }
 )
 

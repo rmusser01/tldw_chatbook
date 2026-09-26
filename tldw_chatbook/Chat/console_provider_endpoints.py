@@ -57,6 +57,16 @@ _BUILTIN_PROVIDER_ENDPOINTS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "qwencloud": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "zai": "https://api.z.ai/api/paas/v4",
+    # ADR-179: "databricks" deliberately has NO entry here. Every value in
+    # this map is a live send-path fallback (``effective_provider_endpoint``
+    # -> the gateway's effective_base_url), and Databricks has no shippable
+    # default -- the workspace host is per-account. The documented per-
+    # account shape is "<workspace-host>/openai/v1" (the engine appends the
+    # /openai/v1 suffix from provider_registry.DATABRICKS.base_url_suffix),
+    # and provider_readiness blocks with workspace-URL copy until
+    # api_base_url is configured, so a placeholder must never ship as a
+    # fallback value: ``builtin_provider_endpoint("databricks", ...) is
+    # None`` is the contract.
 }
 
 

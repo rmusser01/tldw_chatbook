@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
+from tldw_chatbook.provider_registry import CLOUD_PROVIDER_CONFIG_KEYS
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -3619,6 +3620,12 @@ shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+# Custom endpoints (ADR-146): execute the openai_compatible family through
+# the strict hosted engine (custom-hosted execution key) instead of the
+# legacy custom handlers. Set false to roll back to the legacy path
+# (ADR-179 Phase 2 kill switch); identity, readiness, saved sessions, and
+# the [api_settings.custom] fallbacks are identical either way.
+custom_endpoints_use_engine = true
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 # Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
@@ -4132,6 +4139,12 @@ Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 QwenCloud = ["qwen3.8-max"]
 ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
+Databricks = [] # Empty: model availability is workspace-dependent; fills via discovery or manual seeding
+# Inference clouds (ADR-179 Phase 2): engine presets with no per-provider
+# module; empty model lists fill via discovery or manual seeding.
+Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
+Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
+Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4331,6 +4344,54 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 5
+    streaming = true
+
+    [api_settings.databricks] # Matches key in [providers]; values mirror provider_registry.DATABRICKS.settings_defaults (ADR-179)
+    # Databricks Model Serving / AI Gateway. The workspace host is
+    # per-account, so NO api_base_url ships here: the user configures their
+    # workspace URL (the engine appends the /openai/v1 suffix). No `model`
+    # key ships either: served models are workspace-configured and fill via
+    # discovery/seeding — a PRESENT-but-blank value would be rejected by the
+    # engine resolver (present-but-blank settings fail closed; only the
+    # UNSET key resolves to the payload-gated ""), so the key stays absent.
+    api_key_env_var = "DATABRICKS_TOKEN"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # --- Inference clouds (ADR-179 Phase 2) ---
+    # Engine presets (provider_registry.TOGETHER/FIREWORKS/CEREBRAS): no
+    # per-provider handler module exists. Each table mirrors its record's
+    # settings_defaults plus the default api_base_url (the record's
+    # default_base_url). No `model` key ships (same blank-model lesson as
+    # databricks): models fill via discovery or manual seeding, and the
+    # UNSET key resolves to the payload-gated "".
+    [api_settings.together] # Matches key in [providers]
+    api_key_env_var = "TOGETHER_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.together.xyz/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.fireworks] # Matches key in [providers]
+    api_key_env_var = "FIREWORKS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.fireworks.ai/inference/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.cerebras] # Matches key in [providers]
+    api_key_env_var = "CEREBRAS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.cerebras.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
     streaming = true
 
     # --- Local Providers ---
@@ -9849,20 +9910,10 @@ API_MODELS_BY_PROVIDER: Dict[str, List[str]] = {}
 LOCAL_PROVIDERS: Dict[str, List[str]] = {}
 
 _config_providers = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML.get("providers", {}))
-_cloud_provider_keys = [
-    "OpenAI",
-    "Anthropic",
-    "Cohere",
-    "DeepSeek",
-    "Groq",
-    "Google",
-    "HuggingFace",
-    "MistralAI",
-    "Moonshot",
-    "OpenRouter",
-    "QwenCloud",
-    "ZAI",
-]  # Example list
+# ADR-179: cloud classification is derived from the provider registry
+# (single source of truth) instead of a hand-typed list here, so a newly
+# registered cloud provider is classified without touching this module.
+_cloud_provider_keys = CLOUD_PROVIDER_CONFIG_KEYS
 
 for provider_name, models_list in _config_providers.items():
     if isinstance(models_list, list):

@@ -1870,6 +1870,17 @@ def test_provider_resolution_rejects_incoherent_thinking_capability(
             "chat_completions",
         ),
         (
+            # Qodo finding 3 (ADR-179): engine-driven presets derive the
+            # continuation protocol from their registry record, so a
+            # Databricks round-trip restores checkpoints like kimi/zai.
+            "Databricks",
+            "databricks",
+            "databricks-gpt-4o",
+            "https://dbc-1.cloud.databricks.com",
+            None,
+            "chat_completions",
+        ),
+        (
             "ZAI",
             "zai",
             "glm-4.5",
@@ -2092,7 +2103,15 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
         )
     with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
         gateway.prepare_chat_request(
-            dataclasses.replace(resolution, provider="moonshot"),
+            # The pin compares the EXECUTION key (ADR-179, Qodo follow-up):
+            # targets and checkpoints are pinned under it, and a swapped
+            # custom-ep selection legitimately carries a divergent identity
+            # on ``provider`` -- so the negative case flips the execution
+            # key, which is what a real different-provider resolution
+            # changes with it.
+            dataclasses.replace(
+                resolution, provider="moonshot", execution_key="moonshot"
+            ),
             messages,
             continuation_target=target,
             continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
@@ -2824,7 +2843,10 @@ async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
 @pytest.mark.asyncio
 async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() -> None:
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
-    from tldw_chatbook.Chat.provider_readiness import PROVIDERS_REQUIRING_API_KEY_KEYS
+    from tldw_chatbook.Chat.provider_readiness import (
+        PROVIDERS_REQUIRING_API_KEY_KEYS,
+        PROVIDERS_REQUIRING_BASE_URL_KEYS,
+    )
 
     handler_keys = frozenset(API_CALL_HANDLERS)
     api_settings: dict[str, dict[str, str]] = {}
@@ -2839,6 +2861,13 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
         )
         if identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS:
             settings["api_key"] = f"test-key-for-{identity.readiness_key}"
+        # ADR-179: per-account-host providers (databricks) stay blocked on a
+        # resolved key alone; the sweep's point is that a fully configured
+        # handler IS sendable, so give them their workspace URL too.
+        if identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+            settings["api_base_url"] = (
+                f"https://{identity.readiness_key}-workspace.example.test"
+            )
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(

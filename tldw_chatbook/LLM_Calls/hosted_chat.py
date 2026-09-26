@@ -45,7 +45,24 @@ _MAX_OUTPUT_CHARS = 32 * 1024 * 1024
 _MAX_METADATA_CHARS = 4 * 1024
 _MAX_TOOL_CALLS = 128
 _JSON_DECODE_FAILED = object()
+# Closed allowlists by level (ADR-179 Phase 2 level-keyed allowances):
+# top/event, body choice, stream choice, and message/delta shapes.
+_KNOWN_TOP_LEVEL_KEYS = frozenset(
+    {"id", "object", "created", "model", "system_fingerprint", "choices", "usage"}
+)
+_KNOWN_CHOICE_KEYS = frozenset({"index", "message", "finish_reason"})
+_KNOWN_MESSAGE_KEYS = frozenset({"role", "content", "reasoning_content", "tool_calls"})
+_KNOWN_STREAM_CHOICE_KEYS = frozenset({"index", "delta", "finish_reason", "usage"})
+_KNOWN_STREAM_TOOL_KEYS = frozenset({"index", "id", "type", "function"})
+_REQUIRED_TOOL_CALL_KEYS = frozenset({"id", "type", "function"})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# Auth schemes the shared transport accepts (ADR-179 engine). ``"bearer"``
+# hard-requires a non-empty key; ``"bearer_optional"`` (Phase 2) admits an
+# empty key and then sends no Authorization header at all. ``"api_key_header"``
+# is the Phase 3 engine scheme and is deliberately absent until it has a
+# header contract, so an unknown scheme fails closed as invalid transport
+# configuration.
+_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional"})
 # Upper bound on a provider-named Retry-After sleep (seconds). The engine's
 # workers run on threads Stop cannot interrupt, and every hosted provider's
 # api_base_url is user-configurable -- a hostile endpoint naming
@@ -109,6 +126,13 @@ class HostedHTTPTransportConfig:
     # engine's Authorization/Content-Type pair is not overridable; any other
     # header a provider's wire contract requires rides through here.
     extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
+    # Auth contract (engine, ADR-179 Phase 2): ``"bearer"`` requires a
+    # non-empty key; ``"bearer_optional"`` admits an empty key (keyless
+    # endpoint, ADR-146) and then sends no Authorization header at all.
+    # ``"api_key_header"`` is the Phase 3 engine scheme and is rejected by
+    # validation until it has a header contract. Legacy adapters construct
+    # without the field and keep the byte-identical ``"bearer"`` default.
+    auth_scheme: str = "bearer"
 
 
 @dataclass(frozen=True)
@@ -138,9 +162,21 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         records: Iterator[SSERecord],
         *,
         finish_policy: HostedChatFinishPolicy,
+        allowed_extra_keys: frozenset[str] = frozenset(),
+        allowed_choice_keys: frozenset[str] = frozenset(),
+        allowed_message_keys: frozenset[str] = frozenset(),
+        tolerant_top_level_extras: bool = False,
     ) -> None:
         self._records = records
         self._finish_policy = finish_policy
+        self._allowed_extra_keys = allowed_extra_keys
+        self._allowed_choice_keys = allowed_choice_keys
+        self._allowed_message_keys = allowed_message_keys
+        # Tolerant profile (ADR-179 Phase 2, custom family only): shape-safe
+        # unknown event keys dropped; null-valued unknown choice/delta keys
+        # dropped; tool-call objects may carry extra keys; a [DONE] without
+        # any usage frame terminates a usage-None turn instead of failing.
+        self._tolerant = tolerant_top_level_extras
         self._text_segments: list[str] = []
         self._reasoning_segments: list[str] = []
         self._tools: dict[int, _StreamToolState] = {}
@@ -170,7 +206,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             self.close()
             raise HostedChatProtocolError("Hosted Chat stream read failed.") from None
         if record.data == "[DONE]":
-            if self._finish_reason is None or self._usage is None:
+            # Tolerant profile: a terminal frame without any usage (both
+            # captured long-tail servers ship none) ends a usage-None turn;
+            # a missing finish reason still fails (controller ruling b).
+            if self._finish_reason is None or (
+                self._usage is None and not self._tolerant
+            ):
                 self.close()
                 raise HostedChatProtocolError(
                     "Hosted Chat stream terminated before required metadata."
@@ -223,16 +264,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 pass
 
     def _consume_event(self, event: Mapping[str, Any]) -> dict[str, Any]:
-        if set(event) - {
-            "id",
-            "object",
-            "created",
-            "model",
-            "system_fingerprint",
-            "choices",
-            "usage",
-        }:
-            raise HostedChatProtocolError("Hosted Chat stream event is malformed.")
+        _check_top_level_extras(
+            event,
+            allowed_extra_keys=self._allowed_extra_keys,
+            tolerant=self._tolerant,
+            label="stream event is malformed",
+        )
         fingerprint = event.get("system_fingerprint")
         if fingerprint is not None:
             _required_metadata(fingerprint, "system fingerprint")
@@ -257,7 +294,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
             else:
                 self._trailing_usage_seen = True
-            return deepcopy(dict(event))
+            return self._filtered_event(event)
         if self._finish_reason is not None:
             raise HostedChatProtocolError(
                 "Hosted Chat stream data followed terminal state."
@@ -267,13 +304,15 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 "Hosted Chat stream choice count is unsupported."
             )
         choice = choices[0]
-        if not isinstance(choice, Mapping) or set(choice) - {
-            "index",
-            "delta",
-            "finish_reason",
-            "usage",
-        }:
+        if not isinstance(choice, Mapping):
             raise HostedChatProtocolError("Hosted Chat stream choice is malformed.")
+        _check_level_extras(
+            choice,
+            known=_KNOWN_STREAM_CHOICE_KEYS,
+            allowed=self._allowed_choice_keys,
+            tolerant=self._tolerant,
+            label="stream choice is malformed",
+        )
         if "usage" in choice:
             choice_usage = choice.get("usage")
             if "usage" in event or not isinstance(choice_usage, Mapping):
@@ -285,13 +324,15 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 "Hosted Chat stream choice index is malformed."
             )
         delta = choice.get("delta")
-        if not isinstance(delta, Mapping) or set(delta) - {
-            "role",
-            "content",
-            "reasoning_content",
-            "tool_calls",
-        }:
+        if not isinstance(delta, Mapping):
             raise HostedChatProtocolError("Hosted Chat stream delta is malformed.")
+        _check_level_extras(
+            delta,
+            known=_KNOWN_MESSAGE_KEYS,
+            allowed=self._allowed_message_keys,
+            tolerant=self._tolerant,
+            label="stream delta is malformed",
+        )
         if "role" in delta and delta.get("role") != "assistant":
             raise HostedChatProtocolError("Hosted Chat stream role is malformed.")
         content = delta.get("content")
@@ -326,19 +367,86 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             raise HostedChatProtocolError(
                 "Hosted Chat stream usage preceded terminal state."
             )
-        return deepcopy(dict(event))
+        return self._filtered_event(event)
+
+    @staticmethod
+    def _filtered_event(event: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the caller-visible event with tolerated extras dropped.
+
+        Validation tolerates (allowance-listed or tolerant-profile) unknown
+        keys, but the spec's contract is DROP, not passthrough: the visible
+        frame keeps only the known protocol keys at every level -- event,
+        choice, delta, and tool-call objects (normalized to
+        index/id/type/function). Terminal accounting above always reads the
+        ORIGINAL validated values, so filtering never affects the turn.
+        Records without allowances or tolerance can never carry unknown
+        keys past validation, so their visible frames are unchanged.
+        """
+        safe: dict[str, Any] = {
+            key: deepcopy(event[key])
+            for key in _KNOWN_TOP_LEVEL_KEYS
+            if key in event
+        }
+        choices = safe.get("choices")
+        if isinstance(choices, list):
+            safe["choices"] = [
+                HostedChatStream._filtered_choice(choice)
+                for choice in choices
+                if isinstance(choice, Mapping)
+            ]
+        return safe
+
+    @staticmethod
+    def _filtered_choice(choice: Mapping[str, Any]) -> dict[str, Any]:
+        safe_choice: dict[str, Any] = {
+            key: deepcopy(choice[key])
+            for key in _KNOWN_STREAM_CHOICE_KEYS
+            if key in choice
+        }
+        delta = safe_choice.get("delta")
+        if isinstance(delta, Mapping):
+            safe_delta: dict[str, Any] = {
+                key: deepcopy(delta[key])
+                for key in _KNOWN_MESSAGE_KEYS
+                if key in delta
+            }
+            tool_calls = safe_delta.get("tool_calls")
+            if isinstance(tool_calls, list):
+                safe_delta["tool_calls"] = [
+                    HostedChatStream._filtered_tool_call(call)
+                    for call in tool_calls
+                    if isinstance(call, Mapping)
+                ]
+            safe_choice["delta"] = safe_delta
+        return safe_choice
+
+    @staticmethod
+    def _filtered_tool_call(call: Mapping[str, Any]) -> dict[str, Any]:
+        safe_call: dict[str, Any] = {
+            key: deepcopy(call[key])
+            for key in _KNOWN_STREAM_TOOL_KEYS
+            if key in call
+        }
+        function = safe_call.get("function")
+        if isinstance(function, Mapping):
+            safe_call["function"] = {
+                key: deepcopy(function[key])
+                for key in ("name", "arguments")
+                if key in function
+            }
+        return safe_call
 
     def _consume_tool_deltas(self, value: object) -> None:
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
             raise HostedChatProtocolError("Hosted Chat stream tools are malformed.")
         event_indexes: set[int] = set()
         for raw_tool in value:
-            if not isinstance(raw_tool, Mapping) or set(raw_tool) - {
-                "index",
-                "id",
-                "type",
-                "function",
-            }:
+            if not isinstance(raw_tool, Mapping) or (
+                set(raw_tool) - _KNOWN_STREAM_TOOL_KEYS and not self._tolerant
+            ):
+                # Tolerant profile: tool-call objects may carry extra keys
+                # (controller ruling a); index/id/type/function semantics
+                # are unchanged and extras are never passed through.
                 raise HostedChatProtocolError("Hosted Chat stream tool is malformed.")
             index = raw_tool.get("index")
             if type(index) is not int or index < 0 or index >= _MAX_TOOL_CALLS:
@@ -403,20 +511,20 @@ def normalize_hosted_chat_response(
     response: object,
     *,
     finish_policy: HostedChatFinishPolicy,
+    allowed_extra_keys: frozenset[str] = frozenset(),
+    allowed_choice_keys: frozenset[str] = frozenset(),
+    allowed_message_keys: frozenset[str] = frozenset(),
+    tolerant_top_level_extras: bool = False,
 ) -> HostedChatTurn:
     """Normalize one non-streaming OpenAI-shaped Chat response."""
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
-    if set(response) - {
-        "id",
-        "object",
-        "created",
-        "model",
-        "system_fingerprint",
-        "choices",
-        "usage",
-    }:
-        raise HostedChatProtocolError("Hosted Chat response is malformed.")
+    _check_top_level_extras(
+        response,
+        allowed_extra_keys=allowed_extra_keys,
+        tolerant=tolerant_top_level_extras,
+        label="response is malformed",
+    )
     choices = response.get("choices")
     if (
         not isinstance(choices, Sequence)
@@ -425,22 +533,27 @@ def normalize_hosted_chat_response(
     ):
         raise HostedChatProtocolError("Hosted Chat response choices are malformed.")
     choice = choices[0]
-    if not isinstance(choice, Mapping) or set(choice) - {
-        "index",
-        "message",
-        "finish_reason",
-    }:
+    if not isinstance(choice, Mapping):
         raise HostedChatProtocolError("Hosted Chat response choice is malformed.")
+    _check_level_extras(
+        choice,
+        known=_KNOWN_CHOICE_KEYS,
+        allowed=allowed_choice_keys,
+        tolerant=tolerant_top_level_extras,
+        label="response choice is malformed",
+    )
     if type(choice.get("index")) is not int or choice.get("index") != 0:
         raise HostedChatProtocolError("Hosted Chat response choice index is malformed.")
     message = choice.get("message")
-    if not isinstance(message, Mapping) or set(message) - {
-        "role",
-        "content",
-        "reasoning_content",
-        "tool_calls",
-    }:
+    if not isinstance(message, Mapping):
         raise HostedChatProtocolError("Hosted Chat response message is malformed.")
+    _check_level_extras(
+        message,
+        known=_KNOWN_MESSAGE_KEYS,
+        allowed=allowed_message_keys,
+        tolerant=tolerant_top_level_extras,
+        label="response message is malformed",
+    )
     if message.get("role") != "assistant":
         raise HostedChatProtocolError("Hosted Chat response role is malformed.")
     content = message.get("content")
@@ -448,7 +561,10 @@ def normalize_hosted_chat_response(
         raise HostedChatProtocolError("Hosted Chat response content is malformed.")
     text = content or ""
     reasoning = _validate_reasoning(finish_policy, message.get("reasoning_content"))
-    tool_calls = _normalize_tool_calls(message.get("tool_calls", ()))
+    tool_calls = _normalize_tool_calls(
+        message.get("tool_calls", ()),
+        tolerant_extras=tolerant_top_level_extras,
+    )
     if (
         len(text) + len(reasoning or "") + _tool_character_count(tool_calls)
         > _MAX_OUTPUT_CHARS
@@ -478,6 +594,10 @@ def hosted_chat_request(
     payload: Mapping[str, Any],
     streaming: bool,
     finish_policy: HostedChatFinishPolicy,
+    allowed_extra_keys: frozenset[str] = frozenset(),
+    allowed_choice_keys: frozenset[str] = frozenset(),
+    allowed_message_keys: frozenset[str] = frozenset(),
+    tolerant_top_level_extras: bool = False,
 ) -> HostedChatTurn | HostedChatStream:
     """Run one hosted Chat-Completions request through the shared boundary."""
     response = owned_json_post(
@@ -490,8 +610,19 @@ def hosted_chat_request(
         return HostedChatStream(
             cast(Iterator[SSERecord], response),
             finish_policy=finish_policy,
+            allowed_extra_keys=allowed_extra_keys,
+            allowed_choice_keys=allowed_choice_keys,
+            allowed_message_keys=allowed_message_keys,
+            tolerant_top_level_extras=tolerant_top_level_extras,
         )
-    return normalize_hosted_chat_response(response, finish_policy=finish_policy)
+    return normalize_hosted_chat_response(
+        response,
+        finish_policy=finish_policy,
+        allowed_extra_keys=allowed_extra_keys,
+        allowed_choice_keys=allowed_choice_keys,
+        allowed_message_keys=allowed_message_keys,
+        tolerant_top_level_extras=tolerant_top_level_extras,
+    )
 
 
 @_provider_recovery.unqualified
@@ -535,7 +666,8 @@ def owned_json_post(
         not isinstance(config.provider, str)
         or not config.provider
         or not isinstance(config.api_key, str)
-        or not config.api_key
+        or config.auth_scheme not in _SUPPORTED_AUTH_SCHEMES
+        or (config.auth_scheme == "bearer" and not config.api_key)
         or isinstance(config.timeout, bool)
         or not isinstance(config.timeout, (int, float))
         or not math.isfinite(float(config.timeout))
@@ -561,11 +693,20 @@ def owned_json_post(
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    headers = {
-        "Authorization": f"Bearer {config.api_key}",
-        "Content-Type": "application/json",
-        **config.extra_headers,
-    }
+    if config.api_key:
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
+    else:
+        # bearer_optional with no resolved key: no Authorization header at
+        # all -- an empty "Bearer " challenge must never hit the wire under
+        # any scheme.
+        headers = {
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
     session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
@@ -689,6 +830,67 @@ def _json_shape_is_safe(value: object) -> bool:
     except (RecursionError, TypeError, ValueError):
         return False
     return True
+
+
+def _level_allowance_value_is_valid(value: object) -> bool:
+    """Value rule for level-keyed allowances (choice/message/delta).
+
+    An allowlisted extra may be null, a scalar (str/int/float/bool), or a
+    shape-safe mapping; anything else (e.g. a list) fails closed. Valid
+    values are validated then dropped -- never passed through.
+    """
+    if value is None or isinstance(value, (str, int, float)):
+        return True
+    return isinstance(value, Mapping) and _json_shape_is_safe(value)
+
+
+def _check_top_level_extras(
+    mapping: Mapping[str, Any],
+    *,
+    allowed_extra_keys: frozenset[str],
+    tolerant: bool,
+    label: str,
+) -> None:
+    """Check unknown keys at the top/event level.
+
+    Phase 1 semantics: a key in ``allowed_extra_keys`` is dropped from the
+    check (no value rule -- the whole envelope was already shape-checked).
+    Tolerant mode (ADR-179 Phase 2, custom family): remaining unknown keys
+    are dropped when their values are shape-safe. Otherwise fail closed.
+    """
+    unknown = set(mapping) - _KNOWN_TOP_LEVEL_KEYS - allowed_extra_keys
+    if not unknown:
+        return
+    if not tolerant:
+        raise HostedChatProtocolError(f"Hosted Chat {label}.")
+    for key in unknown:
+        if not _json_shape_is_safe(mapping.get(key)):
+            raise HostedChatProtocolError(f"Hosted Chat {label}.")
+
+
+def _check_level_extras(
+    mapping: Mapping[str, Any],
+    *,
+    known: frozenset[str],
+    allowed: frozenset[str],
+    tolerant: bool,
+    label: str,
+) -> None:
+    """Check unknown keys at the choice or message/delta level.
+
+    A key in ``allowed`` (the record's level-keyed allowance) must follow
+    the value rule and is dropped from the normalized turn. Tolerant mode
+    also drops null-valued unknowns; unknown non-null keys fail closed.
+    """
+    unknown = set(mapping) - known
+    if not unknown:
+        return
+    for key in unknown:
+        if key in allowed:
+            if not _level_allowance_value_is_valid(mapping.get(key)):
+                raise HostedChatProtocolError(f"Hosted Chat {label}.")
+        elif not (tolerant and mapping.get(key) is None):
+            raise HostedChatProtocolError(f"Hosted Chat {label}.")
 
 
 def _strict_json_loads(value: str) -> object:
@@ -1023,7 +1225,11 @@ def _validate_finish(
     return normalized
 
 
-def _normalize_tool_calls(value: object) -> tuple[dict[str, Any], ...]:
+def _normalize_tool_calls(
+    value: object,
+    *,
+    tolerant_extras: bool = False,
+) -> tuple[dict[str, Any], ...]:
     if value is None:
         return ()
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
@@ -1033,11 +1239,15 @@ def _normalize_tool_calls(value: object) -> tuple[dict[str, Any], ...]:
     calls: list[dict[str, Any]] = []
     call_ids: set[str] = set()
     for raw_call in value:
-        if not isinstance(raw_call, Mapping) or set(raw_call) != {
-            "id",
-            "type",
-            "function",
-        }:
+        if not isinstance(raw_call, Mapping):
+            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+        keys = set(raw_call)
+        if not _REQUIRED_TOOL_CALL_KEYS <= keys or (
+            not tolerant_extras and keys != _REQUIRED_TOOL_CALL_KEYS
+        ):
+            # Tolerant profile (controller ruling a): call objects may carry
+            # extra keys (ollama emits ``index``); id/type/function stay
+            # mandatory and extras are dropped, never passed through.
             raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:

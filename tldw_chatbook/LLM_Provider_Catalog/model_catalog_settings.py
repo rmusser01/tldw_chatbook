@@ -18,6 +18,13 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "OpenRouter",
     "QwenCloud",
     "ZAI",
+    "Databricks",
+    # ADR-179 Phase 2 Task 5: the inference-cloud engine presets ship
+    # /models-discoverable OpenAI-compatible endpoints (together/fireworks/
+    # cerebras), so their catalogs auto-refresh on startup like the others.
+    "Together",
+    "Fireworks",
+    "Cerebras",
 )
 
 SELECTOR_MERGE_CAP = 50

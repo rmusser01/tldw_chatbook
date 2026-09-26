@@ -131,6 +131,8 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
+    ConsoleProviderIdentity,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
@@ -163,12 +165,16 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatTurn,
     ReasoningDisposition,
 )
+from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    HostedPresetFinishPolicy,
+)
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
 )
+from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -224,9 +230,18 @@ def _max_trace_accumulated_bytes() -> int:
 
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
-_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
-    {"custom-openai-api", "custom-openai-api-2"}
-)
+# ADR-179 Phase 2 Task 6: the whole custom execution family (including the
+# swapped engine key) decides credentials at the gateway and passes
+# ``api_key_resolved`` -- without membership here the swapped key's
+# ``api_key_resolved`` is never sent.
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = CUSTOM_OPENAI_EXECUTION_KEYS
+# ADR-179 (Qodo finding 2): every engine-driven execution key (derived from
+# the registry, never a literal list) gets the resolution's effective base
+# URL forwarded as ``api_base_url`` -- the engine resolves the endpoint from
+# its record/settings only when the gateway resolved nothing, so without
+# this forwarding a session-selected or alias-configured URL silently lost
+# to the preset's shipped default.
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -241,6 +256,89 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
         "zai": ZAIFinishPolicy,
     }
 )
+_FinishPolicy = (
+    type[MoonshotFinishPolicy] | type[ZAIFinishPolicy] | HostedPresetFinishPolicy
+)
+_RESOLVED_FINISH_POLICIES: dict[str, _FinishPolicy] = {}
+
+
+def resolve_finish_policy(key: str) -> _FinishPolicy | None:
+    """Resolve one provider key's hosted thinking finish policy.
+
+    Generic gateway entry (ADR-179): hand-written provider policies win via
+    the static map; engine-driven registry presets resolve to a stateless
+    ``HostedPresetFinishPolicy`` built from their record; every other key
+    resolves to ``None`` (thinking disposition stays ``"ignored"``).
+    Resolved policies are cached per key because they are stateless.
+
+    Args:
+        key: Normalized (stripped, lowercased) provider execution key.
+
+    Returns:
+        The finish policy for hosted thinking round-trips, or ``None`` when
+        the key has no hosted thinking policy.
+    """
+    cached = _RESOLVED_FINISH_POLICIES.get(key)
+    if cached is not None:
+        return cached
+    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    if policy is None:
+        record = RECORDS_BY_KEY.get(key)
+        if record is None or not record.engine_driven:
+            return None
+        policy = HostedPresetFinishPolicy(record)
+    _RESOLVED_FINISH_POLICIES[key] = policy
+    return policy
+
+
+def _custom_endpoints_use_engine(app_config: Mapping[str, Any]) -> bool:
+    """Read the custom-endpoint engine kill switch (ADR-179 Phase 2 Task 6).
+
+    ``[console] custom_endpoints_use_engine`` (default ``True``) decides
+    whether ``openai_compatible`` custom-ep entries execute through the
+    strict hosted engine (``custom-hosted``). A missing value resolves to
+    the documented default. A present-but-malformed value (e.g. the string
+    ``"false"``) resolves to the legacy path with a warning: the switch is
+    a rollback control, so an operator's evident attempt to set it must
+    never leave the engine on. Both paths are known-good, so neither
+    direction bricks custom-endpoint sends.
+    """
+    console = app_config.get("console", {})
+    if not isinstance(console, Mapping):
+        return True
+    value = console.get("custom_endpoints_use_engine", True)
+    if type(value) is bool:
+        return value
+    logger.warning(
+        "[console] custom_endpoints_use_engine must be true or false; "
+        "using the legacy custom-endpoint path."
+    )
+    return False
+
+
+def _apply_custom_endpoint_engine_swap(
+    identity: ConsoleProviderIdentity,
+    entry: CustomEndpointEntry,
+    app_config: Mapping[str, Any],
+) -> ConsoleProviderIdentity:
+    """Swap an openai_compatible custom-ep identity onto the engine key.
+
+    The swap is the single gateway seam of ADR-179 Phase 2 Task 6: with
+    the kill switch on, an ``openai_compatible`` entry's execution key
+    becomes ``custom-hosted`` (the strict engine preset) while
+    ``readiness_key``/``display_key`` keep the legacy ``custom``
+    spellings -- identity, readiness, saved sessions, and the persisted
+    endpoint contract are byte-identical on both paths. Other families
+    (llama_cpp/ollama/...) and a switched-off config keep
+    ``family_execution_key``'s untouched result.
+    """
+    if entry.family == "openai_compatible" and _custom_endpoints_use_engine(
+        app_config
+    ):
+        return replace(identity, execution_key="custom-hosted")
+    return identity
+
+
 _AdapterResult = TypeVar("_AdapterResult")
 
 
@@ -432,7 +530,7 @@ def _thinking_stream_capability(
                 THINKING_ENVELOPE_VERSION if disposition == "displayable" else None
             ),
         }
-    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    policy = resolve_finish_policy(key)
     disposition: ReasoningDisposition = (
         policy.reasoning_disposition if policy is not None else "ignored"
     )
@@ -3206,13 +3304,29 @@ class ConsoleProviderGateway:
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
-            continuation_target.provider,
-            continuation_target.model,
-            normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
-        ) != (
-            provider_config_key(resolution.provider),
-            resolution.model or "",
-            normalize_generic_endpoint_for_compare(resolution.base_url),
+            # Provider spellings must compare under ONE normalization: the
+            # target pins whatever the bridge recorded (for engine-driven
+            # keys like the custom-hosted swap, the hyphenated execution
+            # key), so both sides go through provider_config_key instead of
+            # normalizing only the resolution side. The resolution accepts
+            # EITHER its execution key or its identity spelling: a swapped
+            # custom-ep selection carries the raw ``custom-ep:<slug>``
+            # identity on ``provider`` while checkpoints and targets are
+            # pinned under the execution key, so an identity-only
+            # comparison matched nothing (ADR-179, Qodo follow-up), and an
+            # execution-only comparison would refuse the deliberately
+            # split doubles that exercise displayable thinking replay
+            # alongside continuation history (the two provider families
+            # are disjoint; production resolutions keep the spellings
+            # equal everywhere else).
+            provider_config_key(continuation_target.provider)
+            not in {
+                provider_config_key(resolution.execution_key or resolution.provider),
+                provider_config_key(resolution.provider),
+            }
+            or continuation_target.model != (resolution.model or "")
+            or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
+            != normalize_generic_endpoint_for_compare(resolution.base_url)
         ):
             raise ContinuationConflictError(
                 "Continuation restore target mismatch."
@@ -3925,8 +4039,12 @@ class ConsoleProviderGateway:
         # ``resolve_console_provider_identity``.
         custom_entry = entry_for(app_config, selection.provider)
         if custom_entry is not None:
-            identity = resolve_console_provider_identity(
-                family_execution_key(custom_entry.family)
+            identity = _apply_custom_endpoint_engine_swap(
+                resolve_console_provider_identity(
+                    family_execution_key(custom_entry.family)
+                ),
+                custom_entry,
+                app_config,
             )
         else:
             identity = resolve_console_provider_identity(selection.provider)
@@ -4246,11 +4364,19 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        engine_record = RECORDS_BY_KEY.get(identity.execution_key)
+        # Engine-driven presets derive the protocol from their record
+        # (Qodo finding 3, ADR-179): without it the prepare-time restore
+        # check was skipped and checkpoints never round-tripped.
         continuation_protocol = (
             "chat_completions"
             if identity.execution_key in {"moonshot", "zai"}
             else api_mode
             if identity.execution_key == "deepseek"
+            else engine_record.continuation_protocol
+            if engine_record is not None
+            and engine_record.engine_driven
+            and engine_record.continuation_protocol is not None
             else None
         )
         request_timeout: float | None = None
@@ -6757,6 +6883,15 @@ class ConsoleProviderGateway:
         elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179, Qodo
+            # finding 2): pin the resolved endpoint so the engine's
+            # record/settings defaults never shadow a session-selected or
+            # alias-configured URL. The custom family keeps its own branch
+            # below (it also pins the gateway credential decision).
+            kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {"moonshot", "zai"}:
             kwargs["api_base_url"] = resolution.base_url or None
             kwargs["request_timeout"] = resolution.request_timeout
@@ -6768,13 +6903,11 @@ class ConsoleProviderGateway:
                 ]
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
             "vllm",
             "local_vllm",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_base_url"] = resolution.base_url or None
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
@@ -6785,6 +6918,17 @@ class ConsoleProviderGateway:
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
             kwargs["api_base_url"] = resolution.base_url or None
+        if (
+            resolution.execution_key in _ENGINE_EXECUTION_KEYS
+            and request.continuation_groups
+        ):
+            # Engine-driven presets (ADR-179, Qodo finding 3): continuation
+            # checkpoints ride to the handler for every engine key (the
+            # custom-hosted branch above cannot carry them on its own), so a
+            # restored round-trip reaches the engine's continuation seam.
+            kwargs["provider_continuations"] = [
+                group.checkpoint for group in request.continuation_groups
+            ]
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
@@ -6848,13 +6992,18 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179,
+            # Qodo finding 2): pin the resolved endpoint on the plain-message
+            # path too; the custom family keeps its branch below.
+            kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             # These adapters otherwise consult process-global config after
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the

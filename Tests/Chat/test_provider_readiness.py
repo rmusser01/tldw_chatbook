@@ -1,6 +1,7 @@
 """Provider readiness tests for first-run Chat guidance."""
 
 import os
+import sys
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, fields
@@ -8,6 +9,7 @@ from threading import Event, Thread
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook import config as config_mod
 from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
 from tldw_chatbook.Chat import provider_test_evidence as provider_test_evidence_module
@@ -1658,22 +1660,23 @@ def _real_config(tmp_path, monkeypatch, toml_text: str):
     resolution.py`'s `_real_config` -- same isolation contract, same
     teardown -- so this suite can never write to the live user config and
     cannot drift from that file on how "the real loader" is driven.
+
+    The scratch selection is installed through a FRESH config source
+    (``install_config_source``): the TASK-32628 config-participant admission
+    pins the shared module's participant to the session bootstrap selection,
+    so re-selecting in place raises RecoveryRequired. A fresh source pins to
+    this scratch config, this file's ``config_mod`` rebind makes the tests'
+    ``config_mod.load_settings()`` reads follow it, and monkeypatch alone
+    carries the teardown (no shared-module reload dance needed).
     """
     config_path = tmp_path / "scratch-provider-readiness-config.toml"
     config_path.write_text(toml_text, encoding="utf-8")
-    original_env = os.environ.get("TLDW_CONFIG_PATH")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
-    config_mod.load_settings(force_reload=True)
-    try:
-        yield
-    finally:
-        if original_env is not None:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
-        else:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
-        config_mod.load_settings(force_reload=True)
+    fresh = install_config_source(monkeypatch)
+    monkeypatch.setattr(sys.modules[__name__], "config_mod", fresh)
+    fresh.load_cli_config_and_ensure_existence(force_reload=True)
+    fresh.load_settings(force_reload=True)
+    yield
 
 
 def _clear_provider_env(monkeypatch) -> None:

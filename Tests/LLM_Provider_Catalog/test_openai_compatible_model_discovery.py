@@ -330,11 +330,46 @@ def test_llamacpp_completion_url_drops_userinfo():
             "https://api.example.test/openai/v1/chat/completions",
             "https://api.example.test/openai/v1/models",
         ),
+        (
+            "https://api.example.test/inference/v1/chat/completions",
+            "https://api.example.test/inference/v1/models",
+        ),
     ],
 )
 def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected):
     assert supports_openai_compatible_model_discovery("custom", endpoint) is True
     assert build_models_url(endpoint, "custom") == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "endpoint", "expected"),
+    [
+        # ADR-179 Phase 2 Task 5: the Fireworks engine preset's default
+        # base URL carries the /inference/v1 served-path prefix, which is
+        # NOT a bare /v1 -- without the explicit-path entry the discovery
+        # gate rejects it and catalog auto-refresh never fires for
+        # fireworks. The other two inference-cloud preset defaults use the
+        # standard /v1 shape the gate has always accepted.
+        (
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+            "https://api.fireworks.ai/inference/v1/models",
+        ),
+        (
+            "together",
+            "https://api.together.xyz/v1",
+            "https://api.together.xyz/v1/models",
+        ),
+        (
+            "cerebras",
+            "https://api.cerebras.ai/v1",
+            "https://api.cerebras.ai/v1/models",
+        ),
+    ],
+)
+def test_inference_cloud_default_base_urls_pass_the_gate(provider, endpoint, expected):
+    assert supports_openai_compatible_model_discovery(provider, endpoint) is True
+    assert build_models_url(endpoint, provider) == expected
 
 
 def test_space_separated_provider_label_can_infer_openai_compatible_base_url():
