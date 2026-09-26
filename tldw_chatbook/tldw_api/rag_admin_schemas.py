@@ -5,12 +5,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
-
-try:
-    from pydantic import field_validator
-except Exception:  # pragma: no cover - pydantic v1 fallback
-    from pydantic import validator as field_validator  # type: ignore
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChunkingTemplateConfig(BaseModel):

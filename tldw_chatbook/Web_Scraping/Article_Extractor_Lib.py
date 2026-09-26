@@ -1659,7 +1659,10 @@ class ContentMetadataHandler:
         """
         metadata = {
             "url": url,
-            "ingestion_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # Canonical UTC, matching this class's other copy in
+            # Article_Scraper/utils.py; the naive local spelling this
+            # replaces is on the live scrape_article path (tier-2 S14).
+            "ingestion_date": utc_now_iso(),
             "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
             "scraping_pipeline": pipeline,
         }

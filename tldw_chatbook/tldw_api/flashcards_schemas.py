@@ -5,12 +5,14 @@ from collections.abc import Mapping
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
-
-try:
-    from pydantic import model_validator
-except Exception:  # pragma: no cover - pydantic v1 fallback
-    from pydantic import root_validator as model_validator  # type: ignore
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 DeckSchedulerType = Literal["sm2_plus", "fsrs"]

@@ -1458,7 +1458,7 @@
     },
     {
       "call_count": 80,
-      "diagnostic_digest": "7efd617a1a8a01cd589a",
+      "diagnostic_digest": "6ea68234a2ebc1712b2f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/video_processing.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2521,8 +2521,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 64,
-      "diagnostic_digest": "eafabc9a33272f7d75c6",
+      "call_count": 60,
+      "diagnostic_digest": "f629768568bc1480e352",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4205,6 +4205,13 @@
       "diagnostic_digest": "df78ea9f8f5241cefcc3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/runtime_policy/source_state.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "6a59d965c637922d26e9",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/tldw_api/client.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -9322,15 +9329,6 @@
     {
       "candidates": [
         {
-          "call_digest": "e2efba9e08eac427",
-          "method": "info",
-          "path_expressions": [
-            "file_path"
-          ],
-          "scope": "CCPCharacterHandler.handle_export_character",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "0f8ab56453cdb532",
           "method": "error",
           "path_expressions": [
@@ -11303,11 +11301,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 598,
-    "path_privacy_candidate_calls": 688,
+    "owner_files": 599,
+    "path_privacy_candidate_calls": 687,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
     "task_492_calls": 1360,
-    "task_494_calls": 7543
+    "task_494_calls": 7540
   }
 }

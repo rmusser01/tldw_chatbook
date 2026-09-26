@@ -63,8 +63,6 @@ media_config = {
         ),
     }
 }
-MAX_FILE_SIZE_MB = media_config.get("max_pdf_file_size_mb", 50)
-CONVERSION_TIMEOUT_SECONDS = media_config.get("pdf_conversion_timeout_seconds", 300)
 #
 #######################################################################################################################
 # Function Definitions

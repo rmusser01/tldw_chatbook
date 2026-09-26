@@ -90,6 +90,7 @@ LEARN_PCM_MAX_SECONDS = 60.0
 
 if TYPE_CHECKING:  # import-light at runtime: `console_voice_input` pulls config
     from tldw_chatbook.Chat.console_voice_input import EffectiveConfig
+    from .meeting_capture import MeetingCapture
 
 
 def resolve_effective_config() -> "EffectiveConfig | None":
