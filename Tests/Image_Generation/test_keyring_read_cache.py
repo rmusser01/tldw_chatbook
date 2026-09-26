@@ -82,3 +82,48 @@ def test_repeated_settings_compose_config_loads_share_keyring_reads(monkeypatch)
         image_config.get_image_generation_config(reload=True)
     assert first > 0, "fixture must reach the keyring (no env/config keys)"
     assert len(reads) == first
+
+
+def test_concurrent_cache_misses_share_one_blocking_lookup(monkeypatch):
+    """Qodo review on #2831: Settings workers can overlap (Save, Test, Clear);
+    a cache miss must be single-flight so one locked-keyring prompt, not N."""
+    import threading
+
+    reads = []
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking(service, backend):
+        reads.append(backend)
+        if backend == "novita":
+            started.set()
+            release.wait(5)
+        return "kr-" + backend
+
+    monkeypatch.setattr(config_machinery, "_KEYRING_READS", {})
+    monkeypatch.setattr(config_machinery.keyring, "get_password", blocking)
+    results = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(
+                config_machinery.keyring_get("novita", _TABLES)
+            )
+        )
+        for _ in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    assert started.wait(5)
+    # A different backend is independent: it does not wait on novita's read.
+    other = threading.Thread(
+        target=lambda: results.append(config_machinery.keyring_get("fal", _TABLES))
+    )
+    other.start()
+    other.join(2)
+    assert not other.is_alive()
+    release.set()
+    for thread in threads:
+        thread.join(5)
+
+    assert reads.count("novita") == 1
+    assert results.count("kr-novita") == 3
