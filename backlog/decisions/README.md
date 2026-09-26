@@ -127,6 +127,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-167](167-tool-profile-write-lifetime.md) | Accepted | Keep admitted Tool Profile writes and bounded outcomes application-owned across Settings recreation and shutdown. |
 
 | [ADR-172](172-library-artifacts-browse-and-navigation.md) | Accepted; implementation pending | Browse reports and registered Chatbooks in Library while retaining kept-copy identity, source ownership, app-owned sharing, and the linked ZIP-pack manager. |
+| [ADR-184](184-local-console-prompt-draft-shelf.md) | Accepted | Store explicitly managed unsent Console drafts in a capped, local-only shelf inside the Prompts database and promote them through existing Prompt and collection contracts. |
 
 ## Historical Decision Material
 

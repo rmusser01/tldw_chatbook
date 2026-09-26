@@ -101,8 +101,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any, Literal, Optional, TYPE_CHECKING
 import asyncio
+import inspect
 import uuid
 
 from loguru import logger
@@ -131,6 +133,7 @@ from ...Prompt_Management.prompt_improvement_models import (
     fingerprint_text,
 )
 from ...Prompt_Management.prompt_improvement_service import PromptImprovementService
+from ...Prompt_Management.prompt_scope_service import PromptDraftShelfFullError
 from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     compile_prompt_variables,
@@ -277,6 +280,12 @@ class _ConsolePromptSource:
 
     async def capabilities(self, source: str) -> Any:
         """Report what `source` can store, so the editor can gate its kinds."""
+        if source == "draft_shelf":
+            return SimpleNamespace(
+                structured_kinds=frozenset(),
+                artifact_types=frozenset(),
+                conditional_update=True,
+            )
         method = self._require(
             "get_capabilities", f"{source.title()} Prompt source is unavailable."
         )
@@ -284,6 +293,15 @@ class _ConsolePromptSource:
 
     async def list_page(self, source: str, page: int) -> Any:
         """Return one browse page of `source` at `CONSOLE_PROMPT_PAGE_SIZE`."""
+        if source == "draft_shelf":
+            method = self._require(
+                "list_prompt_drafts", "Local Prompt Draft Shelf is unavailable."
+            )
+            return await method(
+                mode="local",
+                page=page,
+                per_page=CONSOLE_PROMPT_PAGE_SIZE,
+            )
         method = self._require(
             "list_prompts", f"{source.title()} Prompt source is unavailable."
         )
@@ -291,6 +309,16 @@ class _ConsolePromptSource:
 
     async def search(self, source: str, query: str) -> Any:
         """Search `source`, bounded to `CONSOLE_PROMPT_SEARCH_LIMIT`."""
+        if source == "draft_shelf":
+            method = self._require(
+                "list_prompt_drafts", "Local Prompt Draft Shelf is unavailable."
+            )
+            return await method(
+                mode="local",
+                query=query,
+                page=1,
+                per_page=CONSOLE_PROMPT_SEARCH_LIMIT,
+            )
         method = self._require(
             "search_prompts", f"{source.title()} Prompt search is unavailable."
         )
@@ -298,6 +326,14 @@ class _ConsolePromptSource:
 
     async def detail(self, source: str, identifier: str) -> Any:
         """Fetch one record -- also the freshness probe the apply guards use."""
+        if source == "draft_shelf":
+            method = self._require(
+                "get_prompt_draft", "Local Prompt Draft Shelf is unavailable."
+            )
+            draft_id = str(identifier).rsplit(":", 1)[-1]
+            if not draft_id.isdecimal():
+                raise ValueError("Prompt draft identity is invalid.")
+            return await method(mode="local", draft_id=int(draft_id))
         method = self._require(
             "get_prompt", f"{source.title()} Prompt source is unavailable."
         )
@@ -308,6 +344,56 @@ class _ConsolePromptSource:
         method = self._require("save_prompt", "The selected Prompt source cannot save.")
         source = str(payload.pop("source", "local"))
         return await method(mode=source, **payload)
+
+    async def update_draft(
+        self, *, draft_id: int, content: str, expected_version: int
+    ) -> Any:
+        """Conditionally update one local Draft Shelf entry."""
+
+        method = self._require(
+            "update_prompt_draft", "Local Prompt Draft Shelf is unavailable."
+        )
+        return await method(
+            mode="local",
+            draft_id=draft_id,
+            content=content,
+            expected_version=expected_version,
+        )
+
+    async def delete_draft(self, *, draft_id: int, expected_version: int) -> Any:
+        """Conditionally hard-delete one local Draft Shelf entry."""
+
+        method = self._require(
+            "delete_prompt_draft", "Local Prompt Draft Shelf is unavailable."
+        )
+        return await method(
+            mode="local",
+            draft_id=draft_id,
+            expected_version=expected_version,
+        )
+
+    async def list_draft_collections(self) -> Any:
+        """Return optional local Library collection targets for promotion."""
+
+        method = self._require(
+            "list_prompt_collections", "Local Prompt collections are unavailable."
+        )
+        return await method(mode="local", limit=100, offset=0)
+
+    async def assign_draft_collection(
+        self, *, prompt_id: int, collection_ids: tuple[int, ...]
+    ) -> Any:
+        """Assign a promoted local Prompt to its optional collection."""
+
+        method = self._require(
+            "replace_prompt_collection_memberships",
+            "Local Prompt collection assignment is unavailable.",
+        )
+        return await method(
+            mode="local",
+            prompt_id=prompt_id,
+            collection_ids=collection_ids,
+        )
 
     async def record_usage(self, source: str, identifier: str) -> None:
         """Record one Library usage, skipping a source that cannot track it.
@@ -1159,8 +1245,91 @@ class ConsolePromptsController:
         """
         self._focus_console_composer_if_needed(force=True)
 
+    async def _save_current_prompt_draft(self, *, clear_after_save: bool) -> str:
+        """Persist one exact composer snapshot and optionally clear that revision.
+
+        The captured segments, rather than a later live read, supply the stored
+        text. A successful save only clears when the same session and composer
+        fingerprint are still current, so edits made while SQLite is busy are
+        never discarded.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            self.app_instance.notify(
+                "The Console composer is unavailable.", severity="warning"
+            )
+            return "unavailable"
+        snapshot = composer.capture_draft_snapshot()
+        content = "".join(segment.text for segment in snapshot.segments)
+        if not content.strip():
+            self.app_instance.notify(
+                "Write something before saving a draft.", severity="warning"
+            )
+            return "empty"
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        create = getattr(service, "create_prompt_draft", None)
+        if not callable(create):
+            self.app_instance.notify("Draft Shelf is unavailable.", severity="error")
+            return "unavailable"
+        try:
+            pending = create(content=content)
+            if inspect.isawaitable(pending):
+                await pending
+        except PromptDraftShelfFullError as exc:
+            self.app_instance.notify(str(exc), severity="warning")
+            return "shelf-full"
+        except Exception:  # noqa: BLE001 - save failures must preserve the draft
+            logger.opt(exception=True).warning("Could not save Console draft.")
+            self.app_instance.notify(
+                "Couldn't save the draft. The composer was kept unchanged.",
+                severity="error",
+            )
+            return "failed"
+
+        if not clear_after_save:
+            self.app_instance.notify("Draft saved. The composer was kept.")
+            return "saved-kept"
+        current = composer.capture_draft_snapshot()
+        if (
+            store.active_session_id != session_id
+            or current.fingerprint != snapshot.fingerprint
+        ):
+            self.app_instance.notify(
+                "Draft saved. Newer composer changes were kept.",
+                severity="warning",
+            )
+            return "saved-kept-newer"
+        composer.clear_draft()
+        if session_id is not None:
+            store.set_session_draft(session_id, "")
+        self._sync_console_command_popup()
+        self.app_instance.notify("Draft saved and composer cleared.")
+        return "saved-cleared"
+
+    def _insert_prompt_draft_at_caret(
+        self,
+        *,
+        content: str,
+        composer: Any,
+        store: Any,
+        session_id: str,
+    ) -> bool:
+        """Insert a shelf draft at the live caret for the captured session."""
+
+        if store.active_session_id != session_id:
+            return False
+        composer.insert_text_as_paste(content)
+        store.set_session_draft(session_id, composer.draft_text())
+        self._sync_console_command_popup()
+        return True
+
     def _open_console_prompts_modal(
-        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+        self,
+        *,
+        initial_mode: Literal["browse", "improve"] = "browse",
+        initial_source: Literal["local", "server", "draft_shelf"] = "local",
     ) -> None:
         """Open Prompt Browse or direct improvement without changing the draft.
 
@@ -1218,7 +1387,9 @@ class ConsolePromptsController:
             else ""
         )
         provider_blocker = self._console_provider_blocker_copy()
-        unavailable_reason = projection_blocker or run_active_blocker or provider_blocker
+        unavailable_reason = (
+            projection_blocker or run_active_blocker or provider_blocker
+        )
         improvement_context = ConsolePromptImprovementContext(
             session_id=session_id,
             composer_snapshot=composer_snapshot,
@@ -1232,9 +1403,7 @@ class ConsolePromptsController:
                 or "Resolve on Improve"
             ),
             model_unavailable_reason=unavailable_reason,
-            unavailable_recovery=(
-                "draft" if projection_blocker else "provider"
-            ),
+            unavailable_recovery=("draft" if projection_blocker else "provider"),
         )
 
         flow = _ConsolePromptImprovementFlow(
@@ -1254,6 +1423,14 @@ class ConsolePromptsController:
             sync_system_prompt_surfaces=self._sync_console_system_prompt_surfaces,
         )
 
+        def insert_draft(content: str) -> bool:
+            return self._insert_prompt_draft_at_caret(
+                content=content,
+                composer=composer,
+                store=store,
+                session_id=session_id,
+            )
+
         self.push_screen(
             ConsolePromptsModal(
                 capabilities=source.capabilities,
@@ -1272,7 +1449,13 @@ class ConsolePromptsController:
                 apply_improvement_result=flow.apply_improvement_result,
                 retry_improvement_persistence=flow.retry_improvement_persistence,
                 open_library_prompt=self._open_saved_console_recipe_in_library,
+                update_draft=source.update_draft,
+                delete_draft=source.delete_draft,
+                insert_draft=insert_draft,
+                list_draft_collections=source.list_draft_collections,
+                assign_draft_collection=source.assign_draft_collection,
                 initial_mode=initial_mode,
+                initial_source=initial_source,
             ),
             callback=self._restore_console_composer_focus,
         )

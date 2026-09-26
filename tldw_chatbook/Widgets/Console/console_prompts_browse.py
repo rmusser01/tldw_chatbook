@@ -9,6 +9,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
 from textual.message import Message
 from textual.widgets import Button, Input, Select, Static
 
@@ -82,6 +83,8 @@ class ConsolePromptsBrowse(Vertical):
         self._can_configure_provider = bool(can_configure_provider)
         self._manual_improve_available = bool(manual_improve_available)
         self._row_ids: dict[str, str] = {}
+        self._row_tokens: list[str] = []
+        self._highlighted_index = -1
 
     def compose(self) -> ComposeResult:
         improve = Button(
@@ -117,7 +120,11 @@ class ConsolePromptsBrowse(Vertical):
             )
         with Horizontal(id="console-prompts-browse-controls"):
             yield Select(
-                (("Local", "local"), ("Server", "server")),
+                (
+                    ("Draft Shelf", "draft_shelf"),
+                    ("Local", "local"),
+                    ("Server", "server"),
+                ),
                 value=self._source,
                 allow_blank=False,
                 id="console-prompts-source",
@@ -144,8 +151,13 @@ class ConsolePromptsBrowse(Vertical):
 
     def show_loading(self, *, source: PromptSource, query: str) -> None:
         action = "Searching" if query.strip() else "Loading"
+        source_label = (
+            "Draft Shelf"
+            if source == "draft_shelf"
+            else f"{source.title()} Prompt Library"
+        )
         self.show_status(
-            f"{action} {source.title()} Prompt Library…",
+            f"{action} {source_label}…",
             retry=False,
         )
 
@@ -160,30 +172,43 @@ class ConsolePromptsBrowse(Vertical):
         rows = self.query_one("#console-prompts-result-list", Vertical)
         await rows.remove_children()
         self._row_ids.clear()
+        self._row_tokens.clear()
+        self._highlighted_index = -1
         for item in result.items:
             identifier = _identifier(item)
             token = _row_token(str(item.get("id") or identifier))
             self._row_ids[token] = identifier
-            artifact_type = str(item.get("artifact_type") or "prompt").title()
-            source = str(item.get("backend") or result.source).title()
-            has_system = bool(item.get("has_system_prompt"))
-            has_user = bool(item.get("has_user_prompt"))
-            lanes = (
-                "System + User"
-                if has_system and has_user
-                else "System"
-                if has_system
-                else "User"
-                if has_user
-                else "No compiled lanes"
-            )
+            self._row_tokens.append(token)
             updated = item.get("updated_at") or item.get("last_modified")
-            metadata = f"{artifact_type} · {source} · {lanes}"
-            if updated:
-                metadata += f" · Updated {updated}"
             label = Text()
-            label.append(str(item.get("name") or "Untitled Prompt"), style="bold")
-            label.append(f"\n{metadata}")
+            if result.source == "draft_shelf":
+                label.append(
+                    str(item.get("display_name") or "Untitled draft"), style="bold"
+                )
+                preview = str(item.get("preview") or "").strip()
+                metadata = (
+                    f"Draft Shelf · Updated {updated}" if updated else "Draft Shelf"
+                )
+                label.append(f"\n{preview}\n{metadata}" if preview else f"\n{metadata}")
+            else:
+                artifact_type = str(item.get("artifact_type") or "prompt").title()
+                source = str(item.get("backend") or result.source).title()
+                has_system = bool(item.get("has_system_prompt"))
+                has_user = bool(item.get("has_user_prompt"))
+                lanes = (
+                    "System + User"
+                    if has_system and has_user
+                    else "System"
+                    if has_system
+                    else "User"
+                    if has_user
+                    else "No compiled lanes"
+                )
+                metadata = f"{artifact_type} · {source} · {lanes}"
+                if updated:
+                    metadata += f" · Updated {updated}"
+                label.append(str(item.get("name") or "Untitled Prompt"), style="bold")
+                label.append(f"\n{metadata}")
             await rows.mount(
                 Button(
                     label,
@@ -193,19 +218,50 @@ class ConsolePromptsBrowse(Vertical):
             )
 
         if result.items:
-            self.show_status(
-                f"{result.total_items} item{'s' if result.total_items != 1 else ''} "
-                f"in {result.source.title()} · Prompt and Recipe types are labeled below."
-            )
+            if query.strip():
+                shown = len(result.items)
+                if shown < result.total_items:
+                    self.show_status(
+                        f"Showing {shown} of {result.total_items} matches. "
+                        "Refine the search to narrow the results."
+                    )
+                else:
+                    self.show_status(
+                        f"{result.total_items} "
+                        f"match{'es' if result.total_items != 1 else ''}. "
+                        "Use ↑/↓ then Enter, or select a row."
+                    )
+            elif result.source == "draft_shelf":
+                if result.total_items >= 100:
+                    self.show_status(
+                        "Draft Shelf is full — 100 of 100 saved drafts. "
+                        "Delete an entry before saving another."
+                    )
+                else:
+                    self.show_status(
+                        f"Draft Shelf · {result.total_items} of 100 saved "
+                        f"draft{'s' if result.total_items != 1 else ''}. "
+                        "Use ↑/↓ then Enter, or select a row."
+                    )
+            else:
+                self.show_status(
+                    f"{result.total_items} item{'s' if result.total_items != 1 else ''} "
+                    f"in {result.source.title()} · Prompt and Recipe types are labeled below."
+                )
         elif query.strip():
             self.show_status(
                 f'No matches for "{query.strip()}" — Change the query or switch source.'
             )
         else:
-            self.show_status(
-                f"{result.source.title()} Prompt Library is empty — "
-                "Create or save a Prompt, then Retry."
-            )
+            if result.source == "draft_shelf":
+                self.show_status(
+                    "Draft Shelf is empty — save an unsent Console message from the composer menu."
+                )
+            else:
+                self.show_status(
+                    f"{result.source.title()} Prompt Library is empty — "
+                    "Create or save a Prompt, then Retry."
+                )
         self.query_one("#console-prompts-page", Static).update(
             f"Page {result.page} of {result.total_pages}"
         )
@@ -244,7 +300,7 @@ class ConsolePromptsBrowse(Vertical):
     @on(Select.Changed, "#console-prompts-source")
     def _source_changed(self, event: Select.Changed) -> None:
         value = str(event.value)
-        if value in {"local", "server"} and value != self._source:
+        if value in {"local", "server", "draft_shelf"} and value != self._source:
             event.stop()
             self.post_message(self.SourceChanged(value))  # type: ignore[arg-type]
 
@@ -254,6 +310,44 @@ class ConsolePromptsBrowse(Vertical):
             return
         event.stop()
         self.post_message(self.QueryChanged(event.value))
+
+    def focus_search(self) -> None:
+        """Keep typing and row navigation anchored in the search field."""
+
+        self.query_one("#console-prompts-search", Input).focus()
+
+    def on_key(self, event: Key) -> None:
+        """Navigate result rows without moving focus away from search."""
+
+        if not isinstance(self.app.focused, Input) or not self._row_tokens:
+            return
+        if event.key in {"down", "up"}:
+            event.stop()
+            direction = 1 if event.key == "down" else -1
+            if self._highlighted_index < 0:
+                self._highlighted_index = (
+                    0 if direction > 0 else len(self._row_tokens) - 1
+                )
+            else:
+                self._highlighted_index = (self._highlighted_index + direction) % len(
+                    self._row_tokens
+                )
+            self._sync_highlight()
+            return
+        if event.key == "enter" and self._highlighted_index >= 0:
+            event.stop()
+            token = self._row_tokens[self._highlighted_index]
+            identifier = self._row_ids.get(token)
+            if identifier is not None:
+                self.post_message(self.ArtifactSelected(identifier))
+
+    def _sync_highlight(self) -> None:
+        for index, token in enumerate(self._row_tokens):
+            row = self.query_one(f"#console-prompts-result-{token}", Button)
+            selected = index == self._highlighted_index
+            row.set_class(selected, "highlighted")
+            if selected:
+                row.scroll_visible(animate=False, immediate=True)
 
 
 __all__ = ["ConsolePromptsBrowse"]

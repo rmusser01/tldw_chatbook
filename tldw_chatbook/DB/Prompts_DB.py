@@ -136,7 +136,7 @@ class PromptNameConflictError(ConflictError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 5
     _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
     _PROMPT_HISTORY_INDEX_COLUMNS = (
         ("entity", False),
@@ -740,6 +740,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v3_to_v4",
             "description": "Add retained Prompt history index",
         },
+        4: {
+            "to_version": 5,
+            "function": "_apply_migration_v4_to_v5",
+            "description": "Add local Console Prompt Draft Shelf",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -950,6 +955,75 @@ class PromptsDatabase:
                 f"[Migration v3->v4] Failed during migration: {e}"
             )
             raise DatabaseError(f"Migration v3->v4 failed: {e}") from e
+
+    def _apply_migration_v4_to_v5(self, conn: sqlite3.Connection):
+        """Add local-only Console Prompt Draft Shelf storage."""
+        logging.info(
+            "Applying prompts migration from version 4 to 5 for DB: "
+            f"{self.db_path_str}..."
+        )
+        try:
+            with self.transaction():
+                conn.execute(
+                    """
+                    CREATE TABLE LocalPromptDrafts (
+                        draft_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content TEXT NOT NULL CHECK(length(trim(content)) > 0),
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX idx_local_prompt_drafts_updated
+                    ON LocalPromptDrafts(updated_at DESC, draft_id DESC)
+                    """
+                )
+                conn.execute("UPDATE schema_version SET version = 5 WHERE version = 4")
+
+                columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(LocalPromptDrafts)")
+                }
+                expected_columns = {
+                    "draft_id",
+                    "content",
+                    "created_at",
+                    "updated_at",
+                    "version",
+                }
+                if columns != expected_columns:
+                    raise SchemaError(
+                        "Validation Error: LocalPromptDrafts columns do not match "
+                        "the required schema."
+                    )
+                index_row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM sqlite_master
+                    WHERE type = 'index' AND name = 'idx_local_prompt_drafts_updated'
+                    """
+                ).fetchone()
+                if index_row is None:
+                    raise SchemaError(
+                        "Validation Error: local Prompt draft ordering index "
+                        "is missing."
+                    )
+                version_in_tx = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                ).fetchone()
+                if not version_in_tx or version_in_tx["version"] != 5:
+                    raise SchemaError(
+                        "Schema version update to 5 did not take effect within "
+                        "transaction."
+                    )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"[Migration v4->v5] Failed during migration: {e}"
+            )
+            raise DatabaseError(f"Migration v4->v5 failed: {e}") from e
 
     def _initialize_schema(self):
         conn = self.get_connection()

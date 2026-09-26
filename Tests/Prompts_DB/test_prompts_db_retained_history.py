@@ -315,12 +315,12 @@ def _install_snapshot_finalize_failure(database: PromptsDatabase) -> None:
     conn.commit()
 
 
-def test_fresh_v4_schema_has_partial_covering_prompt_history_index():
+def test_fresh_schema_has_partial_covering_prompt_history_index():
     database = PromptsDatabase(":memory:", client_id="fresh-v4")
     try:
         conn = database.get_connection()
 
-        assert database._get_db_version(conn) == 4
+        assert database._get_db_version(conn) == PromptsDatabase._CURRENT_SCHEMA_VERSION
         assert [
             row[2] for row in conn.execute(f"PRAGMA index_info({HISTORY_INDEX})")
         ] == ["entity", "entity_uuid", "change_id", "operation"]
@@ -351,7 +351,7 @@ def test_v3_to_v4_migration_preserves_every_retained_sync_row(tmp_path):
             )
         ]
 
-        assert database._get_db_version(conn) == 4
+        assert database._get_db_version(conn) == PromptsDatabase._CURRENT_SCHEMA_VERSION
         assert actual_rows == expected_rows
         assert HISTORY_INDEX in _index_sql(conn)
     finally:
@@ -366,7 +366,7 @@ def test_v3_to_v4_migration_replaces_wrong_reserved_index(tmp_path):
     try:
         conn = database.get_connection()
 
-        assert database._get_db_version(conn) == 4
+        assert database._get_db_version(conn) == PromptsDatabase._CURRENT_SCHEMA_VERSION
         assert [
             row[2] for row in conn.execute(f"PRAGMA index_info({HISTORY_INDEX})")
         ] == ["entity", "entity_uuid", "change_id", "operation"]
