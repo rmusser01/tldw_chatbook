@@ -296,7 +296,6 @@ class DatabaseNoteSessionCoordinator:
         self._session_request_token = 0
         self._session_generation = 0
         self._save_task: asyncio.Task[NoteSaveOutcome] | None = None
-        self._pending_save_requested = False
         self._untouched_create_token: str | None = None
         self._conflict_operation_counter = 0
         self._active_conflict_operation: _ConflictOperation | None = None
@@ -425,7 +424,6 @@ class DatabaseNoteSessionCoordinator:
             status_message="",
         )
         self._save_task = None
-        self._pending_save_requested = False
         self._untouched_create_token = untouched_create_token
         self._active_conflict_operation = None
         self._destructive = None
@@ -501,8 +499,6 @@ class DatabaseNoteSessionCoordinator:
             ),
         )
         self._untouched_create_token = None
-        if snapshot.saving:
-            self._pending_save_requested = True
         return True
 
     async def request_save(self, *, explicit: bool) -> NoteSaveOutcome:
@@ -547,7 +543,6 @@ class DatabaseNoteSessionCoordinator:
                 message="Saved — no changes.",
             )
 
-        self._pending_save_requested = True
         task = self._save_task
         if task is None or task.done():
             task = asyncio.create_task(self._drive_saves())
@@ -564,7 +559,6 @@ class DatabaseNoteSessionCoordinator:
                     message="The note session changed before save completed.",
                 )
             if snapshot.in_conflict:
-                self._pending_save_requested = False
                 return NoteSaveOutcome(
                     NoteSaveOutcomeKind.CONFLICTED,
                     note_id=snapshot.note_id,
@@ -573,7 +567,6 @@ class DatabaseNoteSessionCoordinator:
                     message="Conflict — review the choices below.",
                 )
             if not snapshot.dirty:
-                self._pending_save_requested = False
                 return NoteSaveOutcome(
                     NoteSaveOutcomeKind.ACKNOWLEDGED,
                     note_id=snapshot.note_id,
@@ -587,7 +580,6 @@ class DatabaseNoteSessionCoordinator:
             expected_version = snapshot.version
             draft_revision = snapshot.draft_revision
             payload = validate_database_note_draft(snapshot.draft)
-            self._pending_save_requested = False
             if isinstance(payload, NoteValidationVeto):
                 self._snapshot = replace(
                     snapshot,
@@ -635,7 +627,6 @@ class DatabaseNoteSessionCoordinator:
                 )
 
             if reply.kind is PortSaveKind.FAILED:
-                self._pending_save_requested = False
                 message = self._actionable_save_failure(reply.message)
                 self._snapshot = replace(
                     current,
@@ -652,7 +643,6 @@ class DatabaseNoteSessionCoordinator:
                 )
 
             if reply.kind is PortSaveKind.CONFLICT:
-                self._pending_save_requested = False
                 message = "Conflict — review the choices below."
                 self._snapshot = replace(
                     current,
@@ -700,10 +690,8 @@ class DatabaseNoteSessionCoordinator:
                 ),
             )
             if has_newer_draft:
-                self._pending_save_requested = True
                 continue
 
-            self._pending_save_requested = False
             return NoteSaveOutcome(
                 NoteSaveOutcomeKind.SAVED,
                 note_id=note_id,
@@ -1139,7 +1127,6 @@ class DatabaseNoteSessionCoordinator:
         self._session_generation += 1
         self._snapshot = None
         self._save_task = None
-        self._pending_save_requested = False
         self._untouched_create_token = None
         self._active_conflict_operation = None
         self._destructive = None

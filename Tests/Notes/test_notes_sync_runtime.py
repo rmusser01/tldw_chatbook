@@ -4016,3 +4016,44 @@ def test_importing_the_runtime_leaves_the_receipt_ledger_off_the_boot_path() -> 
         check=True,
     ).stdout.strip()
     assert resident == "", f"pulled onto the boot path: {resident}"
+
+
+@pytest.mark.asyncio
+async def test_start_failure_records_a_bounded_diagnostic(tmp_path: Path) -> None:
+    """A swallowed start failure must leave a bounded line in the log.
+
+    Before this, all four `_start_once` handlers collapsed any failure into
+    `status="failed"` with the exception discarded and nothing written -- a
+    user reporting "sync says failed" gave a support path of zero bits. The
+    line must name the stage and the exception CLASS, and must NOT carry the
+    exception's text (which routinely holds a filesystem path).
+    """
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    captured: list[str] = []
+    sink_id = loguru_logger.add(captured.append, level="WARNING", format="{message}")
+    try:
+        owner = NotesSyncRuntimeOwner(
+            store=_store(tmp_path, marker=False),
+            migrate_legacy=lambda: (_ for _ in ()).throw(
+                RuntimeError("/private/path/leaks/here")
+            ),
+            coordinator=_Coordinator(),
+            adapter=_Adapter([_input()]),
+            watcher_factory=lambda _schedule: _Watcher(),
+            cutover_admitted=True,
+            profile_process_is_sole=True,
+        )
+        await owner.start()
+        status = owner.snapshot().status
+        await owner.shutdown()
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert status == "failed"
+    logged = "".join(captured)
+    assert "legacy migration" in logged
+    assert "RuntimeError" in logged
+    assert "/private/path/leaks/here" not in logged

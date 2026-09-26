@@ -23,6 +23,8 @@ SAFE_SKILL_TRUST_STATUSES = frozenset(
         "quarantined_unsupported_path",
         "unavailable",
         "unavailable_error",
+        # TASK-32926: rendered while the keyring-backed read runs off-thread.
+        "checking",
     }
 )
 MAX_SKILL_TRUST_STATUS_CHARS = 80
@@ -178,7 +180,7 @@ def build_settings_privacy_posture(
         provider_env_configured=env_total,
         provider_config_secrets=_provider_config_secret_count(app_config),
         skill_trust_enabled=_safe_bool(trust.get("enabled")),
-        skill_trust_status=_safe_skill_trust_status(trust.get("trust_status")),
+        skill_trust_status=safe_skill_trust_status(trust.get("trust_status")),
         skill_trust_keyring_convenience_enabled=_safe_bool(
             trust.get("keyring_convenience_enabled")
         ),
@@ -252,6 +254,8 @@ def skill_trust_display(status: str) -> str:
     Returns:
         The user-facing form without the "trust_" prefix.
     """
+    if status == "checking":
+        return "checking…"
     return status.removeprefix("trust_")
 
 
@@ -386,7 +390,18 @@ def _bounded_nonnegative_int(value: object, *, maximum: int = 2**63 - 1) -> int:
     return min(maximum, max(0, value))
 
 
-def _safe_skill_trust_status(value: object) -> str:
+def safe_skill_trust_status(value: object) -> str:
+    """Clamp a skill-trust status to the closed display set.
+
+    Args:
+        value: A raw status from the skill-trust service or a posture mapping;
+            any type is accepted.
+
+    Returns:
+        The stripped status (truncated to ``MAX_SKILL_TRUST_STATUS_CHARS``)
+        when it is in ``SAFE_SKILL_TRUST_STATUSES``, otherwise
+        ``"unavailable"`` -- so unknown or path-bearing text never renders.
+    """
     status = str(value or "unavailable").strip()[:MAX_SKILL_TRUST_STATUS_CHARS]
     return status if status in SAFE_SKILL_TRUST_STATUSES else "unavailable"
 

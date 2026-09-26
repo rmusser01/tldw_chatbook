@@ -20,8 +20,23 @@ from .tamagotchi_messages import (
     TamagotchiInteraction,
     TamagotchiStateChange,
     TamagotchiDeath,
+    TamagotchiStatCritical,
 )
 from .validators import TamagotchiValidator, RateLimiter, ValidationError
+
+
+#: Stats that raise ``TamagotchiStatCritical`` as they cross, and the severity
+#: each crossing carries. The thresholds are the ones the design doc's
+#: "Notification Integration" example specifies
+#: (``Docs/Development/Textual-Tamagotchis.md``); the severities are Textual
+#: ``notify`` levels, so a host can pass ``event.severity`` straight through.
+#: Entries are ``(stat, threshold, critical_when_below, severity)``.
+_CRITICAL_STATS = (
+    ("health", 30.0, True, "error"),
+    ("hunger", 80.0, False, "warning"),
+    ("happiness", 20.0, True, "warning"),
+    ("energy", 20.0, True, "information"),
+)
 
 
 class BaseTamagotchi(Static):
@@ -184,6 +199,14 @@ class BaseTamagotchi(Static):
         self._is_alive = True
         self._last_interaction_time = 0.0
         self._total_interactions = 0
+        #: Stats currently past their critical threshold. `TamagotchiStatCritical`
+        #: is edge-triggered off this set: one message per crossing, not one per
+        #: tick for as long as the pet stays hungry.
+        self._critical_stats: set[str] = set()
+        #: Whether this instance's in-memory state still reflects the shared
+        #: store. Cleared while the pet sits on a suspended screen; see
+        #: `_periodic_update`.
+        self._state_authoritative = False
 
         # Apply size class
         if validated_size in ["compact", "minimal"]:
@@ -230,8 +253,12 @@ class BaseTamagotchi(Static):
             self._animation_timer.stop()
             self._animation_timer = None
 
-        # Save final state
-        self._save_state()
+        # Save final state -- but only a copy that is still in sync with the
+        # store. A pet on a suspended screen stopped advancing when it left the
+        # foreground (see `_periodic_update`); writing that snapshot at
+        # shutdown would roll the visible pet's progress back.
+        if self._state_authoritative:
+            self._save_state()
 
     def _periodic_update(self) -> None:
         """
@@ -239,6 +266,31 @@ class BaseTamagotchi(Static):
         Applies time-based changes and checks conditions.
         """
         if not self._is_alive:
+            return
+
+        # Same guard `_play_animation`'s `next_frame` already applies, for a
+        # second reason. Textual SUSPENDS an installed screen rather than
+        # unmounting it (see `UI/Navigation/screen_registry.py`'s `reusable`),
+        # so every screen the user has visited keeps its widget tree -- and
+        # this timer -- alive. A pet hosted in per-screen chrome therefore
+        # exists several times over while sharing ONE storage key: without
+        # this, each background copy would go on decaying and saving, and the
+        # stalest writer would win, silently rolling back the pet the user can
+        # actually see. Only the foreground pet advances; the others resync
+        # from storage on their way back.
+        if not self.is_attached or not self.screen.is_active:
+            self._state_authoritative = False
+            return
+        # Resync on EVERY foreground tick, not only when some earlier tick
+        # happened to catch this copy in the background. An A -> B -> A
+        # switch inside one interval never gives the departing copy such a
+        # tick, so it used to return still believing its snapshot was current
+        # and decay/save it over whatever B had advanced in the meantime.
+        # One small JSON read per interval is cheaper than that bug class,
+        # and interactions now save immediately so nothing is lost to it.
+        if not self._load_state():
+            # The store could not be read. These numbers are a guess, and
+            # decaying then saving them would publish the guess.
             return
 
         # Calculate time-based changes
@@ -273,6 +325,10 @@ class BaseTamagotchi(Static):
         # Check if sick
         self.is_sick = self.health < 30 or self.hunger > 90
 
+        # Raise the "needs attention" alarms before the death checks below, so
+        # a host gets the warning that precedes a death, not only the death.
+        self._check_critical_stats()
+
         # Check for death conditions
         if self.health <= 0 or self.happiness <= 0:
             self._handle_death("neglect")
@@ -298,6 +354,24 @@ class BaseTamagotchi(Static):
             self.post_message(
                 TamagotchiStateChange(self, "healthy" if old_sick else "sick", state)
             )
+
+    def _check_critical_stats(self) -> None:
+        """Post ``TamagotchiStatCritical`` as stats cross their thresholds.
+
+        Edge-triggered: a stat that is already critical stays quiet until it
+        recovers and crosses again, so a neglected pet raises one alarm per
+        stat rather than one per tick.
+        """
+        for stat, threshold, below, severity in _CRITICAL_STATS:
+            value = getattr(self, stat)
+            critical = value < threshold if below else value > threshold
+            if not critical:
+                self._critical_stats.discard(stat)
+            elif stat not in self._critical_stats:
+                self._critical_stats.add(stat)
+                self.post_message(
+                    TamagotchiStatCritical(self, stat, value, threshold, severity)
+                )
 
     def _update_mood(self) -> None:
         """Update mood based on current stats."""
@@ -382,6 +456,14 @@ class BaseTamagotchi(Static):
             self.notify("Your pet has passed away", severity="warning")
             return
 
+        # Reusable screens are suspended, not unmounted, so this copy may not
+        # have been the foreground one since it was last synced. Acting on
+        # those numbers loses the interaction outright -- the next periodic
+        # tick reloads the shared snapshot straight over it.
+        if not self._state_authoritative and not self._load_state():
+            self.notify("Your pet's saved state is unavailable", severity="warning")
+            return
+
         # Check rate limiting
         if self.enable_rate_limiting and self.rate_limiter:
             current_time = time.time()
@@ -432,6 +514,12 @@ class BaseTamagotchi(Static):
         self._total_interactions += 1
         self._last_interaction_time = time.time()
 
+        # The edge tracker has to follow the stats it tracks. Left to the
+        # periodic tick, a stat recovered and re-crossed inside one 30 s
+        # interval kept its stale entry, so the second crossing was silently
+        # suppressed.
+        self._check_critical_stats()
+
         # Trigger animation if specified
         if response.get("animation"):
             self._play_animation(response["animation"])
@@ -443,6 +531,10 @@ class BaseTamagotchi(Static):
         self._update_mood()
         self._update_sprite()
         self.refresh()
+
+        # Persist now: the next foreground tick resyncs from the shared store,
+        # so an interaction left only in memory would simply vanish.
+        self._save_state()
 
     def _play_animation(self, animation_type: str) -> None:
         """
@@ -495,8 +587,15 @@ class BaseTamagotchi(Static):
             stats = f"❤️{int(self.happiness)} 🍽️{int(self.hunger)} ⚡{int(self.energy)}"
             return f"{self.sprite} {self.pet_name}\n{stats}\n{self.mood}"
 
-    def _load_state(self) -> None:
-        """Load saved state from storage with recovery support."""
+    def _load_state(self) -> bool:
+        """Load saved state from storage with recovery support.
+
+        Returns:
+            Whether the shared store was actually read. ``False`` means these
+            values are this instance's guess rather than a copy of the store,
+            so the caller must skip both decay and save -- otherwise a
+            transient read failure is written back over real progress.
+        """
         try:
             # Use load_with_recovery if available
             if hasattr(self.storage, "load_with_recovery"):
@@ -527,7 +626,36 @@ class BaseTamagotchi(Static):
                 self._safe_log("info", f"Loaded state for {self.pet_name}")
         except Exception as e:
             self._safe_log("error", f"Failed to load tamagotchi state: {e}")
-            # Continue with default values
+            # NOT authoritative: the previous version claimed authority here
+            # too, on the reasoning that "the defaults are the best copy
+            # available" -- but the only thing this instance then does with
+            # that authority is decay it and save it over the copy it failed
+            # to read.
+            self._state_authoritative = False
+            return False
+
+        self._seed_critical_stats()
+        self._state_authoritative = True
+        return True
+
+    def _seed_critical_stats(self) -> None:
+        """Adopt a snapshot's critical stats without announcing them.
+
+        ``TamagotchiStatCritical`` is edge-triggered, and a snapshot this
+        instance has just adopted carries no crossing it witnessed. Every
+        screen's footer keeps its own edge set against one shared pet, so
+        without this each newly visited screen re-announced the same ongoing
+        hunger as if it had just happened.
+        """
+        self._critical_stats = {
+            stat
+            for stat, threshold, below, _ in _CRITICAL_STATS
+            if (
+                getattr(self, stat) < threshold
+                if below
+                else getattr(self, stat) > threshold
+            )
+        }
 
     def _save_state(self) -> None:
         """Save current state to storage."""
