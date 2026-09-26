@@ -92,6 +92,15 @@ class UserProfileResponse(BaseModel):
     section_errors: dict[str, str] | None = None
 
 
+class UserCapabilitiesResponse(BaseModel):
+    """Current caller capability decisions from the active server."""
+
+    model_config = ConfigDict(extra="allow")
+
+    user_id: int | None = None
+    can_run_audio_diagnostics: bool | None = None
+
+
 class UserProfileUpdateEntry(BaseModel):
     key: str
     value: Any | None = None
@@ -115,14 +124,15 @@ class UserProfileUpdateResponse(BaseModel):
 
 
 __all__ = [
+    "AuthTokenResponse",
     "LogoutRequest",
-    "MessageResponse",
     "MFAChallengeResponse",
+    "MessageResponse",
     "RefreshTokenRequest",
     "RegisterRequest",
     "RegistrationResponse",
     "SessionResponse",
-    "AuthTokenResponse",
+    "UserCapabilitiesResponse",
     "UserProfileCatalogEntry",
     "UserProfileCatalogResponse",
     "UserProfileResponse",

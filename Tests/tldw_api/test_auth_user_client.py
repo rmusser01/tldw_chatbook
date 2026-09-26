@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     RegistrationResponse,
     SessionResponse,
     TLDWAPIClient,
+    UserCapabilitiesResponse,
     UserProfileCatalogResponse,
     UserProfileResponse,
     UserProfileUpdateEntry,
@@ -173,3 +174,19 @@ async def test_auth_and_self_profile_routes_wire_login_sessions_and_profile(
     assert profile.preferences["ui.theme"] == "light"
     assert isinstance(updated, UserProfileUpdateResponse)
     assert isinstance(registration, RegistrationResponse)
+
+
+@pytest.mark.asyncio
+async def test_current_user_capabilities_expose_effective_audio_diagnostic_permission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"user_id": 7, "can_run_audio_diagnostics": True})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.get_current_user_capabilities()
+
+    assert isinstance(result, UserCapabilitiesResponse)
+    assert result.can_run_audio_diagnostics is True
+    mocked.assert_awaited_once_with("GET", "/api/v1/users/me/capabilities")
+    await client.close()

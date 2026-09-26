@@ -6,6 +6,9 @@ from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import (
 from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import (
     LocalAudioServicesService,
 )
+from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import (
+    ServerAudioServicesService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -331,6 +334,41 @@ async def test_audio_services_scope_service_blocks_denied_action_before_dispatch
         await scope.list_tts_providers(mode="local")
 
     assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_audio_services_scope_service_reports_admin_required_for_connected_diagnostics():
+    class NonAdminClient:
+        def __init__(self):
+            self.diagnostic_calls = []
+
+        async def get_current_user_capabilities(self):
+            return {"can_run_audio_diagnostics": False}
+
+        async def get_stt_health(self, **kwargs):
+            self.diagnostic_calls.append("stt_health")
+            return {"status": "healthy"}
+
+        async def test_audio_streaming(self):
+            self.diagnostic_calls.append("streaming_test")
+            return {"status": "success"}
+
+    client = NonAdminClient()
+    scope = AudioServicesScopeService(
+        server_service=ServerAudioServicesService(client=client),
+    )
+
+    assert (await scope.get_stt_health(mode="server", warm=False))[
+        "status"
+    ] == "healthy"
+    with pytest.raises(PolicyDeniedError) as warm_denial:
+        await scope.get_stt_health(mode="server", warm=True)
+    with pytest.raises(PolicyDeniedError) as test_denial:
+        await scope.test_audio_streaming(mode="server")
+
+    assert warm_denial.value.reason_code == "admin_required"
+    assert test_denial.value.reason_code == "admin_required"
+    assert client.diagnostic_calls == ["stt_health"]
 
 
 @pytest.mark.asyncio
