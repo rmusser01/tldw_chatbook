@@ -69,6 +69,11 @@ class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Stay", show=False)]
 
     def compose(self) -> ComposeResult:
+        """Build the prompt: a title, one line of copy, Stay/Discard/Save.
+
+        Returns:
+            The modal's widgets.
+        """
         with Vertical(id="settings-theme-leave-modal", classes="settings-rag-profile-modal"):
             yield Static("Unsaved theme changes", classes="destination-section")
             yield Static(
@@ -82,6 +87,7 @@ class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
                 yield Button("Save", id="settings-theme-leave-save", variant="primary")
 
     def action_cancel(self) -> None:
+        """Escape: dismiss with ``"cancel"`` (Stay), keeping the edits."""
         self.dismiss("cancel")
 
     @on(Button.Pressed, "#settings-theme-leave-stay")
@@ -1523,6 +1529,10 @@ class SettingsThemeEditor(Vertical):
             The imported theme's name once written; None when refused, paused,
             or waiting on the Replace confirmation (which writes, registers
             and posts ``ThemesChanged(highlight=name)`` itself).
+
+        Args:
+            source: The path the user gave; validated with
+                ``path_validation.validate_browsing_path`` before any read.
         """
         try:
             files = self._user_theme_files()
