@@ -406,15 +406,39 @@ _HOST_SEMAPHORES: dict[
 def _host_key_tuple(
     loc: RemoteLocator,
 ) -> tuple[str | None, str, int | None]:
-    """The resolved host identity — the master manager's own key."""
+    """The locator's literal host identity (fallback when no ``ssh -G`` one)."""
     return (loc.user, loc.host, loc.port)
 
 
-def _host_key_string(loc: RemoteLocator) -> str:
-    """The same identity rendered as the status cache's probe key."""
-    user = loc.user if loc.user is not None else ""
-    port = loc.port if loc.port is not None else 22
-    return f"{user}@{loc.host}:{port}"
+def _host_key_string(key: tuple[str | None, str, int | None]) -> str:
+    """A host identity rendered as the status cache's probe key."""
+    user, host, port = key
+    return f"{user or ''}@{host}:{port if port is not None else 22}"
+
+
+def ssh_binding_identity(
+    metadata: Mapping[str, Any] | None,
+) -> tuple[str, tuple[str | None, str, int | None] | None]:
+    """The ``ssh -G`` identity an SSH binding recorded when it was added.
+
+    Args:
+        metadata: The binding row's metadata (``add_ssh_binding`` stores
+            ``canonical_fingerprint`` and ``canonical_host/port/user``).
+
+    Returns:
+        ``(expected_fingerprint, canonical_host_key)``. The fingerprint is
+        ``""`` when the row lacks one -- a value no re-resolution can match,
+        so such a row fails closed instead of skipping the destination
+        check. The host key is ``None`` when the row lacks a complete one.
+    """
+    meta = metadata or {}
+    fingerprint = str(meta.get("canonical_fingerprint") or "")
+    host = meta.get("canonical_host")
+    port = meta.get("canonical_port")
+    user = meta.get("canonical_user")
+    if not isinstance(host, str) or not host or type(port) is not int:
+        return fingerprint, None
+    return fingerprint, (user if isinstance(user, str) else None, host, port)
 
 
 def _host_semaphore(
@@ -441,6 +465,15 @@ class _SshModeConfig:
     python: str
     max_concurrent_calls: int
     recovery_probes: bool
+    #: ``canonical_fingerprint`` recorded at add time; ``None`` skips the
+    #: destination check (loopback-style tests), ``""`` always fails it.
+    expected_fingerprint: str | None = None
+    #: The ``ssh -G`` host identity keying the per-host cap and probe
+    #: debounce, so two aliases for one host share one budget.
+    host_key: tuple[str | None, str, int | None] | None = None
+
+    def resolved_host_key(self) -> tuple[str | None, str, int | None]:
+        return self.host_key or _host_key_tuple(self.loc)
 
 
 def _ssh_identity_source_stub() -> Any:
@@ -522,6 +555,8 @@ class RemoteWorkspaceToolExecutor:
         max_concurrent_calls: int | None = None,
         recovery_probes: bool = True,
         sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
+        expected_fingerprint: str | None = None,
+        canonical_host_key: tuple[str | None, str, int | None] | None = None,
     ) -> RemoteWorkspaceToolExecutor:
         """Build the executor that drives one remote binding over ssh.
 
@@ -555,6 +590,14 @@ class RemoteWorkspaceToolExecutor:
             recovery_probes: ``False`` disables the background recovery
                 probe dispatch (tests drive :meth:`ping` directly for
                 determinism).
+            sensitive_exclusions: Per-call provider of the binding's
+                serialized exclusions.
+            expected_fingerprint: The binding's recorded
+                ``canonical_fingerprint`` (see :func:`ssh_binding_identity`).
+                When set, every identity capture first re-resolves the
+                locator with ``ssh -G`` and refuses a changed destination.
+            canonical_host_key: The recorded ``ssh -G`` host identity; keys
+                the per-host call cap and probe debounce.
 
         Returns:
             An executor in ssh mode; :meth:`execute` and :meth:`ping`
@@ -601,6 +644,8 @@ class RemoteWorkspaceToolExecutor:
             python=python,
             max_concurrent_calls=int(max_concurrent_calls),
             recovery_probes=recovery_probes,
+            expected_fingerprint=expected_fingerprint,
+            host_key=canonical_host_key,
         )
         return executor
 
@@ -906,6 +951,7 @@ class RemoteWorkspaceToolExecutor:
 
         cfg = self._ssh
         assert cfg is not None
+        self._verify_destination()
         remaining = self._remaining_budget(started)
         request = self._build_request(
             "ping",
@@ -960,6 +1006,54 @@ class RemoteWorkspaceToolExecutor:
         )
         return payload, terminal
 
+    def _verify_destination(self) -> None:
+        """Refuse identity capture when ``ssh -G`` resolves elsewhere now.
+
+        The ping is the only identity-capture path, and a pin failure
+        re-captures through it; without this check an ssh_config alias
+        retargeted to another host would have its root identity silently
+        adopted on the next capture. A mismatch (or an ``ssh -G`` that no
+        longer resolves) records BLOCKED -- recovery probes re-check it, so
+        reverting the config heals the binding; accepting the new host
+        means removing and re-adding the binding. ``ssh -G`` is local-only
+        (no connection, no DNS) and runs only on the capture path, never
+        per operation or at run composition.
+        """
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            RemoteLocatorError,
+            canonical_fingerprint,
+            canonicalize_locator,
+        )
+        from tldw_chatbook.Tools.remote_workspace_transport import (
+            TransportFailureKind,
+        )
+
+        cfg = self._ssh
+        assert cfg is not None
+        if cfg.expected_fingerprint is None:
+            return
+        try:
+            target = canonicalize_locator(cfg.loc, ssh_bin=cfg.masters.ssh_bin)
+            matches = (
+                canonical_fingerprint(target, cfg.loc.path)
+                == cfg.expected_fingerprint
+            )
+            reason = (
+                "ssh config now resolves this binding to a different "
+                "destination; remove and re-add the binding to accept it"
+            )
+        except RemoteLocatorError:
+            matches = False
+            reason = "ssh -G could not re-resolve this binding's destination"
+        if matches:
+            return
+        cfg.cache.record_transport_failure(
+            cfg.binding_id, TransportFailureKind.DESTINATION_CHANGED, reason
+        )
+        raise RemoteWorkspaceExecutionError(
+            TransportFailureKind.DESTINATION_CHANGED.value, reason, admitted=False
+        )
+
     def _ssh_call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
         """One transport call under the master and the host cap.
 
@@ -972,7 +1066,7 @@ class RemoteWorkspaceToolExecutor:
         assert cfg is not None
         cfg.masters.ensure_master(cfg.loc)
         semaphore = _host_semaphore(
-            _host_key_tuple(cfg.loc), cfg.max_concurrent_calls
+            cfg.resolved_host_key(), cfg.max_concurrent_calls
         )
         with semaphore:
             return cfg.transport.call(
@@ -1072,7 +1166,7 @@ class RemoteWorkspaceToolExecutor:
         cfg = self._ssh
         if cfg is None or not cfg.recovery_probes:
             return
-        host_key = _host_key_string(cfg.loc)
+        host_key = _host_key_string(cfg.resolved_host_key())
         if not cfg.cache.should_schedule_probe(host_key):
             return
 

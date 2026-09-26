@@ -67,6 +67,7 @@ import selectors
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -84,6 +85,7 @@ from tldw_chatbook.Tools.remote_binding_locator import (
 )
 from tldw_chatbook.Tools.remote_worker_bundle import RESPONSE_MAGIC
 from tldw_chatbook.Tools.remote_workspace_executor import _bundle_payload
+from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
 
 __all__ = [
     "PERCENT_C_EXPANSION_LENGTH",
@@ -212,6 +214,28 @@ def _ensure_private_dir(directory: Path) -> None:
         os.chmod(directory, 0o700)
 
 
+def _private_dir_usable(directory: Path) -> bool:
+    """Create ``directory`` if needed and prove only this user controls it.
+
+    The control dir names the sockets every multiplexed call connects to,
+    so a directory another local user owns or can write (a predictable
+    ``/tmp`` name pre-created by them, or a symlink into their storage)
+    would let them swap in their own socket and read every call's bundle
+    and request, file contents included. ``lstat`` so a symlink is judged
+    as itself, never as its target.
+    """
+    try:
+        _ensure_private_dir(directory)
+        info = os.lstat(directory)
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) & 0o077 == 0
+    )
+
+
 def _unlink_quietly(path: Path) -> None:
     """Best-effort removal; a stale socket must never crash its janitor."""
     try:
@@ -330,23 +354,30 @@ class SshMasterManager:
 
             base = get_user_data_dir()
         primary = base / _CONTROL_DIR_NAME
-        if _rendered_socket_length(primary) < _CONTROL_PATH_RENDER_LIMIT:
-            _ensure_private_dir(primary)
+        primary_fits = _rendered_socket_length(primary) < _CONTROL_PATH_RENDER_LIMIT
+        if primary_fits and _private_dir_usable(primary):
             return primary
+        # Log reasons, never the directories: both sit in persistent logs
+        # and the primary one names the user's home.
         fallback = Path(_FALLBACK_CONTROL_DIR.format(uid=os.getuid()))
         if _rendered_socket_length(fallback) < _CONTROL_PATH_RENDER_LIMIT:
-            logger.info(
-                f"mux control dir {primary} exceeds the {SUN_PATH_LIMIT}-byte "
-                f"sun_path limit once ssh expands %C; "
-                f"using short fallback {fallback}"
+            if _private_dir_usable(fallback):
+                logger.info(
+                    "mux control dir under the app-state dir is unusable (too "
+                    f"long for the {SUN_PATH_LIMIT}-byte sun_path limit once ssh "
+                    "expands %C, or not private); using the short /tmp fallback"
+                )
+                return fallback
+            logger.warning(
+                "SSH control dir fallback under /tmp is not a private directory "
+                "owned by this user (symlink, foreign owner, or group/other "
+                "access); refusing to put mux sockets there"
             )
-            _ensure_private_dir(fallback)
-            return fallback
         logger.warning(
-            f"no usable SSH control dir: both {primary} and {fallback} "
-            f"render >= {_CONTROL_PATH_RENDER_LIMIT} bytes against the "
-            f"{SUN_PATH_LIMIT}-byte sun_path limit; multiplexing "
-            "disabled for this session (per-call direct connections)"
+            "no usable SSH control dir: each candidate is too long for the "
+            f"{SUN_PATH_LIMIT}-byte sun_path limit once ssh expands %C, or not "
+            "private; multiplexing disabled for this session (per-call direct "
+            "connections)"
         )
         self._mux_unusable = True
         return None
@@ -770,6 +801,11 @@ class TransportFailureKind(enum.Enum):
     #: Mux connection/protocol failure; triggers a master restart for
     #: the NEXT call, never a retry of this one.
     MUX_ERROR = "mux_error"
+    #: ``ssh -G`` no longer resolves the binding's locator to the
+    #: destination recorded (and consented to) when it was added -- an
+    #: ssh_config alias was retargeted. Checked before every identity
+    #: capture so a pin failure can never re-capture a different host.
+    DESTINATION_CHANGED = "destination_changed"
 
 
 @dataclass(frozen=True)
@@ -1004,8 +1040,11 @@ def _watch_exchange(
     stdout_fd = proc.stdout.fileno()  # type: ignore[union-attr]
     selector.register(stdout_fd, selectors.EVENT_READ)
     try:
-        buffered = b""
+        buffered = bytearray()
         garbage = bytearray()
+        # Bytes of the current frame already searched for its newline, so
+        # each chunk is scanned once rather than the whole frame per read.
+        scanned = 0
         expect_magic = True
         admitted_at: float | None = None
         terminal: bytes | None = None
@@ -1020,7 +1059,8 @@ def _watch_exchange(
                     index = buffered.find(RESPONSE_MAGIC)
                     if index != -1:
                         garbage += buffered[:index]
-                        buffered = buffered[index + magic_len :]
+                        del buffered[: index + magic_len]
+                        scanned = 0
                         expect_magic = False
                         progressed = True
                     elif len(buffered) > magic_len - 1:
@@ -1028,12 +1068,13 @@ def _watch_exchange(
                         # magic prefix straddling the boundary is noise.
                         cut = len(buffered) - (magic_len - 1)
                         garbage += buffered[:cut]
-                        buffered = buffered[cut:]
+                        del buffered[:cut]
                 else:
-                    newline = buffered.find(b"\n")
+                    newline = buffered.find(b"\n", scanned)
+                    scanned = len(buffered)
                     if newline != -1:
-                        frame = buffered[:newline]
-                        buffered = buffered[newline + 1 :]
+                        frame = bytes(buffered[:newline])
+                        del buffered[: newline + 1]
                         expect_magic = True
                         progressed = True
                         if admitted_at is None and _frame_is_admitted_marker(
@@ -1045,6 +1086,15 @@ def _watch_exchange(
             # The garbage cap outranks a parsed terminal frame, matching
             # the loopback harness: >4KB of leading noise makes the
             # channel unusable even if frames eventually followed.
+            if not expect_magic and len(buffered) > MAX_RESPONSE_BYTES:
+                # A magic-prefixed frame with no newline in sight: stop
+                # buffering at the response cap instead of growing until
+                # the deadline. The over-cap bytes are handed on as the
+                # terminal frame, which the shared parser rejects as a
+                # protocol failure (status unchanged -- the peer spoke).
+                terminal = bytes(buffered[: MAX_RESPONSE_BYTES + 1])
+                killed = _kill_group(proc)
+                break
             if len(garbage) > _NOISE_GARBAGE_CAP:
                 noise_capped = True
                 killed = _kill_group(proc)

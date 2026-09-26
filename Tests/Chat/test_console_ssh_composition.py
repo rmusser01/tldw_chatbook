@@ -914,3 +914,26 @@ def test_invoke_level_remote_read_cas_through_composition(tmp_path, monkeypatch)
         stamp = provider._read_ledger.stamp_for(run, key)
     assert stamp is not None, "worker-reported stamps must reach the ledger"
     assert stamp.sha256 == digest
+
+
+def test_remote_admission_fingerprints_recorded_destination_not_alias_text():
+    """The consented destination (``ssh -G`` at add time) is the authority
+    identity: a renamed alias for the same destination keeps it, and the same
+    alias recorded against another destination does not share it."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _validate_remote_project_instruction_binding,
+    )
+
+    def selection(locator: str, recorded: str):
+        binding = SimpleNamespace(
+            binding_id="ssh-b1",
+            locator=locator,
+            metadata={"access": "ro", "canonical_fingerprint": recorded},
+        )
+        return _validate_remote_project_instruction_binding(binding)
+
+    same_dest = selection("ssh://devbox/srv/www", "a" * 64)
+    renamed = selection("ssh://devbox-alias/srv/www", "a" * 64)
+    moved = selection("ssh://devbox/srv/www", "b" * 64)
+    assert same_dest.locator_fingerprint == renamed.locator_fingerprint
+    assert same_dest.locator_fingerprint != moved.locator_fingerprint

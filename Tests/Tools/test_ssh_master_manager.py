@@ -343,6 +343,40 @@ def test_pathological_fallback_disables_mux(
     assert len([w for w in warnings if "sun_path" in w]) == 1, warnings
 
 
+@pytest.mark.skipif(os.name != "posix", reason="mux is POSIX-only")
+@pytest.mark.parametrize("hazard", ["group-writable", "symlink"])
+def test_fallback_dir_not_private_to_this_user_disables_mux(
+    fake_ssh: FakeSsh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hazard: str,
+) -> None:
+    """A pre-existing fallback dir another user could control (loose
+    permissions, or a symlink into other storage) is never used: the
+    manager degrades to per-call connections instead of naming sockets
+    there."""
+    fallback = Path(f"/tmp/tldw-fb-{os.getpid()}-{uuid.uuid4().hex[:6]}")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    try:
+        if hazard == "symlink":
+            fallback.symlink_to(elsewhere)
+        else:
+            fallback.mkdir()
+            fallback.chmod(0o777)
+        monkeypatch.setattr(transport, "_FALLBACK_CONTROL_DIR", str(fallback))
+        manager = _manager(fake_ssh, state_dir=tmp_path / ("x" * 64))
+        assert manager.control_path_for(_LOC) is None
+        manager.ensure_master(_LOC)
+        assert fake_ssh.invocations() == []
+        assert not any(elsewhere.iterdir())
+    finally:
+        if fallback.is_symlink() or fallback.is_file():
+            fallback.unlink()
+        elif fallback.exists():
+            shutil.rmtree(fallback)
+
+
 # ---------------------------------------------------------------------------
 # ensure_master: one master under contention
 # ---------------------------------------------------------------------------

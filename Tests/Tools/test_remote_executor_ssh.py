@@ -54,7 +54,11 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Tools.build_remote_worker_bundle import expected_bundle_stamp
-from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
+from tldw_chatbook.Tools.remote_binding_locator import (
+    CanonicalTarget,
+    canonical_fingerprint,
+    parse_remote_locator,
+)
 from tldw_chatbook.Tools.remote_binding_status import (
     BindingState,
     RemoteBindingStatusCache,
@@ -93,6 +97,14 @@ if [ "$mode" != "worker" ]; then
   # "down": every invocation (lifecycle or call) dies unreachable.
   exit 255
 fi
+
+# -- ssh -G: print the resolved destination, connect nowhere -----------------
+for arg in "$@"; do
+  if [ "$arg" = "-G" ]; then
+    printf 'hostname %s\nport 22\nuser tester\n' "${FAKE_SSH_G_HOST:-fake-host}"
+    exit 0
+  fi
+done
 
 # -- master lifecycle --------------------------------------------------------
 prev=""
@@ -641,3 +653,54 @@ def test_for_ssh_reads_max_concurrent_calls_from_config(
     )
     executor = env.make(max_concurrent_calls=None)
     assert executor.max_concurrent_calls == 5
+
+
+# ---------------------------------------------------------------------------
+# destination check: a retargeted ssh alias never has its identity adopted
+# ---------------------------------------------------------------------------
+
+
+def _recorded_fingerprint(env: SimpleNamespace) -> str:
+    return canonical_fingerprint(
+        CanonicalTarget(hostname="fake-host", port=22, user="tester"), env.loc.path
+    )
+
+
+def test_matching_destination_captures_identity(env: SimpleNamespace) -> None:
+    executor = env.make(expected_fingerprint=_recorded_fingerprint(env))
+    assert env.read(executor)["outcome"] == "success"
+    assert env.cache.status("binding-1").state == BindingState.READY
+
+
+def test_retargeted_alias_blocks_recapture_and_heals_on_revert(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pin catches the retarget (new root identity); the re-capture
+    that would adopt the new host's identity is refused because ssh -G
+    now resolves elsewhere. Reverting the config lets the next probe heal."""
+    executor = env.make(expected_fingerprint=_recorded_fingerprint(env))
+    assert env.read(executor)["outcome"] == "success"
+    calls_before = len(env.fake.call_invocations())
+
+    monkeypatch.setenv("FAKE_SSH_G_HOST", "other-host.example")
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        executor.ping()
+    assert raised.value.code == "destination_changed"
+    status = env.cache.status("binding-1")
+    assert status.state == BindingState.BLOCKED
+    assert "different destination" in str(status.reason)
+    assert len(env.fake.call_invocations()) == calls_before, (
+        "no worker runs against an unverified destination"
+    )
+
+    monkeypatch.setenv("FAKE_SSH_G_HOST", "fake-host")
+    executor.ping()
+    assert env.cache.status("binding-1").state == BindingState.READY
+
+
+def test_missing_recorded_destination_fails_closed(env: SimpleNamespace) -> None:
+    executor = env.make(expected_fingerprint="")
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+    assert raised.value.code == "destination_changed"
+    assert env.fake.call_invocations() == []

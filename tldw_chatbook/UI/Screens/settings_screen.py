@@ -2727,7 +2727,10 @@ def _workspace_worker_connection(screen):
 
 
 def _settings_ssh_advisory_probe(
-    binding_id: str, locator: str, python_interpreter: str
+    binding_id: str,
+    locator: str,
+    python_interpreter: str,
+    metadata: "Mapping[str, Any] | None" = None,
 ) -> None:
     """Run one advisory ping for a just-added SSH binding (Task 20).
 
@@ -2750,6 +2753,7 @@ def _settings_ssh_advisory_probe(
     from tldw_chatbook.Tools.remote_workspace_executor import (
         RemoteWorkspaceExecutionError,
         RemoteWorkspaceToolExecutor,
+        ssh_binding_identity,
     )
     from tldw_chatbook.Tools.remote_workspace_transport import (
         TransportFailureKind,
@@ -2769,6 +2773,7 @@ def _settings_ssh_advisory_probe(
         except Exception:  # noqa: BLE001 - cache write is best-effort
             pass
 
+    expected_fingerprint, host_key = ssh_binding_identity(metadata)
     try:
         executor = RemoteWorkspaceToolExecutor.for_ssh(
             parse_remote_locator(locator),
@@ -2777,6 +2782,8 @@ def _settings_ssh_advisory_probe(
             masters=get_master_manager(),
             python=python_interpreter,
             sensitive_exclusions=lambda: (),
+            expected_fingerprint=expected_fingerprint if metadata is not None else None,
+            canonical_host_key=host_key,
         )
     except Exception:  # noqa: BLE001 - advisory only, degrade never raise
         _record_unreached("probe could not run")
@@ -20877,7 +20884,12 @@ class SettingsScreen(BaseAppScreen):
 
     @work(thread=True, exclusive=True, group="settings-ssh-probe")
     def _probe_settings_workspace_ssh_binding(
-        self, workspace_id: str, binding_id: str, locator: str, python: str
+        self,
+        workspace_id: str,
+        binding_id: str,
+        locator: str,
+        python: str,
+        metadata: "Mapping[str, Any] | None" = None,
     ) -> None:
         """Probe one just-added SSH binding off the UI thread (advisory).
 
@@ -20886,7 +20898,7 @@ class SettingsScreen(BaseAppScreen):
         outcome back to the UI thread. Never blocks, never retries —
         recovery is the cache plus the transport's own debounced probe.
         """
-        _settings_ssh_advisory_probe(binding_id, locator, python)
+        _settings_ssh_advisory_probe(binding_id, locator, python, metadata)
         try:
             self.app.call_from_thread(
                 self._settings_workspace_ssh_probe_landed, workspace_id, binding_id
@@ -25799,6 +25811,7 @@ class SettingsScreen(BaseAppScreen):
             str(binding.binding_id),
             str(binding.locator),
             str(binding.metadata.get("python") or "python3"),
+            dict(binding.metadata),
         )
 
     @on(Button.Pressed, ".settings-workspace-ssh-toggle")

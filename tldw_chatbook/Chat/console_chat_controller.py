@@ -1631,10 +1631,18 @@ def _validate_remote_project_instruction_binding(
         root=parsed.path,
         binding_id=binding_id,
     )
+    # Fingerprint the ssh -G destination recorded at add time, not the
+    # locator text: an alias is only a name, and the destination is what
+    # the user consented to. The executor re-resolves before every
+    # identity capture and refuses a destination that no longer matches.
+    recorded = (getattr(binding, "metadata", None) or {}).get(
+        "canonical_fingerprint"
+    )
+    fingerprint_source = f"ssh-destination:{recorded}" if recorded else locator
     return ProjectInstructionBindingSelection(
         binding=binding,
         root=descriptor,
-        locator_fingerprint=fingerprint_canonical_locator(locator),
+        locator_fingerprint=fingerprint_canonical_locator(fingerprint_source),
         allow_write=str(getattr(binding, "metadata", {}).get("access", "ro")) == "rw",
         root_identity=root_identity,
         degraded=degraded,
@@ -1950,12 +1958,14 @@ def _default_remote_run_executor_factory(
     from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
     from tldw_chatbook.Tools.remote_workspace_executor import (
         RemoteWorkspaceToolExecutor,
+        ssh_binding_identity,
     )
     from tldw_chatbook.Tools.remote_workspace_transport import get_master_manager
 
     loc = parse_remote_locator(str(binding.locator))
     metadata = getattr(binding, "metadata", None) or {}
     python = str(metadata.get("python") or "python3")
+    expected_fingerprint, host_key = ssh_binding_identity(metadata)
     inner = RemoteWorkspaceToolExecutor.for_ssh(
         loc,
         binding_id,
@@ -1963,6 +1973,8 @@ def _default_remote_run_executor_factory(
         masters=get_master_manager(),
         python=python,
         sensitive_exclusions=sensitive_exclusions,
+        expected_fingerprint=expected_fingerprint,
+        canonical_host_key=host_key,
     )
     return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
@@ -1985,12 +1997,14 @@ def _default_remote_instruction_executor(
     from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
     from tldw_chatbook.Tools.remote_workspace_executor import (
         RemoteWorkspaceToolExecutor,
+        ssh_binding_identity,
     )
     from tldw_chatbook.Tools.remote_workspace_transport import get_master_manager
 
     loc = parse_remote_locator(selection.root.canonical_locator)
     metadata = getattr(selection.binding, "metadata", None) or {}
     python = str(metadata.get("python") or "python3")
+    expected_fingerprint, host_key = ssh_binding_identity(metadata)
     return RemoteWorkspaceToolExecutor.for_ssh(
         loc,
         binding_id,
@@ -1998,7 +2012,32 @@ def _default_remote_instruction_executor(
         masters=get_master_manager(),
         python=python,
         sensitive_exclusions=sensitive_exclusions,
+        expected_fingerprint=expected_fingerprint,
+        canonical_host_key=host_key,
     )
+
+
+def _selection_with_registry_metadata(
+    selection: Any, registry: Any, binding_id: str
+) -> Any:
+    """Give a snapshot-derived remote selection its registry binding row.
+
+    Frozen snapshots carry no binding metadata, so the executor would have
+    no recorded ``ssh -G`` destination to verify against (and would fail
+    closed). The live row supplies it; a missing row leaves the selection
+    as-is, which fails closed in the executor too.
+    """
+    if getattr(selection.binding, "metadata", None) is not None or registry is None:
+        return selection
+    try:
+        row = registry.get_runtime_binding(binding_id)
+    except Exception:  # noqa: BLE001 - unreadable registry: executor fails closed
+        return selection
+    if row is None:
+        return selection
+    from dataclasses import replace
+
+    return replace(selection, binding=row)
 
 
 def _remote_instruction_io_for_selection(
@@ -2032,7 +2071,7 @@ def _remote_instruction_io_for_selection(
             registry, binding_id, selection.root, snapshot_rels
         )
         executor = factory(
-            selection,
+            _selection_with_registry_metadata(selection, registry, binding_id),
             binding_id,
             status_cache=status_cache,
             sensitive_exclusions=exclusions_provider,

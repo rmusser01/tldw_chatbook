@@ -81,6 +81,7 @@ BLOCKING_TRANSPORT_KINDS = frozenset(
         TransportFailureKind.PYTHON_TOO_OLD,
         TransportFailureKind.WORKER_FAILED_TO_START,
         TransportFailureKind.STDOUT_NOISE,
+        TransportFailureKind.DESTINATION_CHANGED,
     }
 )
 

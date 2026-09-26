@@ -294,7 +294,10 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
         tmp_path, "ws-ssh-add"
     )
 
-    def noop_probe(binding_id, locator, python):
+    probe_metadata: list = []
+
+    def noop_probe(binding_id, locator, python, metadata=None):
+        probe_metadata.append(metadata)
         return None
 
     monkeypatch.setattr(
@@ -363,6 +366,9 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
             if "Probe: ready." in _visible_text(screen):
                 break
         assert "Probe: ready." in _visible_text(screen)
+        # The probe gets the recorded ssh -G destination, so it verifies
+        # the host before capturing identity.
+        assert probe_metadata == [binding.metadata]
         # The row renders locator + access + live status (noop probe left
         # the cold-cache optimistic ready).
         row = await _wait_for_widget(
@@ -384,7 +390,7 @@ async def test_advisory_probe_failure_still_saves_with_reason(
     )
     cache = fresh_status_cache
 
-    def failing_probe(binding_id, locator, python):
+    def failing_probe(binding_id, locator, python, metadata=None):
         cache.record_transport_failure(
             binding_id, TransportFailureKind.INTERPRETER_MISSING, "host lacks python3"
         )
@@ -429,7 +435,7 @@ async def test_probe_dispatched_to_worker_never_blocks_ui(
     started = threading.Event()
     release = threading.Event()
 
-    def blocking_probe(binding_id, locator, python):
+    def blocking_probe(binding_id, locator, python, metadata=None):
         started.set()
         release.wait(timeout=10)
         cache.record_transport_failure(
@@ -490,7 +496,7 @@ async def test_ssh_toggle_and_remove_call_through(
         tmp_path, "ws-ssh-edit"
     )
 
-    def noop_probe(binding_id, locator, python):
+    def noop_probe(binding_id, locator, python, metadata=None):
         return None
 
     monkeypatch.setattr(

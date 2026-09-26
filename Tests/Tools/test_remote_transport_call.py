@@ -217,6 +217,14 @@ case "$mode" in
     emit_admitted
     sleep 30
     ;;
+  endless-frame)
+    # A magic-prefixed frame that never ends: newline-free bytes until
+    # the transport stops reading.
+    write_pid
+    drain_stdin
+    printf '%s' "$MAGIC"
+    while :; do printf 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'; done
+    ;;
   noise-capped)
     write_pid
     dd if=/dev/zero bs=5120 count=1 2>/dev/null | tr '\0' 'x'
@@ -691,6 +699,29 @@ def test_pre_magic_garbage_cap_is_stdout_noise(
     failure = result.failure
     assert failure.kind is TransportFailureKind.STDOUT_NOISE
     assert elapsed < 5.0, "the cap must fire while reading, not on exit"
+    env.fake.assert_pid_gone()
+
+
+def test_unterminated_frame_is_capped_not_buffered_to_the_deadline(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Post-magic bytes stop at the response cap: the reader kills the
+    exchange and hands on an over-cap frame (which the shared parser
+    rejects) instead of growing laptop memory until the deadline."""
+    monkeypatch.setenv("FAKE_SSH_MODE", "endless-frame")
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.remote_workspace_transport.MAX_RESPONSE_BYTES",
+        64 * 1024,
+    )
+
+    started = time.monotonic()
+    result = env.call()
+    elapsed = time.monotonic() - started
+
+    assert result.failure is None
+    assert result.response is not None
+    assert len(result.response) == 64 * 1024 + 1
+    assert elapsed < 5.0, "the cap must fire while reading, not at the deadline"
     env.fake.assert_pid_gone()
 
 
