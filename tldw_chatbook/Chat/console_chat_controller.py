@@ -370,6 +370,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+    from tldw_chatbook.Tools.character_tool_service import CharacterReadGuard
 
     from ..Workspaces.conversation_attention import ConversationAttentionFact
 
@@ -1295,12 +1296,15 @@ def capture_skill_context_maximum(app: Any) -> dict[str, Any]:
     if local is None:
         return _empty_local_skill_context()
     try:
-        records = local._load_index()  # noqa: SLF001 -- app-owned snapshot seam
+        records = local._visible_records()  # noqa: SLF001 -- app-owned snapshot seam
         available: list[dict[str, Any]] = []
         blocked: list[dict[str, Any]] = []
         for _, record in sorted(records.items()):
             summary = local._summary_for_record(record)  # noqa: SLF001
-            trust = getattr(local, "trust_service", None)
+            # A built-in never reads trust; with no definition_digest the
+            # later digest gates skip it, and execute re-verifies its pins.
+            is_builtin = record.get("source") == "builtin"
+            trust = None if is_builtin else getattr(local, "trust_service", None)
             if not summary.get("trust_blocked") and trust is not None:
                 summary["definition_digest"] = trust.current_fingerprint_digest(
                     str(summary.get("name", ""))
@@ -4474,6 +4478,12 @@ class ConsoleChatController:
         #: ``request_mcp_approvals`` a safe no-op UI bridge that still
         #: resolves via cancellation/timeout.
         self.app: Any | None = None
+        #: TASK-32954: one CharacterReadGuard per Console session, kept
+        #: across turns (never rebuilt per turn) -- a full read of a field
+        #: in one turn must still permit character_save on a later turn of
+        #: the SAME session (spec §3.1). Built lazily by
+        #: ``_character_wiring``.
+        self._character_read_guards: dict[str, CharacterReadGuard] = {}
         #: UI-thread callback that pushes/clears the pending-approval batch
         #: into the owning screen's task-resume state (``ChatScreen.
         #: _set_console_pending_approval``). Always invoked through
@@ -15888,6 +15898,7 @@ class ConsoleChatController:
             admitted_roots=admitted_roots,
             **self._todo_wiring(session_id),
             **self._ask_user_wiring(session_id),
+            **self._character_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
@@ -16164,6 +16175,58 @@ class ConsoleChatController:
             return self.request_user_questions(questions, session_id=session_id)
 
         return {"ask_user": _ask}
+
+    def _character_wiring(self, session_id: str | None) -> dict[str, Any]:
+        """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
+
+        Empty (tools not registered) without a session or an app. The read
+        guard is per SESSION, not per turn, so a full read in one turn permits
+        the save in the next (spec §3.1).
+
+        Args:
+            session_id: THIS run's owning session id.
+
+        Returns:
+            ``{"character_service": CharacterToolService}`` or ``{}``.
+        """
+        if session_id is None or self.app is None:
+            return {}
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        if session is None:
+            return {}
+        from tldw_chatbook.Tools.character_tool_service import (
+            CharacterReadGuard,
+            CharacterToolService,
+        )
+
+        guard = self._character_read_guards.setdefault(session_id, CharacterReadGuard())
+        app = self.app
+
+        def _service() -> Any:
+            service = getattr(app, "local_character_persona_service", None)
+            if service is None:
+                raise RuntimeError("local character service unavailable")
+            return service
+
+        def _runtime_source() -> str:
+            current = next((s for s in self.store.sessions() if s.id == session_id), None)
+            return "server" if current and current.runtime_backend == "server" else "local"
+
+        def _changed(character_id: int) -> None:
+            from tldw_chatbook.Character_Chat.character_events import (
+                CharacterCardChanged,
+            )
+
+            # Textual's post_message is thread-safe off the app thread (it
+            # hops onto the event loop via call_soon_threadsafe -- see
+            # message_pump.py) and returns False once the app is closed;
+            # call_from_thread would instead block this worker thread with
+            # no timeout, and can hang at shutdown (task-32954 Task 5, R11).
+            app.post_message(CharacterCardChanged(character_id))
+
+        return {"character_service": CharacterToolService(
+            service_loader=_service, runtime_source_loader=_runtime_source,
+            read_guard=guard, on_changed=_changed)}
 
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext

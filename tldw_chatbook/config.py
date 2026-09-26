@@ -2343,6 +2343,9 @@ def _load_settings_uncached(
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
+        # [skills] disabled_builtins is read from app_config on every skills
+        # read (TASK-32954); without this a disabled built-in returned on restart.
+        "skills": copy.deepcopy(toml_config_data.get("skills", {})),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -3715,6 +3718,7 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
+# disabled_builtins = []  # built-in skills to hide, e.g. ["character-creator"]
 
 [tamagotchi]
 enabled = false  # opt-in virtual pet in the footer status bar; off unless you ask for it

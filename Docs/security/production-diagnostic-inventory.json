@@ -71,8 +71,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "38aafa72031a5d81f0b9",
+      "call_count": 10,
+      "diagnostic_digest": "c97650f616c1c31f8b61",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/local_tool_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2451,6 +2451,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "620d129b6dac14b1d349",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/character_tool_service.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 8,
       "diagnostic_digest": "83f1b779d094de50a859",
       "owner": "TASK-492",
@@ -2892,6 +2899,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "20e3637aafc36262c588",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 5,
       "diagnostic_digest": "aa6c5287ff93ffe8cca4",
       "owner": "TASK-494",
@@ -3109,8 +3123,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 188,
-      "diagnostic_digest": "a46c7e3911390f156df3",
+      "call_count": 189,
+      "diagnostic_digest": "1a6b37f5c7fb7d1fd883",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/personas_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11303,11 +11317,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 598,
+    "owner_files": 600,
     "path_privacy_candidate_calls": 688,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
-    "task_492_calls": 1360,
-    "task_494_calls": 7542
+    "task_492_calls": 1362,
+    "task_494_calls": 7546
   }
 }

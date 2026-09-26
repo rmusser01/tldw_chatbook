@@ -11,3 +11,7 @@ tldw_chatbook/Canvas/static/mermaid-runtime-manifest.json -text
 tldw_chatbook/Canvas/static/mermaid-subset.json -text
 tldw_chatbook/Canvas/static/quickjs-runtime.js -text
 tldw_chatbook/Canvas/static/runtime-manifest.json -text
+
+# Built-in skills are SHA-256 pinned (Skills_Interop/builtin_skills.py); a CRLF
+# checkout would block them as builtin_modified.
+tldw_chatbook/assets/skills/** -text

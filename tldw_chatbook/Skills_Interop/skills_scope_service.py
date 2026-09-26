@@ -253,13 +253,14 @@ class SkillsScopeService:
         return int(result)
 
     async def get_skill(
-        self, skill_name: str, *, mode: SkillsBackend | str | None = None
+        self, skill_name: str, *, mode: SkillsBackend | str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.detail.server",
             method_name="get_skill",
             args=(skill_name,),
+            kwargs=kwargs,
         )
 
     async def create_skill(

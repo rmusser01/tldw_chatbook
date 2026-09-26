@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 import zipfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -29,6 +29,13 @@ from ..Utils.input_validation import (
 )
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .atomic_write import write_bytes_atomic, write_text_atomic
+from .builtin_skills import (
+    BUILTIN_SKILL_DIGESTS,
+    builtin_skill_dir,
+    builtin_skill_records,
+    snapshot_builtin_skill,
+    verify_builtin_skill,
+)
 from .skill_trust_models import SkillTrustBlockedError
 from .skill_trust_service import _activation_blocked, _execution_scope, _skill_use
 
@@ -106,6 +113,8 @@ _TEXT_FIELD_LIMITS = {
     "allowed_tool": 128,
 }
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
+#: Record keys only the service assigns; never trusted from the index file.
+_SERVICE_ASSIGNED_KEYS = ("source", "overrides_builtin", "builtin_disabled")
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 SKILL_FILE_READ_CAP_CHARS = 100_000
 
@@ -265,6 +274,7 @@ class LocalSkillsService:
         trust_service: Any | None = None,
         trust_service_factory: Callable[[], Any] | None = None,
         allow_untrusted_without_trust_service: bool = False,
+        builtin_disabled_loader: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         """Construct the local skill library service.
 
@@ -281,6 +291,13 @@ class LocalSkillsService:
                 asked a trust question (TASK-21111(b)).
             allow_untrusted_without_trust_service: Escape hatch for a
                 deliberately trust-service-less service.
+            builtin_disabled_loader: Returns the names of disabled built-in
+                skills. Called on every read, so it must be cheap (the app
+                reads its in-memory config, never ``get_cli_setting``).
+                None (the default) turns built-ins off entirely: only a
+                composition root that also honours ``[skills]
+                disabled_builtins`` (the app) opts in, so a side service
+                (MCP server, evals) never shows a built-in the user hid.
         """
         self.store_dir = Path(store_dir)
         self.skills_dir = self.store_dir / _SKILLS_DIRNAME
@@ -291,6 +308,7 @@ class LocalSkillsService:
         self.allow_untrusted_without_trust_service = (
             allow_untrusted_without_trust_service
         )
+        self._builtin_disabled_loader = builtin_disabled_loader
         self._lock = asyncio.Lock()
 
     @property
@@ -356,7 +374,15 @@ class LocalSkillsService:
         skills = payload.get("skills", {})
         if not isinstance(skills, dict):
             return {}
-        return {str(name): dict(record) for name, record in skills.items()}
+        records = {str(name): dict(record) for name, record in skills.items()}
+        for record in records.values():
+            # Service-assigned keys (TASK-32954): an index row can never claim
+            # to be a built-in, which would skip trust and redirect its reads
+            # to the package. Stripped here, the single choke point every
+            # raw-index reader shares; only _visible_records sets them.
+            for key in _SERVICE_ASSIGNED_KEYS:
+                record.pop(key, None)
+        return records
 
     def _save_index(self, records: dict[str, dict[str, Any]]) -> None:
         self.store_dir.mkdir(parents=True, exist_ok=True)
@@ -376,6 +402,89 @@ class LocalSkillsService:
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
         return self.skills_dir / _normalize_skill_name(skill_name)
+
+    # --- Built-in skills (TASK-32954, spec §3.5) ---
+    #
+    # Read paths use ``_visible_records()``/``_record_dir()``; write paths
+    # keep ``_load_index()``/``_skill_dir()`` so nothing ever writes to, or
+    # deletes from, the package directory.
+
+    def _disabled_builtins(self) -> frozenset[str]:
+        if self._builtin_disabled_loader is None:
+            return frozenset(BUILTIN_SKILL_DIGESTS)
+        return self._builtin_disabled_loader()
+
+    def _builtin_record(self, name: str) -> dict[str, Any]:
+        skill_dir = builtin_skill_dir(name)
+        try:
+            content = (skill_dir / _SKILL_FILENAME).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            content = ""  # verify_builtin_skill blocks it
+        record = self._metadata_from_content(
+            name=name, content=content, skill_dir=skill_dir
+        )
+        record["source"] = "builtin"
+        return record
+
+    def _visible_records(
+        self, *, include_disabled_builtins: bool = False
+    ) -> dict[str, dict[str, Any]]:
+        """Index records plus enabled built-ins; a user skill of the same name wins.
+
+        ``include_disabled_builtins`` is for the Library only (so a hidden
+        built-in can be turned back on): disabled built-ins are added too,
+        flagged ``builtin_disabled``. Model-facing paths never pass it.
+        """
+        disabled = self._disabled_builtins()
+        if include_disabled_builtins and self._builtin_disabled_loader is not None:
+            names = builtin_skill_records(frozenset())
+        else:
+            names = builtin_skill_records(disabled)
+        records = {name: self._builtin_record(name) for name in names}
+        for name, record in records.items():
+            if name in disabled:
+                record["builtin_disabled"] = True
+        for name, record in self._load_index().items():
+            if name in BUILTIN_SKILL_DIGESTS:
+                record["overrides_builtin"] = True
+            records[name] = record
+        return records
+
+    def _record_dir(self, record: Mapping[str, Any]) -> Path:
+        """Read-side directory for a visible record (package dir for a built-in)."""
+        if record.get("source") == "builtin":
+            return builtin_skill_dir(str(record["name"]))
+        return self._skill_dir(str(record["name"]))
+
+    def _visible_builtin(self, skill_name: str) -> dict[str, Any] | None:
+        """The visible built-in record for a name, or None (user copy, disabled, other)."""
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
+        name = _normalize_skill_name(skill_name)
+        if (
+            name not in BUILTIN_SKILL_DIGESTS
+            or name in self._disabled_builtins()
+            or name in self._load_index()
+        ):
+            return None
+        return self._builtin_record(name)
+
+    def _read_dir(self, skill_name: str) -> Path:
+        builtin = self._visible_builtin(skill_name)
+        return self._record_dir(builtin) if builtin else self._skill_dir(skill_name)
+
+    @staticmethod
+    def _refuse_builtin_write(
+        skill_name: str, records: Mapping[str, Any]
+    ) -> None:
+        """Refuse a mutation of a built-in that has no user copy, before any disk I/O."""
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
+        name = _normalize_skill_name(skill_name)
+        if name in BUILTIN_SKILL_DIGESTS and name not in records:
+            raise ValueError(
+                "Built-in skills are read-only. Use Customize to make your own copy."
+            )
 
     @staticmethod
     def _write_text_atomic(path: Path, content: str) -> None:
@@ -736,8 +845,7 @@ class LocalSkillsService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillResponse
 
-        skill_name = str(record["name"])
-        skill_dir = self._skill_dir(skill_name)
+        skill_dir = self._record_dir(record)
         content = self._read_text_preserving_newlines(
             skill_dir / _SKILL_FILENAME,
             base_dir=skill_dir,
@@ -772,6 +880,9 @@ class LocalSkillsService:
             "validation_errors",
             "record_id",
             "backend",
+            "source",
+            "overrides_builtin",
+            "builtin_disabled",
         ):
             if field in record:
                 summary[field] = record[field]
@@ -779,6 +890,17 @@ class LocalSkillsService:
         return summary
 
     def _trust_fields_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        if record.get("source") == "builtin":
+            # Built-ins never consult the trust service (no manifest/keyring).
+            reason = verify_builtin_skill(str(record["name"]))
+            return {
+                "trust_status": "blocked" if reason else "builtin",
+                "trust_reason_code": reason,
+                "trust_blocked": reason is not None,
+                "trust_changed_files": [],
+                "trust_manifest_generation": None,
+                "trust_last_verified_at": None,
+            }
         if self.trust_service is None:
             if not self.allow_untrusted_without_trust_service:
                 return {
@@ -802,6 +924,16 @@ class LocalSkillsService:
         ).response_fields()
 
     def _require_trusted_skill(self, skill_name: str) -> None:
+        builtin = self._visible_builtin(skill_name)
+        if builtin is not None:
+            reason = verify_builtin_skill(str(builtin["name"]))
+            if reason is not None:
+                raise SkillTrustBlockedError(
+                    skill_name=str(builtin["name"]),
+                    reason_code=reason,
+                    trust_status="blocked",
+                )
+            return
         if self.trust_service is None:
             if self.allow_untrusted_without_trust_service:
                 return
@@ -863,6 +995,17 @@ class LocalSkillsService:
             )
 
     def _verify_exact_skill_content(self, skill: dict[str, Any]) -> None:
+        if skill.get("source") == "builtin":
+            name = str(skill["name"])
+            pinned = BUILTIN_SKILL_DIGESTS.get(name, {}).get(_SKILL_FILENAME)
+            actual = hashlib.sha256(str(skill["content"]).encode("utf-8")).hexdigest()
+            if actual != pinned:
+                raise SkillTrustBlockedError(
+                    skill_name=name,
+                    reason_code="builtin_modified",
+                    trust_status="blocked",
+                )
+            return
         if self.trust_service is None:
             self._require_trusted_skill(str(skill["name"]))
             return
@@ -992,6 +1135,7 @@ class LocalSkillsService:
         offset: int = 0,
         query: str = "",
         sort: str = "name",
+        include_disabled_builtins: bool = False,
     ) -> dict[str, Any]:
         """Return one exact page from the complete classified local index.
 
@@ -1006,6 +1150,8 @@ class LocalSkillsService:
             offset: Zero-based summary offset at which the page begins.
             query: Literal case-insensitive name/description filter.
             sort: ``"name"`` or ``"status"`` ordering mode.
+            include_disabled_builtins: Library browse only -- also list
+                disabled built-ins (flagged ``builtin_disabled``).
 
         Returns:
             A serialized Skills-list response with exact page coordinates,
@@ -1027,7 +1173,9 @@ class LocalSkillsService:
         normalized_sort = validated.sort
 
         self._enforce("skills.list.local")
-        records = self._load_index()
+        records = self._visible_records(
+            include_disabled_builtins=include_disabled_builtins
+        )
         summaries = [
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
@@ -1076,7 +1224,7 @@ class LocalSkillsService:
         from ..tldw_api import SkillContextPayload
 
         self._enforce("skills.context.list.local")
-        records = self._load_index()
+        records = self._visible_records()
         available: list[dict[str, Any]] = []
         blocked: list[dict[str, Any]] = []
         for _, record in sorted(records.items()):
@@ -1135,9 +1283,13 @@ class LocalSkillsService:
         )
 
     @content_call(_content_sources)
-    async def get_skill(self, skill_name: str) -> dict[str, Any]:
+    async def get_skill(
+        self, skill_name: str, *, include_disabled_builtins: bool = False
+    ) -> dict[str, Any]:
         self._enforce("skills.detail.local")
-        records = self._load_index()
+        records = self._visible_records(
+            include_disabled_builtins=include_disabled_builtins
+        )
         return self._response_for_record(self._require_record(skill_name, records))
 
     # --- Library read seams (task-1337) ---
@@ -1212,9 +1364,9 @@ class LocalSkillsService:
                 raise ValueError("local_skill_file_token_invalid") from None
         return decoded
 
-    def _read_body_for_match(self, skill_name: str) -> str:
+    def _read_body_for_match(self, record: Mapping[str, Any]) -> str:
         """Best-effort SKILL.md body read for search matching (never raises)."""
-        skill_dir = self._skill_dir(skill_name)
+        skill_dir = self._record_dir(record)
         try:
             return self._read_text_preserving_newlines(
                 skill_dir / _SKILL_FILENAME, base_dir=skill_dir
@@ -1242,7 +1394,7 @@ class LocalSkillsService:
             PolicyDeniedError: If local skill listing is denied by policy.
         """
         self._enforce("skills.list.local")
-        records = self._load_index()
+        records = self._visible_records()
         items = [
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
@@ -1276,7 +1428,7 @@ class LocalSkillsService:
             PolicyDeniedError: If local skill listing is denied by policy.
         """
         self._enforce("skills.list.local")
-        records = self._load_index()
+        records = self._visible_records()
         query_cf = query.casefold()
         matched: list[tuple[bool, str, dict[str, Any]]] = []
         for _, record in sorted(records.items()):
@@ -1294,7 +1446,7 @@ class LocalSkillsService:
             ):
                 fields.add("metadata")
             if not summary.get("trust_blocked"):
-                body = self._read_body_for_match(name)
+                body = self._read_body_for_match(record)
                 if body and query_cf in body.casefold():
                     fields.add("body")
             if fields:
@@ -1328,13 +1480,12 @@ class LocalSkillsService:
             ValueError: If the skill is not in the managed index.
         """
         self._enforce("skills.detail.local")
-        records = self._load_index()
+        records = self._visible_records()
         record = self._require_record(skill_name, records)
         summary = self._summary_for_record(record)
         if summary.get("trust_blocked"):
             return summary
-        canonical_name = str(record["name"])
-        skill_dir = self._skill_dir(canonical_name)
+        skill_dir = self._record_dir(record)
         body_path = skill_dir / _SKILL_FILENAME
         body = self._read_text_preserving_newlines(body_path, base_dir=skill_dir)
         files = [
@@ -1390,7 +1541,7 @@ class LocalSkillsService:
         self._enforce("skills.read_file.launch.local")
         self._require_trusted_skill(skill_name)
         relative_path = self._parse_library_file_token(file_token)
-        skill_dir = self._skill_dir(skill_name)
+        skill_dir = self._read_dir(skill_name)
         if not skill_dir.is_dir():
             raise ValueError(f"local_skill_not_found:{skill_name}")
         path = skill_dir / PurePosixPath(relative_path)
@@ -1481,6 +1632,7 @@ class LocalSkillsService:
         async with self._lock:
             records = self._load_index()
             normalized_name = _normalize_skill_name(skill_name)
+            self._refuse_builtin_write(normalized_name, records)
             record = self._require_record(normalized_name, records)
             self._check_expected_version(normalized_name, record, expected_version)
             skill_dir = self._skill_dir(normalized_name)
@@ -1516,6 +1668,7 @@ class LocalSkillsService:
         async with self._lock:
             records = self._load_index()
             normalized_name = _normalize_skill_name(skill_name)
+            self._refuse_builtin_write(normalized_name, records)
             record = self._require_record(normalized_name, records)
             self._check_expected_version(normalized_name, record, expected_version)
             records.pop(normalized_name, None)
@@ -1952,7 +2105,7 @@ class LocalSkillsService:
         # Containment is still enforced below via the same contained read.
         if relative_path != _SKILL_FILENAME:
             validate_supporting_file_path(relative_path)
-        skill_dir = self._skill_dir(skill_name)
+        skill_dir = self._read_dir(skill_name)
         if not skill_dir.is_dir():
             raise ValueError(f"local_skill_not_found:{skill_name}")
         path = skill_dir / PurePosixPath(relative_path)
@@ -2073,8 +2226,12 @@ class LocalSkillsService:
             ``allow_untrusted_without_trust_service`` escape hatch, whose
             semantics are kept identical to ``_require_trusted_skill``'s --
             with no trust service at all there is no manifest to consult, so
-            that flag alone decides, and it is not widened here.
+            that flag alone decides, and it is not widened here. A visible
+            built-in answers from its pinned file set instead.
         """
+        builtin = self._visible_builtin(skill_name)
+        if builtin is not None:
+            return relative_path in BUILTIN_SKILL_DIGESTS.get(str(builtin["name"]), {})
         if self.trust_service is None:
             return self.allow_untrusted_without_trust_service
         accessor = getattr(self.trust_service, "trusted_file_paths", None)
@@ -2140,7 +2297,7 @@ class LocalSkillsService:
             # is exactly the distinction this method's docstring promises
             # never to leak.
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}") from exc
-        skill_dir = self._skill_dir(skill_name)
+        skill_dir = self._read_dir(skill_name)
         if not skill_dir.is_dir():
             raise ValueError(f"local_skill_not_found:{skill_name}")
         path = skill_dir / PurePosixPath(script_path)
@@ -2591,6 +2748,57 @@ class LocalSkillsService:
         await join_retained_task(completion)
         return completion.result()
 
-    async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
+    async def seed_builtin_skills(
+        self, *, overwrite: bool = False, names: Iterable[str] | None = None
+    ) -> dict[str, Any]:
+        """Customize: copy each enabled built-in into the user's store.
+
+        The copy goes through ``import_skill_directory`` so the index,
+        validation and trust handling are the standard ones; the user copy
+        then overrides the built-in. Existing user copies are kept unless
+        ``overwrite``. ``names`` limits the copy to those built-ins (Library
+        Customize copies one); None copies every enabled built-in.
+
+        Each built-in is copied from a digest-verified private snapshot; one
+        that fails its integrity check is never imported (Qodo #2 on PR #2842:
+        a user copy is outside the built-in digest gate).
+
+        Returns:
+            ``{"seeded": [names], "count": n}``, plus ``"blocked": {name:
+            reason}`` when a built-in failed its integrity check.
+        """
+        import tempfile
+
         self._enforce("skills.seed.launch.local")
-        return {"seeded": [], "count": 0}
+        existing = self._load_index()
+        seeded: list[str] = []
+        blocked: dict[str, str] = {}
+        wanted = None if names is None else frozenset(names)
+        # An explicit request (Library Customize) copies a disabled built-in
+        # too; the blanket seed skips disabled ones. Built-ins stay off
+        # entirely without a loader.
+        if self._builtin_disabled_loader is None:
+            candidates = builtin_skill_records(self._disabled_builtins())
+        elif wanted is not None:
+            candidates = builtin_skill_records(frozenset())
+        else:
+            candidates = builtin_skill_records(self._disabled_builtins())
+        for name in candidates:
+            if wanted is not None and name not in wanted:
+                continue
+            if name in existing and not overwrite:
+                continue
+            with tempfile.TemporaryDirectory() as scratch:
+                snapshot = Path(scratch) / name
+                reason = snapshot_builtin_skill(name, snapshot)
+                if reason:
+                    blocked[name] = reason
+                    continue
+                await self.import_skill_directory(
+                    snapshot, name=name, overwrite=overwrite
+                )
+            seeded.append(name)
+        result: dict[str, Any] = {"seeded": seeded, "count": len(seeded)}
+        if blocked:
+            result["blocked"] = blocked
+        return result

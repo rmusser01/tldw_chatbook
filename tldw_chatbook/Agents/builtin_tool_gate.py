@@ -846,6 +846,15 @@ _ASK_USER_DESCRIPTION = (
     "agent."
 )
 
+#: TASK-32954: hand-written like ask_user's -- character_search/get/save are
+#: LocalToolSpecs, not a Tool ABC subclass. Default ON (see
+#: CHARACTER_TOOLS_GATE_KEY): every save still asks via the mutates floor.
+_CHARACTER_TOOLS_DESCRIPTION = (
+    "Lets the Console assistant search, read, create, and update your local "
+    "character cards (and set their avatars). On by default; every save asks "
+    "for your approval first."
+)
+
 
 def _gate_config_snapshot() -> tuple[dict, dict]:
     """Load the config ONCE and return its ``[tools]`` and ``[console]`` sections.
@@ -900,6 +909,8 @@ def all_tool_gates() -> list[ToolGate]:
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
+        CHARACTER_TOOLS_DEFAULT_ENABLED,
+        CHARACTER_TOOLS_GATE_KEY,
         WEB_DEEP_SEARCH_GATE_KEY,
     )
     from .tool_catalog import _GATEABLE_BUILTINS
@@ -971,6 +982,20 @@ def all_tool_gates() -> list[ToolGate]:
             group="local",
         )
     )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=CHARACTER_TOOLS_GATE_KEY,
+            tool_name="character_save",
+            title="Character cards (character_*)",
+            description=_CHARACTER_TOOLS_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                tools_cfg.get(CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED),
+                CHARACTER_TOOLS_DEFAULT_ENABLED,
+            ),
+            group="local",
+        )
+    )
     return gates
 
 
@@ -980,6 +1005,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     count path share so the key set can never drift between them."""
     from .local_tool_provider import (
         ASK_USER_GATE_KEY,
+        CHARACTER_TOOLS_GATE_KEY,
         WEB_DEEP_SEARCH_GATE_KEY,
     )
     from .tool_catalog import _GATEABLE_BUILTINS
@@ -990,6 +1016,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
     pairs.append(("tools", ASK_USER_GATE_KEY))
+    pairs.append(("tools", CHARACTER_TOOLS_GATE_KEY))
     return pairs
 
 
@@ -1001,7 +1028,12 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         gate is disabled.
     """
     from ..config import coerce_bool_setting
-    from .local_tool_provider import ASK_USER_DEFAULT_ENABLED, ASK_USER_GATE_KEY
+    from .local_tool_provider import (
+        ASK_USER_DEFAULT_ENABLED,
+        ASK_USER_GATE_KEY,
+        CHARACTER_TOOLS_DEFAULT_ENABLED,
+        CHARACTER_TOOLS_GATE_KEY,
+    )
 
     tools_cfg, console_cfg = _gate_config_snapshot()
     off = 0
@@ -1012,6 +1044,9 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         elif section == "tools" and key == ASK_USER_GATE_KEY:
             # PRD A12: the one [tools] gate that defaults ON.
             default = ASK_USER_DEFAULT_ENABLED
+        elif section == "tools" and key == CHARACTER_TOOLS_GATE_KEY:
+            # TASK-32954: also defaults ON.
+            default = CHARACTER_TOOLS_DEFAULT_ENABLED
         else:
             default = False
         section_cfg = console_cfg if section == "console" else tools_cfg

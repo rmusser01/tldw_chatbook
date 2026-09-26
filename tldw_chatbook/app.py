@@ -665,6 +665,9 @@ from tldw_chatbook.Skills_Interop import (  # noqa: E402
     SkillsScopeService,
     default_local_skills_store_dir,
 )
+from tldw_chatbook.Skills_Interop.builtin_skills import (
+    disabled_builtins_from_config,
+)
 from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
     MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,
     SkillTrustStore,
@@ -8891,6 +8894,11 @@ class TldwCli(
                 store_dir=default_local_skills_store_dir(get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
                 trust_service_factory=lambda: self.local_skill_trust_service,
+                # In-memory config read: this runs on every skills read,
+                # including the Console's per-send capture.
+                builtin_disabled_loader=lambda: disabled_builtins_from_config(
+                    getattr(self, "app_config", None)
+                ),
             )
         if self._skills_scope_service is None:
             self._skills_scope_service = SkillsScopeService(
@@ -12584,6 +12592,31 @@ class TldwCli(
         """Restore app-owned presentation after the active screen rebuilds."""
         if self.screen_stack and message.screen is self.screen:
             self._schedule_persona_buddy_overlay()
+
+    def on_character_card_changed(self, message: Any) -> None:
+        """Forward a Console character-card save to the active Personas screen.
+
+        Textual delivers an App-posted message to App handlers only (it
+        never bubbles down into a Screen's own handler -- see
+        ``forward_model_catalog_refreshed`` for the identical constraint),
+        so the screen's handler is called directly instead. Walks the full
+        screen stack, not just ``self.screen``, so a modal sitting on top of
+        Personas (e.g. an unsaved-changes confirm dialog) does not silently
+        drop the notification (fix round 1, review point 4).
+        ``exit_on_error=False``: a background notification must never crash
+        the app (review point 1).
+        """
+        from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+
+        for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+            if isinstance(screen, PersonasScreen):
+                screen.run_worker(
+                    screen._on_character_card_changed(message),
+                    group="personas-character-changed",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
 
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""

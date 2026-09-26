@@ -48,6 +48,13 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.character_events import CharacterCardChanged
+from ...Character_Chat.character_avatar import (
+    AVATAR_IMAGE_SUFFIX_COPY as PERSONAS_AVATAR_IMAGE_SUFFIX_COPY,
+    AVATAR_IMAGE_SUFFIXES as PERSONAS_AVATAR_IMAGE_SUFFIXES,
+    AVATAR_MAX_BYTES as PERSONAS_AVATAR_MAX_BYTES,
+    AVATAR_MAX_SIZE_COPY as PERSONAS_AVATAR_MAX_SIZE_COPY,
+)
 from ...Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
     canonical_visual_identity_reactions,
@@ -487,10 +494,6 @@ _LIBRARY_SORT_LABELS: dict[str, str] = {
     "modified_desc": "Recent edit",
     "created_desc": "Recent add",
 }
-PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
-PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
-PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
-PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 # TASK-32806.6: the two importers above cap at 10 MB before reading;
@@ -1407,6 +1410,11 @@ class PersonasScreen(BaseAppScreen):
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
         self._character_save_inflight: bool = False
+        # TASK-32954 final review I1: character ids the Console changed while
+        # this editor held unsaved edits. The first Save of such an id is
+        # refused (it would silently overwrite the Console's version); the
+        # second, deliberate Save proceeds. Cleared when the character loads.
+        self._console_changed_character_ids: set[str] = set()
         self._character_save_worker_handle: Any | None = None
         self._actor_pack_save_worker_handle: Any | None = None
         # ``_characters`` now holds only the CURRENT page of the library, not
@@ -5227,9 +5235,68 @@ class PersonasScreen(BaseAppScreen):
         record["id"] = character_id
         return expected_server_id, record
 
+    async def _on_character_card_changed(self, message: CharacterCardChanged) -> None:
+        """Reload the shown character after a Console save; never drop edits.
+
+        ``message`` arrives via the app-level ``TldwCli.on_character_card_
+        changed`` forwarder (TASK-32954 Task 5): Textual delivers an
+        App-posted message to App handlers only, so this method is called
+        directly rather than through Textual's own dispatch (see
+        ``forward_model_catalog_refreshed`` for the identical constraint).
+
+        Fix round 1 (review): this runs under a worker with
+        ``exit_on_error=False`` (a background notification must never crash
+        the app), and this method also wraps its own body in a try/except --
+        ``_select_character`` performs unguarded ``query_one``/DB/server
+        work. The unsaved-work check is the same one ``_run_guarded`` uses
+        (``self.state.has_unsaved_changes`` plus the three visual-identity
+        authoring predicates), not just the character-editor's private
+        ``_dirty_posted`` flag, so an unsaved Persona-visual/lore edit made
+        while a *different* pane is showing also blocks the silent reload.
+        """
+        try:
+            state = self.state
+            if (
+                state.runtime_source != "local"  # event ids are local ids (Qodo #8)
+                or state.selected_entity_kind != "character"
+                or str(state.selected_entity_id) != str(message.character_id)
+            ):
+                return
+            if (
+                state.has_unsaved_changes
+                or self._visual_identity_has_unsaved_authoring()
+                or self._persona_shared_visual_identity_has_unsaved_authoring()
+                or self._persona_visual_has_unsaved_authoring()
+            ):
+                self._console_changed_character_ids.add(str(message.character_id))
+                self._notify(
+                    "This character was changed from the Console. Your unsaved "
+                    "edits are kept: Cancel them to load the new version, or "
+                    "Save twice to overwrite it with your edits.",
+                    "warning",
+                )
+                return
+            # The fresh card arrives later from a thread worker; until then
+            # Edit must see "not loaded yet", not the pre-change card whose
+            # Save would silently overwrite the Console's edit (Qodo #1).
+            self.character_handler.current_character_data = {}
+            await self._select_character(
+                str(message.character_id),
+                state.selected_entity_name,
+                # Preserve the live preview chat instead of letting
+                # _select_character reset it to the character's greeting.
+                restore_preview=self.save_state().get("personas_preview"),
+            )
+        except Exception:  # noqa: BLE001 - a background notification must never crash the app
+            logger.opt(exception=True).warning(
+                "Personas character refresh after a Console save failed "
+                "(category=character_card_changed_refresh_failed)."
+            )
+
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self._console_changed_character_ids.discard(str(entity_id))
         self.conversations.close_conversation_preview()
         if self.size.width <= 60:
             self._compact_active_pane = "work"
@@ -15204,6 +15271,18 @@ class PersonasScreen(BaseAppScreen):
                 "Character save already in flight; ignoring duplicate request."
             )
             return
+        selected = str(self.state.selected_entity_id or "")
+        if self._edit_mode != "create" and selected in self._console_changed_character_ids:
+            # Final review I1: the save path writes the editor's full field
+            # set over the current version -- never do that silently.
+            self._console_changed_character_ids.discard(selected)
+            self._notify(
+                "This character was changed from the Console since you started "
+                "editing. Save again to overwrite that version with your edits, "
+                "or Cancel to load it.",
+                "warning",
+            )
+            return
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
         # The editor footer is the single in-editor validation surface: the
@@ -15744,6 +15823,11 @@ class PersonasScreen(BaseAppScreen):
 
         async def _finish() -> None:
             self._finish_cancel_edit()
+            selected = str(self.state.selected_entity_id or "")
+            if selected in self._console_changed_character_ids:
+                # Final review I1: Cancel loads the Console's newer version.
+                self._console_changed_character_ids.discard(selected)
+                await self._select_character(selected, self.state.selected_entity_name)
 
         await self._run_guarded(_finish)
 

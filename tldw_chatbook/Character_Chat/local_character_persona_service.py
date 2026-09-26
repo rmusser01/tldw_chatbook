@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import hashlib
@@ -50,6 +52,18 @@ def _model_payload(value: Any, *, exclude_none: bool = True) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump(exclude_none=exclude_none, mode="json")
     return dict(value or {})
+
+
+def _decode_image_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Replace ``image_base64`` with the DB's ``image`` bytes (spec §3.1a)."""
+    encoded = payload.pop("image_base64", None)
+    if encoded is None:
+        return payload
+    try:
+        payload["image"] = base64.b64decode(str(encoded), validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("Character image is not valid base64.") from None
+    return payload
 
 
 def _clean_text(value: Any) -> str | None:
@@ -763,12 +777,19 @@ class LocalCharacterPersonaService:
         return record
 
     @_chat_sources.guarded
+    def get_character_by_name(self, name: str) -> Any:
+        """Return the non-deleted card named exactly ``name``, or None."""
+        return self._require_db().get_character_card_by_name(name)
+
+    @_chat_sources.guarded
     def create_character(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterCreateRequest
 
-        payload = _model_payload(
-            CharacterCreateRequest.model_validate(_model_payload(request_data))
+        payload = _decode_image_payload(
+            _model_payload(
+                CharacterCreateRequest.model_validate(_model_payload(request_data))
+            )
         )
         character_id = self._require_db().add_character_card(payload)
         record = self.get_character(int(character_id))
@@ -783,6 +804,7 @@ class LocalCharacterPersonaService:
         request_data: Any,
         *,
         expected_version: int,
+        clear_image: bool = False,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterUpdateRequest
@@ -793,6 +815,9 @@ class LocalCharacterPersonaService:
             )
         )
         payload = {key: value for key, value in payload.items() if value is not None}
+        payload = _decode_image_payload(payload)
+        if clear_image:
+            payload["image"] = None
         updated = self._require_db().update_character_card(
             int(character_id), payload, int(expected_version)
         )

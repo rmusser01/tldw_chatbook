@@ -337,3 +337,8 @@ class LibrarySkillsState:
     # both share this single flag/handler set since only one of the
     # two views is ever mounted at a time.
     trust_confirming_reset: bool = False
+
+    # TASK-32954: the built-in skill open read-only in the Work pane
+    # (``view == "preview"``) -- ``name``/``content``/``enabled``, or None
+    # while loading. Built-ins never open the editor.
+    builtin_preview: dict[str, Any] | None = None
