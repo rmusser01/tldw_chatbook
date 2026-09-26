@@ -3732,6 +3732,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "6f989d5820386650ce0e",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/AppFooterStatus.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 12,
       "diagnostic_digest": "6320c2f9385c3abf2dd8",
       "owner": "TASK-494",
