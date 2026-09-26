@@ -1354,8 +1354,11 @@ class ConsolePromptsController:
         except PromptDraftShelfFullError as exc:
             self.app_instance.notify(str(exc), severity="warning")
             return "shelf-full"
-        except Exception:  # noqa: BLE001 - save failures must preserve the draft
-            logger.opt(exception=True).warning("Could not save Console draft.")
+        except Exception as exc:  # noqa: BLE001 - preserve the unsent draft
+            logger.warning(
+                "Could not save Console draft category={}",
+                type(exc).__name__,
+            )
             self.app_instance.notify(
                 "Couldn't save the draft. The composer was kept unchanged.",
                 severity="error",

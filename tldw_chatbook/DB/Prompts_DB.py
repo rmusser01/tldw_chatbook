@@ -958,10 +958,7 @@ class PromptsDatabase:
 
     def _apply_migration_v4_to_v5(self, conn: sqlite3.Connection):
         """Add local-only Console Prompt Draft Shelf storage."""
-        logging.info(
-            "Applying prompts migration from version 4 to 5 for DB: "
-            f"{self.db_path_str}..."
-        )
+        logging.info("Applying prompts migration from version 4 to 5.")
         try:
             with self.transaction():
                 conn.execute(
@@ -1020,8 +1017,9 @@ class PromptsDatabase:
                         "transaction."
                     )
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"[Migration v4->v5] Failed during migration: {e}"
+            logging.error(
+                "Prompts migration v4-to-v5 failed category={}",
+                type(e).__name__,
             )
             raise DatabaseError(f"Migration v4->v5 failed: {e}") from e
 
