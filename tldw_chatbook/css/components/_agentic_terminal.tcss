@@ -1617,6 +1617,95 @@ ConsolePromptsModal {
     align: center middle;
 }
 
+ConsolePromptDraftSaveDialog {
+    align: center middle;
+}
+
+#console-prompt-draft-save-dialog {
+    width: $ds-size-60;
+    max-width: $ds-percent-96;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-prompt-draft-save-copy {
+    width: $ds-width-full;
+    height: auto;
+    margin-bottom: $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#console-prompt-draft-save-actions {
+    width: $ds-width-full;
+    height: auto;
+    align-horizontal: right;
+}
+
+#console-prompt-draft-editor {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-12;
+}
+
+#console-prompt-draft-editor-copy,
+#console-prompt-draft-status,
+#console-prompt-draft-promote-title {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#console-prompt-draft-editor-copy,
+#console-prompt-draft-status {
+    color: $ds-text-muted;
+}
+
+#console-prompt-draft-status.error {
+    color: $ds-status-error-readable;
+}
+
+#console-prompt-draft-content {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-6;
+    margin-top: $ds-space-1;
+}
+
+#console-prompt-draft-actions,
+#console-prompt-draft-promote-fields {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#console-prompt-draft-promote-title {
+    margin-top: $ds-space-1;
+    text-style: bold;
+}
+
+#console-prompt-draft-library-name,
+#console-prompt-draft-library-collection {
+    width: $ds-width-fill;
+}
+
+.console-prompts-result.highlighted {
+    border-left: thick $ds-action-focus;
+    background: $ds-focus-bg;
+}
+
+ConsolePromptsModal.-narrow #console-prompt-draft-actions,
+ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields {
+    layout: vertical;
+}
+
+ConsolePromptsModal.-narrow #console-prompt-draft-actions Button,
+ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields Button,
+ConsolePromptsModal.-narrow #console-prompt-draft-library-name,
+ConsolePromptsModal.-narrow #console-prompt-draft-library-collection {
+    width: $ds-width-full;
+}
+
 /* The legacy app-wide Checkbox rule fixes every checkbox at width: 100% and
    height: 2, leaving no content row inside Textual's tall border. Keep the
    shared Prompt editor's lane choices intrinsic and paintable. */

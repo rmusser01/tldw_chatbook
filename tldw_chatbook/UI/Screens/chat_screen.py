@@ -656,9 +656,14 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_BUDDY,
     ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
+    ACTION_SAVE_PROMPT_DRAFT,
     ACTION_SAVE_CHATBOOK,
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
+)
+from ...Widgets.Console.console_prompt_draft_save_dialog import (
+    ConsolePromptDraftSaveDialog,
+    PromptDraftSaveChoice,
 )
 from ...Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
@@ -10947,6 +10952,9 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_IMPROVE_CURRENT_DRAFT:
             self._open_console_prompts_modal(initial_mode="improve")
             return
+        if action_id == ACTION_SAVE_PROMPT_DRAFT:
+            self.action_save_console_prompt_draft()
+            return
         if action_id == ACTION_UNDO_PROMPT_IMPROVEMENT:
             self._undo_console_prompt_improvement()
             return
@@ -10985,6 +10993,33 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
         return True
 
+    def action_save_console_prompt_draft(self) -> None:
+        """Ask whether to keep or clear the composer after a local draft save."""
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.draft_text().strip():
+            self.app_instance.notify(
+                "Write something before saving a draft.", severity="warning"
+            )
+            return
+        self.app.push_screen(
+            ConsolePromptDraftSaveDialog(),
+            callback=self._handle_console_prompt_draft_save_choice,
+        )
+
+    def _handle_console_prompt_draft_save_choice(
+        self, choice: PromptDraftSaveChoice | None
+    ) -> None:
+        if choice is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        self.run_worker(
+            self._prompts._save_current_prompt_draft(
+                clear_after_save=choice == "clear"
+            ),
+            exclusive=True,
+            group="console-prompt-draft-save",
+        )
+
     def _open_console_prompt_comparison(self) -> None:
         """Open the safe before/after view for the current improvement Undo."""
         composer = self._console_composer_or_none()
@@ -11008,10 +11043,16 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
 
     def _open_console_prompts_modal(
-        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+        self,
+        *,
+        initial_mode: Literal["browse", "improve"] = "browse",
+        initial_source: Literal["local", "server", "draft_shelf"] = "local",
     ) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
-        self._prompts._open_console_prompts_modal(initial_mode=initial_mode)
+        self._prompts._open_console_prompts_modal(
+            initial_mode=initial_mode,
+            initial_source=initial_source,
+        )
 
     @on(ConsoleTemporaryChip.SaveRequested)
     def on_console_temporary_chip_save(

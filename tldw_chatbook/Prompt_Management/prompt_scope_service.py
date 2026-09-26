@@ -49,6 +49,23 @@ from .server_prompt_adapter import normalize_artifact_type
 
 
 _SQLITE_SIGNED_INTEGER_MAX = PromptsDatabase._SQLITE_SIGNED_INTEGER_MAX
+PROMPT_DRAFT_SHELF_CAPACITY = 100
+PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE = 100
+
+
+class PromptDraftShelfFullError(RuntimeError):
+    """Raised when a new local Prompt draft would exceed the shelf cap."""
+
+    def __init__(self, *, capacity: int = PROMPT_DRAFT_SHELF_CAPACITY) -> None:
+        self.capacity = capacity
+        super().__init__(
+            f"Draft Shelf is full ({capacity} of {capacity}). Open Browse Prompt "
+            "Library…, select Draft Shelf, delete an entry, and retry."
+        )
+
+
+class PromptDraftConflictError(RuntimeError):
+    """Raised when a reviewed Prompt draft changed before mutation."""
 
 
 def _positive_signed_id(value: Any, *, field_name: str) -> int:
@@ -56,6 +73,75 @@ def _positive_signed_id(value: Any, *, field_name: str) -> int:
     if type(value) is not int or value < 1 or value > _SQLITE_SIGNED_INTEGER_MAX:
         raise ValueError(f"{field_name} must be a positive signed 64-bit integer.")
     return value
+
+
+def _prompt_draft_content(value: Any) -> str:
+    """Validate one shelf payload while preserving its exact text."""
+    if not isinstance(value, str):
+        raise TypeError("content must be a string.")
+    if not value.strip():
+        raise ValueError("content must contain non-whitespace text.")
+    return value
+
+
+def _prompt_draft_version(value: Any, *, field_name: str = "expected_version") -> int:
+    if type(value) is not int or value < 1 or value > _SQLITE_SIGNED_INTEGER_MAX:
+        raise ValueError(f"{field_name} must be a positive signed 64-bit integer.")
+    return value
+
+
+def _prompt_draft_page_args(
+    *, query: Any, page: Any, per_page: Any
+) -> tuple[str, int, int]:
+    if not isinstance(query, str):
+        raise TypeError("query must be a string.")
+    if type(page) is not int or page < 1:
+        raise ValueError("page must be a positive integer.")
+    if (
+        type(per_page) is not int
+        or not 1 <= per_page <= PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE
+    ):
+        raise ValueError(
+            f"per_page must be between 1 and {PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE}."
+        )
+    offset = (page - 1) * per_page
+    if offset > _SQLITE_SIGNED_INTEGER_MAX:
+        raise ValueError("page offset exceeds SQLite's signed integer range.")
+    return query.strip().casefold(), page, per_page
+
+
+def _prompt_draft_display_name(content: str) -> str:
+    for line in content.splitlines():
+        candidate = line.strip()
+        if candidate:
+            return candidate[:80]
+    return "Untitled draft"
+
+
+def _normalize_prompt_draft_record(record: Any) -> dict[str, Any]:
+    if not isinstance(record, Mapping):
+        raise TypeError("Prompt draft response must be a mapping.")
+    draft_id = _positive_signed_id(record.get("draft_id"), field_name="draft_id")
+    content = _prompt_draft_content(record.get("content"))
+    version = _prompt_draft_version(record.get("version"), field_name="version")
+    created_at = record.get("created_at")
+    updated_at = record.get("updated_at")
+    if not isinstance(created_at, str) or not created_at:
+        raise ValueError("Prompt draft response requires created_at.")
+    if not isinstance(updated_at, str) or not updated_at:
+        raise ValueError("Prompt draft response requires updated_at.")
+    return {
+        "id": f"draft_shelf:{draft_id}",
+        "draft_id": draft_id,
+        "content": content,
+        "display_name": _prompt_draft_display_name(content),
+        "preview": " ".join(content.strip().split())[:160],
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "version": version,
+        "backend": "draft_shelf",
+        "artifact_type": "draft",
+    }
 
 
 def _unique_positive_signed_ids(values: Any, *, field_name: str) -> tuple[int, ...]:
@@ -314,6 +400,164 @@ class LocalPromptService:
             """
         )
         conn.commit()
+
+    def _require_draft_shelf_db(self) -> Any:
+        if self.prompt_db is None or not hasattr(self.prompt_db, "get_connection"):
+            raise ValueError("Local Prompt Draft Shelf backend is unavailable.")
+        self._ensure_draft_shelf_schema()
+        return self.prompt_db
+
+    def _ensure_draft_shelf_schema(self) -> None:
+        """Install per-connection search support for the versioned draft table."""
+        conn = self.prompt_db.get_connection()
+        conn.create_function(
+            "PY_CASEFOLD",
+            1,
+            lambda value: str(value).casefold(),
+            deterministic=True,
+        )
+        table = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'LocalPromptDrafts'
+            """
+        ).fetchone()
+        if table is None:
+            raise ValueError("Local Prompt Draft Shelf schema is unavailable.")
+
+    @staticmethod
+    def _prompt_draft_row(conn: sqlite3.Connection, draft_id: int) -> dict[str, Any]:
+        row = conn.execute(
+            """
+            SELECT draft_id, content, created_at, updated_at, version
+            FROM LocalPromptDrafts
+            WHERE draft_id = ?
+            """,
+            (draft_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(draft_id)
+        return _normalize_prompt_draft_record(dict(row))
+
+    def create_prompt_draft(self, content: str) -> dict[str, Any]:
+        """Create one exact local draft, refusing rather than evicting at capacity."""
+        content = _prompt_draft_content(content)
+        db = self._require_draft_shelf_db()
+        with db.transaction(immediate=True) as conn:
+            total = int(
+                conn.execute("SELECT COUNT(*) FROM LocalPromptDrafts").fetchone()[0]
+            )
+            if total >= PROMPT_DRAFT_SHELF_CAPACITY:
+                raise PromptDraftShelfFullError()
+            cursor = conn.execute(
+                """
+                INSERT INTO LocalPromptDrafts (
+                    content, created_at, updated_at, version
+                ) VALUES (
+                    ?,
+                    STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    1
+                )
+                """,
+                (content,),
+            )
+            return self._prompt_draft_row(conn, int(cursor.lastrowid))
+
+    def list_prompt_drafts(
+        self,
+        *,
+        query: str = "",
+        page: int = 1,
+        per_page: int = 10,
+    ) -> dict[str, Any]:
+        """Return one newest-first draft page with literal content search."""
+        query, page, per_page = _prompt_draft_page_args(
+            query=query, page=page, per_page=per_page
+        )
+        db = self._require_draft_shelf_db()
+        conn = db.get_connection()
+        predicate = ""
+        predicate_params: tuple[Any, ...] = ()
+        if query:
+            predicate = "WHERE INSTR(PY_CASEFOLD(content), ?) > 0"
+            predicate_params = (query,)
+        total = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM LocalPromptDrafts {predicate}",
+                predicate_params,
+            ).fetchone()[0]
+        )
+        offset = (page - 1) * per_page
+        rows = conn.execute(
+            f"""
+            SELECT draft_id, content, created_at, updated_at, version
+            FROM LocalPromptDrafts
+            {predicate}
+            ORDER BY updated_at DESC, draft_id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*predicate_params, per_page, offset),
+        ).fetchall()
+        return {
+            "items": [_normalize_prompt_draft_record(dict(row)) for row in rows],
+            "page": page,
+            "per_page": per_page,
+            "total_pages": max(1, (total + per_page - 1) // per_page),
+            "total_items": total,
+        }
+
+    def get_prompt_draft(self, draft_id: int) -> dict[str, Any]:
+        """Return one exact local draft by stable identity."""
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        db = self._require_draft_shelf_db()
+        return self._prompt_draft_row(db.get_connection(), draft_id)
+
+    def update_prompt_draft(
+        self,
+        *,
+        draft_id: int,
+        content: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        """Replace one reviewed draft only when its version is still current."""
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        content = _prompt_draft_content(content)
+        expected_version = _prompt_draft_version(expected_version)
+        db = self._require_draft_shelf_db()
+        with db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE LocalPromptDrafts
+                SET content = ?,
+                    updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    version = version + 1
+                WHERE draft_id = ? AND version = ?
+                """,
+                (content, draft_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise PromptDraftConflictError(
+                    "Draft changed or was deleted. Reload it before saving."
+                )
+            return self._prompt_draft_row(conn, draft_id)
+
+    def delete_prompt_draft(self, *, draft_id: int, expected_version: int) -> bool:
+        """Hard-delete one reviewed local draft without creating a sync tombstone."""
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        expected_version = _prompt_draft_version(expected_version)
+        db = self._require_draft_shelf_db()
+        with db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                "DELETE FROM LocalPromptDrafts WHERE draft_id = ? AND version = ?",
+                (draft_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise PromptDraftConflictError(
+                    "Draft changed or was deleted. Reload it before deleting."
+                )
+        return True
 
     @staticmethod
     def _collection_display_name(
@@ -1285,6 +1529,18 @@ class PromptScopeService:
         return f"prompts.collections.{action}.{mode.value}"
 
     @staticmethod
+    def _draft_action_id(action: str) -> str:
+        return f"prompts.drafts.{action}.local"
+
+    @staticmethod
+    def _local_draft_mode(
+        mode: PromptBackend | str | None,
+    ) -> PromptBackend:
+        if mode in (None, PromptBackend.LOCAL, PromptBackend.LOCAL.value):
+            return PromptBackend.LOCAL
+        raise ValueError("Prompt drafts are local-only.")
+
+    @staticmethod
     def _local_membership_mode(mode: PromptBackend | str) -> PromptBackend:
         if mode != PromptBackend.LOCAL and mode != PromptBackend.LOCAL.value:
             raise ValueError("Prompt collection memberships are local-only.")
@@ -1949,6 +2205,130 @@ class PromptScopeService:
             "backend": normalized_mode.value,
             "collection_id": collection_id,
         }
+
+    async def create_prompt_draft(
+        self,
+        *,
+        mode: PromptBackend | str | None = PromptBackend.LOCAL,
+        content: str,
+    ) -> dict[str, Any]:
+        """Persist one exact device-local unsent Console draft."""
+        self._local_draft_mode(mode)
+        self._enforce_policy(self._draft_action_id("create"))
+        method = getattr(self.local_service, "create_prompt_draft", None)
+        if not callable(method):
+            raise RuntimeError("Local Prompt Draft Shelf is unavailable.")
+        response = await self._maybe_await(method(content))
+        return _normalize_prompt_draft_record(response)
+
+    async def list_prompt_drafts(
+        self,
+        *,
+        mode: PromptBackend | str | None = PromptBackend.LOCAL,
+        query: str = "",
+        page: int = 1,
+        per_page: int = 10,
+    ) -> dict[str, Any]:
+        """Return one bounded local Draft Shelf page or literal search page."""
+        self._local_draft_mode(mode)
+        query, page, per_page = _prompt_draft_page_args(
+            query=query, page=page, per_page=per_page
+        )
+        self._enforce_policy(self._draft_action_id("list"))
+        method = getattr(self.local_service, "list_prompt_drafts", None)
+        if not callable(method):
+            raise RuntimeError("Local Prompt Draft Shelf is unavailable.")
+        response = await self._maybe_await(
+            method(query=query, page=page, per_page=per_page)
+        )
+        if not isinstance(response, Mapping):
+            raise TypeError("Prompt draft list response must be a mapping.")
+        raw_items = response.get("items")
+        if not isinstance(raw_items, Sequence) or isinstance(
+            raw_items, (str, bytes, bytearray)
+        ):
+            raise TypeError("Prompt draft list response requires an item sequence.")
+        items = [_normalize_prompt_draft_record(item) for item in raw_items]
+        total_items = response.get("total_items")
+        total_pages = response.get("total_pages")
+        response_page = response.get("page")
+        if type(total_items) is not int or total_items < 0:
+            raise ValueError("Prompt draft list response has an invalid total_items.")
+        if type(total_pages) is not int or total_pages < 1:
+            raise ValueError("Prompt draft list response has an invalid total_pages.")
+        if type(response_page) is not int or response_page < 1:
+            raise ValueError("Prompt draft list response has an invalid page.")
+        return {
+            "items": items,
+            "page": response_page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_items": total_items,
+        }
+
+    async def get_prompt_draft(
+        self,
+        *,
+        mode: PromptBackend | str | None = PromptBackend.LOCAL,
+        draft_id: int,
+    ) -> dict[str, Any]:
+        """Return one device-local Draft Shelf entry."""
+        self._local_draft_mode(mode)
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        self._enforce_policy(self._draft_action_id("detail"))
+        method = getattr(self.local_service, "get_prompt_draft", None)
+        if not callable(method):
+            raise RuntimeError("Local Prompt Draft Shelf is unavailable.")
+        response = await self._maybe_await(method(draft_id))
+        return _normalize_prompt_draft_record(response)
+
+    async def update_prompt_draft(
+        self,
+        *,
+        mode: PromptBackend | str | None = PromptBackend.LOCAL,
+        draft_id: int,
+        content: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        """Conditionally replace one device-local Draft Shelf entry."""
+        self._local_draft_mode(mode)
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        content = _prompt_draft_content(content)
+        expected_version = _prompt_draft_version(expected_version)
+        self._enforce_policy(self._draft_action_id("update"))
+        method = getattr(self.local_service, "update_prompt_draft", None)
+        if not callable(method):
+            raise RuntimeError("Local Prompt Draft Shelf is unavailable.")
+        response = await self._maybe_await(
+            method(
+                draft_id=draft_id,
+                content=content,
+                expected_version=expected_version,
+            )
+        )
+        return _normalize_prompt_draft_record(response)
+
+    async def delete_prompt_draft(
+        self,
+        *,
+        mode: PromptBackend | str | None = PromptBackend.LOCAL,
+        draft_id: int,
+        expected_version: int,
+    ) -> bool:
+        """Conditionally hard-delete one device-local Draft Shelf entry."""
+        self._local_draft_mode(mode)
+        draft_id = _positive_signed_id(draft_id, field_name="draft_id")
+        expected_version = _prompt_draft_version(expected_version)
+        self._enforce_policy(self._draft_action_id("delete"))
+        method = getattr(self.local_service, "delete_prompt_draft", None)
+        if not callable(method):
+            raise RuntimeError("Local Prompt Draft Shelf is unavailable.")
+        response = await self._maybe_await(
+            method(draft_id=draft_id, expected_version=expected_version)
+        )
+        if response is not True:
+            raise ValueError("Prompt draft delete response must confirm deletion.")
+        return True
 
     async def list_prompt_collections(
         self,
