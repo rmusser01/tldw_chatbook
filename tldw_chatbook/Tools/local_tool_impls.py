@@ -59,6 +59,7 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
     is_git_metadata_write,
@@ -336,8 +337,39 @@ def _read_relative_file(
     limit: int | None,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
+    content_stamps: bool = False,
 ) -> str:
-    """Read a pinned-root-relative text file without reopening its resolved path."""
+    """Read a pinned-root-relative text file without reopening its resolved path.
+
+    The file is opened exactly ONCE and fully read as bytes: the binary
+    sniff, the decoded text, and (when ``content_stamps`` is set) the
+    CAS stamp digest all come from that single read, so the rendered
+    content and its sha256/size stamps can never be a torn pair under
+    concurrent modification. (``str.splitlines`` splits untranslated
+    ``\\r``/``\\r\\n`` exactly where the old universal-newline
+    ``read_text`` translation produced splits, so the output is
+    byte-identical to the previous two-open implementation.)
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        workspace: The confinement root ``relative`` resolves against.
+        offset: 1-based first line to render.
+        limit: Optional cap on the rendered line count.
+        sensitive_exclusions: Deny rules applied to the target.
+        display_path: Caller-facing path for error messages.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) computed from the same
+            read — the pinned dispatch path sets this; the plain local
+            ``read_file`` surface does not.
+
+    Returns:
+        The numbered (or notice) body, plus the stamp tail when
+        requested.
+
+    Raises:
+        LocalToolError: If the target is missing/protected, oversized,
+            or binary.
+    """
     target = workspace / relative
     if not _relative_target_is_safe(
         relative, workspace, sensitive_exclusions, is_directory=False
@@ -349,24 +381,26 @@ def _read_relative_file(
             f"'{display_path or relative}' is too large to read "
             f"({file_size} bytes; maximum {MAX_READ_FILE_BYTES})"
         )
-    with open(target, "rb") as fh:
-        sniff = fh.read(8192)
-    if b"\x00" in sniff:
+    data = target.read_bytes()
+    if b"\x00" in data[:8192]:
         raise LocalToolError(
             f"'{display_path or relative}' appears to be binary; fs_read only reads text files"
         )
-    text = target.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
+    lines = data.decode("utf-8", errors="replace").splitlines()
     if not lines:
-        return "(empty file)"
-    start = max(offset, 1) - 1
-    if start >= len(lines):
-        return f"(offset {offset} is past end of file; {len(lines)} lines total)"
-    window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
-    numbered = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
-    if len(numbered) > MAX_READ_CHARS:
-        numbered = numbered[:MAX_READ_CHARS] + "\n… [truncated]"
-    return numbered
+        body = "(empty file)"
+    else:
+        start = max(offset, 1) - 1
+        if start >= len(lines):
+            body = f"(offset {offset} is past end of file; {len(lines)} lines total)"
+        else:
+            window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
+            body = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
+            if len(body) > MAX_READ_CHARS:
+                body = body[:MAX_READ_CHARS] + "\n… [truncated]"
+    if content_stamps:
+        body += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+    return body
 
 
 def stat_path(path: str, *, workspace_root: Path) -> str:
@@ -452,8 +486,27 @@ def _write_relative_file(
     dry_run: bool = False,
     expected_sha256: str | None = None,
     expected_absent: bool = False,
+    content_stamps: bool = False,
 ) -> str:
-    """Preview or atomically write one admitted path with optional CAS."""
+    """Preview or atomically write one admitted path with optional CAS.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        content: Full replacement content.
+        workspace: The confinement root ``relative`` resolves against.
+        display_path: Caller-facing path for messages.
+        dry_run: Preview only; nothing is written and no stamp tail is
+            appended (the preview is a JSON object).
+        expected_sha256: Optional CAS precondition on the current bytes.
+        expected_absent: Optional CAS precondition that no file exists.
+        content_stamps: Append the worker-reported CAS tail
+            (``\\nsha256: <hex>\\nsize: <n>``) of the bytes just written
+            (Task 16 write-path parity with ``_read_relative_file``).
+            Computed from ``data`` -- the exact in-memory bytes handed to
+            the atomic writer -- so content and stamps can never be a
+            torn pair; the plain local ``write_file`` surface does not
+            set this and stays byte-identical.
+    """
     target = workspace / relative
     shown = display_path or str(relative)
     if not target.parent.is_dir():
@@ -501,7 +554,12 @@ def _write_relative_file(
             expected_sha256=expected_sha256,
             expected_absent=expected_absent,
         )
-    return f"wrote {len(content)} characters to {shown}"
+    summary = f"wrote {len(content)} characters to {shown}"
+    if content_stamps and not dry_run:
+        summary += (
+            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+        )
+    return summary
 
 
 def _write_lock_for(key: str) -> threading.Lock:
@@ -612,6 +670,13 @@ def _atomic_write_target(
     except OSError:
         raise LocalToolError(f"write parent changed: {shown}") from None
     temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
+    # Watchdog data plane (Task 12): while the temp exists (creation
+    # until rename/link or cleanup), its ABSOLUTE path sits in the
+    # registry the worker's tier-1 timer sweeps — a mid-write watchdog
+    # death must not leave the partial temp behind. Absolute because
+    # the sweep unlinks by path from another thread while this one
+    # holds only the parent descriptor.
+    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
@@ -636,6 +701,7 @@ def _atomic_write_target(
             flags |= os.O_NOFOLLOW
         temp_fd = os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
         temp_created = True
+        register_temp(temp_path)
         try:
             if live_mode is not None:
                 os.fchmod(temp_fd, live_mode)
@@ -656,6 +722,7 @@ def _atomic_write_target(
             )
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_created = False
+            unregister_temp(temp_path)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(
@@ -672,6 +739,7 @@ def _atomic_write_target(
                 dst_dir_fd=parent_fd,
             )
             temp_created = False
+            unregister_temp(temp_path)
         os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError("write precondition failed: target is present") from None
@@ -685,15 +753,73 @@ def _atomic_write_target(
                 os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
+            unregister_temp(temp_path)
         if target_lock is not None:
-            try:
-                import portalocker
-
-                portalocker.unlock(target_lock)
-            except Exception:  # noqa: BLE001 - best-effort lock release
-                pass
+            _unlock_target_handle(target_lock)
             target_lock.close()
         os.close(parent_fd)
+
+
+def _portalocker_module():
+    """Return the ``portalocker`` module, or ``None`` where absent.
+
+    The remote worker bundle (Phase 1d, Task 8) concatenates this module
+    onto a bare remote interpreter that has no third-party packages, so
+    the CAS write lock needs a stdlib fallback there. In the parent
+    application ``portalocker`` is a pinned dependency and the fallback
+    never runs.
+    """
+    try:
+        import portalocker
+    except ImportError:
+        return None
+    return portalocker
+
+
+def _lock_expected_target(handle: BinaryIO) -> None:
+    """Take one non-blocking exclusive advisory lock on an open target.
+
+    Uses portalocker where installed; otherwise falls back to the same
+    POSIX advisory lock portalocker itself delegates to (``fcntl.flock``,
+    exclusive + non-blocking). Contention or a lock failure raises
+    ``LocalToolError`` with the fixed precondition message callers map to.
+    """
+    portalocker = _portalocker_module()
+    if portalocker is not None:
+        try:
+            portalocker.lock(
+                handle,
+                portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+            )
+        except portalocker.exceptions.LockException:
+            handle.close()
+            raise LocalToolError(
+                "write precondition failed: target is being modified"
+            ) from None
+        return
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise LocalToolError(
+            "write precondition failed: target is being modified"
+        ) from None
+
+
+def _unlock_target_handle(handle: BinaryIO) -> None:
+    """Best-effort release of the advisory lock taken by the helper above."""
+    portalocker = _portalocker_module()
+    try:
+        if portalocker is not None:
+            portalocker.unlock(handle)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:  # noqa: BLE001 - closing the handle releases the lock anyway
+        pass
 
 
 def _acquire_expected_target_lock(
@@ -703,8 +829,6 @@ def _acquire_expected_target_lock(
     expected_sha256: str,
 ) -> BinaryIO:
     """Acquire a non-blocking process lock on the expected target inode."""
-    import portalocker
-
     flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -713,16 +837,7 @@ def _acquire_expected_target_lock(
         handle = os.fdopen(descriptor, "r+b", buffering=0)
     except OSError:
         raise LocalToolError("write precondition failed: target digest changed") from None
-    try:
-        portalocker.lock(
-            handle,
-            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
-        )
-    except portalocker.exceptions.LockException:
-        handle.close()
-        raise LocalToolError(
-            "write precondition failed: target is being modified"
-        ) from None
+    _lock_expected_target(handle)
     try:
         _assert_expected_target_is_current(
             parent_fd,
@@ -732,10 +847,7 @@ def _acquire_expected_target_lock(
             handle,
         )
     except Exception:
-        try:
-            portalocker.unlock(handle)
-        except Exception:  # noqa: BLE001 - preserve the validation failure
-            pass
+        _unlock_target_handle(handle)
         handle.close()
         raise
     return handle
@@ -840,8 +952,25 @@ def _edit_relative_file(
     workspace: Path,
     replace_all: bool = False,
     display_path: str | None = None,
+    content_stamps: bool = False,
 ) -> str:
-    """Edit one already-admitted path relative to an I/O root."""
+    """Edit one already-admitted path relative to an I/O root.
+
+    Args:
+        relative: Root-relative target, already safety-checked.
+        old_string: Exact text to replace.
+        new_string: Replacement text.
+        workspace: The confinement root ``relative`` resolves against.
+        replace_all: Replace every occurrence instead of requiring a
+            unique match.
+        display_path: Caller-facing path for messages.
+        content_stamps: Append the worker-reported CAS tail of the bytes
+            just written (``\\nsha256: <hex>\\nsize: <n>``), computed
+            from the same in-memory ``data`` handed to the atomic writer
+            (Task 16 write-path parity with ``_read_relative_file``);
+            the plain local ``edit_file`` surface does not set this and
+            stays byte-identical.
+    """
     shown = display_path or str(relative)
     if not old_string:
         raise LocalToolError("old_string must not be empty")
@@ -885,7 +1014,12 @@ def _edit_relative_file(
         expected_absent=False,
     )
     n = count if replace_all else 1
-    return f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
+    summary = f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
+    if content_stamps:
+        summary += (
+            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
+        )
+    return summary
 
 
 def glob_files(

@@ -1,9 +1,18 @@
-"""Dispatch closed workspace operations against one retained root pin."""
+"""Dispatch closed workspace operations against one retained root pin.
+
+Part of the pinned worker's stdlib-only import closure (Phase 0c): nothing
+here may import the parent's pydantic protocol module. Request frames
+arrive already decoded/validated; dispatch consumes the attribute surface
+``_PinnedOperationRequest`` describes (the parent's
+``WorkspaceToolRequest`` dataclass and the worker's decoded-request view
+both satisfy it).
+"""
 
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any, Protocol
 
 from tldw_chatbook.Tools.git_tool_impls import (
     git_blame,
@@ -34,9 +43,8 @@ from tldw_chatbook.Tools.workspace_root_pin import (
     PinnedWorkspaceRoot,
     WorkspaceRootPinError,
 )
-from tldw_chatbook.Tools.workspace_tool_protocol import (
-    WorkspaceProtocolError,
-    WorkspaceToolRequest,
+from tldw_chatbook.Tools.workspace_wire_decode import (
+    WireDecodeError,
     validate_glob_pattern,
 )
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
@@ -50,13 +58,104 @@ class WorkspaceToolDispatchError(RuntimeError):
         self.code = code
 
 
+class _PinnedOperationRequest(Protocol):
+    """The attribute surface dispatch consumes from one admitted request."""
+
+    operation: str
+    arguments: dict[str, Any]
+
+
+#: Catch-all exclusion for a pinned root that ITSELF sits inside a
+#: denylisted entry: an empty 'subtree' prefix matches every relative
+#: path in the exclusion matcher (``parts[:0] == ()`` is vacuously
+#: true), so every operation on the binding refuses — the whole root is
+#: a denylisted subtree (review fix, Important 1).
+_DENYLISTED_ROOT_CATCH_ALL = (SensitiveExclusion("subtree", ""),)
+
+
+def _remote_home_denylist_exclusions() -> tuple[SensitiveExclusion, ...]:
+    """Map the worker-side remote-home denylist into root-relative space.
+
+    ``REMOTE_SENSITIVE_PATHS`` (``Tools/remote_sensitive_paths.py``) is
+    the set of REMOTE-HOME-relative subtrees the pinned worker must never
+    expose regardless of which root a binding pins. This module is shared
+    by the LOCAL pinned worker and the flattened remote bundle; the
+    denylist NAME exists only in the bundle's flat namespace (Task 8
+    embeds the data below the dispatch section), so the live local worker
+    resolves it to ``()`` through ``globals().get`` — byte-identical
+    local behavior — while the bundle picks the tuple up at call time.
+
+    Mapping rule (review fix, Important 1 — the general form): each
+    entry is joined onto the resolved home directory, then re-expressed
+    relative to the pinned root (``Path('.')`` after the root pin's
+    chdir) via ``relative_to`` — which is exactly ``relpath(home/entry,
+    root)`` and holds for EVERY root relationship:
+
+    - root BELOW home (the common case, e.g. ``~/projects``): entries
+      map to plain subtrees under the root when they are under it, and
+      to nothing when they are not (the worker is root-confined, so an
+      entry outside the root is unreachable);
+    - root AT or ABOVE home (e.g. ``ssh://host/`` pinning ``/``): every
+      entry lies under the root and maps to a deep subtree refusal —
+      the pre-review mapping RAISED here (``root.relative_to(home)`` is
+      inverted for these roots) and silently voided the entire denylist;
+    - root INSIDE a denylisted entry (e.g. a binding pinned at
+      ``~/.ssh`` itself): the whole root is denylisted — every operation
+      refuses via :data:`_DENYLISTED_ROOT_CATCH_ALL`.
+
+    An unresolvable home degrades to ``()``: the request-carried
+    exclusions still enforce, and a missing ``HOME`` must not crash
+    unrelated operations.
+    """
+    entries = globals().get("REMOTE_SENSITIVE_PATHS", ())
+    if not entries:
+        return ()
+    try:
+        home = Path.home().resolve()
+        root = Path(".").resolve()
+    except (RuntimeError, OSError):
+        return ()
+    root_under_home: PurePosixPath | None = None
+    try:
+        root_under_home = PurePosixPath(root.relative_to(home).as_posix())
+    except ValueError:
+        root_under_home = None  # root at/above home (or disjoint)
+    if root_under_home is not None:
+        for entry in entries:
+            entry_parts = PurePosixPath(entry).parts
+            if root_under_home.parts[: len(entry_parts)] == entry_parts:
+                return _DENYLISTED_ROOT_CATCH_ALL
+    mapped: list[SensitiveExclusion] = []
+    for entry in entries:
+        try:
+            target = (home / entry).resolve()
+            relative = target.relative_to(root)
+        except (OSError, ValueError):
+            continue  # entry outside the pinned root: unreachable
+        mapped.append(SensitiveExclusion("subtree", relative.as_posix()))
+    return tuple(mapped)
+
+
 def execute_pinned_operation(
-    request: WorkspaceToolRequest,
+    request: _PinnedOperationRequest,
     root: PinnedWorkspaceRoot,
 ) -> str:
     """Execute one supported request relative to ``root`` or refuse it."""
     if request.operation == "stat_path":
-        return _stat_relative_path(_request_relative_path(request, root))
+        # ``stat_path``'s wire schema carries no exclusions field, so the
+        # serialized binding exclusions are refused PARENT-side (the
+        # remote builder's lexical admission); the worker-side denylist
+        # applies here (ADR-174: excluded/sensitive paths are fully
+        # invisible — a stat must never confirm existence).
+        relative = _request_relative_path(request, root)
+        denylist = _remote_home_denylist_exclusions()
+        if denylist and not _relative_target_is_safe(
+            relative, Path("."), denylist, is_directory=True
+        ):
+            raise WorkspaceToolDispatchError(
+                "invalid_request", "workspace path is invalid"
+            )
+        return _stat_relative_path(relative)
     if request.operation == "fs_write":
         return _write_relative_file(
             _request_mutation_path(request, root),
@@ -66,6 +165,7 @@ def execute_pinned_operation(
             dry_run=request.arguments.get("dry_run", False),
             expected_sha256=request.arguments.get("expected_sha256"),
             expected_absent=request.arguments.get("expected_absent", False),
+            content_stamps=True,
         )
     if request.operation == "fs_edit":
         return _edit_relative_file(
@@ -75,6 +175,7 @@ def execute_pinned_operation(
             workspace=Path("."),
             replace_all=request.arguments.get("replace_all", False),
             display_path=request.arguments["path"],
+            content_stamps=True,
         )
     if request.operation == "fs_patch":
         return _patch_request(request, root)
@@ -105,11 +206,12 @@ def execute_pinned_operation(
             offset=request.arguments.get("offset", 1),
             limit=request.arguments.get("limit"),
             sensitive_exclusions=exclusions,
+            content_stamps=True,
         )
     if request.operation == "fs_glob":
         try:
             pattern = validate_glob_pattern(request.arguments["pattern"])
-        except WorkspaceProtocolError:
+        except WireDecodeError:
             raise WorkspaceToolDispatchError(
                 "invalid_request", "workspace glob pattern is invalid"
             ) from None
@@ -130,7 +232,7 @@ def execute_pinned_operation(
         )
 
 
-def _git_request(request: WorkspaceToolRequest) -> str:
+def _git_request(request: _PinnedOperationRequest) -> str:
     """Run one closed read-only Git operation beneath the retained root."""
     discovered = shutil.which("git")
     if discovered is None:
@@ -175,7 +277,7 @@ def _git_request(request: WorkspaceToolRequest) -> str:
 
 
 def _request_relative_path(
-    request: WorkspaceToolRequest, root: PinnedWorkspaceRoot
+    request: _PinnedOperationRequest, root: PinnedWorkspaceRoot
 ) -> Path:
     """Return one request path validated as lexical root-relative text."""
     try:
@@ -188,17 +290,25 @@ def _request_relative_path(
 
 
 def _request_exclusions(
-    request: WorkspaceToolRequest, field: str
+    request: _PinnedOperationRequest, field: str
 ) -> tuple[SensitiveExclusion, ...]:
-    """Decode the parent's fixed bounded exclusions without filesystem discovery."""
+    """Decode the parent's fixed bounded exclusions without filesystem discovery.
+
+    Task 17: the worker-side remote-home denylist joins the request's
+    serialized exclusions here — the single decode point every read,
+    write, patch, and git consumer passes through — so ``REMOTE_SENSITIVE_PATHS``
+    is enforced on every operation even when the parent serialized none
+    (the local pinned worker's denylist contribution is ``()``, keeping
+    its behavior byte-identical).
+    """
     return tuple(
         SensitiveExclusion(item["kind"], item["value"])
         for item in request.arguments[field]
-    )
+    ) + _remote_home_denylist_exclusions()
 
 
 def _request_mutation_path(
-    request: WorkspaceToolRequest, root: PinnedWorkspaceRoot
+    request: _PinnedOperationRequest, root: PinnedWorkspaceRoot
 ) -> Path:
     """Validate a mutation target's live lexical and resolved location."""
     relative = _request_relative_path(request, root)
@@ -214,7 +324,7 @@ def _request_mutation_path(
     return relative
 
 
-def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> str:
+def _patch_request(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) -> str:
     """Reparse a bounded patch and require its exact parent-admitted targets."""
     try:
         plans = parse_patch_targets(request.arguments["diff"])
@@ -250,6 +360,7 @@ def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> 
         plans,
         root=root,
         dry_run=request.arguments.get("dry_run", False),
+        content_stamps=True,
     )
 
 

@@ -406,6 +406,88 @@ def get_canvas_execution_enabled() -> bool:
         diagnostics=[],
     )
     return enabled
+
+
+# --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
+# (spec 2026-09-24-ssh-remote-workspace-bindings, "ControlMaster lifecycle —
+# explicit, and the executor owns its health"). These four values are the
+# whole section; `Tools/remote_workspace_transport.py` consumes the first
+# three, the executor's call cap consumes `max_concurrent_calls`.
+
+DEFAULT_CONSOLE_SSH_CONTROL_PERSIST = "10m"
+DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S = 3
+DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSshSettings:
+    """Effective ``[console_ssh]`` settings, coerced to their use types.
+
+    Attributes:
+        control_persist: OpenSSH ControlPersist duration, passed VERBATIM
+            as the ``ControlPersist=`` value on the ``ssh -MNf`` master
+            command (never parsed locally; unusable values fall back to the
+            default rather than shipping garbage on an argv).
+        enable_multiplexing: False disables the whole ControlMaster
+            machinery — per-call direct connections, no sockets, no
+            masters. The Windows posture (ssh.exe lacks ControlMaster).
+        connect_timeout_s: Ceiling on the master handshake and per-call
+            connects, in seconds.
+        max_concurrent_calls: Cap on in-flight per-binding ssh calls.
+    """
+
+    control_persist: str = DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    enable_multiplexing: bool = True
+    connect_timeout_s: int = DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+    max_concurrent_calls: int = DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS
+
+
+def get_console_ssh_settings() -> ConsoleSshSettings:
+    """Return the effective ``[console_ssh]`` settings.
+
+    The default returned when the section is absent or unusable is always
+    the shipped default (multiplexing ON), matching the fallback posture
+    of the sibling section accessors: a malformed key must not silently
+    degrade remote workspaces into per-call direct connections.
+
+    Returns:
+        The coerced settings; per-key fallbacks on invalid values.
+    """
+
+    raw_persist = get_cli_setting(
+        "console_ssh", "control_persist", DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    )
+    control_persist = (
+        raw_persist
+        if isinstance(raw_persist, str) and raw_persist.strip()
+        else DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    )
+    # Strict bool (TOML delivers real booleans): a hand-edited non-boolean
+    # falls back to the shipped default rather than coercing through the
+    # truthy-string ladder, which turned "maybe" into OFF — a silent
+    # multiplexing kill switch no user asked for.
+    raw_enabled = get_cli_setting("console_ssh", "enable_multiplexing", True)
+    enable_multiplexing = raw_enabled if type(raw_enabled) is bool else True
+    return ConsoleSshSettings(
+        control_persist=control_persist,
+        enable_multiplexing=enable_multiplexing,
+        connect_timeout_s=coerce_int_setting(
+            get_cli_setting(
+                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+            ),
+            DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
+            minimum=1,
+        ),
+        max_concurrent_calls=coerce_int_setting(
+            get_cli_setting(
+                "console_ssh",
+                "max_concurrent_calls",
+                DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS,
+            ),
+            DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS,
+            minimum=1,
+        ),
+    )
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -3704,6 +3786,21 @@ effect = "none"  # none, snow, rain, matrix
 scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
+
+[console_ssh]
+# SSH ControlMaster lifecycle for remote workspace bindings (spec
+# 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
+# `ssh -MNf` master command verbatim (OpenSSH duration like "10m"/"45s"/"4h";
+# it is the crash backstop that self-expires an orphaned master).
+control_persist = "10m"
+# Kill switch for connection multiplexing: false = per-call direct
+# connections, no master, no ControlPath (also the Windows posture, where
+# ssh.exe lacks ControlMaster).
+enable_multiplexing = true
+# Bounds both the master spawn handshake and per-call connects, in seconds.
+connect_timeout_s = 3
+# Cap on in-flight per-binding ssh calls (consumed by the transport executor).
+max_concurrent_calls = 8
 
 [hooks]
 enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)

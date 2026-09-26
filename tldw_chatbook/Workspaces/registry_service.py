@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import base64
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 from secrets import token_urlsafe
 import sqlite3
 import threading
@@ -25,6 +26,13 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Tools.remote_binding_locator import (
+    RemoteLocatorError,
+    canonical_fingerprint,
+    canonicalize_locator,
+    locator_string,
+    parse_remote_locator,
+)
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -336,6 +344,107 @@ def _validate_folder_overlap(
             )
 
 
+#: Interpreter command charset for SSH bindings (spec: "Charset
+#: validation, three distinct sets"). The value crosses the remote
+#: command line, so it is one whitespace-free token of basename/path
+#: characters — no shell metacharacters — and must not start with ``-``
+#: (enforced separately in :func:`_validate_ssh_python_interpreter`,
+#: mirroring the locator-component dash rule).
+_SSH_PYTHON_INTERPRETER_RE = re.compile(r"[A-Za-z0-9_./-]+")
+
+
+def _validate_ssh_python_interpreter(value: Any) -> None:
+    """Vet the remote python interpreter command for an SSH binding.
+
+    Args:
+        value: Candidate interpreter command (expected ``str``).
+
+    Raises:
+        WorkspaceRegistryServiceError: If the value is not a string of
+            one or more ``[A-Za-z0-9_./-]`` characters (no spaces or
+            shell metacharacters) or starts with ``-``.
+    """
+    if not isinstance(value, str) or not _SSH_PYTHON_INTERPRETER_RE.fullmatch(
+        value
+    ):
+        raise WorkspaceRegistryServiceError(
+            f"Invalid python interpreter {value!r}: allowed charset is "
+            "[A-Za-z0-9_./-] with no spaces"
+        )
+    if value.startswith("-"):
+        raise WorkspaceRegistryServiceError(
+            f"Invalid python interpreter {value!r}: leading '-' is not allowed"
+        )
+
+
+def _ssh_canonical_identity(
+    metadata: Mapping[str, Any],
+) -> tuple[str, int, str | None] | None:
+    """Read a stored SSH binding's canonical identity from its metadata.
+
+    Private helper for the overlap check. Returns ``None`` for rows whose
+    metadata lacks a well-formed identity (hand-edited or foreign writes):
+    such rows cannot be grouped by destination and are skipped rather
+    than crashing admission — the same defensive-read posture as
+    ``binding_exclusion_entries``.
+    """
+    host = metadata.get("canonical_host")
+    port = metadata.get("canonical_port")
+    user = metadata.get("canonical_user")
+    if not isinstance(host, str) or not host:
+        return None
+    if not isinstance(port, int) or isinstance(port, bool):
+        return None
+    if user is not None and not isinstance(user, str):
+        return None
+    return (host, port, user)
+
+
+def _validate_ssh_overlap(
+    identity: tuple[str, int, str | None],
+    path: PurePosixPath,
+    existing_bindings: Sequence[WorkspaceRuntimeBinding],
+) -> None:
+    """Validate that an SSH root does not duplicate or nest existing ones.
+
+    Private helper; keyed on the ``ssh -G``-resolved canonical identity
+    (hostname, port, user) so alias-vs-hostname spellings of one
+    destination collide, while different hosts (or ports) never do.
+    Local-filesystem bindings never participate: the caller passes only
+    SSH bindings, and a remote path never conflicts with a laptop path.
+    Raises WorkspaceRegistryServiceError on duplicate or nesting in
+    either direction.
+    """
+    for binding in existing_bindings:
+        if _ssh_canonical_identity(binding.metadata) != identity:
+            continue
+        try:
+            existing_path = parse_remote_locator(binding.locator).path
+        except RemoteLocatorError:
+            # Defensive: rows are written via locator_string(), so an
+            # unparseable locator means a foreign/hand-edited row; it
+            # cannot be compared and must not crash admission.
+            logger.debug(
+                "ssh binding overlap check skipped an unparseable locator",
+                binding_id=binding.binding_id,
+            )
+            continue
+        if path == existing_path:
+            raise WorkspaceRegistryServiceError(
+                f"{binding.locator} is already bound to this workspace."
+            )
+        if existing_path in path.parents:
+            raise WorkspaceRegistryServiceError(
+                f"{path} is inside the already-bound SSH root "
+                f"{binding.locator}."
+            )
+        if path in existing_path.parents:
+            raise WorkspaceRegistryServiceError(
+                f"The already-bound SSH root {binding.locator} is inside "
+                f"{path}; remove it first."
+            )
+
+
 def validate_folder_binding_path(
     path: str | Path,
     existing_locators: Sequence[str] = (),
@@ -465,6 +574,48 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
             "Exclusion path escapes the binding root."
         )
     if target == resolved_root:
+        raise WorkspaceRegistryServiceError(
+            "Exclude specific paths; remove the binding to exclude the whole root."
+        )
+    return candidate
+
+
+def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
+    """Vet one SSH-binding exclusion path LEXICALLY (Task 17, Phase 3c).
+
+    The remote host owns the filesystem, so the laptop resolve/stat in
+    :func:`_validated_exclusion_relative` is structurally impossible:
+    validation reduces to what is decidable from the stored locator —
+    the same relative-text rules (empty/home-relative/absolute/parent-
+    escaping refused) plus a lexical root check against the locator's
+    path component (``.`` names the root; users remove the binding
+    instead).
+
+    Documented choice: NO ping-style validation call at edit time (a
+    probe was considered and declined — add-binding's advisory probe
+    keeps setup offline-safe, and exclusions must match that posture).
+    Real validation is worker-side at apply time: the exclusion rides
+    every request as a serialized relative string and the worker's
+    matcher refuses reads/writes/enumeration under it.
+    """
+    raw = str(path).strip()
+    candidate = PurePosixPath(raw)
+    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+        raise WorkspaceRegistryServiceError(
+            "Exclusion path must be relative to the binding root."
+        )
+    try:
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            RemoteLocatorError,
+            parse_remote_locator,
+        )
+
+        root = parse_remote_locator(str(binding.locator)).path
+    except (RemoteLocatorError, ValueError, TypeError) as exc:
+        raise WorkspaceRegistryServiceError(
+            "Binding root is not resolvable."
+        ) from exc
+    if candidate == PurePosixPath(".") or root == root / candidate:
         raise WorkspaceRegistryServiceError(
             "Exclude specific paths; remove the binding to exclude the whole root."
         )
@@ -2595,6 +2746,102 @@ class LocalWorkspaceRegistryService:
             )
         return binding_result
 
+    def add_ssh_binding(
+        self,
+        workspace_id: str,
+        raw_locator: str,
+        *,
+        allow_write: bool = False,
+        python_interpreter: str = "python3",
+        ssh_bin: str = "ssh",
+    ) -> WorkspaceRuntimeBinding:
+        """Bind an SSH remote directory as a file-tool access root.
+
+        Mirrors ``add_folder_binding`` for remote roots (spec
+        2026-09-24 "Binding model & data layer"): the locator is parsed
+        and component-validated, then canonicalized via ``ssh -G`` (a
+        local config dump — no connection, no DNS, no remote command —
+        run only here at add time, never in the send path). Duplicate
+        and nesting checks run between SSH bindings on the same
+        canonical identity only — never across hosts, and never against
+        local-filesystem bindings. Default-workspace and
+        unknown-workspace rejection is delegated to
+        ``save_runtime_binding``.
+
+        The stored ``status`` is ``READY`` and stays informational:
+        admission reads the in-memory status cache (Task 13), never this
+        column. Metadata carries the access flag, the remote interpreter,
+        and the canonical identity/fingerprint for retarget detection —
+        never credentials (the model-level
+        ``scrub_secret_metadata`` discipline applies on construction).
+
+        Args:
+            workspace_id: Owning (non-Default) workspace id.
+            raw_locator: ``ssh://[user@]host[:port]/absolute/path`` as
+                typed by the user; the host may be an ssh_config alias.
+            allow_write: Bind read-write instead of read-only.
+            python_interpreter: Remote python command (charset
+                ``[A-Za-z0-9_./-]``, no leading ``-``, no spaces).
+            ssh_bin: ssh binary used for the one ``ssh -G`` resolution
+                (injected by tests).
+
+        Returns:
+            The stored binding, kind ``ssh-filesystem``.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the locator is malformed,
+                the interpreter is invalid, ``ssh -G`` cannot resolve the
+                destination, or the root duplicates/nests an existing SSH
+                binding on the same canonical identity.
+            WorkspaceNotFound: If the workspace does not exist.
+        """
+        try:
+            loc = parse_remote_locator(raw_locator)
+        except RemoteLocatorError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"Invalid SSH locator: {exc}"
+            ) from exc
+        _validate_ssh_python_interpreter(python_interpreter)
+        try:
+            target = canonicalize_locator(loc, ssh_bin=ssh_bin)
+        except RemoteLocatorError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"Invalid SSH locator: {exc}"
+            ) from exc
+        _validate_ssh_overlap(
+            (target.hostname, target.port, target.user),
+            loc.path,
+            self.list_ssh_bindings(workspace_id),
+        )
+        binding = WorkspaceRuntimeBinding(
+            workspace_id=workspace_id,
+            binding_id=f"ssh-{uuid4().hex[:12]}",
+            binding_kind=RuntimeBindingKind.SSH_FILESYSTEM,
+            label=loc.path.name or locator_string(loc),
+            locator=locator_string(loc),
+            status=RuntimeBindingStatus.READY,
+            metadata={
+                "access": "rw" if allow_write else "ro",
+                "python": python_interpreter,
+                "canonical_fingerprint": canonical_fingerprint(target, loc.path),
+                "canonical_host": target.hostname,
+                "canonical_port": target.port,
+                "canonical_user": target.user,
+            },
+        )
+        binding_result = self.save_runtime_binding(binding)
+        try:
+            if self._change_review_binding_owner is not None:
+                self._change_review_binding_owner.binding_added(
+                    workspace_id,
+                    binding_result,
+                )
+        except Exception:  # noqa: BLE001 -- persistence must never fail on observer
+            logger.opt(exception=True).debug(
+                "change_review: binding observer failed after registration"
+            )
+        return binding_result
+
     def add_binding_exclusion(
         self, workspace_id: str, binding_id: str, path: str
     ) -> WorkspaceRuntimeBinding:
@@ -2604,6 +2851,17 @@ class LocalWorkspaceRegistryService:
         file/directory from disk (nonexistent paths read as directories for
         pre-excluding build output), rejects case-insensitive duplicates,
         and persists via binding metadata so the live run is untouched.
+
+        Task 17 (Phase 3c): SSH-filesystem bindings learn exclusions too.
+        The laptop resolve/stat is structurally impossible for a remote
+        root, so validation is LEXICAL and the entry stores the RAW
+        relative string with kind ``"directory"`` — the worker-side
+        matcher applies subtree semantics, which covers not-yet-existing
+        targets and files alike (a remote stat was considered to infer
+        file/dir and declined: it would make the edit depend on the
+        remote being reachable, and add-binding's own probe is advisory
+        for exactly that reason). Validation beyond the lexical rules is
+        worker-side at apply time.
 
         Args:
             workspace_id: Owning workspace of the folder binding.
@@ -2616,15 +2874,26 @@ class LocalWorkspaceRegistryService:
 
         Raises:
             WorkspaceRegistryServiceError: If the binding is unknown, not a
-                local-filesystem binding of this workspace, the path is
-                invalid (empty/absolute/home-relative/parent-escaping/root
-                itself/unresolvable or symlink-escaping), duplicates an
-                existing exclusion case-insensitively, or the per-binding
-                cap (200) is reached.
+                local-filesystem or ssh-filesystem binding of this
+                workspace, the path is invalid (empty/absolute/home-
+                relative/parent-escaping/root itself/unresolvable or
+                symlink-escaping), duplicates an existing exclusion
+                case-insensitively, or the per-binding cap (200) is reached.
         """
         with _BINDING_EXCLUSION_EDIT_LOCK:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
-            relative = _validated_exclusion_relative(binding, path)
+            if str(binding.binding_kind) in (
+                "ssh-filesystem",
+                str(RuntimeBindingKind.SSH_FILESYSTEM),
+            ):
+                relative = _validated_remote_exclusion_relative(binding, path)
+                kind = "directory"
+            else:
+                relative = _validated_exclusion_relative(binding, path)
+                absolute = Path(str(binding.locator)) / relative
+                kind = (
+                    "directory" if not absolute.exists() or absolute.is_dir() else "file"
+                )
             key = relative.as_posix().casefold()
             entries = list(binding_exclusion_entries(binding))
             if any(entry.path.casefold() == key for entry in entries):
@@ -2633,8 +2902,6 @@ class LocalWorkspaceRegistryService:
                 raise WorkspaceRegistryServiceError(
                     f"Exclusion limit reached ({_MAX_BINDING_EXCLUSIONS})."
                 )
-            absolute = Path(str(binding.locator)) / relative
-            kind = "directory" if not absolute.exists() or absolute.is_dir() else "file"
             entries.append(
                 BindingExclusion(path=relative.as_posix(), kind=kind, added_at=self._now_factory())
             )
@@ -2689,7 +2956,15 @@ class LocalWorkspaceRegistryService:
         if (
             binding is None
             or str(binding.workspace_id) != str(workspace_id)
-            or str(binding.binding_kind) != str(RuntimeBindingKind.LOCAL_FILESYSTEM)
+            or str(binding.binding_kind)
+            not in (
+                "local-filesystem",
+                str(RuntimeBindingKind.LOCAL_FILESYSTEM),
+                # Task 17: exclusions apply to SSH bindings as raw
+                # relative strings, validated worker-side at apply time.
+                "ssh-filesystem",
+                str(RuntimeBindingKind.SSH_FILESYSTEM),
+            )
         ):
             raise WorkspaceRegistryServiceError(
                 "Folder binding not found in this workspace."
@@ -2739,6 +3014,31 @@ class LocalWorkspaceRegistryService:
             )
         return tuple(refreshed)
 
+    def list_ssh_bindings(
+        self,
+        workspace_id: str,
+    ) -> tuple[WorkspaceRuntimeBinding, ...]:
+        """SSH-filesystem bindings with status returned as stored.
+
+        Unlike ``list_folder_bindings`` (which recomputes status from the
+        local disk), the SSH lister never probes the remote: live status
+        is owned by the in-memory status cache consulted at admission
+        (Task 13). The stored ``status`` column stays informational.
+
+        Args:
+            workspace_id: Workspace whose SSH bindings are listed.
+
+        Returns:
+            Stored ``ssh-filesystem`` bindings in registry order.
+        """
+        bindings = self.list_runtime_bindings(workspace_id)
+        return tuple(
+            b
+            for b in bindings
+            if str(b.binding_kind)
+            in ("ssh-filesystem", str(RuntimeBindingKind.SSH_FILESYSTEM))
+        )
+
     def remove_runtime_binding(self, binding_id: str) -> None:
         """Delete a runtime binding row (spec §2)."""
         safe_binding_id = _normalize_required_text(binding_id, "binding_id")
@@ -2761,6 +3061,52 @@ class LocalWorkspaceRegistryService:
         existing = self.get_runtime_binding(binding_id)
         if existing is None:
             raise BindingNotFound(binding_id)
+        metadata = dict(existing.metadata)
+        metadata["access"] = "rw" if allow_write else "ro"
+        return self.save_runtime_binding(
+            WorkspaceRuntimeBinding(
+                workspace_id=existing.workspace_id,
+                binding_id=existing.binding_id,
+                binding_kind=existing.binding_kind,
+                label=existing.label,
+                locator=existing.locator,
+                status=existing.status,
+                metadata=metadata,
+                created_at=existing.created_at,
+            )
+        )
+
+    def set_ssh_binding_access(
+        self, binding_id: str, *, allow_write: bool
+    ) -> WorkspaceRuntimeBinding:
+        """Flip an SSH binding's ro/rw access flag (folder toggle mirror).
+
+        Kind-checked unlike the folder-era toggle: the ro/rw flag lives in
+        ``metadata["access"]`` either way, but a folder binding id must
+        not be silently flipped through the SSH surface.
+
+        Args:
+            binding_id: SSH binding whose access flag is flipped.
+            allow_write: True for read-write, False for read-only.
+
+        Returns:
+            The updated binding.
+
+        Raises:
+            BindingNotFound: If the binding id does not exist.
+            WorkspaceRegistryServiceError: If the binding exists but is
+                not an ``ssh-filesystem`` binding.
+        """
+        existing = self.get_runtime_binding(binding_id)
+        if existing is None:
+            raise BindingNotFound(binding_id)
+        if str(existing.binding_kind) not in (
+            "ssh-filesystem",
+            str(RuntimeBindingKind.SSH_FILESYSTEM),
+        ):
+            raise WorkspaceRegistryServiceError(
+                f"SSH binding not found: {binding_id}"
+            )
         metadata = dict(existing.metadata)
         metadata["access"] = "rw" if allow_write else "ro"
         return self.save_runtime_binding(

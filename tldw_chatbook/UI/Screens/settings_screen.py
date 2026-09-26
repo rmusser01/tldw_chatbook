@@ -2728,6 +2728,86 @@ def _workspace_worker_connection(screen):
             WorkspaceDB.close(database)
 
 
+def _settings_ssh_advisory_probe(
+    binding_id: str,
+    locator: str,
+    python_interpreter: str,
+    metadata: "Mapping[str, Any] | None" = None,
+) -> None:
+    """Run one advisory ping for a just-added SSH binding (Task 20).
+
+    Thread-worker body only — never called on the UI thread. The ping is
+    the status probe (:meth:`RemoteWorkspaceToolExecutor.ping`): success
+    flips the shared status cache READY (capturing the identity chain);
+    every typed failure records its taxonomy row in the same cache, which
+    is what the Settings rows and the Console pickers render. Advisory
+    means the SAVE already happened regardless of this probe's outcome —
+    a dead host costs a status word, never a rejected form.
+
+    Never raises: a probe that cannot even be built records a plain
+    UNREACHABLE row so the row still degrades visibly.
+    """
+    from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
+    from tldw_chatbook.Tools.remote_binding_status import (
+        BindingState,
+        get_remote_binding_status_cache,
+    )
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceExecutionError,
+        RemoteWorkspaceToolExecutor,
+        ssh_binding_identity,
+    )
+    from tldw_chatbook.Tools.remote_workspace_transport import (
+        TransportFailureKind,
+        get_master_manager,
+    )
+
+    cache = get_remote_binding_status_cache()
+
+    def _record_unreached(reason: str) -> None:
+        # Last resort: the probe never produced a taxonomy row, but a
+        # false "ready" after a failed probe is worse than a plain
+        # unreachable. Best-effort; never raises out of the worker.
+        try:
+            cache.record_transport_failure(
+                binding_id, TransportFailureKind.UNREACHABLE, reason
+            )
+        except Exception:  # noqa: BLE001 - cache write is best-effort
+            pass
+
+    expected_fingerprint, host_key = ssh_binding_identity(metadata)
+    try:
+        executor = RemoteWorkspaceToolExecutor.for_ssh(
+            parse_remote_locator(locator),
+            binding_id,
+            cache=cache,
+            masters=get_master_manager(),
+            python=python_interpreter,
+            sensitive_exclusions=lambda: (),
+            expected_fingerprint=expected_fingerprint if metadata is not None else None,
+            canonical_host_key=host_key,
+        )
+    except Exception:  # noqa: BLE001 - advisory only, degrade never raise
+        _record_unreached("probe could not run")
+        return
+    try:
+        executor.ping()
+    except Exception as exc:  # noqa: BLE001 - advisory only
+        # The transport-class failures and the pin refusal were ALREADY
+        # recorded by the ping itself (see ``_ssh_ping``) — recording
+        # again here would overwrite their specific reason. Only the
+        # residual contract failures (protocol/bundle mismatch) reach the
+        # cache still READY; those degrade to a plain unreachable rather
+        # than leave a false "ready".
+        try:
+            still_ready = str(cache.status(binding_id).state) == str(BindingState.READY)
+        except Exception:  # noqa: BLE001 - unreadable cache, nothing to add
+            return
+        if still_ready:
+            code = getattr(exc, "code", "") or type(exc).__name__
+            _record_unreached(f"probe failed ({code})")
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
@@ -3316,6 +3396,13 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspace_first_bind_intent: object | None = None
         self._settings_workspace_first_bind_modal: object | None = None
         self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
+        #: Task 20 (SSH bindings): the latest SSH-editor outcome, same
+        #: ``(workspace_id, binding_id | None, text)`` shape as the folder
+        #: result so the pane recompose keeps it beside its action.
+        self._settings_workspace_ssh_result: tuple[str, str | None, str] | None = None
+        #: The add form's staged access choice ("ro"/"rw"); read by the
+        #: submit handler, flipped by the access button in place.
+        self._settings_workspace_ssh_access_choice: str = "ro"
         #: Task 10 (workspace assistant defaults): the staged-but-unapplied
         #: selection in the "Default assistant" section
         #: (``{"workspace_id", "persona_id", "persona_label",
@@ -20441,6 +20528,9 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_workspace_folder_bindings(
                 registry, record.workspace_id
             )
+            yield from self._render_workspace_ssh_bindings(
+                registry, record.workspace_id
+            )
             yield from self._render_workspace_change_review(
                 registry, record.workspace_id
             )
@@ -20879,6 +20969,148 @@ class SettingsScreen(BaseAppScreen):
                 animate=False
             )
         except QueryError:
+            pass
+
+    def _render_workspace_ssh_bindings(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the SSH-remote folder-bindings editor (Task 20, Phase 5a).
+
+        Mirrors ``_render_workspace_folder_bindings`` row for row: one
+        row per bound remote root as ``locator [ro|rw] <live-status>``
+        with a per-row ro/rw toggle and remove button, then the add form
+        (target, absolute remote path, ro/rw choice, interpreter
+        override). The live status is RENDERED FROM THE STATUS CACHE only
+        (``Tools.remote_binding_status.cached_status_display``) — never
+        probed here; refreshes land via the advisory probe worker and
+        recompose. Toggle/remove buttons stash ``binding_id`` the same way
+        the folder rows do (plain attribute, never parsed from the dom
+        id).
+        """
+        from ...Tools.remote_binding_status import cached_status_display
+
+        yield Static("SSH folders (remote agent file-tool access)",
+                    classes="destination-section")
+        for binding in registry.list_ssh_bindings(workspace_id):
+            access = binding.metadata.get("access", "ro")
+            status_word = cached_status_display(str(binding.binding_id))
+            yield Static(
+                f"{binding.locator} [{access}] {status_word}",
+                id=f"settings-workspace-ssh-{binding.binding_id}",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-input-row"):
+                toggle_button = Button(
+                    "Allow write" if access != "rw" else "Read-only",
+                    id=f"settings-workspace-ssh-toggle-{binding.binding_id}",
+                    classes="settings-workspace-ssh-toggle",
+                    compact=True,
+                )
+                toggle_button.binding_id = binding.binding_id
+                yield toggle_button
+                remove_button = Button(
+                    "Remove",
+                    id=f"settings-workspace-ssh-remove-{binding.binding_id}",
+                    classes="settings-workspace-ssh-remove",
+                    compact=True,
+                )
+                remove_button.binding_id = binding.binding_id
+                yield remove_button
+            yield self._workspace_ssh_result_widget(workspace_id, binding.binding_id)
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="user@host[:port] or alias",
+                id="settings-workspace-ssh-target",
+                classes="settings-compact-input",
+            )
+            yield Input(
+                placeholder="/absolute/remote/path",
+                id="settings-workspace-ssh-path",
+                classes="settings-compact-input",
+            )
+        with Horizontal(classes="settings-input-row"):
+            access_button = Button(
+                "Access: read-only"
+                if self._settings_workspace_ssh_access_choice != "rw"
+                else "Access: read-write",
+                id="settings-workspace-ssh-access",
+                compact=True,
+            )
+            yield access_button
+            yield Input(
+                placeholder="python3 (default)",
+                id="settings-workspace-ssh-python",
+                classes="settings-compact-input",
+            )
+            yield Button("Add SSH folder", id="settings-workspace-ssh-add", compact=True)
+        yield self._workspace_ssh_result_widget(workspace_id)
+
+    def _workspace_ssh_result_widget(
+        self, workspace_id: str, binding_id: str | None = None
+    ) -> Static:
+        """Keep the latest SSH outcome next to the action that produced it."""
+        result = self._settings_workspace_ssh_result
+        text = result[2] if result and result[:2] == (workspace_id, binding_id) else ""
+        suffix = f"-{binding_id}" if binding_id else ""
+        return Static(
+            text,
+            id=f"settings-workspace-ssh-result{suffix}",
+            classes="settings-status-row settings-workspace-ssh-result",
+            markup=False,
+        )
+
+    def _set_workspace_ssh_result(
+        self, text: str, binding_id: str | None = None
+    ) -> None:
+        """Publish SSH-editor feedback without recomposing a rejected draft."""
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        self._settings_workspace_ssh_result = (workspace_id, binding_id, text)
+        for result in self.query(".settings-workspace-ssh-result"):
+            result.update("")
+        suffix = f"-{binding_id}" if binding_id else ""
+        self._set_static_text(f"#settings-workspace-ssh-result{suffix}", text)
+
+    def _settings_workspace_ssh_probe_landed(
+        self, workspace_id: str, binding_id: str
+    ) -> None:
+        """Apply one advisory probe outcome (UI thread, via ``call_from_thread``)."""
+        from ...Tools.remote_binding_status import cached_status_display
+
+        if not self.is_attached or self._settings_selected_workspace_id != workspace_id:
+            return
+        self._set_workspace_ssh_result(
+            f"Probe: {cached_status_display(binding_id)}.", binding_id
+        )
+        self._refresh_settings_workspaces_pane()
+
+    @work(thread=True, exclusive=True, group="settings-ssh-probe")
+    def _probe_settings_workspace_ssh_binding(
+        self,
+        workspace_id: str,
+        binding_id: str,
+        locator: str,
+        python: str,
+        metadata: "Mapping[str, Any] | None" = None,
+    ) -> None:
+        """Probe one just-added SSH binding off the UI thread (advisory).
+
+        The save already happened; this worker only refreshes the cached
+        status (see ``_settings_ssh_advisory_probe``) and posts the
+        outcome back to the UI thread. Never blocks, never retries —
+        recovery is the cache plus the transport's own debounced probe.
+        """
+        _settings_ssh_advisory_probe(binding_id, locator, python, metadata)
+        try:
+            self.app.call_from_thread(
+                self._settings_workspace_ssh_probe_landed, workspace_id, binding_id
+            )
+        except RuntimeError:
+            # App shutting down; the cache write already landed.
             pass
 
     def _set_workspace_assistant_result(
@@ -25730,6 +25962,147 @@ class SettingsScreen(BaseAppScreen):
         # during teardown, leaving focus attached to a removed control.
         self._after_category_panes(
             self._restore_category_pane_focus, "settings-workspace-folder-add"
+        )
+
+    @on(Button.Pressed, "#settings-workspace-ssh-access")
+    def _settings_workspace_toggle_ssh_access_choice(
+        self, event: Button.Pressed
+    ) -> None:
+        """Flip the ADD FORM's staged ro/rw choice in place (no recompose)."""
+        event.stop()
+        choice = self._settings_workspace_ssh_access_choice
+        self._settings_workspace_ssh_access_choice = "ro" if choice == "rw" else "rw"
+        event.button.label = (
+            "Access: read-only"
+            if self._settings_workspace_ssh_access_choice != "rw"
+            else "Access: read-write"
+        )
+
+    @on(Button.Pressed, "#settings-workspace-ssh-add")
+    def _settings_workspace_add_ssh(self, event: Button.Pressed) -> None:
+        """Bind an SSH remote directory as a file-tool access root (Task 20).
+
+        The two typed fields compose into the registry's
+        ``ssh://[user@]host[:port]/absolute/path`` locator. The save is
+        immediate; the connectivity probe is ADVISORY and dispatched to a
+        thread worker after the pane recomposes (see
+        ``_probe_settings_workspace_ssh_binding``). Without an ``ssh``
+        binary on PATH the submit refuses inline with the feature-off
+        message (Task 21) — the feature is disabled, not broken.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        from ...Tools.remote_workspace_transport import (
+            SSH_UNAVAILABLE_MESSAGE,
+            ssh_available,
+        )
+
+        if not ssh_available():
+            self._set_workspace_ssh_result(SSH_UNAVAILABLE_MESSAGE)
+            return
+        target = self.query_one("#settings-workspace-ssh-target", Input).value.strip()
+        raw_path = self.query_one("#settings-workspace-ssh-path", Input).value.strip()
+        python = self.query_one("#settings-workspace-ssh-python", Input).value.strip()
+        if not target:
+            self._set_workspace_ssh_result("Enter a target (user@host[:port] or alias).")
+            return
+        if not raw_path.startswith("/"):
+            self._set_workspace_ssh_result(
+                "Remote path must be absolute (start with /)."
+            )
+            return
+        locator = f"ssh://{target}{raw_path}"
+        try:
+            binding = registry.add_ssh_binding(
+                workspace_id,
+                locator,
+                allow_write=self._settings_workspace_ssh_access_choice == "rw",
+                python_interpreter=python or "python3",
+            )
+        except WorkspaceRegistryServiceError as exc:
+            self._set_workspace_ssh_result(str(exc))
+            return
+        access_word = (
+            "read-write"
+            if self._settings_workspace_ssh_access_choice == "rw"
+            else "read-only"
+        )
+        self._set_workspace_ssh_result(
+            f"SSH folder added ({access_word}). Probing host…"
+        )
+        self._refresh_settings_workspaces_pane()
+        # Advisory probe: never awaited here; the worker posts its outcome
+        # back and the row re-renders from the status cache.
+        self._probe_settings_workspace_ssh_binding(
+            workspace_id,
+            str(binding.binding_id),
+            str(binding.locator),
+            str(binding.metadata.get("python") or "python3"),
+            dict(binding.metadata),
+        )
+
+    @on(Button.Pressed, ".settings-workspace-ssh-toggle")
+    def _settings_workspace_toggle_ssh_access(self, event: Button.Pressed) -> None:
+        """Flip an SSH binding between read-only and read-write (Task 20)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        current = next(
+            (
+                binding
+                for binding in registry.list_ssh_bindings(workspace_id)
+                if binding.binding_id == binding_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        allow_write = current.metadata.get("access") != "rw"
+        try:
+            registry.set_ssh_binding_access(binding_id, allow_write=allow_write)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_workspace_ssh_result(str(exc), binding_id)
+            return
+        self._set_workspace_ssh_result(
+            "SSH folder access: read-write."
+            if allow_write
+            else "SSH folder access: read-only.",
+            binding_id,
+        )
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-ssh-remove")
+    def _settings_workspace_remove_ssh(self, event: Button.Pressed) -> None:
+        """Unbind an SSH remote root from the selected workspace (Task 20)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        try:
+            registry.remove_runtime_binding(binding_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_workspace_ssh_result(str(exc), binding_id)
+            return
+        self._set_workspace_ssh_result("SSH folder removed.")
+        self._refresh_settings_workspaces_pane()
+        # Same deferred-focus rule as the folder remove handler above.
+        self._after_category_panes(
+            self._restore_category_pane_focus, "settings-workspace-ssh-add"
         )
 
     @on(Button.Pressed, "#settings-workspace-persona-previous")

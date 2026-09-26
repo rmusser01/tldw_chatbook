@@ -25,6 +25,7 @@ from .project_instruction_resolver import (
     capture_binding_root_identity,
     path_is_excluded,
 )
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
 __all__ = [
     "PROJECT_INSTRUCTION_ROW_KEY",
@@ -281,9 +282,16 @@ class InstructionActivationLedger:
             raise ValueError("nested_max_bytes must be non-negative")
         self._lock = threading.RLock()
         self._snapshot = snapshot
-        self._resolver = resolver or ProjectInstructionResolver()
+        # Task 19: a REMOTE snapshot carries its executor-backed IO; the
+        # ledger's nested resolution and identity capture route through
+        # it, and a remote root without a reader fails closed exactly
+        # like an unresolvable local chain.
+        self._remote_io = getattr(snapshot, "remote_io", None)
+        self._resolver = resolver or ProjectInstructionResolver(
+            remote_io=self._remote_io
+        )
         self._binding_root_identity = capture_binding_root_identity(
-            snapshot.binding_root
+            snapshot.binding_root, remote_io=self._remote_io
         )
         self._nested_max_bytes = nested_max_bytes
         self._remaining_nested_bytes = nested_max_bytes
@@ -341,6 +349,11 @@ class InstructionActivationLedger:
         relative = Path(target_relative_path)
         if relative.name not in {"AGENTS.md", "AGENTS.override.md"}:
             raise InstructionPromotionSnapshotError("ineligible_target")
+        if isinstance(self._snapshot.binding_root, RemoteRoot):
+            # Task 19 boundary: promotion is local-only in v1 (the
+            # resolver refuses remote targets fail-closed); refuse here
+            # BEFORE any laptop-path work on the remote descriptor.
+            raise InstructionPromotionSnapshotError("ineligible_target")
         try:
             from tldw_chatbook.Utils.path_validation import validate_path
 
@@ -370,6 +383,14 @@ class InstructionActivationLedger:
         self, prepared: InstructionPromotionSnapshot
     ) -> PromotionSnapshotRevalidation:
         """Recompute and compare every authority-bearing snapshot field."""
+        if (
+            isinstance(self._snapshot.binding_root, RemoteRoot)
+            or isinstance(prepared.binding_root, RemoteRoot)
+        ):
+            # Remote promotion is never created (see snapshot_promotion_target)
+            # and always revalidates ineligible — before any path work on
+            # the remote descriptor.
+            return PromotionSnapshotRevalidation(False, "ineligible_target")
         if (
             prepared.binding_id != self._snapshot.binding_id
             or prepared.locator_fingerprint != self._snapshot.locator_fingerprint

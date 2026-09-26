@@ -19523,6 +19523,25 @@ class TldwCli(
             # Cancel any pending workers and wait for them, bounded.
             await self._cancel_and_settle_workers("unmount")
 
+            # SSH ControlMaster cleanup (Phase 2a): `ssh -O exit` for every
+            # master this process started, only after in-flight calls have
+            # settled above so closing a master cannot cut a live call.
+            # Best-effort and bounded (5s per host, off the loop);
+            # ControlPersist remains the crash backstop, so a failure here
+            # degrades to an eventually-expiring master and must never
+            # block the quit.
+            try:
+                from tldw_chatbook.Tools.remote_workspace_transport import (
+                    get_master_manager,
+                )
+
+                await asyncio.to_thread(get_master_manager().close_all)
+            except Exception as error:
+                self.loguru_logger.warning(
+                    "Closing SSH control masters on shutdown failed type={}",
+                    type(error).__name__,
+                )
+
             # Stop media cleanup timer
             if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
                 self._media_cleanup_timer.stop()

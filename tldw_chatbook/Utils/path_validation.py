@@ -10,21 +10,77 @@ import stat
 import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
-from loguru import logger
+
+# No module-scope loguru import: this module sits inside the pinned
+# workspace worker's stdlib-only import closure (Phase 0c), so merely
+# importing it must not pull loguru. Logging happens only on actual
+# validation-failure paths, which import it lazily below — the same rule
+# the telemetry wrappers directly underneath already follow.
 
 
 # Telemetry belongs to actual validation calls; pure recovery path parsing must
 # not bootstrap config, optional engines or persistent metrics during discovery.
+#
+# The lazy ``..Metrics`` import is additionally guarded with an ImportError
+# fallback (Phase 1d): this module sits inside the pinned worker's closure,
+# and Task 8 concatenates it into the remote worker bundle that runs on a
+# bare remote interpreter with no ``tldw_chatbook`` package. There the
+# relative import raises ImportError, and telemetry degrades to a no-op
+# instead of failing every validation call. In the parent application the
+# import always succeeds, so parent behaviour is unchanged.
 def log_counter(*args, **kwargs):
-    from ..Metrics.metrics_logger import log_counter as emit
-
+    try:
+        from ..Metrics.metrics_logger import log_counter as emit
+    except ImportError:
+        return None
     return emit(*args, **kwargs)
 
 
 def log_histogram(*args, **kwargs):
-    from ..Metrics.metrics_logger import log_histogram as emit
-
+    try:
+        from ..Metrics.metrics_logger import log_histogram as emit
+    except ImportError:
+        return None
     return emit(*args, **kwargs)
+
+
+class _NoOpLogger:
+    """Silent stand-in for loguru's logger where loguru is not installed.
+
+    Only the methods called on ``logger`` in this module are defined. The
+    remote worker bundle (Task 8) runs on a bare interpreter without
+    loguru; validation diagnostics there are dropped rather than allowed
+    to break ``validate_path``/``validate_path_simple``.
+    """
+
+    __slots__ = ()
+
+    def debug(self, *_args, **_kwargs) -> None:
+        return None
+
+    def info(self, *_args, **_kwargs) -> None:
+        return None
+
+    def warning(self, *_args, **_kwargs) -> None:
+        return None
+
+    def error(self, *_args, **_kwargs) -> None:
+        return None
+
+
+def _logging_logger():
+    """Return loguru's logger, or a silent no-op when loguru is absent.
+
+    Same laziness rule as ``log_counter`` above: the import happens per
+    call, never at module scope, and the ImportError fallback exists for
+    the stdlib-only remote worker bundle (Phase 1d). In the parent, where
+    loguru is an installed dependency, the return value is unchanged.
+    """
+    try:
+        from loguru import logger
+    except ImportError:
+        return _NoOpLogger()
+    return logger
 
 
 def validate_recovery_relative_path(value: str) -> str:
@@ -159,6 +215,8 @@ def validate_path(
     Raises:
         ValueError: If the path is invalid or attempts directory traversal
     """
+    logger = _logging_logger()
+
     start_time = time.time()
     log_counter("path_validation_validate_path_attempt")
     redacted_failure: str | None = None
@@ -465,6 +523,8 @@ def validate_path_simple(
     Raises:
         ValueError: If the path contains security risks
     """
+    logger = _logging_logger()
+
     start_time = time.time()
     log_counter("path_validation_validate_path_simple_attempt")
 
