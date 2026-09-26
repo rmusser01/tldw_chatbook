@@ -282,6 +282,44 @@ async def test_console_source_routes_draft_shelf_only_to_local_draft_contracts()
     ]
 
 
+@pytest.mark.asyncio
+async def test_draft_promotion_collection_choices_include_every_bounded_page():
+    class _PagedCollectionsScope:
+        def __init__(self) -> None:
+            self.offsets = []
+
+        async def list_prompt_collections(self, **kwargs):
+            offset = kwargs["offset"]
+            limit = kwargs["limit"]
+            self.offsets.append(offset)
+            items = [
+                {
+                    "id": f"local:prompt_collection:{index}",
+                    "backend": "local",
+                    "collection_id": index,
+                    "name": f"Collection {index:03d}",
+                    "display_name": f"Collection {index:03d}",
+                    "description": None,
+                    "prompt_ids": [],
+                }
+                for index in range(offset + 1, min(offset + limit, 205) + 1)
+            ]
+            return {
+                "collections": items,
+                "limit": limit,
+                "offset": offset,
+                "total": 205,
+            }
+
+    scope = _PagedCollectionsScope()
+    result = await _ConsolePromptSource(scope).list_draft_collections()
+
+    assert scope.offsets == [0, 100, 200]
+    assert len(result["collections"]) == 205
+    assert result["collections"][0]["collection_id"] == 1
+    assert result["collections"][-1]["collection_id"] == 205
+
+
 def test_controller_inserts_shelf_text_at_live_caret_without_replacing_draft():
     composer = ConsoleComposerBar()
     composer.load_draft("alpha omega")

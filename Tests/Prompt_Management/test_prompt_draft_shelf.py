@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event, Thread
 
 import pytest
 
@@ -15,6 +15,7 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     PromptScopeService,
 )
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.Utils.input_validation import CONSOLE_DRAFT_MAX_LENGTH
 
 
 @pytest.fixture
@@ -142,6 +143,71 @@ def test_atomic_capacity_refuses_one_of_two_concurrent_100th_creates(draft_shelf
     assert replacement["content"] == "replacement after explicit delete"
     assert local.list_prompt_drafts(page=1, per_page=100)["total_items"] == 100
 
+
+def test_draft_page_count_and_rows_share_one_read_snapshot(draft_shelf):
+    database, local, _scope = draft_shelf
+    first = local.create_prompt_draft("first")
+    local.create_prompt_draft("second")
+    start_delete = Event()
+    delete_finished = Event()
+    writer_errors: list[BaseException] = []
+
+    def delete_between_count_and_page() -> None:
+        assert start_delete.wait(5)
+        try:
+            local.delete_prompt_draft(
+                draft_id=first["draft_id"], expected_version=first["version"]
+            )
+        except Exception as exc:  # noqa: BLE001 - assert worker failures in parent
+            writer_errors.append(exc)
+        finally:
+            database.close_connection()
+            delete_finished.set()
+
+    connection = database.get_connection()
+
+    def pause_before_page(statement: str) -> None:
+        normalized = " ".join(statement.split()).upper()
+        if normalized.startswith("SELECT DRAFT_ID, CONTENT"):
+            start_delete.set()
+            assert delete_finished.wait(5)
+
+    connection.set_trace_callback(pause_before_page)
+    worker = Thread(target=delete_between_count_and_page)
+    worker.start()
+    try:
+        result = local.list_prompt_drafts(page=1, per_page=10)
+    finally:
+        connection.set_trace_callback(None)
+        start_delete.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert writer_errors == []
+    assert result["total_items"] == 2
+    assert len(result["items"]) == 2
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize(
+    "invalid_content",
+    ["x" * (CONSOLE_DRAFT_MAX_LENGTH + 1), "prefix\x00suffix"],
+)
+def test_draft_writes_reject_unsafe_or_oversized_exact_text(
+    draft_shelf, operation, invalid_content
+):
+    _database, local, _scope = draft_shelf
+    created = local.create_prompt_draft("valid")
+
+    with pytest.raises(ValueError, match="content"):
+        if operation == "create":
+            local.create_prompt_draft(invalid_content)
+        else:
+            local.update_prompt_draft(
+                draft_id=created["draft_id"],
+                content=invalid_content,
+                expected_version=created["version"],
+            )
 
 @pytest.mark.asyncio
 async def test_scope_rejects_server_mode_before_consulting_server(draft_shelf):

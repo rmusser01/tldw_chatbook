@@ -16,6 +16,7 @@ from ..runtime_policy.bootstrap import (
     derive_configured_server_binding,
 )
 from ..runtime_policy.types import PolicyDeniedError
+from ..Utils.input_validation import validate_prompt_draft_shelf_content
 
 if TYPE_CHECKING:
     from ..tldw_api import PromptCreateRequest, TLDWAPIClient
@@ -25,6 +26,10 @@ from .prompt_batch_models import (
     PromptBatchRestoreResult,
     PromptBatchTarget,
     validate_prompt_batch_targets,
+)
+from .prompt_draft_contract import (
+    PROMPT_DRAFT_SHELF_CAPACITY,
+    PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE,
 )
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
@@ -47,10 +52,7 @@ from .prompt_source_capabilities import (
 )
 from .server_prompt_adapter import normalize_artifact_type
 
-
 _SQLITE_SIGNED_INTEGER_MAX = PromptsDatabase._SQLITE_SIGNED_INTEGER_MAX
-PROMPT_DRAFT_SHELF_CAPACITY = 100
-PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE = 100
 
 
 class PromptDraftShelfFullError(RuntimeError):
@@ -72,15 +74,6 @@ def _positive_signed_id(value: Any, *, field_name: str) -> int:
     """Return one strict positive SQLite identifier."""
     if type(value) is not int or value < 1 or value > _SQLITE_SIGNED_INTEGER_MAX:
         raise ValueError(f"{field_name} must be a positive signed 64-bit integer.")
-    return value
-
-
-def _prompt_draft_content(value: Any) -> str:
-    """Validate one shelf payload while preserving its exact text."""
-    if not isinstance(value, str):
-        raise TypeError("content must be a string.")
-    if not value.strip():
-        raise ValueError("content must contain non-whitespace text.")
     return value
 
 
@@ -122,7 +115,7 @@ def _normalize_prompt_draft_record(record: Any) -> dict[str, Any]:
     if not isinstance(record, Mapping):
         raise TypeError("Prompt draft response must be a mapping.")
     draft_id = _positive_signed_id(record.get("draft_id"), field_name="draft_id")
-    content = _prompt_draft_content(record.get("content"))
+    content = validate_prompt_draft_shelf_content(record.get("content"))
     version = _prompt_draft_version(record.get("version"), field_name="version")
     created_at = record.get("created_at")
     updated_at = record.get("updated_at")
@@ -441,8 +434,20 @@ class LocalPromptService:
         return _normalize_prompt_draft_record(dict(row))
 
     def create_prompt_draft(self, content: str) -> dict[str, Any]:
-        """Create one exact local draft, refusing rather than evicting at capacity."""
-        content = _prompt_draft_content(content)
+        """Create one exact local draft without evicting an older entry.
+
+        Args:
+            content: Exact unsent Console text to persist.
+
+        Returns:
+            The normalized created Draft Shelf record.
+
+        Raises:
+            ValueError: If content violates the shared Draft Shelf boundary.
+            PromptDraftShelfFullError: If the shelf already holds its capacity.
+            RuntimeError: If local Draft Shelf storage is unavailable.
+        """
+        content = validate_prompt_draft_shelf_content(content)
         db = self._require_draft_shelf_db()
         with db.transaction(immediate=True) as conn:
             total = int(
@@ -472,47 +477,75 @@ class LocalPromptService:
         page: int = 1,
         per_page: int = 10,
     ) -> dict[str, Any]:
-        """Return one newest-first draft page with literal content search."""
+        """Return one snapshot-consistent newest-first Draft Shelf page.
+
+        Args:
+            query: Optional literal case-insensitive content substring.
+            page: One-based result page.
+            per_page: Number of entries to return, bounded by the shelf contract.
+
+        Returns:
+            A normalized page with items and pagination metadata from one read
+            snapshot.
+
+        Raises:
+            TypeError: If the query is not text.
+            ValueError: If a page bound is invalid.
+            RuntimeError: If local Draft Shelf storage is unavailable.
+        """
         query, page, per_page = _prompt_draft_page_args(
             query=query, page=page, per_page=per_page
         )
         db = self._require_draft_shelf_db()
-        conn = db.get_connection()
         predicate = ""
         predicate_params: tuple[Any, ...] = ()
         if query:
             predicate = "WHERE INSTR(PY_CASEFOLD(content), ?) > 0"
             predicate_params = (query,)
-        total = int(
-            conn.execute(
-                f"SELECT COUNT(*) FROM LocalPromptDrafts {predicate}",
-                predicate_params,
-            ).fetchone()[0]
-        )
-        offset = (page - 1) * per_page
-        rows = conn.execute(
-            f"""
-            SELECT draft_id, content, created_at, updated_at, version
-            FROM LocalPromptDrafts
-            {predicate}
-            ORDER BY updated_at DESC, draft_id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (*predicate_params, per_page, offset),
-        ).fetchall()
-        return {
-            "items": [_normalize_prompt_draft_record(dict(row)) for row in rows],
-            "page": page,
-            "per_page": per_page,
-            "total_pages": max(1, (total + per_page - 1) // per_page),
-            "total_items": total,
-        }
+        with db.transaction() as conn:
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM LocalPromptDrafts {predicate}",
+                    predicate_params,
+                ).fetchone()[0]
+            )
+            offset = (page - 1) * per_page
+            rows = conn.execute(
+                f"""
+                SELECT draft_id, content, created_at, updated_at, version
+                FROM LocalPromptDrafts
+                {predicate}
+                ORDER BY updated_at DESC, draft_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (*predicate_params, per_page, offset),
+            ).fetchall()
+            return {
+                "items": [_normalize_prompt_draft_record(dict(row)) for row in rows],
+                "page": page,
+                "per_page": per_page,
+                "total_pages": max(1, (total + per_page - 1) // per_page),
+                "total_items": total,
+            }
 
     def get_prompt_draft(self, draft_id: int) -> dict[str, Any]:
-        """Return one exact local draft by stable identity."""
+        """Return one exact local draft by stable identity.
+
+        Args:
+            draft_id: Positive local Draft Shelf identifier.
+
+        Returns:
+            The normalized Draft Shelf record.
+
+        Raises:
+            ValueError: If the identifier is outside SQLite's positive range.
+            KeyError: If the draft does not exist.
+            RuntimeError: If local Draft Shelf storage is unavailable.
+        """
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
         db = self._require_draft_shelf_db()
-        return self._prompt_draft_row(db.get_connection(), draft_id)
+        with db.transaction() as conn:
+            return self._prompt_draft_row(conn, draft_id)
 
     def update_prompt_draft(
         self,
@@ -521,9 +554,23 @@ class LocalPromptService:
         content: str,
         expected_version: int,
     ) -> dict[str, Any]:
-        """Replace one reviewed draft only when its version is still current."""
+        """Replace one reviewed draft only while its version is current.
+
+        Args:
+            draft_id: Positive local Draft Shelf identifier.
+            content: Exact replacement text.
+            expected_version: Version observed when the draft was opened.
+
+        Returns:
+            The normalized updated record with its incremented version.
+
+        Raises:
+            ValueError: If an identifier, version, or content value is invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+            RuntimeError: If local Draft Shelf storage is unavailable.
+        """
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
-        content = _prompt_draft_content(content)
+        content = validate_prompt_draft_shelf_content(content)
         expected_version = _prompt_draft_version(expected_version)
         db = self._require_draft_shelf_db()
         with db.transaction(immediate=True) as conn:
@@ -544,7 +591,20 @@ class LocalPromptService:
             return self._prompt_draft_row(conn, draft_id)
 
     def delete_prompt_draft(self, *, draft_id: int, expected_version: int) -> bool:
-        """Hard-delete one reviewed local draft without creating a sync tombstone."""
+        """Hard-delete one current local draft without a sync tombstone.
+
+        Args:
+            draft_id: Positive local Draft Shelf identifier.
+            expected_version: Version observed when the draft was opened.
+
+        Returns:
+            ``True`` after the row is deleted.
+
+        Raises:
+            ValueError: If the identifier or version is invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+            RuntimeError: If local Draft Shelf storage is unavailable.
+        """
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
         expected_version = _prompt_draft_version(expected_version)
         db = self._require_draft_shelf_db()
@@ -2212,7 +2272,21 @@ class PromptScopeService:
         mode: PromptBackend | str | None = PromptBackend.LOCAL,
         content: str,
     ) -> dict[str, Any]:
-        """Persist one exact device-local unsent Console draft."""
+        """Persist one exact device-local unsent Console draft.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            content: Exact unsent Console text to persist.
+
+        Returns:
+            The normalized created Draft Shelf record.
+
+        Raises:
+            ValueError: If mode or content is invalid.
+            PolicyDeniedError: If runtime policy denies local draft creation.
+            PromptDraftShelfFullError: If the local shelf is full.
+            RuntimeError: If the local Draft Shelf service is unavailable.
+        """
         self._local_draft_mode(mode)
         self._enforce_policy(self._draft_action_id("create"))
         method = getattr(self.local_service, "create_prompt_draft", None)
@@ -2229,7 +2303,23 @@ class PromptScopeService:
         page: int = 1,
         per_page: int = 10,
     ) -> dict[str, Any]:
-        """Return one bounded local Draft Shelf page or literal search page."""
+        """Return one bounded local Draft Shelf page or literal search page.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            query: Optional literal case-insensitive content substring.
+            page: One-based result page.
+            per_page: Number of entries to return.
+
+        Returns:
+            A validated page containing normalized Draft Shelf records.
+
+        Raises:
+            TypeError: If query or the backend response has an invalid shape.
+            ValueError: If mode, bounds, or response metadata is invalid.
+            PolicyDeniedError: If runtime policy denies local draft listing.
+            RuntimeError: If the local Draft Shelf service is unavailable.
+        """
         self._local_draft_mode(mode)
         query, page, per_page = _prompt_draft_page_args(
             query=query, page=page, per_page=per_page
@@ -2272,7 +2362,21 @@ class PromptScopeService:
         mode: PromptBackend | str | None = PromptBackend.LOCAL,
         draft_id: int,
     ) -> dict[str, Any]:
-        """Return one device-local Draft Shelf entry."""
+        """Return one device-local Draft Shelf entry.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            draft_id: Positive local Draft Shelf identifier.
+
+        Returns:
+            The normalized Draft Shelf record.
+
+        Raises:
+            ValueError: If mode or the identifier is invalid.
+            KeyError: If the draft does not exist.
+            PolicyDeniedError: If runtime policy denies local draft reads.
+            RuntimeError: If the local Draft Shelf service is unavailable.
+        """
         self._local_draft_mode(mode)
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
         self._enforce_policy(self._draft_action_id("detail"))
@@ -2290,10 +2394,26 @@ class PromptScopeService:
         content: str,
         expected_version: int,
     ) -> dict[str, Any]:
-        """Conditionally replace one device-local Draft Shelf entry."""
+        """Conditionally replace one device-local Draft Shelf entry.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            draft_id: Positive local Draft Shelf identifier.
+            content: Exact replacement text.
+            expected_version: Version observed when the draft was opened.
+
+        Returns:
+            The normalized updated record.
+
+        Raises:
+            ValueError: If mode, identity, version, or content is invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+            PolicyDeniedError: If runtime policy denies local draft updates.
+            RuntimeError: If the local Draft Shelf service is unavailable.
+        """
         self._local_draft_mode(mode)
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
-        content = _prompt_draft_content(content)
+        content = validate_prompt_draft_shelf_content(content)
         expected_version = _prompt_draft_version(expected_version)
         self._enforce_policy(self._draft_action_id("update"))
         method = getattr(self.local_service, "update_prompt_draft", None)
@@ -2315,7 +2435,22 @@ class PromptScopeService:
         draft_id: int,
         expected_version: int,
     ) -> bool:
-        """Conditionally hard-delete one device-local Draft Shelf entry."""
+        """Conditionally hard-delete one device-local Draft Shelf entry.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            draft_id: Positive local Draft Shelf identifier.
+            expected_version: Version observed when the draft was opened.
+
+        Returns:
+            ``True`` after the backend confirms deletion.
+
+        Raises:
+            ValueError: If mode, identity, version, or confirmation is invalid.
+            PromptDraftConflictError: If the draft changed or was deleted.
+            PolicyDeniedError: If runtime policy denies local draft deletion.
+            RuntimeError: If the local Draft Shelf service is unavailable.
+        """
         self._local_draft_mode(mode)
         draft_id = _positive_signed_id(draft_id, field_name="draft_id")
         expected_version = _prompt_draft_version(expected_version)

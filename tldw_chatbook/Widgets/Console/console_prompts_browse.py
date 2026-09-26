@@ -13,6 +13,9 @@ from textual.events import Key
 from textual.message import Message
 from textual.widgets import Button, Input, Select, Static
 
+from ...Prompt_Management.prompt_draft_contract import (
+    PROMPT_DRAFT_SHELF_CAPACITY,
+)
 from .console_prompts_state import PromptBrowseResult, PromptSource
 
 
@@ -232,14 +235,17 @@ class ConsolePromptsBrowse(Vertical):
                         "Use ↑/↓ then Enter, or select a row."
                     )
             elif result.source == "draft_shelf":
-                if result.total_items >= 100:
+                if result.total_items >= PROMPT_DRAFT_SHELF_CAPACITY:
                     self.show_status(
-                        "Draft Shelf is full — 100 of 100 saved drafts. "
+                        "Draft Shelf is full — "
+                        f"{PROMPT_DRAFT_SHELF_CAPACITY} of "
+                        f"{PROMPT_DRAFT_SHELF_CAPACITY} saved drafts. "
                         "Delete an entry before saving another."
                     )
                 else:
                     self.show_status(
-                        f"Draft Shelf · {result.total_items} of 100 saved "
+                        f"Draft Shelf · {result.total_items} of "
+                        f"{PROMPT_DRAFT_SHELF_CAPACITY} saved "
                         f"draft{'s' if result.total_items != 1 else ''}. "
                         "Use ↑/↓ then Enter, or select a row."
                     )
@@ -312,12 +318,23 @@ class ConsolePromptsBrowse(Vertical):
         self.post_message(self.QueryChanged(event.value))
 
     def focus_search(self) -> None:
-        """Keep typing and row navigation anchored in the search field."""
+        """Keep typing and row navigation anchored in the search field.
+
+        Returns:
+            None.
+        """
 
         self.query_one("#console-prompts-search", Input).focus()
 
     def on_key(self, event: Key) -> None:
-        """Navigate result rows without moving focus away from search."""
+        """Navigate result rows without moving focus away from search.
+
+        Args:
+            event: Textual key event received while the browse widget is active.
+
+        Returns:
+            None.
+        """
 
         if not isinstance(self.app.focused, Input) or not self._row_tokens:
             return
