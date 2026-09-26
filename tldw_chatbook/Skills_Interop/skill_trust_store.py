@@ -9,8 +9,9 @@ import hashlib
 import json
 import math
 import os
+import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -224,6 +225,53 @@ class UnavailableSkillTrustGenerationMarkerStore:
         return None
 
 
+# TASK-32921: every installed skill's trust status re-read these entries, on
+# the UI loop, on every send and Chat visit -- one SecretService D-Bus round
+# trip per skill on Linux. Each store's own write invalidates its read.
+# ponytail: another app instance's write is seen within the success TTL.
+_KEYRING_READ_TTL_SECONDS = 30.0
+# Short, so one pass over N skills against a locked keyring raises once
+# instead of N times, while a user's Retry seconds later still reads fresh.
+_KEYRING_FAILURE_TTL_SECONDS = 2.0
+
+
+def _cached_keyring_read(store: Any) -> str | None:
+    """Read the store's single keyring entry through its short-lived cache."""
+
+    now = time.monotonic()
+    cached = store._read_cache
+    if cached is not None and cached[0] > now:
+        if isinstance(cached[1], Exception):
+            raise cached[1]
+        return cached[1]
+    generation = store._read_generation
+    try:
+        value = store.keyring_backend.get_password(store.service_name, store._account)
+    except Exception as exc:
+        # Expiry starts when the read RETURNS: a locked keyring can block for
+        # longer than either window (Qodo review on #2820).
+        result: tuple[float, Any] = (
+            time.monotonic() + _KEYRING_FAILURE_TTL_SECONDS,
+            exc,
+        )
+        raise
+    else:
+        result = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
+        return value
+    finally:
+        # A read that raced this store's own write must not re-cache the
+        # value the write replaced (trust setup runs on a worker thread).
+        if generation == store._read_generation:
+            store._read_cache = result
+
+
+def _invalidate_keyring_read(store: Any) -> None:
+    """Drop the cached read AFTER a write, so no in-flight read survives it."""
+
+    store._read_generation += 1
+    store._read_cache = None
+
+
 @dataclass(slots=True, repr=False)
 class KeyringSkillTrustGenerationMarkerStore:
     """Secure OS-keyring-backed generation marker store."""
@@ -231,6 +279,10 @@ class KeyringSkillTrustGenerationMarkerStore:
     service_name: str = _DEFAULT_MARKER_SERVICE_NAME
     keyring_backend: Any | None = None
     account_scope: str = ""
+    _read_cache: tuple[float, Any] | None = field(
+        default=None, init=False, compare=False
+    )
+    _read_generation: int = field(default=0, init=False, compare=False)
 
     def __post_init__(self) -> None:
         keyring_backend = _resolve_keyring_backend(self.keyring_backend)
@@ -254,7 +306,7 @@ class KeyringSkillTrustGenerationMarkerStore:
     def load_marker(self) -> dict[str, Any] | None:
         """Load the marker from secure keyring storage."""
 
-        payload = self.keyring_backend.get_password(self.service_name, self._account)
+        payload = _cached_keyring_read(self)
         if not payload:
             return None
         marker = json.loads(payload)
@@ -272,7 +324,10 @@ class KeyringSkillTrustGenerationMarkerStore:
             },
             sort_keys=True,
         )
-        self.keyring_backend.set_password(self.service_name, self._account, payload)
+        try:
+            self.keyring_backend.set_password(self.service_name, self._account, payload)
+        finally:
+            _invalidate_keyring_read(self)
 
     def clear(self) -> None:
         """Delete the scoped keyring marker entry (best-effort)."""
@@ -282,6 +337,7 @@ class KeyringSkillTrustGenerationMarkerStore:
                 deleter(self.service_name, self._account)
             except Exception:
                 pass
+        _invalidate_keyring_read(self)
 
 
 def build_skill_trust_marker_store_with_fallback(
@@ -328,6 +384,10 @@ class KeyringSkillTrustKeyCache:
     service_name: str = _DEFAULT_KEY_CACHE_SERVICE_NAME
     keyring_backend: Any | None = None
     account_scope: str = ""
+    _read_cache: tuple[float, Any] | None = field(
+        default=None, init=False, compare=False
+    )
+    _read_generation: int = field(default=0, init=False, compare=False)
 
     def __post_init__(self) -> None:
         keyring_backend = _resolve_keyring_backend(self.keyring_backend)
@@ -360,17 +420,20 @@ class KeyringSkillTrustKeyCache:
             "audit_mac_key": _encode_bytes(keys.audit_mac_key),
             "wrapped_root_key": _encode_bytes(keys.wrapped_root_key),
         }
-        self.keyring_backend.set_password(
-            self.service_name,
-            self._account,
-            json.dumps(payload, sort_keys=True),
-        )
+        try:
+            self.keyring_backend.set_password(
+                self.service_name,
+                self._account,
+                json.dumps(payload, sort_keys=True),
+            )
+        finally:
+            _invalidate_keyring_read(self)
 
     def load_keys(self, *, expected_salt: bytes) -> SkillTrustKeys | None:
         """Load cached derived trust keys from the secure keyring."""
 
         expected_salt_digest = _salt_digest(expected_salt)
-        payload = self.keyring_backend.get_password(self.service_name, self._account)
+        payload = _cached_keyring_read(self)
         if not payload:
             return None
         data = json.loads(payload)
@@ -389,6 +452,7 @@ class KeyringSkillTrustKeyCache:
                 deleter(self.service_name, self._account)
             except Exception:
                 pass
+        _invalidate_keyring_read(self)
 
 
 def build_default_skill_trust_key_cache(

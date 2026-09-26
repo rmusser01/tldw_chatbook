@@ -16253,6 +16253,41 @@ scheduled animations and asserts the unchanged Pilot mouse click actually hits.
 No retry or direct-handler bypass is involved. Also assert a Failed outcome in
 redaction tests: absence-only checks had accepted the empty, never-run result.
 
+### A sibling asymmetry is not a defect until you read the odd one out's contract (TASK-32902)
+
+**What happened.** The tier-2 review filed three P3s of the shape "this call
+site does X and its siblings do Y". Three times the recommended Y would have
+broken something:
+
+- `Notes/notes_sync_executor._run_keep_both` omits the
+  `_persist_attention_best_effort(..., "cancelled_after_admission")` its two
+  sibling run paths do on `CancelledError`. Adding it turned
+  `test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes`
+  [binding_update] and [final_verification] red with
+  `RuntimeError("recovery_authority_changed")`: keep-both carries its late
+  progress in `operation.state`, and `reconstruct_request` only tolerates a
+  binding that no longer matches the reviewed one while that state is
+  `BINDING_UPDATED`/`VERIFIED`. Writing `NEEDS_ATTENTION` over it makes a
+  cancelled late-substage operation unresumable.
+- `Media/local_media_reading_service.save_reading_item` commits the media row
+  and the read-it-later flag in two transactions; "wrap both in one
+  `db.transaction()`" looks like a four-line fix, because
+  `MediaDatabase.transaction()` is nesting-aware. But
+  `add_media_with_keywords` dispatches post-ingest callbacks **after** its
+  transaction commits, by documented contract. An outer transaction runs every
+  registered callback on uncommitted data.
+- `Notes/file_notes_replica._utc_now` should "adopt `Utils.timestamps.utc_now_iso`".
+  Measured: canonical is `...563Z`, the replica writes `...563880+00:00`, and
+  `'Z' (0x5A) > '8' (0x38)`, so every new row sorts after every old row in the
+  `ORDER BY deleted_at` that `list_deleted` runs. Adopting the helper without a
+  read-side migration *creates* the mixed-shape column ADR-173 exists to prevent.
+
+**What to do.** Before "making it consistent", grep for the tests that pin the
+odd one out and read what the *other* side of its contract requires — a state
+machine it feeds, a post-commit callback, a stored shape something orders by.
+The asymmetry is often the thing holding the contract up. And when a proposed
+fix turns a passing test red, the test is the default winner until you can say
+precisely why it is wrong.
 ## `git stash push <path>` + `git stash pop` is not a safe revert-and-restore (task-32901)
 
 **Incident.** Watching a test go red before a fix means running it against the
@@ -16361,6 +16396,56 @@ the guard. Beware assertions guarded by more than one constant: clamped or
 precisely the shape that makes a mutation look like a valid control while being
 inert.
 
+## A Tests/UI failure can be caused by adding a config section, not by your feature
+
+**Incident (2026-09-22, PR #2807).** The UI Fast Lane went red on one PR and
+green on five siblings at the same `dev` base. Four tests failed, all with
+`RecoveryRequired: raw_source_selection_changed`, in
+`test_research_mode_strip.py` and `test_first_run_wizard_cancel_route.py`.
+The PR mounted a widget in `AppFooterStatus`, which **every screen composes**,
+and the failing tests were screen-navigation tests. The obvious causal story
+was right there, and it was wrong.
+
+The traceback's innermost application frame is `app.py`'s module scope --
+`APP_CONFIG = load_settings()` -- so the failure happens while
+`tldw_chatbook.app` is being **imported**, long before any screen mounts.
+`Tests/UI/conftest.py`'s autouse `_disable_model_catalog_refresh` is what
+first imports it (via `monkeypatch.setattr("tldw_chatbook.app...")`). By then
+the test has its own profile, while the `config` module is still bound to the
+session profile, so that load opens a bound config operation admission
+refuses. Instrumenting `_participant_state` showed it plainly: owner `config`,
+`state.selected` = the session profile, `binding[1]` = the per-test profile.
+
+The part worth remembering is what actually flipped the switch. The only
+production change in the PR that mattered was **seven lines of `[tamagotchi]`
+added to `CONFIG_TOML_CONTENT`** -- the shipped template. Removing just that
+block made the four tests pass. And the section's *content* is irrelevant:
+adding a dummy
+
+```toml
+[zzz_probe_section]
+enabled = false
+```
+
+to the template on otherwise-unmodified `dev` reproduces the identical four
+failures. Whether these tests pass depends on whether `load_settings()` still
+needs the config file at app-import time, and a new top-level section crosses
+that threshold.
+
+`Tests/UI/conftest.py` already carries the remedy -- `install_config_source`,
+applied to a hand-listed set of files -- so the fix is two more entries. Note
+the list cannot be generalised away: applying it to every file rebinds the
+config module before the test body runs, which breaks tests that select their
+own profile *inside* the body (`test_profile_owned_settings_paths.py`, measured
+as one new failure across the 851-test census).
+
+**What to do.** If a Tests/UI slice fails with `raw_source_selection_changed`,
+read the traceback for an `app.py` `<module>` frame before believing any story
+about screens or widgets. Then check whether your PR touches
+`CONFIG_TOML_CONTENT`: if it adds a section, reproduce with a dummy section on
+clean `dev` before touching your feature. Two green runs -- feature commit
+alone green, dummy section on `dev` red -- settle it in about five minutes and
+stop you from redesigning something that was never broken.
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
@@ -16388,3 +16473,34 @@ behavioural drive (start the real loop, run the real coroutine, assert the old
 task is dead at the moment the new playback starts); the AST guard was kept only
 for the one thing it is actually good at -- "no site may call this without
 `await`".
+
+### 87 green unit tests and an engine that could not produce one sample (TASK-32928, PR #2825)
+
+**What happened.** The OmniVoice ONNX backend shipped with 87 passing tests:
+prompt layout, sampler mechanics, error mapping, format conversion, voice
+profiles. Its only real-model test was env-gated and **skipped** everywhere it
+ran. The first UAT against the actual `ct03/omnivoice-onnx-int8hq` artifact
+failed twice before producing audio:
+`tokenizers.Tokenizer.encode` returns an `Encoding`, not the `list[int]` every
+fake tokenizer returned (so `style_ids + body_ids` raised `TypeError`), and the
+LM graph declares `audio_mask`/`position_ids` as `(batch, seq)` while the
+adapter -- tested only against fake sessions that accepted anything -- fed
+`(batch, 8, seq)` (`ORT INVALID_ARGUMENT: Invalid rank`). Every synthesis
+request would have surfaced as a generic "generation failed". The same pass
+found three more wiring defects that no unit test spanned end to end: the
+Settings Save wrote nothing (no `_TTS_SETTING_BINDINGS` rows -- the persister
+`continue`s past unknown keys), and request admission rejected every Speech
+Lab generation (unlisted numeric provider options are range-checked to
+`[0, 1]`; `num_steps=32` is not).
+
+**What to do.** A fake is evidence only for the contract the fake encodes; when
+the fake is written from the author's *assumption* of a third-party API, the
+suite pins the assumption. For a new engine adapter, (1) build at least one test
+against the real library object where it is cheap (an in-memory
+`tokenizers.Tokenizer` costs nothing), (2) copy the real graph's
+`get_inputs()` names/types/shapes into the fake session, and (3) treat a
+skipped real-model test as *no evidence*, not as a pass -- run it once, with
+the artifact, before claiming the engine works. For a new provider in an
+existing pipeline, drive one request through the real admission and
+persistence layers: both defects above lived in code the provider's own tests
+never touched.

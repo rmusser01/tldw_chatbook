@@ -3813,6 +3813,15 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
 
+[tamagotchi]
+enabled = false  # opt-in virtual pet in the footer status bar; off unless you ask for it
+# Write a TOML boolean. The gate is fail-closed: anything it cannot read as
+# true/yes/1 (or their negatives) -- including "on" -- leaves the pet off.
+# name = "Bit"  # 1-20 chars, letters/digits/space/-/_ only
+# personality = "balanced"  # balanced, energetic, lazy, needy, independent, playful
+# State lives in ~/.config/tldw_chatbook/tamagotchi_pets.json (backed up by the
+# "tamagotchi.config" backup/recovery owner). Nothing is created while disabled.
+
 [appearance]
 character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
 density = "normal"  # compact, normal, or comfortable default control density

@@ -37,9 +37,16 @@ class SpeechLocalDependencyAvailability:
     kokoro: bool
     chatterbox: bool
     higgs: bool
+    omnivoice: bool = False
 
     def __post_init__(self) -> None:
-        for value in (self.stt, self.kokoro, self.chatterbox, self.higgs):
+        for value in (
+            self.stt,
+            self.kokoro,
+            self.chatterbox,
+            self.higgs,
+            self.omnivoice,
+        ):
             if type(value) is not bool:
                 raise TypeError("Speech dependency availability must be boolean")
 
@@ -47,7 +54,7 @@ class SpeechLocalDependencyAvailability:
     def all_available(cls) -> SpeechLocalDependencyAvailability:
         """Return a dependency snapshot where every local capability is ready."""
 
-        return cls(stt=True, kokoro=True, chatterbox=True, higgs=True)
+        return cls(stt=True, kokoro=True, chatterbox=True, higgs=True, omnivoice=True)
 
 
 @dataclass(frozen=True, slots=True)

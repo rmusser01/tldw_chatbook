@@ -1109,6 +1109,27 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # path); same admission signature as the suites above.
             "test_console_modal_dismissal.py",
             "test_library_modal_dismissal.py",
+            # TASK-32856 follow-up trial: media-generation suites import the
+            # real app (config participants on the import path); same
+            # admission signature as the suites above.
+            "test_adapter_registry.py",
+            "test_comfyui_image_adapter.py",
+            "test_request_validation.py",
+            "test_fal_adapter.py",
+            "test_gemini_adapter.py",
+            "test_loose_voice_finite_operations.py",
+            "test_http_client.py",
+            "test_worker.py",
+            "test_video_store.py",
+            "test_swarmui_adapter.py",
+            "test_openrouter_adapter.py",
+            "test_image_format_utils.py",
+            "test_comfyui_adapter.py",
+            "test_modelstudio_adapter.py",
+            "test_together_adapter.py",
+            "test_novita_adapter.py",
+            "test_config_projection.py",
+            "test_comfyui_workflow_distribution.py",
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the

@@ -500,6 +500,7 @@ def validate_path_simple(
     require_exists: bool = False,
     *,
     probe_existing: bool = True,
+    reject_shell_metacharacters: bool = True,
 ) -> Path:
     """
     Simple path validation that checks for common security issues without requiring a base directory.
@@ -509,6 +510,12 @@ def validate_path_simple(
         require_exists: Whether to require the path exists
         probe_existing: Whether to inspect and resolve an existing selected path.
             Disable this when a later no-follow boundary owns link validation.
+        reject_shell_metacharacters: Reject ``| ; && || ` $( ${`` in the path.
+            These are COMMAND-INJECTION guards, and they are legal characters
+            in a POSIX filename -- ``Q3 P&L; final.txt`` is a real file a user
+            can create and select. Pass False at a boundary that only ever
+            hands the path to ``open()``/``stat()``, never to a shell.
+            Traversal, NUL and ``~`` expansion are checked either way.
 
     Returns:
         Path: The validated path
@@ -545,14 +552,20 @@ def validate_path_simple(
             "~/",  # Home directory expansion
             "~\\",  # Windows home
             "\x00",  # Null byte
-            "|",  # Pipe (command injection)
-            ";",  # Command separator
-            "&&",  # Command chaining
-            "||",  # Command chaining
-            "`",  # Command substitution
-            "$(",  # Command substitution
-            "${",  # Variable expansion
         ]
+        if reject_shell_metacharacters:
+            # Only meaningful where the path reaches a shell. They are legal
+            # filename characters, so applying them to a plain open()/stat()
+            # boundary rejects files the user legitimately owns.
+            dangerous_patterns += [
+                "|",  # Pipe (command injection)
+                ";",  # Command separator
+                "&&",  # Command chaining
+                "||",  # Command chaining
+                "`",  # Command substitution
+                "$(",  # Command substitution
+                "${",  # Variable expansion
+            ]
 
         for pattern in dangerous_patterns:
             if pattern in path_str:

@@ -881,3 +881,44 @@ async def test_startup_orders_bounded_association_before_bounded_readiness() -> 
     await scheduler.resume_startup(association_limit=13, readiness_limit=17)
 
     assert trace == [("association", 13), ("readiness", 17)]
+
+
+@pytest.mark.asyncio
+async def test_readiness_startup_resume_reports_each_isolated_failure() -> None:
+    """The readiness fan-out must leave a diagnostic for a swallowed failure.
+
+    Same shape as the association scheduler's: `asyncio.gather(...,
+    return_exceptions=True)` with the result list unbound, in a module with
+    zero logger calls (tier-2 S13 P3).
+    """
+
+    from loguru import logger
+
+    coordinator = ResearchSourceReadinessCoordinator(
+        operation_store=SimpleNamespace(
+            list_readiness_actionable=lambda **kwargs: (
+                SimpleNamespace(operation_id="op-broken"),
+                SimpleNamespace(operation_id="op-fine"),
+            )
+        ),
+        adapters={},
+    )
+
+    async def resume(operation_id: str) -> None:
+        if operation_id == "op-broken":
+            raise RuntimeError("readiness receipt is unreadable")
+
+    coordinator.resume = resume  # type: ignore[method-assign]
+
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await coordinator.resume_incomplete()
+    finally:
+        logger.remove(sink)
+
+    reported = [message for message in messages if "op-broken" in message]
+    assert reported, messages
+    assert "RuntimeError" in reported[0]
+    assert "unreadable" not in reported[0]
+    assert not [message for message in messages if "op-fine" in message]

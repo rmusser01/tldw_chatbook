@@ -71,6 +71,7 @@ class PlanRow:
     total_bytes: int
     already_installed: bool
     provenance: str
+    usage_notice: str = ""
 
 
 @dataclass(frozen=True)
@@ -336,6 +337,7 @@ def plan_rows(report: PreflightReport) -> tuple[PlanRow, ...]:
             total_bytes=entry.total_bytes,
             already_installed=entry.already_installed,
             provenance=provenance_label(entry.provenance),
+            usage_notice=entry.usage_notice,
         )
         for entry in report.entries
     )

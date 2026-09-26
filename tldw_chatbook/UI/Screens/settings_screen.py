@@ -346,6 +346,7 @@ from .settings_video_gen_defaults import (
     VideoGenDraftValues,
     diff_to_sections as video_gen_diff_to_sections,
     expected_select_mount_values as video_gen_expected_select_mount_values,
+    key_source_after_clear as video_gen_key_source_after_clear,
     validate_draft as validate_video_gen_draft,
 )
 from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
@@ -394,6 +395,7 @@ from .settings_privacy_security import (
     build_privacy_posture_rows,
     build_settings_privacy_posture,
     env_var_summary,
+    safe_skill_trust_status,
     skill_trust_display,
 )
 from .settings_storage_defaults import (
@@ -3193,6 +3195,16 @@ class SettingsScreen(BaseAppScreen):
         #: dropped rather than clobbering an unrelated, freshly (re)opened
         #: panel's badge or in-flight state.
         self._image_gen_probe_session: int = 0
+        #: TASK-32926 (Qodo on #2831): identity tokens for the off-thread
+        #: keyring-backed reads. Each start mints a new ``object()``; a
+        #: callback whose token is no longer current (a newer load, a panel
+        #: replaced by Save/Revert/revisit, a re-rendered Privacy row) is
+        #: dropped, because thread workers cannot be cancelled mid-read.
+        self._image_gen_load_token: object | None = None
+        self._video_gen_load_token: object | None = None
+        self._image_gen_key_source_tokens: dict[str, object] = {}
+        self._video_gen_key_source_tokens: dict[str, object] = {}
+        self._skill_trust_token: object | None = None
         #: Qodo PR #901 fix 3: `_image_gen_raw_section()`'s merged
         #: `[image_generation]` baseline, cached for the duration of one
         #: category "session" -- reached from every keystroke's staging
@@ -4351,7 +4363,8 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.SPEECH_TTS,
                 "Speech & TTS",
                 "Application-wide speech, TTS, voice, audio.cpp, OpenAI, "
-                "ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk defaults and setup.",
+                "ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk, and OmniVoice "
+                "defaults and setup.",
                 "Global",
             ),
             SettingsCategorySummary(
@@ -5567,6 +5580,7 @@ class SettingsScreen(BaseAppScreen):
                     "app_tts provider connection and initialization",
                     "API OpenAI and ElevenLabs credentials",
                     "HiggsSettings initialization",
+                    "OmniVoiceSettings initialization",
                 ),
                 reads_runtime_state_from=("TTS service configuration revisions",),
                 writes_allowed=True,
@@ -7486,13 +7500,12 @@ class SettingsScreen(BaseAppScreen):
         return dict(draft.values) if draft is not None else {}
 
     def _image_gen_expected_default_backend_select_value(
-        self, overlay: Mapping[str, object]
+        self, overlay: Mapping[str, object], cfg: Any
     ) -> object:
         """The exact value `ImageGenSettingsPanel.compose()` is about to
         construct `#settings-imagegen-default_backend` with, for `overlay`
         -- must mirror that compose() logic exactly (see
         `_queue_image_gen_select_suppression`'s docstring)."""
-        cfg = get_image_generation_config(reload=True)
         effective_default_backend = overlay.get("default_backend", cfg.default_backend)
         return (
             effective_default_backend
@@ -7501,22 +7514,95 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _queue_image_gen_select_suppression(
-        self, overlay: Mapping[str, object]
+        self, overlay: Mapping[str, object], cfg: Any
     ) -> None:
         """Record the value the about-to-(re)compose default-backend
         `Select` will mount with, if that value is non-blank -- a fresh
         `Select` only posts `Changed` on mount when constructed with a
         non-`Select.NULL` value (verified empirically; unlike Checkbox,
         which never refires on construction regardless of value). Call
-        this immediately before every `ImageGenSettingsPanel` (re)compose:
-        the initial category-open `_render_detail_pane` branch, and the
-        `panel.recompose()` calls in `_apply_image_gen_save_result` /
-        `_handle_image_gen_revert`. See `_rag_select_suppress_queue` for
-        the sibling idiom this mirrors (a boolean in-progress flag cannot
-        suppress a deferred `Select.Changed` message)."""
-        expected_value = self._image_gen_expected_default_backend_select_value(overlay)
+        this immediately before every `ImageGenSettingsPanel` recompose
+        with loaded config -- `_apply_image_gen_panel_config`, which the
+        category open, Save and Revert all route through (TASK-32926). See
+        `_rag_select_suppress_queue` for the sibling idiom this mirrors (a
+        boolean in-progress flag cannot suppress a deferred
+        `Select.Changed` message)."""
+        expected_value = self._image_gen_expected_default_backend_select_value(
+            overlay, cfg
+        )
         if expected_value is not Select.NULL:
             self._image_gen_select_suppress_queue.append(expected_value)
+
+    # TASK-32926: the effective Image Gen config resolves backend secrets
+    # through the OS keyring (seconds on Linux, or an unlock prompt), so the
+    # panel never loads it in compose(). Every (re)compose -- category open,
+    # Save, Revert -- loads it here, on a thread, then recomposes the panel.
+    def _start_image_gen_panel_load(
+        self, overlay: Mapping[str, object], message: str | None = None
+    ) -> None:
+        """Start the one current Image Gen config load; older ones go stale."""
+        token = object()
+        self._image_gen_load_token = token
+        # The panel is about to be replaced: pending Clear lookups are moot.
+        self._image_gen_key_source_tokens.clear()
+        self._image_gen_panel_load_worker(overlay, message, token)
+
+    @work(thread=True, exclusive=True, group="settings-imagegen-load")
+    def _image_gen_panel_load_worker(
+        self, overlay: Mapping[str, object], message: str | None, token: object
+    ) -> None:
+        try:
+            cfg = get_image_generation_config(reload=True)
+            cleared = {
+                key.split("::")[1]: image_gen_key_source_after_clear(
+                    key.split("::")[1]
+                )
+                for key in overlay
+                if key.startswith("cleared::")
+            }
+        except Exception as exc:  # noqa: BLE001 - a worker raise exits the app
+            logger.warning(
+                "Image Gen settings failed to load. error_type=%s",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(self._show_image_gen_load_error, token)
+            return
+        self.app.call_from_thread(
+            self._apply_image_gen_panel_config, cfg, cleared, message, token
+        )
+
+    def _show_image_gen_load_error(self, token: object) -> None:
+        if token is not self._image_gen_load_token:
+            return
+        text = "Image Gen settings could not be loaded; reopen Image Gen to retry."
+        self._set_static_text("#settings-imagegen-loading", text)
+        self._set_static_text("#settings-imagegen-save-result", text)
+
+    async def _apply_image_gen_panel_config(
+        self,
+        cfg: Any,
+        cleared_key_sources: dict[str, str],
+        message: str | None,
+        token: object,
+    ) -> None:
+        if token is not self._image_gen_load_token:
+            return
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        panel.config = cfg
+        panel.cleared_key_sources = cleared_key_sources
+        self._queue_image_gen_select_suppression(panel.overlay, cfg)
+        await panel.recompose()
+        if message is not None:
+            self._set_static_text("#settings-imagegen-save-result", message)
+        # A fresh panel mounts its Test buttons enabled by default; if a
+        # probe is still in flight, re-assert the disabled state on the
+        # newly-mounted buttons rather than letting them render as
+        # clickable while ignored.
+        if self._image_gen_probe_in_flight:
+            self._image_gen_set_test_buttons_disabled(True)
 
     def _image_gen_stage(self, key: str, original: object, value: object) -> None:
         category = SettingsCategoryId.IMAGE_GENERATION
@@ -7753,13 +7839,42 @@ class SettingsScreen(BaseAppScreen):
             # recovery (deleting an absent key is a no-op, so this is free).
             self._image_gen_stage("cleared::swarmui::api_key", False, True)
         self._image_gen_unstage(f"field::{backend_id}::{toml_key}")
-        new_source = image_gen_key_source_after_clear(backend_id)
         try:
-            secret_input = self.query_one(
+            self.query_one(
                 f"#settings-imagegen-field-{backend_id}-{toml_key}", Input
-            )
-            secret_input.value = ""
-            secret_input.placeholder = _image_gen_secret_placeholder(new_source)
+            ).value = ""
+        except QueryError:
+            pass
+        # TASK-32926: the after-Clear source is a keyring read.
+        self._show_image_gen_key_source(backend_id, toml_key, "checking")
+        token = object()
+        self._image_gen_key_source_tokens[backend_id] = token
+        self._image_gen_key_source_worker(backend_id, toml_key, token)
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    @work(thread=True, group="settings-imagegen-key-source")
+    def _image_gen_key_source_worker(
+        self, backend_id: str, toml_key: str, token: object
+    ) -> None:
+        source = image_gen_key_source_after_clear(backend_id)
+        self.app.call_from_thread(
+            self._apply_image_gen_key_source, backend_id, toml_key, source, token
+        )
+
+    def _apply_image_gen_key_source(
+        self, backend_id: str, toml_key: str, source: str, token: object
+    ) -> None:
+        if self._image_gen_key_source_tokens.get(backend_id) is not token:
+            return
+        self._show_image_gen_key_source(backend_id, toml_key, source)
+
+    def _show_image_gen_key_source(
+        self, backend_id: str, toml_key: str, new_source: str
+    ) -> None:
+        try:
+            self.query_one(
+                f"#settings-imagegen-field-{backend_id}-{toml_key}", Input
+            ).placeholder = _image_gen_secret_placeholder(new_source)
         except QueryError:
             pass
         try:
@@ -7774,7 +7889,6 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
     # ------------------------------------------------------------------
     # Image Gen (task 6): backend "Test" probes.
@@ -7801,8 +7915,8 @@ class SettingsScreen(BaseAppScreen):
         Input falls back to the resolved effective value it's currently
         showing as its own placeholder (see `effective_placeholder`),
         never a blank string `probe_backend` could mistake for
-        "explicitly cleared"."""
-        cfg = get_image_generation_config(reload=True)
+        "explicitly cleared". Blanks are left "" here and filled by
+        `_image_gen_probe_worker` off the UI thread (TASK-32926)."""
         form_values: dict[str, str] = {}
         for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
             if spec.kind == "secret":
@@ -7813,17 +7927,16 @@ class SettingsScreen(BaseAppScreen):
                 ).value.strip()
             except QueryError:
                 current = ""
-            form_values[spec.toml_key] = current or image_gen_effective_placeholder(
-                cfg, backend_id, spec.toml_key
-            )
+            form_values[spec.toml_key] = current
         return form_values
 
     def _image_gen_test_secret(
         self, panel: ImageGenSettingsPanel, backend_id: str
     ) -> str | None:
         """The secret to probe with: this session's pasted-but-unsaved
-        value if present, else the effective resolved secret (env/config/
-        keyring) -- see `probe_backend`'s `secret` parameter docstring."""
+        value if present, else ``""`` -- `_image_gen_probe_worker` then
+        resolves the effective secret (env/config/keyring) off the UI
+        thread (TASK-32926). ``None`` when the backend has no secret."""
         secret_spec = next(
             (
                 spec
@@ -7840,10 +7953,7 @@ class SettingsScreen(BaseAppScreen):
             ).value.strip()
         except QueryError:
             pasted = ""
-        if pasted:
-            return pasted
-        cfg = get_image_generation_config(reload=True)
-        return image_gen_effective_secret_value(cfg, backend_id)
+        return pasted
 
     def _image_gen_set_test_buttons_disabled(self, disabled: bool) -> None:
         for backend_id in IMAGE_GEN_BACKEND_IDS:
@@ -7878,6 +7988,13 @@ class SettingsScreen(BaseAppScreen):
         session: int,
     ) -> None:
         try:
+            cfg = get_image_generation_config(reload=True)
+            form_values = {
+                key: value or image_gen_effective_placeholder(cfg, backend_id, key)
+                for key, value in form_values.items()
+            }
+            if secret == "":
+                secret = image_gen_effective_secret_value(cfg, backend_id)
             badge = image_gen_probe_backend(backend_id, form_values, secret).badge
         except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
             # Qodo PR #901 fix 2: this probe builds Authorization headers
@@ -7969,15 +8086,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._queue_image_gen_select_suppression({})
-            await panel.recompose()
-            self._set_static_text("#settings-imagegen-save-result", message)
-            # A fresh panel mounts its Test buttons enabled by default; if a
-            # probe is still in flight (Save clicked mid-probe), re-assert
-            # the disabled state on the newly-mounted buttons rather than
-            # letting them render as clickable while ignored.
-            if self._image_gen_probe_in_flight:
-                self._image_gen_set_test_buttons_disabled(True)
+            self._start_image_gen_panel_load({}, message)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
         self.app.notify(message, severity="warning" if warnings else "information")
 
@@ -7996,12 +8105,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._queue_image_gen_select_suppression({})
-            await panel.recompose()
-            self._set_static_text("#settings-imagegen-save-result", "")
-            # See the matching comment in _apply_image_gen_save_result.
-            if self._image_gen_probe_in_flight:
-                self._image_gen_set_test_buttons_disabled(True)
+            self._start_image_gen_panel_load({}, "")
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
     @on(Button.Pressed)
@@ -8221,7 +8325,7 @@ class SettingsScreen(BaseAppScreen):
         return queues
 
     def _queue_video_gen_select_suppression(
-        self, overlay: Mapping[str, object]
+        self, overlay: Mapping[str, object], cfg: Any
     ) -> None:
         """Record what EVERY about-to-(re)compose Video Gen Select will mount
         with -- a fresh Select refires Changed on mount with a non-blank
@@ -8230,18 +8334,78 @@ class SettingsScreen(BaseAppScreen):
         reads as an edit (TASK-23191: retention did exactly that, and a
         never-touched fresh profile opened on "Unsaved changes").
 
-        Call immediately before every ``VideoGenSettingsPanel`` (re)compose:
-        the category-open ``_render_detail_pane`` branch, and the
-        ``panel.recompose()`` calls in ``_apply_video_gen_save_result`` /
-        ``_handle_video_gen_revert``. This is the image block's idiom,
-        widened from its single Select to a per-Select mapping.
+        Call immediately before every ``VideoGenSettingsPanel`` recompose
+        with loaded config -- ``_apply_video_gen_panel_config``, which the
+        category open, Save and Revert all route through (TASK-32926). This
+        is the image block's idiom, widened from its single Select to a
+        per-Select mapping.
         """
         queues = self._video_gen_select_suppress_queues()
-        expected = video_gen_expected_select_mount_values(
-            get_video_generation_config(reload=True), overlay
-        )
+        expected = video_gen_expected_select_mount_values(cfg, overlay)
         for select_id, value in expected.items():
             queues.setdefault(select_id, []).append(value)
+
+    # TASK-32926: see `_image_gen_panel_load_worker` -- same off-thread
+    # load for every Video Gen panel (re)compose.
+    def _start_video_gen_panel_load(
+        self, overlay: Mapping[str, object], message: str | None = None
+    ) -> None:
+        """Start the one current Video Gen config load; older ones go stale."""
+        token = object()
+        self._video_gen_load_token = token
+        self._video_gen_key_source_tokens.clear()
+        self._video_gen_panel_load_worker(overlay, message, token)
+
+    @work(thread=True, exclusive=True, group="settings-videogen-load")
+    def _video_gen_panel_load_worker(
+        self, overlay: Mapping[str, object], message: str | None, token: object
+    ) -> None:
+        try:
+            cfg = get_video_generation_config(reload=True)
+            cleared = {
+                key.split("::")[1]: video_gen_key_source_after_clear(
+                    key.split("::")[1]
+                )
+                for key in overlay
+                if key.startswith("cleared::")
+            }
+        except Exception as exc:  # noqa: BLE001 - a worker raise exits the app
+            logger.warning(
+                "Video Gen settings failed to load. error_type=%s",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(self._show_video_gen_load_error, token)
+            return
+        self.app.call_from_thread(
+            self._apply_video_gen_panel_config, cfg, cleared, message, token
+        )
+
+    def _show_video_gen_load_error(self, token: object) -> None:
+        if token is not self._video_gen_load_token:
+            return
+        text = "Video Gen settings could not be loaded; reopen Video Gen to retry."
+        self._set_static_text("#settings-videogen-loading", text)
+        self._set_static_text("#settings-videogen-save-result", text)
+
+    async def _apply_video_gen_panel_config(
+        self,
+        cfg: Any,
+        cleared_key_sources: dict[str, str],
+        message: str | None,
+        token: object,
+    ) -> None:
+        if token is not self._video_gen_load_token:
+            return
+        try:
+            panel = self.query_one("#settings-videogen-panel", VideoGenSettingsPanel)
+        except QueryError:
+            return
+        panel.config = cfg
+        panel.cleared_key_sources = cleared_key_sources
+        self._queue_video_gen_select_suppression(panel.overlay, cfg)
+        await panel.recompose()
+        if message is not None:
+            self._set_static_text("#settings-videogen-save-result", message)
 
     def _consume_video_gen_select_mount_echo(
         self, select_id: str, value: object
@@ -8494,16 +8658,34 @@ class SettingsScreen(BaseAppScreen):
             field_input.value = ""
         except QueryError:
             pass
-        try:
-            source_line = self.query_one(
-                f"#settings-videogen-key-source-{backend_id}", Static
-            )
-            from .settings_video_gen_defaults import key_source_after_clear
+        # TASK-32926: the after-Clear source is a keyring read.
+        self._show_video_gen_key_source(backend_id, "checking…")
+        token = object()
+        self._video_gen_key_source_tokens[backend_id] = token
+        self._video_gen_key_source_worker(backend_id, token)
+        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
-            source_line.update(key_source_after_clear(backend_id))
+    @work(thread=True, group="settings-videogen-key-source")
+    def _video_gen_key_source_worker(self, backend_id: str, token: object) -> None:
+        source = video_gen_key_source_after_clear(backend_id)
+        self.app.call_from_thread(
+            self._apply_video_gen_key_source, backend_id, source, token
+        )
+
+    def _apply_video_gen_key_source(
+        self, backend_id: str, source: str, token: object
+    ) -> None:
+        if self._video_gen_key_source_tokens.get(backend_id) is not token:
+            return
+        self._show_video_gen_key_source(backend_id, source)
+
+    def _show_video_gen_key_source(self, backend_id: str, text: str) -> None:
+        try:
+            self.query_one(
+                f"#settings-videogen-key-source-{backend_id}", Static
+            ).update(text)
         except QueryError:
             pass
-        self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
     def _handle_video_gen_save(self) -> None:
         try:
@@ -8558,9 +8740,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._queue_video_gen_select_suppression({})
-            await panel.recompose()
-            self._set_static_text("#settings-videogen-save-result", message)
+            self._start_video_gen_panel_load({}, message)
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
         self.app.notify(message, severity="warning" if warnings else "information")
 
@@ -8573,9 +8753,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
-            self._queue_video_gen_select_suppression({})
-            await panel.recompose()
-            self._set_static_text("#settings-videogen-save-result", "")
+            self._start_video_gen_panel_load({}, "")
         self._update_draft_status_widgets(SettingsCategoryId.VIDEO_GENERATION)
 
     @on(Button.Pressed)
@@ -9160,6 +9338,7 @@ class SettingsScreen(BaseAppScreen):
             "chatterbox": "chatterbox",
             "higgs": "higgs",
             "alltalk": "alltalk",
+            "omnivoice": "omnivoice",
         }
         for alias, provider_id in aliases.items():
             if alias in query:
@@ -11088,7 +11267,9 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         active_workspace = self._active_workspace_record()
-        sync_scope = self._active_sync_scope(active_workspace)
+        # TASK-32926: the principal scope reads the auth token, which can
+        # be an OS-keyring read -- never on the event loop.
+        sync_scope = await asyncio.to_thread(self._active_sync_scope, active_workspace)
         server_profile_id = sync_scope["server_profile_id"]
         if not server_profile_id:
             self._apply_manual_sync_rows(
@@ -11393,7 +11574,14 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
-    def _skill_trust_posture(self) -> dict[str, object]:
+    def _skill_trust_posture(self, *, read_status: bool = True) -> dict[str, object]:
+        """Redacted skill-trust posture for Privacy & Security.
+
+        ``overall_status()`` reads the OS keyring, which can block for seconds
+        on Linux (TASK-32926): UI-thread callers pass ``read_status=False`` to
+        get an honest ``"checking"`` status and fill it in from
+        ``_skill_trust_status_worker``.
+        """
         skill_trust_service = getattr(
             self.app_instance,
             "local_skill_trust_service",
@@ -11407,9 +11595,9 @@ class SettingsScreen(BaseAppScreen):
                 "reduced_rollback_protection": False,
             }
 
-        trust_status = "unavailable"
+        trust_status = "unavailable" if read_status else "checking"
         overall_status = getattr(skill_trust_service, "overall_status", None)
-        if callable(overall_status):
+        if read_status and callable(overall_status):
             try:
                 trust_status = overall_status()
             except Exception:
@@ -11438,6 +11626,8 @@ class SettingsScreen(BaseAppScreen):
     def _settings_privacy_posture(
         self,
         app_config: object | None = None,
+        *,
+        read_skill_trust: bool = True,
     ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -11453,7 +11643,7 @@ class SettingsScreen(BaseAppScreen):
                 )
         return build_settings_privacy_posture(
             app_config,
-            skill_trust=self._skill_trust_posture(),
+            skill_trust=self._skill_trust_posture(read_status=read_skill_trust),
             trace_maintenance=trace_maintenance,
         )
 
@@ -11494,6 +11684,22 @@ class SettingsScreen(BaseAppScreen):
     def _privacy_check_worker(self, app_config: object) -> None:
         rows = self._privacy_check_results(app_config)
         self.app.call_from_thread(self._apply_privacy_check_result, rows)
+
+    @work(exclusive=True, group="settings-skill-trust-status", thread=True)
+    def _skill_trust_status_worker(self, token: object) -> None:
+        trust = self._skill_trust_posture()
+        self.app.call_from_thread(self._apply_skill_trust_status, trust, token)
+
+    def _apply_skill_trust_status(
+        self, trust: Mapping[str, object], token: object
+    ) -> None:
+        if token is not self._skill_trust_token:
+            return  # a later Privacy render owns the row now
+        status = safe_skill_trust_status(trust.get("trust_status"))
+        self._set_static_text(
+            "#settings-privacy-skill-trust",
+            f"Skill trust: {skill_trust_display(status)}",
+        )
 
     def _appearance_theme_summary(self) -> str:
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -21619,20 +21825,26 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-imagegen-hint",
             )
             image_gen_overlay = self._image_gen_overlay_values()
-            self._queue_image_gen_select_suppression(image_gen_overlay)
+            # TASK-32926: composes pending; config loads on a worker.
             yield ImageGenSettingsPanel(
                 id="settings-imagegen-panel",
                 overlay=image_gen_overlay,
+            )
+            self.call_after_refresh(
+                self._start_image_gen_panel_load, image_gen_overlay
             )
         elif category is SettingsCategoryId.VIDEO_GENERATION:
             yield Static(
                 "Video Gen", classes="destination-section settings-column-title"
             )
             video_gen_overlay = self._video_gen_overlay_values()
-            self._queue_video_gen_select_suppression(video_gen_overlay)
+            # TASK-32926: composes pending; config loads on a worker.
             yield VideoGenSettingsPanel(
                 id="settings-videogen-panel",
                 overlay=video_gen_overlay,
+            )
+            self.call_after_refresh(
+                self._start_video_gen_panel_load, video_gen_overlay
             )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
@@ -21728,7 +21940,13 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.WORKSPACES:
             yield from self._render_workspaces_detail()
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
-            posture = self._settings_privacy_posture()
+            # TASK-32926: never read the keyring-backed trust status here.
+            posture = self._settings_privacy_posture(read_skill_trust=False)
+            if posture.skill_trust_enabled:
+                self._skill_trust_token = object()
+                self.call_after_refresh(
+                    self._skill_trust_status_worker, self._skill_trust_token
+                )
             yield Static(
                 "Privacy & Security",
                 classes="destination-section settings-column-title",
@@ -21775,6 +21993,7 @@ class SettingsScreen(BaseAppScreen):
                     skill_trust_display(posture.skill_trust_status)
                     if posture.skill_trust_enabled
                     else "disabled",
+                    identifier="settings-privacy-skill-trust",
                 )
                 yield self._detail_row(
                     "Skill trust keyring convenience",
@@ -25055,8 +25274,21 @@ class SettingsScreen(BaseAppScreen):
                     )
                 )
                 return
+        self.run_worker(
+            self._resolve_notes_adoption(action, review_id, new_name),
+            group="settings-notes-adoption",
+            exclusive=True,
+        )
+
+    async def _resolve_notes_adoption(
+        self, action: str, review_id: str, new_name: str | None
+    ) -> None:
         control = getattr(self.app_instance, "manual_sync_control_service", None)
-        sync_scope = self._active_sync_scope(self._active_workspace_record())
+        # TASK-32926: the principal scope reads the auth token, which can
+        # be an OS-keyring read -- never on the event loop.
+        sync_scope = await asyncio.to_thread(
+            self._active_sync_scope, self._active_workspace_record()
+        )
         server_profile_id = sync_scope["server_profile_id"]
         if control is None or not server_profile_id:
             self._apply_manual_sync_rows(

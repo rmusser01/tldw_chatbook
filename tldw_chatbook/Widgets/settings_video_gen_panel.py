@@ -31,17 +31,14 @@ from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     RETENTION_SELECT_ID,
     build_backend_rows,
     effective_placeholder,
-    key_source_after_clear,
     load_user_video_generation_table,
     playback_tool_rows,
 )
-from tldw_chatbook.Video_Generation.config import get_video_generation_config
 from tldw_chatbook.Video_Generation.video_templates import (
     BUILTIN_VIDEO_TEMPLATES,
     get_all_video_templates,
 )
 from tldw_chatbook.Widgets.settings_image_gen_panel import switch_word, toggle_label
-
 
 _GENERATION_DEFAULT_FIELDS: tuple[tuple[str, str], ...] = (
     ("retention_ttl_hours", "Retention TTL (hours)"),
@@ -59,6 +56,8 @@ def _key_source_line(key_source: str) -> str:
         return f"env: {key_source.split(':', 1)[1]}"
     if key_source == "keyring":
         return "keyring"
+    if key_source == "checking":
+        return "checking…"
     return "missing"
 
 
@@ -92,15 +91,45 @@ class VideoGenSettingsPanel(Vertical):
         self,
         *args: Any,
         overlay: Mapping[str, Any] | None = None,
+        config: Any = None,
+        cleared_key_sources: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the panel.
+
+        Args:
+            *args: Positional arguments forwarded to ``Vertical``.
+            overlay: The screen's staged, unsaved values (empty means render
+                straight from disk).
+            config: The effective ``VideoGenerationConfig``, loaded off the UI
+                thread by the screen. ``None`` composes only a pending
+                "Loading..." line until the screen supplies it.
+            cleared_key_sources: Backend id to the key source that applies
+                once its locally saved secret is cleared, for each
+                ``cleared::`` overlay key. A missing entry renders as
+                "checking...".
+            **kwargs: Keyword arguments forwarded to ``Vertical``.
+        """
         super().__init__(*args, **kwargs)
+        # TASK-32926: the effective config resolves backend secrets through
+        # the OS keyring (seconds on Linux), so the screen loads it -- and
+        # the after-Clear key sources for ``cleared::`` overlay keys -- on a
+        # worker and hands them in. ``None`` renders a pending placeholder.
+        self.config: Any = config
+        self.cleared_key_sources: Mapping[str, str] = cleared_key_sources or {}
         # Mirror of the image panel's overlay contract: the screen's staged
         # (unsaved) values, keyed like the draft ("" for nothing staged).
         self.overlay: Mapping[str, Any] = overlay or {}
 
     def compose(self) -> ComposeResult:
-        cfg = get_video_generation_config(reload=True)
+        if self.config is None:
+            yield Static(
+                "Loading Video Gen settings…",
+                id="settings-videogen-loading",
+                classes="settings-videogen-hint",
+            )
+            return
+        cfg = self.config
         raw_top: Mapping = load_user_video_generation_table()
         rows = build_backend_rows(cfg)
         overlay = self.overlay
@@ -171,7 +200,7 @@ class VideoGenSettingsPanel(Vertical):
                         if spec.kind == "secret":
                             cleared_key = f"cleared::{backend_id}::{spec.toml_key}"
                             key_source = (
-                                key_source_after_clear(backend_id)
+                                self.cleared_key_sources.get(backend_id, "checking")
                                 if cleared_key in overlay
                                 else row.key_source
                             )

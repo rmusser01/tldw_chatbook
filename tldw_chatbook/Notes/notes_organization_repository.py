@@ -909,7 +909,7 @@ class NotesOrganizationRepository:
         if domain == "notes.keyword_collection_link":
             self._materialize_collection_link(cursor, operation, payload)
             return None
-        return self._materialize_folder_link(cursor, dataset_id, operation, payload)
+        return self._materialize_folder_link(cursor, operation, payload)
 
     def _materialize_keyword(
         self,
@@ -1217,7 +1217,6 @@ class NotesOrganizationRepository:
     def _materialize_folder_link(
         self,
         cursor: sqlite3.Cursor,
-        dataset_id: str,
         operation: str,
         payload: Mapping[str, object],
     ) -> str | None:
@@ -1399,10 +1398,22 @@ class NotesOrganizationRepository:
             "AND (sync_id IS NULL OR sync_id <> ?) ORDER BY id LIMIT 1",
             (name, sync_id),
         ).fetchone()
-        rows = cursor.execute(
-            f"SELECT id, {column}, sync_id FROM {table} WHERE deleted = 0 ORDER BY id"
-        ).fetchall()
         if collision is None:
+            # The portable-key fallback catches near-matches the indexed
+            # NOCASE query cannot express, and needs the whole live set to do
+            # it. It runs ONLY on the miss: it used to run unconditionally and
+            # be discarded on the common path, which is one full table read per
+            # synced keyword or collection.
+            #
+            # The two queries differ on `deleted` deliberately. `keywords.
+            # keyword` is `UNIQUE ... COLLATE NOCASE`, so a soft-deleted row
+            # still owns its exact name and an adoption past it would fail the
+            # INSERT; a portable-key near-match owns no name, so a soft-deleted
+            # one must not block adoption.
+            rows = cursor.execute(
+                f"SELECT id, {column}, sync_id FROM {table} "
+                "WHERE deleted = 0 ORDER BY id"
+            ).fetchall()
             collision = next(
                 (
                     row

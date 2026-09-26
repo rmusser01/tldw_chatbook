@@ -829,6 +829,18 @@ def _validate_speed(
     return speed
 
 
+# Numeric request options whose valid range is not the default [0, 1].
+# OmniVoice's bounds match its Settings validation (settings_speech_tts).
+_OPTION_RANGES: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {
+        "temperature": (0.0, 2.0),
+        "repetition_penalty": (1.0, 10.0),
+        "guidance_scale": (0.0, 10.0),
+        "max_reference_duration": (1.0, 600.0),
+    }
+)
+
+
 def _validated_options(
     provider_id: str,
     value: object,
@@ -869,6 +881,16 @@ def _validated_options(
                 source,
             )
             continue
+        if key == "num_steps":
+            # OmniVoice diffusion steps; same bound as the Settings field.
+            if type(option) is not int or not 1 <= option <= 128:
+                raise TTSEffectiveResolutionError(
+                    code="invalid_selection",
+                    axis="provider_options",
+                    source=source,
+                )
+            normalized[key] = option
+            continue
         if key == "num_candidates":
             if type(option) is not int or not 1 <= option <= 5:
                 raise TTSEffectiveResolutionError(
@@ -891,13 +913,7 @@ def _validated_options(
                 axis="provider_options",
                 source=source,
             )
-        minimum, maximum = (
-            (0.0, 2.0)
-            if key == "temperature"
-            else (1.0, 10.0)
-            if key == "repetition_penalty"
-            else (0.0, 1.0)
-        )
+        minimum, maximum = _OPTION_RANGES.get(key, (0.0, 1.0))
         if not minimum <= number <= maximum:
             raise TTSEffectiveResolutionError(
                 code="invalid_selection",

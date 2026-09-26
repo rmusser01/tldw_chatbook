@@ -101,6 +101,11 @@ PROVIDER_PARAMS: dict[str, tuple[str, ...]] = {
         "tts-higgs-multi-speaker-switch",
         "tts-higgs-delimiter-input",
     ),
+    "omnivoice": (
+        "tts-omnivoice-num-steps-input",
+        "tts-omnivoice-guidance-scale-input",
+        "tts-omnivoice-max-ref-duration-input",
+    ),
     "kokoro": ("tts-kokoro-use-onnx",),
     "audio_cpp": (),
     "openai": (),

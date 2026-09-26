@@ -43,6 +43,7 @@ STUDIO_TTS_PROVIDER_OPTION_KEYS: Mapping[str, frozenset[str]] = MappingProxyType
         "chatterbox": frozenset({"exaggeration", "cfg_weight"}),
         "higgs": frozenset(),
         "alltalk": frozenset(),
+        "omnivoice": frozenset(),
     }
 )
 """Request-local option keys permitted in durable Studio preferences."""

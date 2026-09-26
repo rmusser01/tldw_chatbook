@@ -896,20 +896,17 @@ class StudyWindow(Container):
         return False
 
     def _configure_flashcards_lifecycle_controls(self) -> None:
+        # The ``#delete-deck-button`` lookup is a presence check only: its
+        # enable/disable gating lives in
+        # ``Study_Modules/flashcards_handler._update_lifecycle_controls``.
+        # A discarded ``bool(self.flashcards_controller._scope_is_available())``
+        # and a duplicate ``display`` write used to sit here; both were dead.
         try:
             self.query_one("#delete-deck-button", Button)
             delete_deck_note = self.query_one("#delete-deck-note", Static)
         except Exception:
             return
-
-        server_mode = self._is_server_mode()
-        controller = getattr(self, "flashcards_controller", None)
-        scope_checker = getattr(controller, "_scope_is_available", None)
-        if callable(scope_checker):
-            bool(scope_checker())
-
-        delete_deck_note.display = server_mode
-        delete_deck_note.display = server_mode
+        delete_deck_note.display = self._is_server_mode()
 
     def _schedule_flashcards_refresh(self) -> None:
         self.run_worker(
