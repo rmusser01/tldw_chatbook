@@ -11319,11 +11319,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 598,
+    "owner_files": 599,
     "path_privacy_candidate_calls": 689,
     "persistent_sink_files": 14,
     "task_31551_calls": 56,
     "task_492_calls": 1360,
-    "task_494_calls": 7551
+    "task_494_calls": 7552
   }
 }
