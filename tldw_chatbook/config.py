@@ -9514,6 +9514,14 @@ def get_library_collections_db_path() -> Path:
     )
 
 
+def get_dreams_db_path() -> Path:
+    """Return the canonical path for the Dreams database (dreams phase 1)."""
+    return (
+        _get_custom_database_path("dreams_db_path")
+        or get_user_data_dir() / "dreams.sqlite"
+    )
+
+
 def get_library_ingest_jobs_db_path() -> Path:
     return (
         _get_custom_database_path("library_ingest_jobs_db_path")

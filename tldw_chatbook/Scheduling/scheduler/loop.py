@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Coroutine, Optional, TYPE_CHECKING
 
 from loguru import logger
 
@@ -32,6 +32,11 @@ from tldw_chatbook.Scheduling.scheduler.queue import (
 )
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+
+# dreams phase 1: typing only -- see the matching guard in `queue.py`
+# (module-level import would put the Dreams chain on every boot census).
+if TYPE_CHECKING:
+    from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
@@ -95,6 +100,7 @@ class SchedulerLoop:
         clock: Optional[Callable[[], datetime]] = None,
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
+        dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
@@ -187,6 +193,7 @@ class SchedulerLoop:
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
+            dreams_projection=dreams_projection,  # dreams phase 1
         )
 
     @contextmanager
