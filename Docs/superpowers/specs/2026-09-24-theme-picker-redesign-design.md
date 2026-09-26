@@ -70,9 +70,9 @@ Changes elsewhere:
 
 **Layout, narrow:** one column. The filter, then the list filling the remaining height with a fixed minimum and maximum, then a two-row preview (strip plus one sample line of text and button), then the chips.
 
-**Rows.** Each row reads `› Apricot  ▮▮▮▮▮▮▮  active · launch`.
+**Rows.** Each row reads `Apricot  ▮▮▮▮▮▮▮  active · launch`.
 
-- The `›` cursor glyph and the marker words carry the state. The colour strip is decorative.
+- The highlighted row is shown in **bold** as well as with the highlight fill, and the marker words carry the state, so neither relies on colour alone. The colour strip is decorative. (Amended during PR 1: Textual's `OptionList` has no per-row cursor slot, so the originally planned `›` glyph became a bold highlight; this is pinned by the contrast test.)
 - The strip is drawn as styled segments inside the row's text, not one widget per swatch.
 - The groups are YOUR THEMES, SHIPPED and TEXTUAL, as disabled `OptionList` headers. While filtering, each header shows a count.
 - A file in your themes folder with the same name as a shipped or Textual theme is listed under Yours, marked "overrides shipped" or "overrides Textual". This matches startup, where user themes register after `ALL_THEMES` (`app.py:15873`). The theme it overrides is not listed separately.

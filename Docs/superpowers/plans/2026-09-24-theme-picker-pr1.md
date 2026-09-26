@@ -326,7 +326,7 @@ git commit -m "feat(theme): catalog of registered themes with origins and marker
   - `ThemeChange` (frozen dataclass): `previous_active: str`, `previous_launch_default: str`, `persisted: bool`. Method `merge(later: ThemeChange) -> ThemeChange` keeps self's previous values and ORs `persisted`.
   - `current_launch_default() -> str`.
   - `use_theme(app, name: str, *, persist: bool) -> ThemeChange`. It raises `InvalidThemeError` for an unknown name *before* writing anything. In Textual 8.2.8 that class is `textual.app.InvalidThemeError`; `textual.theme` has no such name (verified).
-  - `revert_theme(app, change: ThemeChange) -> None`.
+  - `revert_theme(app, change: ThemeChange) -> None`. *(Amended after review: it now returns `bool`, which is False when the launch default could not be restored, so the picker can warn. PR 3 widened it to `(restored, caches_reloaded)`. The code's docstring is the source of truth.)*
   - `user_theme_names(directory: Path) -> set[str]`.
 
 - [ ] **Step 1: Write the failing tests.** Append them to `Tests/Utils/test_theme_catalog.py`, with the new imports moved to the top of the file.
