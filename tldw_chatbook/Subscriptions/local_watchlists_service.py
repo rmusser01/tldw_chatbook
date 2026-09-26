@@ -2169,9 +2169,22 @@ class LocalWatchlistsService:
             # run (task-1394's isolation is only for the per-URL loop body;
             # if the sitemap itself cannot be fetched there is no per-URL
             # work to isolate).
+            # TASK-32894: every URL below is DISCOVERED (a `<loc>` out of the
+            # fetched document), so the per-URL config must carry the
+            # subscription's own configured source as the trust provenance --
+            # `_check_url_isolated` overwrites `source` with the discovered
+            # value, and `URLMonitor._fetch_url_content` used to seed
+            # `trusted_origins` from that, letting a `<loc>` naming loopback
+            # or a LAN address authorize itself. Unlike `url_list` (whose
+            # URLs the user configured), a sitemap's contents are not the
+            # user's intent.
+            discovered_config = {
+                **subscription_config,
+                "trusted_source": subscription_config.get("source"),
+            }
             for url in await self._urls_for_sitemap(subscription_config):
                 result, disposition = await self._check_url_guarded(
-                    monitor, subscription_config, url, db, isolated=True
+                    monitor, discovered_config, url, db, isolated=True
                 )
                 dispositions.append(disposition)
                 if result:

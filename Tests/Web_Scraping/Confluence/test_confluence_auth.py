@@ -270,3 +270,67 @@ class TestConfluenceAuth:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestMakeRequestQueryConstruction:
+    """`make_request` folds `params` into the URL so the guarded branch is
+    reachable (all seven production call sites pass `params=`). Qodo review
+    of #2800: that fold was hand-rolled string concatenation, which does not
+    match what `requests` itself would have built.
+    """
+
+    @staticmethod
+    def _auth():
+        auth = ConfluenceAuth("https://example.atlassian.net/wiki")
+        auth.configure_api_token("user@example.com", "token")
+        return auth
+
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def _fetched_url(self, endpoint, params, mock_guarded_fetch):
+        mock_guarded_fetch.return_value = Mock(status_code=200)
+        self._auth().make_request("GET", endpoint, params=params)
+        return mock_guarded_fetch.call_args[0][0]
+
+    def test_the_query_precedes_a_fragment_instead_of_joining_it(self):
+        """Appending after the whole URL put the query INSIDE the fragment,
+        where it is never transmitted. Endpoints interpolate a server-supplied
+        `page_id`, so this is reachable, not merely theoretical."""
+        url = self._fetched_url("/rest/api/content/12#section", {"limit": 50})
+
+        assert url == (
+            "https://example.atlassian.net/wiki/rest/api/content/12"
+            "?limit=50#section"
+        )
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"cql": "type=page and space=DEV"},
+            {"expand": ["body.storage", "version"]},
+            {"start": 0, "limit": 25},
+            {"spaceKey": "DEV", "type": "page", "limit": 100},
+        ],
+        ids=["string", "sequence", "ints", "mixed"],
+    )
+    def test_the_query_matches_what_requests_itself_would_build(self, params):
+        """The documented contract is "arguments to pass to requests", so the
+        built URL must equal the one `requests` prepares -- asserted against
+        `requests` rather than against a hand-written expectation."""
+        endpoint = "/rest/api/content"
+        expected = requests.Request(
+            "GET",
+            f"https://example.atlassian.net/wiki{endpoint}",
+            params=params,
+        ).prepare().url
+
+        assert self._fetched_url(endpoint, params) == expected
+
+    def test_an_endpoint_that_already_has_a_query_keeps_both(self):
+        url = self._fetched_url("/rest/api/content?expand=body", {"limit": 5})
+
+        assert url == (
+            "https://example.atlassian.net/wiki/rest/api/content"
+            "?expand=body&limit=5"
+        )

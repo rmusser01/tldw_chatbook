@@ -610,6 +610,25 @@ async def probe_settings_endpoint(
             state="unreachable",
             summary="unreachable: invalid endpoint URL",
         )
+    # TASK-32894: the chat branch reached the network with the resolved
+    # credential attached and no egress check, while the TTS branch
+    # (`_probe_openai_tts_catalog`) had one. This is the funnel all four
+    # production Test-button callers route through, and the Ollama
+    # `/api/tags` fallback below shares this origin, so one check here
+    # covers every chat-purpose probe. Trust is seeded from the configured
+    # origin exactly as the TTS branch does, so a local provider on
+    # 127.0.0.1 keeps working; cloud metadata endpoints stay blocked
+    # regardless of trust.
+    try:
+        await check_url_or_raise_async(
+            resolution.models_url,
+            trusted_origins=origin_set(resolution.models_url),
+        )
+    except Exception:  # noqa: BLE001 - policy details stay out of UI summaries.
+        return _failure(
+            "connection_error",
+            "unreachable: blocked by network policy",
+        )
     owns_client = http_client is None
     try:
         client = http_client or httpx.AsyncClient(timeout=timeout)

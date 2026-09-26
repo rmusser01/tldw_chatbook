@@ -69,6 +69,18 @@ class _FakeResponse:
     def json(self) -> Dict[str, Any]:
         return self._payload
 
+    #: TASK-32894: credentialed backends now go through
+    #: `_credentialed_search_request`, which refuses a redirect and reads the
+    #: body in capped chunks. A fake that only offers `.json()` would model a
+    #: transport the shipped path no longer uses.
+    is_redirect = False
+
+    def iter_content(self, chunk_size=65536):
+        yield json.dumps(self._payload).encode()
+
+    def close(self):
+        return None
+
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise real_requests.exceptions.HTTPError(f"status {self.status_code}")
