@@ -3304,7 +3304,12 @@ class ConsoleProviderGateway:
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
-            continuation_target.provider,
+            # Provider spellings must compare under ONE normalization: the
+            # target pins whatever the bridge recorded (for engine-driven
+            # keys like the custom-hosted swap, the hyphenated execution
+            # key), so both sides go through provider_config_key instead of
+            # normalizing only the resolution side.
+            provider_config_key(continuation_target.provider),
             continuation_target.model,
             normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
         ) != (
