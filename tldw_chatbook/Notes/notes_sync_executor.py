@@ -3189,6 +3189,19 @@ class NotesSyncExecutor:
                     self._restore_keep_both_operation_state(request.operation_id)
             return await self._advance_keep_both(request)
         except asyncio.CancelledError:
+            # Deliberately NOT the sibling
+            # `_persist_attention_best_effort(..., "cancelled_after_admission")`
+            # that `_run` and `_run_create_or_move` do here. Keep-both carries
+            # its late progress in `operation.state`, and
+            # `reconstruct_request` only tolerates a binding that no longer
+            # matches the reviewed one while that state is BINDING_UPDATED or
+            # VERIFIED (:1270). Writing NEEDS_ATTENTION over it makes a
+            # cancelled late-substage operation unresumable --
+            # `test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes`
+            # [binding_update] and [final_verification] both fail on that.
+            # The cancellation is still durable: `conflict_substage` in the
+            # recovery metadata is what `_restore_keep_both_operation_state`
+            # replays from.
             raise
         except Exception as exc:
             reason = self._bounded_reason(exc)

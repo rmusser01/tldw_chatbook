@@ -16290,6 +16290,41 @@ scheduled animations and asserts the unchanged Pilot mouse click actually hits.
 No retry or direct-handler bypass is involved. Also assert a Failed outcome in
 redaction tests: absence-only checks had accepted the empty, never-run result.
 
+### A sibling asymmetry is not a defect until you read the odd one out's contract (TASK-32902)
+
+**What happened.** The tier-2 review filed three P3s of the shape "this call
+site does X and its siblings do Y". Three times the recommended Y would have
+broken something:
+
+- `Notes/notes_sync_executor._run_keep_both` omits the
+  `_persist_attention_best_effort(..., "cancelled_after_admission")` its two
+  sibling run paths do on `CancelledError`. Adding it turned
+  `test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes`
+  [binding_update] and [final_verification] red with
+  `RuntimeError("recovery_authority_changed")`: keep-both carries its late
+  progress in `operation.state`, and `reconstruct_request` only tolerates a
+  binding that no longer matches the reviewed one while that state is
+  `BINDING_UPDATED`/`VERIFIED`. Writing `NEEDS_ATTENTION` over it makes a
+  cancelled late-substage operation unresumable.
+- `Media/local_media_reading_service.save_reading_item` commits the media row
+  and the read-it-later flag in two transactions; "wrap both in one
+  `db.transaction()`" looks like a four-line fix, because
+  `MediaDatabase.transaction()` is nesting-aware. But
+  `add_media_with_keywords` dispatches post-ingest callbacks **after** its
+  transaction commits, by documented contract. An outer transaction runs every
+  registered callback on uncommitted data.
+- `Notes/file_notes_replica._utc_now` should "adopt `Utils.timestamps.utc_now_iso`".
+  Measured: canonical is `...563Z`, the replica writes `...563880+00:00`, and
+  `'Z' (0x5A) > '8' (0x38)`, so every new row sorts after every old row in the
+  `ORDER BY deleted_at` that `list_deleted` runs. Adopting the helper without a
+  read-side migration *creates* the mixed-shape column ADR-173 exists to prevent.
+
+**What to do.** Before "making it consistent", grep for the tests that pin the
+odd one out and read what the *other* side of its contract requires — a state
+machine it feeds, a post-commit callback, a stored shape something orders by.
+The asymmetry is often the thing holding the contract up. And when a proposed
+fix turns a passing test red, the test is the default winner until you can say
+precisely why it is wrong.
 ## `git stash push <path>` + `git stash pop` is not a safe revert-and-restore (task-32901)
 
 **Incident.** Watching a test go red before a fix means running it against the
