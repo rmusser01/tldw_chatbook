@@ -317,6 +317,7 @@ PICKER_CONTROLS = (
     "#settings-theme-try",
     "#settings-theme-picker-clone",
     "#settings-theme-picker-new",
+    "#settings-theme-picker-import",
 )
 
 # TASK-32948 PR 2 Task 6: the four yours-only file-action buttons, visible
@@ -562,7 +563,7 @@ async def test_picker_lists_via_editor_scope(request, monkeypatch):
     def paused(self):
         raise RecoveryRequired("x")
 
-    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    monkeypatch.setattr(SettingsThemeEditor, "user_theme_listing", paused)
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Theme")
@@ -738,7 +739,7 @@ async def test_save_buttons_disabled_while_theme_files_are_paused(request, monke
     def paused(self):
         raise RecoveryRequired("x")
 
-    monkeypatch.setattr(SettingsThemeEditor, "list_user_theme_names", paused)
+    monkeypatch.setattr(SettingsThemeEditor, "user_theme_listing", paused)
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
         await _highlight(host, pilot, "apricot")
@@ -963,3 +964,551 @@ async def test_rename_prompt_escapes_markup_in_theme_name(request):
         assert isinstance(host.screen, RagProfileNameModal)
         title = host.screen.query_one(".destination-section", Static)
         assert "x[/]" in str(title.render())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_of_an_unreadable_file_removes_it(request):
+    """PR 3 Task 1: an unreadable file is listed under Yours and deletable."""
+    from tldw_chatbook import config
+
+    themes = config._get_effective_config_path().parent / "themes"
+    themes.mkdir(exist_ok=True)
+    # R40(a): nord.toml shares its stem with the Textual built-in nord.
+    path = themes / "nord.toml"
+    path.write_text("garbage [[ not toml", encoding="utf-8")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "unreadable:nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        entry = next(e for e in picker.entries if e.id == "unreadable:nord")
+        assert entry.origin == "yours" and entry.error == "not valid TOML"
+        assert entry.display_name == "Nord (unreadable)"
+        # R40(b): the pane lists through ONE scan per refresh.
+        editor = host.screen.query_one("#settings-theme-editor")
+        scans = []
+        real_scan = editor._scan_theme_files
+        editor._scan_theme_files = lambda: scans.append(1) or real_scan()
+        picker.refresh_catalog()
+        assert len(scans) == 1
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Delete theme"
+        await pilot.pause(0.3)
+        assert not path.exists()
+        assert "unreadable:nord" not in _picker_ids(host)
+        assert "nord" in _picker_ids(host)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_path_factory):
+    """TASK-32948 PR 3 Task 2: `i` -> path prompt -> file lands in the
+    profile's themes dir, registered and highlighted."""
+    from textual.widgets import Input
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    source = tmp_path_factory.mktemp("import-src") / "drop.toml"
+    source.write_text(
+        '[theme]\nname = "dropped"\ndark = true\n[colors]\nprimary = "#22AA88"\n',
+        encoding="utf-8",
+    )
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        picker = host.screen.query_one("#settings-theme-picker")
+        highlights: list[str | None] = []
+        real_refresh = picker.refresh_catalog
+
+        def spy(highlight=None):
+            highlights.append(highlight)
+            real_refresh(highlight=highlight)
+
+        picker.refresh_catalog = spy
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("i")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        # R40(f): the prompt says what it wants.
+        assert host.screen._modal_title == "Import theme — full path to a .toml file"
+        host.screen.query_one("#settings-rag-profile-name-input", Input).value = f"'{source}'"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        themes = config._get_effective_config_path().parent / "themes"
+        assert (themes / "dropped.toml").exists()
+        assert "dropped" in host.available_themes
+        picker = host.screen.query_one("#settings-theme-picker")
+        assert picker.highlighted_id == "dropped"
+        assert "dropped" in _picker_ids(host)
+        # R37: one refresh (ThemesChanged(highlight=)), not a second from the screen.
+        assert highlights.count("dropped") == 1
+
+
+# TASK-32948 PR 3 Task 3: launch-default-missing notice, and Export's Copy path.
+@pytest.mark.asyncio
+@private_profile_test
+async def test_launch_default_missing_notice_pins_picker_and_appearance(request, monkeypatch):
+    """Spec §9: a launch default that no theme is registered under shows in
+    both the picker (above the list) and Appearance's read-only summary;
+    a Use of a real theme clears the picker's notice."""
+    writes = _stateful_launch_default(monkeypatch, "deleted_one")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        summary = str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        assert "launch default missing: deleted_one" in summary
+
+        await _category(host, pilot, "Theme")
+        notice = host.screen.query_one("#settings-theme-launch-missing")
+        assert notice.display
+        assert "Launch default missing: deleted_one" in str(notice.render())
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.pause(0.1)
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        assert writes[-1] == {"general": {"default_theme": "nord"}}
+        assert not host.screen.query_one("#settings-theme-launch-missing").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_shows_full_path_and_copy_path_copies_it(request, monkeypatch, tmp_path_factory):
+    """Spec §7: after Export, the picker card shows the full export path
+    (the §7 exception to R16's truncated paths) with a Copy path button;
+    a fresh highlight clears the row."""
+    from pathlib import Path
+
+    downloads_home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: downloads_home))
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        assert not host.screen.query_one("#settings-theme-export-result").display
+        await pilot.click("#settings-theme-picker-export")
+        await pilot.pause(0.3)
+        export_path = downloads_home / "Downloads" / "mine_theme.toml"
+        assert export_path.exists()
+        result = host.screen.query_one("#settings-theme-export-path")
+        assert str(export_path) in str(result.render())
+        assert host.screen.query_one("#settings-theme-export-result").display
+
+        copied = []
+        monkeypatch.setattr(host, "copy_to_clipboard", lambda text: copied.append(text))
+        await pilot.click("#settings-theme-copy-path")
+        await pilot.pause(0.1)
+        assert copied == [str(export_path)]
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause(0.1)
+        assert not host.screen.query_one("#settings-theme-export-result").display
+
+
+# TASK-32948 PR 3 Task 4 (R28): a theme name is untrusted file text.
+def _record_toasts(host):
+    """Each notify message as a Toast renders it (markup parsed), so a name
+    that is broken markup raises here just as it would on screen."""
+    from textual.content import Content
+
+    shown = []
+    original = host.notify
+
+    def notify(message, *args, **kwargs):
+        shown.append(Content.from_markup(message).plain)
+        return original(message, *args, **kwargs)
+
+    host.notify = notify
+    return shown
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_names_with_markup_render_literally_everywhere(request, monkeypatch):
+    """R28: ``x[/]`` from a hand-edited file shows literally in the Use/Try
+    toasts, the Revert chip, the Rename title and toast, and the Delete
+    dialog and toast; nothing raises."""
+    from textual.widgets import Button, Label
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _stateful_launch_default(monkeypatch, "textual-dark")
+    host = _host()
+    _saved_theme_file(host, "odd", "x[/]")
+    _saved_theme_file(host, "odd2", "z[/]")
+    toasts = _record_toasts(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = "x[/]"
+        await _highlight(host, pilot, "nord")
+        await pilot.press("enter")  # Use nord
+        await pilot.pause(0.2)
+        assert "Nord is now your theme (was: X[/])" in toasts
+        revert = host.screen.query_one("#settings-theme-revert", Button)
+        assert revert.label.plain.startswith("Revert to X[/]")
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == "x[/]"
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("x[/]")
+        await pilot.pause(0.1)
+        await pilot.press("t")
+        await pilot.pause(0.2)
+        assert "Trying X[/] for this session" in toasts
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert "X[/] is now your theme (was: X[/])" in toasts
+
+        await _rename_highlighted(host, pilot, "y")
+        assert "Renamed 'x[/]' to 'y'" in toasts
+        assert host.screen.query_one("#settings-theme-picker").highlighted_id == "y"
+
+        lst = host.screen.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("z[/]")
+        await pilot.pause(0.1)
+        await pilot.press("delete")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ConfirmationDialog)
+        # The dialog renders with markup off: no escape backslash shows.
+        message = str(host.screen.query_one(".dialog-message", Label).render())
+        assert message.startswith("Delete the saved theme 'z[/]'?")
+        await pilot.click("#confirm-button")
+        await pilot.pause(0.3)
+        assert "Deleted theme 'z[/]'" in toasts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reset_reloads_a_theme_whose_name_differs_from_its_file(request):
+    """R28: Reset resolves the file by [theme].name, like every file op (R12)."""
+    from textual.widgets import Input
+
+    host = _host()
+    _saved_theme_file(host, "a", "b")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "b")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.click("#settings-theme-reset")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Discard changes"
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-color-primary", Input).value == "#AB0001"
+        assert host.screen.query_one("#settings-theme-editor").is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_confirmed_after_the_pane_is_gone_does_not_crash(request):
+    """R38: the Rename prompt's callback may run after the theme pane was
+    torn down (a category switch); it must not raise QueryError."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    path = _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        screen = host.screen
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(screen.query("#settings-theme-pane")) == 0
+        screen._handle_theme_rename_result("mine", "ours")
+        await pilot.pause(0.1)
+        assert path.exists()
+
+
+# -- TASK-32949: leaving the Settings screen with unsaved theme edits ---------
+
+
+async def _dirty_theme_editor(host, pilot, name="leave_test"):
+    from textual.widgets import Input
+
+    await _category(host, pilot, "Theme")
+    settings = host.screen
+    settings.query_one("#settings-theme-list").focus()
+    await pilot.press("c")
+    await pilot.pause(0.2)
+    editor = settings.query_one("#settings-theme-editor")
+    editor.query_one("#settings-theme-name", Input).value = name  # a real edit
+    await pilot.pause(0.2)
+    assert editor.is_modified
+    return settings, editor
+
+
+async def _leave(host, pilot, settings, button_id):
+    """Run the app's navigation hook and answer its prompt with ``button_id``."""
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    decision = settings.run_worker(settings.confirm_navigation(), exit_on_error=False)
+    await pilot.pause(0.2)
+    assert isinstance(host.screen, ThemeLeaveModal)
+    await pilot.click(f"#{button_id}")
+    await pilot.pause(0.2)
+    await decision.wait()
+    return decision.result
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_without_theme_edits_does_not_ask(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        assert await host.screen.confirm_navigation() is True
+        await _category(host, pilot, "Appearance")
+        assert await host.screen.confirm_navigation() is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_stay_keeps_the_theme_edit(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-stay") is False
+        assert host.screen is settings
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-editor-view"
+        assert editor.is_modified and editor.current_theme_name == "leave_test"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_discard_leaves_without_saving(request):
+    from tldw_chatbook.config import get_user_themes_dir
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-discard") is True
+        assert not (get_user_themes_dir() / "leave_test.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_save_writes_then_leaves(request):
+    from tldw_chatbook.config import get_user_themes_dir
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is True
+        assert (get_user_themes_dir() / "leave_test.toml").exists()
+        assert not editor.is_modified
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_settings_refused_or_pending_save_stays(request):
+    from tldw_chatbook.config import get_user_themes_dir
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        # Refused: the reserved prefix.
+        settings, editor = await _dirty_theme_editor(host, pilot, name="custom_x")
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is False
+        assert host.screen is settings and editor.is_modified
+        # Pending: saving over another theme's file asks first.
+        (get_user_themes_dir() / "taken.toml").write_text(
+            '[theme]\nname = "taken"\n[colors]\nprimary = "#112233"\n', encoding="utf-8"
+        )
+        from textual.widgets import Input
+
+        editor.query_one("#settings-theme-name", Input).value = "taken"
+        await pilot.pause(0.2)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-save") is False
+        assert isinstance(host.screen, ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_appearance_summary_strips_control_characters(request, monkeypatch):
+    """Qodo 4109320405: the launch default comes from a hand-editable config."""
+    from tldw_chatbook.css.Themes import theme_catalog
+
+    monkeypatch.setattr(theme_catalog, "current_launch_default", lambda: "gone\x1b]52;c;eA==\x07")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Appearance")
+        text = str(host.screen.query_one("#settings-appearance-theme-summary").render())
+        assert "launch default missing: gone?]52;c;eA==?" in text
+        assert text.isprintable(), repr(text)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edit_of_a_vanished_file_stays_on_the_picker(request):
+    """Qodo 4104047302: a failed load never opens the editor on the previous
+    palette under the previous name."""
+    from tldw_chatbook.config import get_user_themes_dir
+
+    themes = get_user_themes_dir()
+    themes.mkdir(parents=True, exist_ok=True)
+    path = themes / "mine.toml"
+    path.write_text('[theme]\nname = "mine"\n[colors]\nprimary = "#112233"\n', encoding="utf-8")
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    host = _host()
+    for theme in load_user_themes(themes):  # what startup registers
+        host.register_theme(theme)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        picker = host.screen.query_one("#settings-theme-picker")
+        picker.refresh_catalog(highlight="mine")
+        await pilot.pause()
+        assert picker.highlighted_id == "mine"
+        path.unlink()
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
+
+
+# -- Review follow-up: quit, no stacked prompts, a real NavigateToScreen -------
+
+
+def _leave_modals(host):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    return [s for s in host.screen_stack if isinstance(s, ThemeLeaveModal)]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leave_prompts_never_stack(request):
+    """Review follow-up 2: while one theme leave prompt is open, neither a
+    screen navigation nor a category switch opens a second one."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        # Category prompt open -> a navigation vetoes at once, no second modal.
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        assert await settings.confirm_navigation() is False
+        await pilot.pause(0.2)
+        assert len(_leave_modals(host)) == 1
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.3)
+        assert _leave_modals(host) == [] and settings.active_category == SettingsCategoryId.THEME.value
+
+        # Navigation prompt open -> a category switch does nothing.
+        nav = settings.run_worker(settings.confirm_navigation(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.3)
+        await nav.wait()
+        assert nav.result is False
+        assert _leave_modals(host) == []
+        assert settings.active_category == SettingsCategoryId.THEME.value and editor.is_modified
+
+
+def _real_app_on(host, settings, monkeypatch):
+    """The harness's real TldwCli, looking at the live Settings screen.
+
+    The TldwCli is not itself running, so its ``screen`` is pointed at the
+    harness's Settings screen and the final ``switch_screen`` is recorded --
+    the same seams test_screen_navigation's real-handler tests patch.
+    """
+    tldw = host.app_instance
+    tldw._initial_screen_pushed = True
+    monkeypatch.setattr(type(tldw), "screen", property(lambda self: settings))
+    switched = []
+
+    async def fake_switch_screen(screen):
+        switched.append(screen)
+
+    class _Target:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    monkeypatch.setattr(tldw, "_resolve_screen_navigation_target", lambda target: ("chat", "chat", _Target))
+    monkeypatch.setattr(tldw, "switch_screen", fake_switch_screen)
+    return tldw, switched
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_with_theme_edits_prompts_and_stay_keeps_the_app(request, monkeypatch):
+    """Review follow-up 1: ``action_quit``'s worker (``_confirm_and_quit``)
+    asks the screen's ``confirm_quit``; Settings now answers with the theme
+    leave prompt, and Stay stops the quit before any cleanup."""
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False  # stop the real quit flow right after the screen's answer
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.2)
+        await quit_flow.wait()
+        assert past_screen_check == [] and tldw._quit_in_progress is False
+        assert host.is_running and host.screen is settings and editor.is_modified
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_without_theme_edits_does_not_prompt(request, monkeypatch):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        await tldw._confirm_and_quit()
+        assert past_screen_check == [True]  # the screen let the quit through
+        assert _leave_modals(host) == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, monkeypatch):
+    """Review follow-up 7: a real ``NavigateToScreen`` through the real
+    ``TldwCli.handle_screen_navigation`` asks, and Stay vetoes the switch."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        tldw, switched = _real_app_on(host, settings, monkeypatch)
+        nav = host.run_worker(tldw.handle_screen_navigation(NavigateToScreen("console")), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.2)
+        await nav.wait()
+        assert switched == []
+        assert host.screen is settings and editor.is_modified

@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+import toml
+
 from tldw_chatbook.css.Themes.themes import load_user_themes
 
 
@@ -82,3 +85,159 @@ async def test_malformed_user_theme_survives_css_refresh(tmp_path):
         await pilot.pause()
         assert app.theme == "hostile"
     assert app.return_code in (None, 0)
+
+
+def test_theme_from_file_data_refuses_non_colour_keys():
+    """R32: `variables`/`dark` are Theme kwargs, not colours; accepting them
+    built a theme whose generate() raised AttributeError."""
+    import pytest
+
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    for key, value in (("variables", "#ffffff"), ("dark", "#000000"), ("bogus", "#fff")):
+        data = {"colors": {"primary": "#112233", key: value}}
+        with pytest.raises(ValueError, match=f"^{key} is not a theme colour$"):
+            theme_from_file_data(data, "x", "x.toml")
+
+
+def test_load_user_themes_skips_non_colour_keys(tmp_path):
+    _write(tmp_path, "good", '[colors]\nprimary = "#9966FF"\n')
+    _write(tmp_path, "vars", '[colors]\nprimary = "#9966FF"\nvariables = "#ffffff"\n')
+    _write(tmp_path, "dark", '[colors]\nprimary = "#9966FF"\ndark = "#000000"\n')
+
+    themes = load_user_themes(tmp_path)
+
+    assert [t.name for t in themes] == ["good"]
+    for theme in themes:
+        theme.to_color_system().generate()  # would raise for a bad key
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [('"false"', False), ('"OFF"', False), ('"0"', False), ('"no"', False),
+     ('"true"', True), ('"Yes"', True), ("false", False), ("true", True), ('"maybe"', True)],
+)
+def test_theme_file_dark_flag_coerces_strings(raw, expected):
+    """R31: ``dark = "false"`` is a light theme, not ``bool("false")``."""
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    data = toml.loads(f'[theme]\nname = "t"\ndark = {raw}\n[colors]\nprimary = "#FFAA00"\n')
+    assert theme_from_file_data(data, "t", "t.toml").dark is expected
+
+
+def test_theme_name_with_control_characters_is_refused_and_skipped(tmp_path):
+    """R39: a name like ``x<ESC>c`` would emit a terminal reset when shown."""
+    from tldw_chatbook.css.Themes.themes import printable, theme_from_file_data
+
+    body = '[theme]\nname = "x\\u001bc"\n[colors]\nprimary = "#FFAA00"\n'
+    with pytest.raises(ValueError, match="name has control characters"):
+        theme_from_file_data(toml.loads(body), "t", "t.toml")
+    _write(tmp_path, "t", body)
+    assert load_user_themes(tmp_path) == []
+    assert printable("a\x1b]52;c;eA==\x07b\u00e9 ") == "a?]52;c;eA==?b\u00e9 "
+
+
+_OSC_SECONDARY = (
+    '[theme]\nname = "osc"\n[colors]\nprimary = "#112233"\n'
+    'secondary = "\\u001b]52;c;eA==\\u001b\\\\"\n'
+)
+
+
+def test_non_hex_colour_value_is_refused_and_skipped(tmp_path):
+    """R41: a non-primary colour Textual can't parse used to be silently
+    dropped, so an ESC-laden value was accepted and later echoed into Edit."""
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    for value in ("\x1b]52;c;eA==\x1b\\", "red", "#12345", "#1122334", "#fff\n", "rgb(1,2,3)", 7):
+        data = {"colors": {"primary": "#112233", "secondary": value}}
+        with pytest.raises(ValueError, match=r"^invalid colour 'secondary'$"):
+            theme_from_file_data(data, "x", "x.toml")
+    # Follow-up: #RRGGBBAA is what the editor writes for a translucent
+    # shipped colour (deep_dive_cyberspace.error = #FF33AACC).
+    for value in ("#abc", "#ABCDEF", "#a1B2c3", "#FF33AACC"):
+        theme_from_file_data({"colors": {"primary": value}}, "x", "x.toml")
+
+    _write(tmp_path, "osc", _OSC_SECONDARY)
+    records = []
+    sink = logger.add(lambda m: records.append(m.record), level="DEBUG")
+    try:
+        assert load_user_themes(tmp_path) == []
+    finally:
+        logger.remove(sink)
+    skipped = [r for r in records if "osc.toml" in r["message"]]
+    assert skipped and skipped[0]["level"].name == "WARNING"
+    assert "invalid colour 'secondary'" in skipped[0]["message"]
+
+
+def test_create_theme_from_dict_does_not_print_unparseable_colours(capsys):
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    create_theme_from_dict("x", {"primary": "#112233", "secondary": "not-a-colour"})
+    assert capsys.readouterr().out == ""
+
+
+def test_variable_warning_file_label_is_printable():
+    """R41 item 4: the dropped-variable warning names the file; a file name
+    with control characters must not carry them into the log."""
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import sanitize_theme_variables
+
+    messages = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="DEBUG")
+    try:
+        assert sanitize_theme_variables({"bad": "red; }"}, "x\x1b]52;c;eA==\x07.toml") == {}
+    finally:
+        logger.remove(sink)
+    assert messages and all(m.isprintable() for m in messages), [repr(m) for m in messages]
+
+
+def test_rrggbbaa_colour_file_loads(tmp_path):
+    _write(tmp_path, "alpha", '[colors]\nprimary = "#112233"\nerror = "#FF33AACC"\n')
+    [theme] = load_user_themes(tmp_path)
+    assert theme.name == "alpha"
+    theme.to_color_system().generate()
+
+
+def test_variables_with_trailing_newline_are_dropped():
+    """Follow-up item 4: ``$`` matches before a trailing newline."""
+    from tldw_chatbook.css.Themes.themes import sanitize_theme_variables
+
+    assert sanitize_theme_variables(
+        {"foo\n": "red", "bar": "#fff\n", "baz": "auto 50%\n", "ok": "#fff"}, "t.toml"
+    ) == {"ok": "#fff"}
+
+
+def test_startup_loader_skips_linked_theme_files(tmp_path):
+    """R43: startup agrees with the picker and the backup layer -- a
+    symlinked, dangling or hard-linked ``*.toml`` is skipped with a warning,
+    never registered (a linked copy of ``nord`` no longer shadows SHIPPED)."""
+    import os
+
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    good = '[theme]\nname = "{0}"\n[colors]\nprimary = "#112233"\n'
+    themes = tmp_path / "themes"
+    themes.mkdir()
+    (themes / "plain.toml").write_text(good.format("plain"), encoding="utf-8")
+    outside = tmp_path / "nord_source.toml"
+    outside.write_text(good.format("nord"), encoding="utf-8")
+    os.symlink(outside, themes / "nord.toml")
+    os.symlink(tmp_path / "nowhere.toml", themes / "gone.toml")
+    hard_source = tmp_path / "hard_source.toml"
+    hard_source.write_text(good.format("hard"), encoding="utf-8")
+    os.link(hard_source, themes / "hard.toml")
+
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        names = [t.name for t in load_user_themes(themes)]
+    finally:
+        logger.remove(sink)
+    assert names == ["plain"]
+    for stem in ("gone", "hard", "nord"):
+        assert any(f"{stem}.toml" in m and "not a regular file" in m for m in messages), messages

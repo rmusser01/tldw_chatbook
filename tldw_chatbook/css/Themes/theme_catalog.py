@@ -17,7 +17,19 @@ from typing import Any, Literal
 from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
-from .themes import ALL_THEMES
+from ...Utils.input_validation import escape_markup
+from .themes import ALL_THEMES, UNREADABLE_ID_PREFIX, printable
+
+# R40(a): an unreadable saved file's entry id is ``unreadable:<stem>``
+# (UNREADABLE_ID_PREFIX) -- its own id, so a broken ``nord.toml`` is listed
+# next to shipped ``nord``. The prefix is reserved (themes.is_reserved_theme_
+# name), so no saved theme can take that id.
+
+#: Stand-in for a colour with no RGB of its own (unset, unparseable, ANSI).
+_NEUTRAL = "#808080"
+
+#: The shared suffix for a persisted change whose config-cache reload failed.
+CACHE_REFRESH_FAILED = "configuration refresh failed — reopen Settings to refresh"
 
 Origin = Literal["yours", "shipped", "textual"]
 STRIP_KEYS = ("background", "surface", "primary", "secondary", "accent", "success", "error")
@@ -31,6 +43,21 @@ _SHIPPED_NAMES = frozenset(t.name for t in ALL_THEMES if getattr(t, "name", None
 
 @dataclass(frozen=True)
 class ThemeEntry:
+    """One picker row: a registered theme, or an unreadable saved file.
+
+    Attributes:
+        id: The registered theme name, or ``unreadable:<stem>``.
+        display_name: The printable label shown in the list.
+        origin: ``yours``, ``shipped`` or ``textual``.
+        dark: Whether the theme is dark.
+        colours: ``(key, #RRGGBB)`` pairs for the colour strip and card.
+        is_active: The running theme.
+        is_launch_default: The theme the config starts with.
+        overrides: For a saved theme that shadows a catalog name, which
+            catalog it shadows.
+        error: A short, path-free reason when the saved file is unreadable.
+    """
+
     id: str
     display_name: str
     origin: Origin
@@ -39,6 +66,9 @@ class ThemeEntry:
     is_active: bool
     is_launch_default: bool
     overrides: Literal["shipped", "textual"] | None = None
+    # Set for a saved file that can't be read (spec §4): a short, path-free
+    # reason. The entry is listed so the file can be deleted.
+    error: str | None = None
 
     @property
     def strip(self) -> tuple[str, ...]:
@@ -47,6 +77,14 @@ class ThemeEntry:
 
 
 def display_name(theme_id: str) -> str:
+    """Turn a theme id into a title-case label.
+
+    Args:
+        theme_id: A theme name such as ``gruvbox-dark`` or ``my_theme``.
+
+    Returns:
+        The id with ``_`` and ``-`` as spaces, title-cased.
+    """
     return theme_id.replace("_", " ").replace("-", " ").title()
 
 
@@ -82,13 +120,15 @@ def _colour_hex(raw: Any) -> str:
     colours the same way an unset colour already falls back.
     """
     if not raw:
-        return "#808080"
+        return _NEUTRAL
     try:
-        colour = Color.parse(str(raw))
+        # A saved theme holds Color objects (create_theme_from_dict), whose
+        # str() -- "Color(17, 34, 51)" -- does not parse.
+        colour = raw if isinstance(raw, Color) else Color.parse(str(raw))
     except Exception:  # noqa: BLE001
-        return "#808080"
+        return _NEUTRAL
     if colour.ansi is not None:
-        return "#808080"
+        return _NEUTRAL
     return colour.hex6.upper()
 
 
@@ -109,8 +149,15 @@ def build_catalog(
     user_names: Collection[str],
     active: str,
     launch_default: str,
+    unreadable: Mapping[str, str] | None = None,
 ) -> list[ThemeEntry]:
-    """List every registered theme once, grouped yours → shipped → textual."""
+    """List every registered theme once, grouped yours → shipped → textual.
+
+    ``unreadable`` maps each unreadable saved file's stem to its error; each
+    becomes a grey "yours" entry with id ``unreadable:<stem>`` (skipped if a
+    registered theme already has that id, so ids stay unique; the reserved
+    prefix keeps saved themes from ever taking one).
+    """
     rows: list[tuple[str, Origin, Literal["shipped", "textual"] | None, Theme]] = []
     for name, theme in available.items():
         if name.startswith("custom_"):
@@ -134,6 +181,22 @@ def build_catalog(
         )
         for name, origin, overrides, theme in rows
     ]
+    listed = {entry.id for entry in entries}
+    entries.extend(
+        ThemeEntry(
+            id=f"{UNREADABLE_ID_PREFIX}{stem}",
+            # R39: a file name can carry control characters too.
+            display_name=f"{printable(display_name(stem))} (unreadable)",
+            origin="yours",
+            dark=True,
+            colours=tuple((key, _NEUTRAL) for key in BASE_KEYS),
+            is_active=False,
+            is_launch_default=False,
+            error=error,
+        )
+        for stem, error in (unreadable or {}).items()
+        if f"{UNREADABLE_ID_PREFIX}{stem}" not in listed
+    )
     entries.sort(key=lambda e: (_ORIGIN_ORDER[e.origin], e.display_name.casefold()))
     return entries
 
@@ -249,27 +312,43 @@ def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
     keep their own separate wording for a Try (``persist=False``); this
     only covers the Use branch both of them share.
     """
+    # notify parses markup; a saved theme's name is untrusted file text (R28).
+    shown = escape_markup(display_name(name))
     if not change.persisted:
         return (
-            f"{display_name(name)} applied; the launch default was not saved",
+            f"{shown} applied; the launch default was not saved",
             "warning",
         )
-    message = f"{display_name(name)} is now your theme (was: {display_name(change.previous_active)})"
+    message = f"{shown} is now your theme (was: {escape_markup(display_name(change.previous_active))})"
     if change.caches_reloaded:
         return message, "information"
     return (
-        f"{message}; configuration refresh failed — reopen Settings to refresh",
+        f"{message}; {CACHE_REFRESH_FAILED}",
         "warning",
     )
 
 
-def revert_theme(app: Any, change: ThemeChange) -> bool:
-    """Undo ``change``; False when the launch default could not be restored."""
+def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
+    """Undo ``change``: restore the active theme and, if it was persisted,
+    the launch default.
+
+    Args:
+        app: The running app.
+        change: The pending change to undo.
+
+    Returns:
+        ``(restored, caches_reloaded)``: whether the launch default was
+        restored (always True when nothing was persisted), and whether the
+        config caches were refreshed after that write (Qodo 4107495934).
+
+    Raises:
+        textual.app.InvalidThemeError: the previous theme is no longer
+            registered.
+    """
     app.theme = change.previous_active
     if change.persisted:
-        persisted, _caches_reloaded = _persist_launch_default(app, change.previous_launch_default)
-        return persisted
-    return True
+        return _persist_launch_default(app, change.previous_launch_default)
+    return True, True
 
 
 def user_theme_names(directory: Path) -> set[str]:

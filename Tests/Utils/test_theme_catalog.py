@@ -234,11 +234,14 @@ def test_revert_restores_active_and_launch_default(writes):
 def test_revert_reports_whether_the_launch_default_was_restored(writes, monkeypatch):
     app = _FakeApp()
     change = tc.use_theme(app, "nord", persist=True)
-    assert tc.revert_theme(app, change) is True
-    assert tc.revert_theme(app, tc.use_theme(app, "nord", persist=False)) is True  # nothing to restore
+    assert tc.revert_theme(app, change) == (True, True)
+    assert tc.revert_theme(app, tc.use_theme(app, "nord", persist=False)) == (True, True)  # nothing to restore
+    change = tc.use_theme(app, "nord", persist=True)
+    monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+    assert tc.revert_theme(app, change) == (True, False)  # Qodo 4107495934
     change = tc.use_theme(app, "nord", persist=True)
     monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False))
-    assert tc.revert_theme(app, change) is False
+    assert tc.revert_theme(app, change)[0] is False
     assert app.theme == "textual-dark"
 
 
@@ -264,3 +267,56 @@ def test_user_theme_names_reads_toml_stems(tmp_path):
     (tmp_path / "notes.txt").write_text("x")
     assert tc.user_theme_names(tmp_path) == {"warm_paper"}
     assert tc.user_theme_names(tmp_path / "missing") == set()
+
+
+def test_unreadable_file_is_listed_under_yours_with_its_error():
+    mine = Theme(name="warm_paper", primary="#BD6B32", dark=False)
+    entries = build_catalog(
+        _available(warm_paper=mine),
+        {"warm_paper"},
+        "broken_one",
+        "broken_one",
+        unreadable={"broken_one": "not valid TOML"},
+    )
+    by_id = {e.id: e for e in entries}
+    bad = by_id["unreadable:broken_one"]
+    assert bad.origin == "yours" and bad.error == "not valid TOML"
+    assert bad.display_name == "Broken One (unreadable)"
+    assert bad.dark is True and bad.overrides is None
+    assert dict(bad.colours) == {key: "#808080" for key in BASE_KEYS}
+    assert not bad.is_active and not bad.is_launch_default
+    assert by_id["warm_paper"].error is None
+    yours = [e.id for e in entries if e.origin == "yours"]
+    assert yours == ["unreadable:broken_one", "warm_paper"]
+    assert [e.origin for e in entries][: len(yours)] == ["yours"] * len(yours)
+
+
+def test_unreadable_stem_that_matches_a_listed_theme_is_still_listed():
+    """R40(a): a corrupted nord.toml is listed (so it can be deleted) under
+    its own id, next to the Textual built-in nord."""
+    entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"nord": "not valid TOML"})
+    by_id = {e.id: e for e in entries}
+    assert by_id["nord"].error is None and by_id["nord"].origin == "textual"
+    broken = by_id["unreadable:nord"]
+    assert broken.error == "not valid TOML" and broken.display_name == "Nord (unreadable)"
+    assert len(by_id) == len(entries)  # ids stay unique
+
+
+def test_unreadable_display_name_has_no_control_characters():
+    """R39: a file name can carry an ESC too."""
+    entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"x\x1bc": "not valid TOML"})
+    entry = next(e for e in entries if e.error)
+    assert entry.display_name.isprintable()
+
+
+def test_saved_theme_colours_are_listed_not_grey():
+    """Found while measuring Qodo 4107495860: ``create_theme_from_dict``
+    stores ``Color`` objects, and ``str(Color)`` ("Color(17, 34, 51)") does
+    not parse -- every saved theme's explicit colours fell back to grey, via
+    a difflib suggestion search per colour (most of the 120 ms re-render)."""
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    theme = create_theme_from_dict("x", {"primary": "#112233", "background": "#0A0A0A"})
+    colours = dict(tc._colours(theme))
+    assert colours["primary"] == "#112233"
+    assert colours["background"] == "#0A0A0A"

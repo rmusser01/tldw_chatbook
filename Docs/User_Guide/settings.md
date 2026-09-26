@@ -441,7 +441,9 @@ Speech & TTS resolves this draft: save or discard first" (task-2708).
 editing and deeper visual preview." **Global visual defaults** leads with a
 read-only **Theme** row — "\<Launch theme\> (launch default) · active: \<Active
 theme\>" (or "launch default missing: \<id\> · active: …" if that theme is no
-longer registered) — and an **Open Theme** button that jumps straight to the
+longer registered — the Theme picker shows the same case above its list, as
+"Launch default missing: \<id\> — Use any theme to fix it") — and an **Open
+Theme** button that jumps straight to the
 Theme picker, highlighting the launch default (not whatever's merely active,
 if the two differ); Appearance itself no longer sets or saves a theme. Below that:
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
@@ -481,13 +483,18 @@ shipped** / **overrides textual** when one of your saved themes shadows a
 built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/textual") and a live swatch preview — without
-touching the app you're actually using.
+touching the app you're actually using. If the configured launch default no
+longer exists (its file was deleted or renamed outside the app), a notice
+appears above the list — "Launch default missing: \<id\> — Use any theme to
+fix it" — the same wording Appearance's summary row uses; using any theme
+clears it.
 
 **Keys**, active while the list has focus: **Enter** (or the **Use this
 theme** button) — switch to the highlighted theme now *and* save it as the
 launch default; **t** — **Try** it for this session only, without saving
 anything; **c** — **Clone**, **n** — **New**, both of which open the full
-editor below, pre-loaded from the highlighted theme; **↑** on the list's very
+editor below, pre-loaded from the highlighted theme; **i** — **Import…**,
+which prompts for an external theme file's path; **↑** on the list's very
 top row returns focus to the filter box instead of wrapping to the bottom.
 When the highlighted theme is one of **yours**, three more keys work: **e** —
 **Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
@@ -495,7 +502,8 @@ and **Delete** — remove it. These three, plus **Export**, have no effect on a
 shipped or Textual theme (Clone or New it first to make your own copy).
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
-match '\<text\>'" and Enter does nothing.
+match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
+starts from the theme you are running.
 
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
@@ -537,7 +545,51 @@ and the toast says "launch default reset to Textual Dark"; if it was merely
 active (not the launch default) it switches to your launch default instead;
 and either way, deleting a saved theme that reuses a shipped or built-in
 name (say `nord`) brings the original back. **Export** writes the saved
-file to your Downloads folder and asks before replacing an earlier export.
+file to your Downloads folder and asks before replacing an earlier export;
+on success the card shows "Exported to \<full path\>" with a **Copy path**
+button (copies the path to the clipboard and confirms "Path copied") — the
+row clears the next time you highlight a different theme.
+
+A saved file that can't be read — invalid TOML, a missing or unparseable
+primary colour, a `[colors]` key that isn't one of the ten base colours, a
+colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
+a name containing control characters ("name has control characters"), a
+name starting with a reserved prefix ("reserved name"), a symlinked or
+hard-linked file ("not a regular file"), or a second file claiming a name
+another file already holds ("duplicate of '\<name\>'"; the app uses the
+later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
+the reason as both a short label on the card and every disabled button's
+tooltip. It is listed even when its file name matches a shipped or Textual
+theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
+Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
+pressing one of their keys shows the reason instead. Only **Delete** works,
+so a broken file can always be cleared — except a symlinked (even a
+dangling symlink) or hard-linked one, which the app never writes through or
+replaces: Delete, Save, Save as, Import and Rename onto that name all say
+"'\<name\>.toml' is a link, not a regular file; remove it outside the app".
+Such a file is also skipped at startup, so it never registers a theme —
+a linked `nord.toml` shows only as "Nord (unreadable)" under YOUR THEMES,
+next to the shipped Nord it would otherwise have replaced. That one file no
+longer makes the whole themes folder read as unavailable. Control characters in anything a
+theme file puts on screen — an error, a key, a value — show as `?`.
+
+**Import…** (the button beside New, or the **i** key) brings a theme file
+from outside the app into YOUR THEMES. A modal ("Import theme — full path to a .toml file") prompts for its path —
+typed, pasted (quoted or not), or dropped from Finder or a terminal, which
+unescapes every backslash-escaped character a drop pastes on macOS
+(`My\ \&\ Theme.toml`). The file must be a real `.toml` under 64 KB with a valid
+`[colors].primary`, using only the ten base colour keys — a stray
+`variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB`,
+`#RRGGBB` or `#RRGGBBAA` (the editor's own rule: "background: 'blue' is not
+#RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
+filename-safe, contains `[`, contains control characters, or starts with
+`custom_` or `unreadable:` each refuse with a specific reason and write
+nothing. A `[variables]` entry that isn't a colour
+(or `auto NN%`, or a text style) is dropped with a warning instead, the same
+as Save. Importing a name you already have asks first ("Replace the saved
+theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
+unchanged. On success the picker highlights the new theme and shows
+"Imported '\<name\>'".
 
 **Clone**, **New** or **Edit** swap in the full editor below, behind a **Back
 to themes** button; the editor no longer has its own theme list — the header
@@ -554,7 +606,10 @@ the theme you just saved is the one currently running, it repaints live so it
 is never stale. Save no longer sets the launch default itself — use the
 picker's **Use** for that. **Save as…** prompts for a new name ("Save theme
 as", pre-filled `\<current\>_copy`) and always confirms an overwrite, even of
-the loaded theme's own name, since Save as always means a new file; like
+the loaded theme's own name, since Save as always means a new file. Save, Save as and Rename refuse a name
+starting with `custom_` or `unreadable:` ("names starting with 'custom_' or
+'unreadable:' are reserved") — the app uses those prefixes for its own
+entries; like
 Save, it then returns you to the picker with the new theme highlighted, not
 back into the editor. **Reset** reloads it as last saved;
 **Generate from Primary** derives a palette from the primary colour. **Color
@@ -573,13 +628,16 @@ style) is skipped with a warning when the theme loads. **Back** — or **Esc**
 twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different
-Settings category while the editor is open, and a Save that needs an
+Settings category while the editor is open, or leave Settings altogether
+(the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
+Changing only the **Name** box counts as an unsaved edit.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
-in place of your themes, and Edit, Rename, Delete and Export (list keys and
-picker buttons alike) are disabled with that same reason as a tooltip — Use
+in place of your themes, and Edit, Rename, Delete, Export and Import (list
+keys and picker buttons alike) are disabled with that same reason as a
+tooltip — Use
 and Try still work, and so does the editor's Try, but the editor's Save and
 Save as are disabled with the same tooltip too, since both write a file. The
 card's buttons are bracketed chips — Try, Save, Reset and (on the picker)
@@ -1208,3 +1266,60 @@ Downloads path. The real `~/.config/tldw_cli/config.toml` mtime and the
 real `~/.config/tldw_cli/themes/` directory were checked before and after
 both passes and never changed; both Export toasts pointed at the scratch
 HOME's Downloads, confirmed on disk, never the real `~/Downloads`.*
+
+*Verified against `feat/theme-picker-pr3` @ fa8b892c97 — 2026-09-25
+(TASK-32948 PR 3, Task 3): the picker now shows its own "Launch default
+missing: \<id\> — Use any theme to fix it" notice above the list, matching
+Appearance's read-only row; Export's card shows "Exported to \<full path\>"
+with a Copy path button (copies to the clipboard, "Path copied"), clearing
+on the next highlight. Pinned by pilot tests at 80x24 and 190x55, not
+driven live.*
+
+*Verified against `feat/theme-picker-pr3` @ abff12e1b4 — 2026-09-25
+(TASK-32948 PR 3, Task 5 — this section rewritten as one section for the
+finished PR 3 design, covering Import and the unreadable/launch-missing
+states this stamp adds, in addition to everything the prior stamps above
+already verified). Driven live in an isolated scratch profile at 190x55
+and 80x24, splash disabled: importing a valid `.toml` from a typed, quoted
+path registered and highlighted it ("Imported '\<name\>'"); importing one
+missing `[colors].primary` refused with that exact reason and wrote
+nothing; a garbage file dropped straight into the themes directory showed
+as "\<name\> (unreadable)" with "not valid TOML" on the card after
+reopening Theme, and Delete removed it from disk; using theme A then
+Trying theme B, then deleting A (the launch default, not on screen) showed
+"Deleted 'a'; launch default reset to Textual Dark" while B stayed active
+on screen, confirmed by a fresh highlight afterward — the 2026-09-25 user
+decision that a launch-default delete changes only the setting when that
+theme isn't the one running; Export then Copy path showed "Exported to
+\<full path\>" and "Path copied", with the file confirmed on disk under the
+scratch profile's own Downloads; and a theme named `x[/]`, present at
+startup so the app's own loader registered it, rendered literally in the
+list row, the card title and the Use toast at both sizes, with no
+MarkupError. The real `~/.config/tldw_cli/config.toml` mtime and the real
+(empty) `~/.config/tldw_cli/themes/` directory were checked before the
+first launch and after the last one: unchanged; the real `~/Downloads`
+tail was unchanged throughout. One live finding not covered by the section
+text above: a theme file dropped into the themes directory while the app
+is already running does not appear in the picker's YOUR THEMES group until
+either Import (which registers it explicitly) or a restart (which runs the
+startup loader) — a bare drop alone needs one of those two to take effect,
+which is by design, not a defect.*
+
+*Verified against `feat/theme-picker-pr3` (final-review fixes, off 868e9cc526)
+— 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`/`#RRGGBBAA`
+colours; control characters in a theme file's name refuse it (import) or
+list it as unreadable (saved file), and every file-derived error shows them
+as `?`; a saved file's colours, like Import's, must be `#RGB`/`#RRGGBB`/`#RRGGBBAA`
+or the file is unreadable and skipped at startup (R41); a broken file named
+like a shipped theme is listed and deletable;
+blocked keys on an unreadable row say why; the Import prompt names what it
+wants. Pinned by pilot and unit tests, not driven live.*
+
+*Verified against `feat/theme-picker-pr3` @ 6c8bc4ea65 — 2026-09-25
+(TASK-32948 Qodo review fixes, TASK-32949): reserved `custom_`/`unreadable:`
+names are refused; a symlinked or hard-linked theme file is one "not a
+regular file" row, not an unavailable folder; a second file claiming a name
+is a "duplicate of" row; New works with a filter that matches nothing;
+leaving Settings or quitting with unsaved theme edits asks Stay / Discard /
+Save (one prompt at a time); linked theme files are never replaced and are
+skipped at startup (R43). Pinned by pilot and unit tests, not driven live.*

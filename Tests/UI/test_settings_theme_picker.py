@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.theme import Theme
 from textual.widgets import Button, OptionList
 
@@ -64,8 +65,16 @@ def config_writes(monkeypatch, tmp_path):
     return calls
 
 
+def _names(list_user_names):
+    """Adapt a names-only lister to the picker's one ``list_themes`` hook."""
+    return lambda: (list_user_names(), {})
+
+
 async def _picker_app(size=(160, 45), list_user_names=None):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=list_user_names)
+    picker = ThemePicker(
+        id="settings-theme-picker",
+        list_themes=_names(list_user_names) if list_user_names else None,
+    )
     app = _app(picker)
     for theme in ALL_THEMES:
         app.register_theme(theme)
@@ -217,6 +226,7 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
         self.renames: list[str] = []
         self.deletes: list[str] = []
         self.exports: list[str] = []
+        self.imports = 0
 
     @on(ThemePicker.EditRequested)
     def _capture(self, message: ThemePicker.EditRequested) -> None:
@@ -233,6 +243,10 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
     @on(ThemePicker.ExportRequested)
     def _capture_export(self, message: ThemePicker.ExportRequested) -> None:
         self.exports.append(message.theme_id)
+
+    @on(ThemePicker.ImportRequested)
+    def _capture_import(self, message: ThemePicker.ImportRequested) -> None:
+        self.imports += 1
 
 
 @pytest.mark.asyncio
@@ -409,7 +423,7 @@ async def test_yours_actions_only_show_for_your_themes(request, config_writes):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_rename_delete_export_edit_post_requests(request, config_writes):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: ({"mine"}, {}))
 
     def compose() -> ComposeResult:
         yield picker
@@ -436,7 +450,7 @@ async def test_rename_delete_export_edit_post_requests(request, config_writes):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_keys_ignored_for_catalog_themes(request, config_writes):
-    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: ({"mine"}, {}))
 
     def compose() -> ComposeResult:
         yield picker
@@ -538,3 +552,351 @@ async def test_lister_oserror_reads_as_no_user_themes(request, config_writes):
         assert picker.files_available is True
         assert not [e for e in picker.entries if e.origin == "yours"]
         assert picker.entries  # the catalog still lists
+
+
+# -- PR 3 Task 1: an unreadable file is listed, and only Delete works -----------
+
+_UNREADABLE_DISABLED_IDS = (
+    "#settings-theme-use",
+    "#settings-theme-try",
+    "#settings-theme-picker-clone",
+    "#settings-theme-picker-new",  # R29
+    "#settings-theme-picker-edit",
+    "#settings-theme-picker-rename",
+    "#settings-theme-picker-export",
+)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_file_is_listed_and_only_delete_works(request, config_writes):
+    error = "missing [colors].primary [b]not markup[/b]"
+    picker = ThemePicker(
+        id="settings-theme-picker",
+        list_themes=lambda: (set(), {"a": error}),
+    )
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        before = app.theme
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("unreadable:a")
+        await pilot.pause()
+        assert "(unreadable)" in str(lst.get_option_at_index(lst.highlighted).prompt)
+        title = picker.query_one("#settings-theme-card-title")
+        assert str(title.render()) == "A (unreadable)"
+        card_error = picker.query_one("#settings-theme-card-error")
+        assert card_error.display and str(card_error.render()) == error
+        for button_id in _UNREADABLE_DISABLED_IDS:
+            button = picker.query_one(button_id, Button)
+            assert button.disabled, button_id
+            assert Content.from_markup(button.tooltip).plain == (
+                f"This theme file can't be read: {error}"
+            ), button_id
+        delete = picker.query_one("#settings-theme-picker-delete", Button)
+        assert delete.display and not delete.disabled
+
+        app.notify.reset_mock()
+        await pilot.press("enter", "t", "c", "n", "e", "r")
+        await pilot.pause()
+        assert app.theme == before
+        assert app.edits == [] and app.renames == []
+        assert config_writes == []
+        # R40(d): each blocked key says why, once.
+        notes = [Content.from_markup(c.args[0]).plain for c in app.notify.call_args_list]
+        assert notes == [f"This theme file can't be read: {error}"] * 6
+
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.deletes == ["unreadable:a"]
+
+        # A readable theme hides the error line and re-enables the actions.
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        assert not card_error.display
+        assert not picker.query_one("#settings-theme-use", Button).disabled
+        assert picker.query_one("#settings-theme-use", Button).tooltip is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_error_with_markup_renders_its_tooltip_literally(request, config_writes):
+    """Fix round 1: the error quotes untrusted file content; a tooltip parses markup."""
+    error = "unknown colour '[/mismatched]'"
+    picker = ThemePicker(
+        id="settings-theme-picker", list_themes=lambda: (set(), {"a": error})
+    )
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("unreadable:a")
+        await pilot.pause()
+        use = picker.query_one("#settings-theme-use", Button)
+        assert "[/mismatched]" in Content.from_markup(use.tooltip).plain
+        # The tooltip actually renders on hover.
+        await pilot.hover("#settings-theme-picker-delete")
+        await pilot.hover("#settings-theme-use")
+        await pilot.pause(0.6)
+        assert "[/mismatched]" in str(picker.query_one("#settings-theme-card-error").render())
+
+
+def _capture_app(picker):
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    return app
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_button_and_i_key_post_import_requested(request, config_writes):
+    """TASK-32948 PR 3 Task 2: Import… sits next to New; `i` on the list."""
+    picker = ThemePicker(id="settings-theme-picker")
+    app = _capture_app(picker)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = picker.query_one("#settings-theme-picker-import", Button)
+        assert str(button.label) == "Import…"
+        assert button.parent is picker.query_one("#settings-theme-picker-new").parent
+        picker.query_one("#settings-theme-list", OptionList).focus()
+        await pilot.press("i")
+        await pilot.click("#settings-theme-picker-import")
+        await pilot.pause()
+        assert app.imports == 2
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_is_disabled_while_paused(request, config_writes):
+    def raiser():
+        raise RecoveryRequired("x")
+
+    picker = ThemePicker(id="settings-theme-picker", list_themes=_names(raiser))
+    app = _capture_app(picker)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        button = picker.query_one("#settings-theme-picker-import", Button)
+        assert button.disabled
+        assert button.tooltip == THEMES_UNAVAILABLE_LABEL
+        picker.query_one("#settings-theme-list", OptionList).focus()
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.imports == 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(request, monkeypatch, config_writes):
+    """R28: an exception text quoting a theme name goes through escape_markup."""
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append(Content.from_markup(message).plain)
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted): arms Revert
+        await pilot.pause()
+
+        def boom(*_args, **_kwargs):
+            raise ValueError("theme 'x[/]' is gone")
+
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.revert_theme", boom)
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert "Could not revert the theme: theme 'x[/]' is gone" in notes
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.use_theme", boom)
+        picker.use_highlighted()
+        await pilot.pause()
+        assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_one_listing_call_per_refresh(request, config_writes):
+    """R40(b): readable and unreadable come from ONE read of the themes dir."""
+    calls = []
+
+    def lister():
+        calls.append(1)
+        return {"mine"}, {"broken": "not valid TOML"}
+
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        calls.clear()
+        picker.refresh_catalog()
+        assert len(calls) == 1
+        assert "unreadable:broken" in _option_ids(picker)
+
+
+# -- Qodo review fixes (TASK-32948) ------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_new_after_a_zero_match_filter_starts_from_the_active_theme(request, config_writes):
+    """Qodo 4104047326 / 4107495882: New is enabled with nothing listed, so it
+    must do something -- start from the theme on screen."""
+    picker = ThemePicker(id="settings-theme-picker")
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzzqq")
+        await pilot.pause()
+        assert picker.highlighted_id is None
+        picker.query_one("#settings-theme-picker-new", Button).press()
+        await pilot.pause()
+        assert app.edits == [("new", str(app.theme))]
+        # Clone/Edit still need a highlighted theme.
+        picker.request_edit("clone")
+        await pilot.pause()
+        assert len(app.edits) == 1
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_warns_when_the_config_refresh_fails(request, monkeypatch, config_writes):
+    """Qodo 4107495934: Revert surfaces ``caches_reloaded`` like Use does."""
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted)
+        await pilot.pause()
+        monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert (f"Reverted the theme; {tc.CACHE_REFRESH_FAILED}", "warning") in notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_launch_missing_notice_strips_control_characters(request, monkeypatch, config_writes):
+    """Qodo 4109320405: a hand-edited config value reaches the terminal."""
+    hostile = "gone\x1b]52;c;eA==\x07"
+    monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.current_launch_default", lambda: hostile)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: hostile)
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        notice = picker.query_one("#settings-theme-launch-missing")
+        assert notice.display
+        text = str(notice.render())
+        assert "Launch default missing: gone?]52;c;eA==?" in text
+        assert text.isprintable(), repr(text)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_switch_reaches_app_theme_config_and_toast(request):
+    """Qodo 4104047279: drive the real command palette (no mocked config
+    write): pick a theme, then check the running theme, the persisted
+    launch default in this test's private config.toml, and the toast."""
+    from typing import ClassVar
+
+    import toml
+    from textual.app import App
+    from textual.command import CommandPalette
+
+    from tldw_chatbook import config
+    from tldw_chatbook.app import ThemeProvider
+
+    class _PaletteApp(App):
+        COMMANDS: ClassVar = {ThemeProvider}
+
+    app = _PaletteApp()
+    notes = []
+    real_notify = app.notify
+    app.notify = lambda message, **kw: (notes.append((message, kw.get("severity"))), real_notify(message, **kw))
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_command_palette()
+        await pilot.pause()
+        assert isinstance(app.screen, CommandPalette)
+        await pilot.press(*"switch to monokai pro")
+        for _ in range(20):
+            await pilot.pause(0.05)
+        await pilot.press("enter")
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert app.theme == "monokai_pro"
+    saved = toml.load(config._get_effective_config_path())
+    assert saved["general"]["default_theme"] == "monokai_pro"
+    assert ("Monokai Pro is now your theme (was: Textual Dark)", "information") in notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_theme_switches_reuse_the_last_listing(request, config_writes):
+    """Qodo 4107495860: a theme change only moves the active/launch markers,
+    so it must not re-scan the themes folder (the backup-scoped scan costs
+    ~5-6.6 ms per file -- a 254 ms median at 50 files, measured)."""
+    calls = []
+
+    def lister():
+        calls.append(1)
+        return {"mine"}, {}
+
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        calls.clear()
+        app.theme = "nord"  # e.g. the palette
+        await pilot.pause()
+        assert next(e for e in picker.entries if e.id == "nord").is_active
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "t")  # Try
+        await pilot.pause()
+        picker.query_one("#settings-theme-revert", Button).press()
+        await pilot.pause()
+        assert calls == []
+        picker.refresh_catalog()  # an explicit refresh (after a file action) still scans
+        assert calls == [1]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_label_strips_control_characters_from_the_launch_default(
+    request, monkeypatch, config_writes
+):
+    """Review follow-up 3: the chip names the launch default, which comes
+    from a hand-editable config.toml -- ESC must not reach the terminal."""
+    hostile = "gone\x1b]52;c;eA==\x07"
+    monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.current_launch_default", lambda: hostile)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: hostile)
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()
+        await pilot.pause()
+        label = str(picker.query_one("#settings-theme-revert", Button).label)
+        assert "(launch: Gone?]52;C;Ea==?)" in label, label
+        assert label.isprintable(), repr(label)

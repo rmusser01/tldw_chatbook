@@ -13,6 +13,7 @@ import pytest
 import toml
 from textual import on
 from textual.app import App, ComposeResult
+from textual.widgets import Input
 
 from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
@@ -20,6 +21,7 @@ from tldw_chatbook.Backup_Recovery import raw_participants
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.css.Themes import theme_catalog
 from tldw_chatbook.css.Themes.themes import ALL_THEMES, create_theme_from_dict
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
@@ -446,3 +448,605 @@ async def test_file_errors_do_not_leak_paths_into_notices(
             message = app.notify.call_args.args[0]
             assert str(tmp_path) not in message, message
             assert "mine" in message
+
+
+# -- PR 3 Task 1: unreadable files are listed, not hidden --------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_path):
+    (tmp_path / "a.toml").write_text("garbage [[ not toml", encoding="utf-8")
+    _write(tmp_path, "b", colors={"background": "#000000"})
+    _write(tmp_path, "c", colors={**MINE, "bogus": "#FFFFFF"})
+    # R32: Theme kwargs that are not colours are unreadable too.
+    _write(tmp_path, "d", colors={**MINE, "variables": "#FFFFFF"})
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {
+            "a": "not valid TOML",
+            "b": "missing [colors].primary",
+            "c": "bogus is not a theme colour",
+            "d": "variables is not a theme colour",
+        }
+        for error in unreadable.values():
+            assert str(tmp_path) not in error
+        # Every existing caller still sees only the readable map.
+        assert editor.list_user_theme_names() == {"mine"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_raises_through_on_pause(request, tmp_path, monkeypatch):
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+
+        def paused(*_a, **_k):
+            raise RecoveryRequired("x")
+
+        monkeypatch.setattr(raw_participants, "_file", paused)
+        with pytest.raises(RecoveryRequired):
+            editor.user_theme_listing()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_delete_removes_an_unreadable_file(request, tmp_path, config_writes):
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        await _confirm_delete(pilot, app, editor, "unreadable:a")
+        assert not (tmp_path / "a.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_of_unreadable_file_notice_escapes_file_content(request, tmp_path, config_writes):
+    """Fix round 1: notify parses markup; the error quotes an untrusted key."""
+    from textual.content import Content
+
+    path = tmp_path / "broken.toml"
+    path.write_text('[colors]\nprimary = "#112233"\n"[/mismatched]" = "#fff"\n', encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.user_theme_listing()[1] == {"broken": "[/mismatched] is not a theme colour"}
+        app.notify.reset_mock()
+        assert editor.rename_user_theme("unreadable:broken", "fixed") is False
+        message = app.notify.call_args.args[0]
+        assert "[/mismatched] is not a theme colour" in Content.from_markup(message).plain
+        assert path.exists() and not (tmp_path / "fixed.toml").exists()
+
+
+def _terminal_text(markup: str) -> str:
+    """The text Textual would send to the terminal for a notice or card."""
+    from textual.content import Content
+    from textual.strip import Strip
+
+    return Strip(Content.from_markup(markup).render_segments()).text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_errors_and_notices_carry_no_control_characters(request, tmp_path, config_writes):
+    """R39: TOML ``\\u001b`` escapes are real ESC chars; an OSC 52 clipboard
+    write in a key, or a reset in a name, must not reach the terminal."""
+    # A raw ESC byte: the toml parser does not unescape quoted keys.
+    osc = "\x1b]52;c;eA==\x1b\\\\"
+    (tmp_path / "osckey.toml").write_text(
+        f'[colors]\nprimary = "#112233"\n"{osc}" = "#000000"\n', encoding="utf-8"
+    )
+    (tmp_path / "escname.toml").write_text(
+        '[theme]\nname = "x\\u001bc"\n[colors]\nprimary = "#112233"\n', encoding="utf-8"
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {}
+        assert unreadable["escname"] == "name has control characters"
+        assert unreadable["osckey"] == "?]52;c;eA==?\\ is not a theme colour"
+        for error in unreadable.values():
+            assert all(ch.isprintable() for ch in _terminal_text(escape_markup(error)))
+        # The rename refusal quotes the card error.
+        app.notify.reset_mock()
+        assert editor.rename_user_theme("unreadable:osckey", "fixed") is False
+        assert all(ch.isprintable() for ch in _terminal_text(app.notify.call_args.args[0]))
+        assert not (tmp_path / "fixed.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_broken_file_named_like_a_shipped_theme_is_deleted_by_its_own_id(
+    request, tmp_path, config_writes
+):
+    """R40(a): a corrupted nord.toml resolves through ``unreadable:nord``;
+    plain ``nord`` is still the Textual built-in and deletes nothing."""
+    path = tmp_path / "nord.toml"
+    path.write_text("garbage [[ not toml", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.request_delete("nord")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "built-in" in app.notify.call_args.args[0]
+        editor.request_delete("unreadable:nord")
+        await pilot.pause()
+        assert app.screen.message.startswith("Delete the saved theme 'nord.toml'?")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert not path.exists()
+        assert "nord" in app.available_themes  # the built-in stays registered
+        assert app.notify.call_args.args[0] == "Deleted theme 'nord.toml'"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_files_log_at_warning_not_error(request, tmp_path):
+    """R40(b): the picker re-lists on every theme change; a broken file must
+    not raise an ERROR each time."""
+    from loguru import logger
+
+    (tmp_path / "a.toml").write_text("garbage [[", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    records = []
+    sink = logger.add(lambda m: records.append(m.record), level="DEBUG")
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _mounted(pilot, app, editor, tmp_path)
+            records.clear()
+            editor.user_theme_listing()
+    finally:
+        logger.remove(sink)
+    about = [r for r in records if "a.toml" in r["message"]]
+    assert about and {r["level"].name for r in about} == {"WARNING"}
+
+
+# -- Fix round 2 (R41) --------------------------------------------------------
+
+_OSC_VALUE = "\x1b]52;c;eA==\x1b\\"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_non_hex_colour_file_is_unreadable_and_edit_places_no_control_char(
+    request, tmp_path, config_writes
+):
+    """R41 item 1: an ESC in a non-primary colour used to be listed readable
+    and written verbatim into a colour Input by Edit."""
+    _write(tmp_path, "osc", colors={**MINE, "secondary": _OSC_VALUE})
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {"osc": "invalid colour 'secondary'"}
+        editor.load_user_theme("osc")
+        await pilot.pause()
+        for input_widget in editor.query(Input):
+            assert input_widget.value.isprintable(), repr(input_widget.value)
+        # The editor's own saved files still load.
+        editor.load_user_theme("mine")
+        await pilot.pause()
+        assert editor.color_inputs["secondary"].value == "#223344"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_deleting_unreadable_file_leaves_a_theme_named_like_it_registered(
+    request, tmp_path, config_writes, monkeypatch
+):
+    """R41 item 2: broken b.toml is announced as 'b.toml'; a readable theme
+    literally named 'b.toml' must not be unregistered or fallen back from."""
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    (tmp_path / "b.toml").write_text("garbage [[", encoding="utf-8")
+    data = {"theme": {"name": "b.toml", "dark": True}, "colors": dict(MINE)}
+    (tmp_path / "other.toml").write_text(toml.dumps(data), encoding="utf-8")
+    _launch_default(monkeypatch, "b.toml")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        app.register_theme(theme_from_file_data(data, "other", "other.toml"))
+        app.theme = "b.toml"
+        await pilot.pause()
+        await _confirm_delete(pilot, app, editor, "unreadable:b")
+        assert not (tmp_path / "b.toml").exists()
+        assert "b.toml" in app.available_themes
+        assert app.theme == "b.toml"
+        assert config_writes == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_stale_unreadable_id_notice_is_printable(request, tmp_path, config_writes):
+    """R41 item 3: a stale ``unreadable:<stem>`` echoes the stem verbatim."""
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.request_delete(f"unreadable:x{_OSC_VALUE}")
+        await pilot.pause()
+        text = _terminal_text(app.notify.call_args.args[0])
+        assert text.startswith("No saved custom theme named")
+        assert text.isprintable(), repr(text)
+
+
+# -- Fix round 2 follow-up ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clone_of_translucent_shipped_theme_saves_a_readable_file(request, tmp_path, config_writes):
+    """deep_dive_cyberspace.error is #FF33AACC; its saved clone must load."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes, theme_from_file_data
+
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.load_theme("deep_dive_cyberspace")
+        await pilot.pause()
+        editor.on_clone_theme()
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        path = tmp_path / "deep_dive_cyberspace_copy.toml"
+        data = toml.loads(path.read_text(encoding="utf-8"))
+        assert len(data["colors"]["error"]) == 9  # #RRGGBBAA
+        theme_from_file_data(data, "x", path.name)
+        readable, unreadable = editor.user_theme_listing()
+        assert "deep_dive_cyberspace_copy" in readable and unreadable == {}
+        assert [t.name for t in load_user_themes(tmp_path)] == ["deep_dive_cyberspace_copy"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_deleting_unreadable_file_keeps_editor_state_of_same_named_theme(
+    request, tmp_path, config_writes
+):
+    """Follow-up item 2: the editor keeps a readable 'b.toml' it has loaded."""
+    (tmp_path / "b.toml").write_text("garbage [[", encoding="utf-8")
+    data = {"theme": {"name": "b.toml", "dark": True}, "colors": dict(MINE)}
+    (tmp_path / "other.toml").write_text(toml.dumps(data), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.load_user_theme("b.toml")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#445566"
+        await pilot.pause()
+        await _confirm_delete(pilot, app, editor, "unreadable:b")
+        assert not (tmp_path / "b.toml").exists()
+        assert editor.current_theme_name == "b.toml"
+        assert editor.color_inputs["primary"].value == "#445566"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_load_user_theme_validates_the_data_it_reads(request, tmp_path, config_writes, monkeypatch):
+    """Follow-up item 3: the file may change between the scan and the read."""
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        real_load = toml.load
+        hostile = {"theme": {"name": "mine"}, "colors": {**MINE, "secondary": _OSC_VALUE}}
+        # The scan reads through the real parser; the editor's re-read is swapped.
+        editor._user_theme_files()
+        monkeypatch.setattr(editor, "_user_theme_files", lambda: {"mine": tmp_path / "mine.toml"})
+        monkeypatch.setattr(toml, "load", lambda f: hostile)
+        editor.load_user_theme("mine")
+        monkeypatch.setattr(toml, "load", real_load)
+        await pilot.pause()
+        for input_widget in editor.query(Input):
+            assert input_widget.value.isprintable(), repr(input_widget.value)
+        assert editor.current_theme_data.get("secondary") != _OSC_VALUE
+        assert all(ch.isprintable() for ch in _terminal_text(app.notify.call_args.args[0]))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_stale_name_notice_is_printable(request, tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # BEL-terminated OSC passes validate_filename -> "No saved custom theme";
+        # the ESC-backslash form fails it -> "Failed to export theme".
+        for name in ("x\x1b]52;c;eA==\x07", f"x{_OSC_VALUE}"):
+            editor.export_theme(name)
+            await pilot.pause()
+            text = _terminal_text(app.notify.call_args.args[0])
+            assert text.isprintable(), repr(text)
+        assert not list(tmp_path.glob("Downloads/*"))
+
+
+# -- Qodo review fixes (TASK-32948) ------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_name_only_edit_marks_the_editor_modified(request, tmp_path):
+    """Qodo 4100998919: a Name-box edit alone must make Back/leave prompt."""
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # Programmatic load then clone (the picker's open_editor) stays clean:
+        # the load's stale Name-box echo must not count as an edit.
+        editor.load_theme("nord")
+        editor.on_clone_theme()
+        await pilot.pause()
+        assert editor.is_modified is False
+        editor.query_one("#settings-theme-name", Input).value = "renamed"
+        await pilot.pause()
+        assert editor.current_theme_name == "renamed"
+        assert editor.is_modified is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_load_user_theme_reports_whether_it_loaded(request, tmp_path):
+    """Qodo 4104047302: a failed load returns False instead of silently
+    leaving the previous palette in place."""
+    _write(tmp_path, "mine")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.load_user_theme("mine") is True
+        assert editor.load_user_theme("gone") is False
+        await pilot.pause()
+        assert "gone" in app.notify.call_args.args[0]
+        assert editor.current_theme_name == "mine"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_listing_keys_by_the_normalised_registered_name(request, tmp_path):
+    """Qodo 4107495864: the listing uses the name startup registers."""
+    for stem, name in (("a", " b "), ("c", 123), ("d", "")):
+        path = tmp_path / f"{stem}.toml"
+        path.write_text(toml.dumps({"theme": {"name": name}, "colors": MINE}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.list_user_theme_names() == {"b", "123", "d"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_second_file_claiming_a_name_is_listed_as_a_duplicate(request, tmp_path):
+    """Qodo 4107495872: both files stay visible; the one startup registers
+    (the last in file order) is the readable one."""
+    _write(tmp_path, "a", name="x")
+    _write(tmp_path, "b", name="x")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"x": tmp_path / "b.toml"}
+        assert unreadable == {"a": "duplicate of 'x'"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reserved_name_prefixes_are_refused_everywhere(request, tmp_path, config_writes):
+    """Qodo 4104047299 / 4109320402: ``custom_`` and ``unreadable:`` names."""
+    _write(tmp_path, "mine")
+    _write(tmp_path, "custom_old")
+    source = tmp_path.parent / "import_me.toml"
+    source.write_text(toml.dumps({"theme": {"name": "custom_x"}, "colors": MINE}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        _readable, unreadable = editor.user_theme_listing()
+        assert unreadable == {"custom_old": "reserved name"}
+        for name in ("custom_ocean", "unreadable:x"):
+            app.notify.reset_mock()
+            editor.save_as(name)
+            await pilot.pause()
+            assert "reserved" in app.notify.call_args.args[0]
+            app.notify.reset_mock()
+            assert editor.rename_user_theme("mine", name) is False
+            assert "reserved" in app.notify.call_args.args[0]
+        app.notify.reset_mock()
+        assert editor.import_theme(str(source)) is None
+        assert "reserved" in app.notify.call_args.args[0]
+        assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["custom_old.toml", "mine.toml"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_rolls_back_when_the_launch_default_cannot_be_saved(
+    request, tmp_path, monkeypatch
+):
+    """Qodo 4107495893: the launch default moves before the old file goes."""
+    _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "mine")
+    monkeypatch.setattr(
+        theme_catalog,
+        "_apply_config_mutation",
+        lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False),
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.rename_user_theme("mine", "ours") is False
+        await pilot.pause()
+        assert (tmp_path / "mine.toml").exists()
+        assert not (tmp_path / "ours.toml").exists()
+        assert app.notify.call_args.kwargs.get("severity") == "error"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_and_delete_warn_when_the_config_refresh_fails(
+    request, tmp_path, monkeypatch
+):
+    """Qodo 4107495906 / 4107495911: ``caches_reloaded`` is surfaced."""
+    _write(tmp_path, "mine")
+    _launch_default(monkeypatch, "mine")
+    monkeypatch.setattr(
+        theme_catalog,
+        "_apply_config_mutation",
+        lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False),
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.rename_user_theme("mine", "ours") is True
+        await pilot.pause()
+        assert "configuration refresh failed" in app.notify.call_args.args[0]
+        assert app.notify.call_args.kwargs.get("severity") == "warning"
+        _launch_default(monkeypatch, "ours")
+        await _confirm_delete(pilot, app, editor, "ours")
+        assert "configuration refresh failed" in app.notify.call_args.args[0]
+        assert app.notify.call_args.kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tmp_path, config_writes):
+    """Qodo 4109320416: a file renamed on disk while the dialog is up is the
+    one written; the stale path is not recreated."""
+    _write(tmp_path, "mine")
+    source = tmp_path.parent / "mine_import.toml"
+    source.write_text(toml.dumps({"theme": {"name": "mine"}, "colors": {**MINE, "primary": "#445566"}}), encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor.import_theme(str(source)) is None
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        (tmp_path / "mine.toml").rename(tmp_path / "moved.toml")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert not (tmp_path / "mine.toml").exists()
+        assert toml.load(tmp_path / "moved.toml")["colors"]["primary"] == "#445566"
+
+        editor.save_as("mine")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        (tmp_path / "moved.toml").rename(tmp_path / "moved_again.toml")
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["moved_again.toml"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_non_regular_theme_file_is_one_unreadable_entry(request, tmp_path):
+    """Qodo 4109320408: a symlinked or hard-linked ``*.toml`` is refused
+    (never read) but no longer makes the whole folder unavailable."""
+    import os
+
+    _write(tmp_path, "mine")
+    outside = _write(tmp_path.parent, "outside")
+    os.symlink(outside, tmp_path / "linked.toml")
+    os.link(outside, tmp_path / "hard.toml")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        readable, unreadable = editor.user_theme_listing()
+        assert readable == {"mine": tmp_path / "mine.toml"}
+        assert unreadable == {"hard": "not a regular file", "linked": "not a regular file"}
+        # Delete is refused with a reason (the backup layer never unlinks
+        # through a link) and no dialog.
+        editor.request_delete("unreadable:linked")
+        await pilot.pause()
+        assert "not a regular file" in app.notify.call_args.args[0]
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert (tmp_path / "linked.toml").is_symlink()
+
+
+def _links(themes_dir: Path) -> tuple[Path, Path, Path]:
+    """``linked.toml`` -> a real theme file outside the folder, and
+    ``gone.toml`` -> nothing (dangling). Returns (linked, gone, link target)."""
+    import os
+
+    outside = themes_dir.parent / "dotfiles_linked.toml"
+    outside.write_text(toml.dumps({"theme": {"name": "linked"}, "colors": MINE}), encoding="utf-8")
+    linked, gone = themes_dir / "linked.toml", themes_dir / "gone.toml"
+    os.symlink(outside, linked)
+    os.symlink(themes_dir.parent / "nowhere.toml", gone)
+    return linked, gone, outside
+
+
+def _links_untouched(linked: Path, gone: Path, outside: Path, before: str) -> None:
+    assert linked.is_symlink() and gone.is_symlink()
+    assert not gone.exists()  # still dangling: nothing was written through it
+    assert outside.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_save_as_import_and_rename_refuse_a_linked_target(request, tmp_path, config_writes):
+    """Review follow-up 4: a symlinked or dangling-symlink ``<name>.toml`` is
+    never replaced -- Save, Save as, Import and Rename refuse it by name."""
+    _write(tmp_path, "mine")
+    linked, gone, outside = _links(tmp_path)
+    before = outside.read_text(encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        _readable, unreadable = editor.user_theme_listing()
+        assert unreadable == {"gone": "not a regular file", "linked": "not a regular file"}
+        for name in ("linked", "gone"):
+            app.notify.reset_mock()
+            editor.save_as(name)
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            app.notify.reset_mock()
+            editor.query_one("#settings-theme-name", Input).value = name
+            await pilot.pause()
+            editor.on_save_theme()
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            app.notify.reset_mock()
+            assert editor.rename_user_theme("mine", name) is False
+            assert "not a regular file" in app.notify.call_args.args[0]
+
+            source = tmp_path.parent / f"import_{name}.toml"
+            source.write_text(toml.dumps({"theme": {"name": name}, "colors": MINE}), encoding="utf-8")
+            app.notify.reset_mock()
+            assert editor.import_theme(str(source)) is None
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmationDialog)
+            assert "not a regular file" in app.notify.call_args.args[0]
+        _links_untouched(linked, gone, outside, before)
+        assert (tmp_path / "mine.toml").exists()

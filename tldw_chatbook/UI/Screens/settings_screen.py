@@ -9709,10 +9709,12 @@ class SettingsScreen(BaseAppScreen):
     def _appearance_theme_summary(self) -> str:
         """Read-only Theme row: the launch default and the active theme."""
         from ...css.Themes.theme_catalog import current_launch_default, display_name
+        from ...css.Themes.themes import printable
 
         # The running app (as the picker's use_theme does), not app_instance:
         # the two differ in harnesses, and the palette switches self.app.
-        launch = current_launch_default()
+        # Qodo 4109320405: config.toml is hand-editable; strip control chars.
+        launch = printable(current_launch_default())
         active = str(getattr(self.app, "theme", launch))
         registered = getattr(self.app, "available_themes", {}) or {}
         if launch not in registered:
@@ -23972,6 +23974,53 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    async def confirm_navigation(self) -> bool:
+        """Save / Discard / Stay before leaving Settings with an edited theme.
+
+        TASK-32949: the app awaits this before every screen switch -- tab
+        bar, command palette and shortcuts all post ``NavigateToScreen`` to
+        ``TldwCli.handle_screen_navigation`` -- and Settings is not a
+        reusable route, so leaving drops the editor's unsaved palette. Same
+        prompt and outcomes as a category switch (TASK-32941).
+
+        Returns:
+            True to let navigation proceed; False to stay on Settings ▸ Theme
+            (Stay, a Save that was refused or waits on its overwrite
+            confirmation, or a theme leave prompt that is already open).
+        """
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return True
+        if not editor.is_modified:
+            return True
+        if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
+            # One prompt at a time: a category-leave (or earlier navigation)
+            # prompt is already asking about these edits; stay put.
+            return False
+        self._theme_leave_in_progress = True
+        try:
+            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        finally:
+            self._theme_leave_in_progress = False
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            editor.on_save_theme()
+            return not editor.is_modified
+        return True
+
+    async def confirm_quit(self) -> bool:
+        """Ask before quitting with unsaved theme edits (review follow-up).
+
+        ``TldwCli._confirm_and_quit`` consults ``confirm_quit``, not
+        ``confirm_navigation``; same prompt, same outcomes.
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        return await self.confirm_navigation()
+
     def _theme_editor_shown(self) -> bool:
         try:
             pane = self.query_one("#settings-theme-pane", ThemePane)
@@ -24490,8 +24539,31 @@ class SettingsScreen(BaseAppScreen):
     def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
         if not new or new == old:
             return
-        if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
-            self.query_one(ThemePicker).refresh_catalog(highlight=new)
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return  # R38: the pane was torn down while the prompt was up
+        # The editor's ThemesChanged(highlight=new) refreshes the picker.
+        editor.rename_user_theme(old, new)
+
+    @on(ThemePicker.ImportRequested)
+    def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:
+        """Prompt for a theme file path, then import it through the editor."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
+            self._handle_theme_import_result,
+        )
+
+    def _handle_theme_import_result(self, source: str | None) -> None:
+        if not source:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        # R37: the editor's ThemesChanged(highlight=) refreshes the picker.
+        editor.import_theme(source)
 
     @on(SettingsThemeEditor.SaveAsRequested)
     def handle_theme_save_as_requested(
