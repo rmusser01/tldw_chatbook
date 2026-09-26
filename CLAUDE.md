@@ -216,7 +216,13 @@ Key sections:
 
 ### Notes Sync
 - Bidirectional file ↔ DB
-- Last-write-wins conflict resolution
+- **No automatic winner.** When both sides moved, `notes_sync_reconciler._plan_bound`
+  returns `ReconciliationAttention(CONFLICT, "both_sides_changed")` and waits: resolution
+  needs an explicit `NotesSyncConflictChoice` (`KEEP_FILE`/`KEEP_NOTE`/`KEEP_BOTH`/`SKIP`)
+  supplied through `apply_reviewed`. The old `ask`/`disk_wins`/`db_wins`/`newer_wins` names
+  survive only as legacy config the migration drops (`notes_sync_legacy.py`, reported as
+  `legacy_policy_ignored`) — this file used to say "last-write-wins", which cost one
+  reviewer a full pass hunting a silent-winner data-loss shape the design does not have.
 - Background monitoring
 
 ### Pre-commit Hook
