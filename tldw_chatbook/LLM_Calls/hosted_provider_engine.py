@@ -124,6 +124,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     validate_continuation_restore,
 )
+from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
@@ -434,10 +435,18 @@ def _resolve_base_url(
     explicit: object,
     settings: Mapping[str, object],
 ) -> str:
+    """Resolve the request base URL.
+
+    Precedence: the caller's explicit URL, then the settings table's first
+    configured base-URL alias (the shared readiness alias list -- a URL
+    spelled ``base_url``/``api_base``/``api_url``/``endpoint`` resolves the
+    same as ``api_base_url``; Qodo finding 2), then the record's shipped
+    default. A record with no default (Databricks) fails closed here.
+    """
     validators = _validators_for(record)
-    candidate: object = (
-        explicit if explicit is not None else settings.get("api_base_url")
-    )
+    candidate: object = explicit
+    if candidate is None:
+        candidate = configured_workspace_base_url(settings)
     if candidate is None and isinstance(record.default_base_url, str):
         candidate = record.default_base_url
     if candidate is None:

@@ -132,3 +132,47 @@ async def test_auto_refresh_loop_refreshes_databricks(tmp_path):
     ]
     assert len(seen) == 1
     assert seen[0]["endpoint"] == "https://dbc-1.cloud.databricks.com/openai/v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url_key",
+    ["api_base_url", "api_base", "base_url", "api_url", "endpoint"],
+)
+async def test_discovery_resolves_every_base_url_alias(base_url_key):
+    """Qodo finding 2 (ADR-179): every base-URL alias readiness accepts also
+    drives discovery through the engine branch -- the alias-resolved URL is
+    passed as the explicit base, so ready gate, send resolution, and model
+    discovery all hit the same workspace endpoint."""
+    seen: list[dict] = []
+
+    async def fake_client(**kwargs):
+        seen.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint="fp",
+            status="success",
+            models=(),
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"Databricks": ["databricks-gpt-4o"]},
+        settings_loader=lambda: {
+            "providers": {"Databricks": ["databricks-gpt-4o"]},
+            "api_settings": {
+                "databricks": {
+                    base_url_key: "https://dbc-1.cloud.databricks.com",
+                }
+            },
+        },
+        discovery_client=fake_client,
+        environ={"DATABRICKS_TOKEN": "catalog-secret-canary"},
+    )
+
+    result = await service.discover_models(provider="Databricks")
+
+    assert result.status == "success"
+    assert len(seen) == 1
+    assert seen[0]["endpoint"] == "https://dbc-1.cloud.databricks.com/openai/v1"
+    assert seen[0]["api_key"] == "catalog-secret-canary"

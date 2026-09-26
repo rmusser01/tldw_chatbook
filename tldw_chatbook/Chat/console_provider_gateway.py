@@ -174,7 +174,7 @@ from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
 )
-from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -235,6 +235,13 @@ _EMPTY_RESPONSE = object()
 # ``api_key_resolved`` -- without membership here the swapped key's
 # ``api_key_resolved`` is never sent.
 _CUSTOM_CREDENTIAL_DECISION_PROVIDERS = CUSTOM_OPENAI_EXECUTION_KEYS
+# ADR-179 (Qodo finding 2): every engine-driven execution key (derived from
+# the registry, never a literal list) gets the resolution's effective base
+# URL forwarded as ``api_base_url`` -- the engine resolves the endpoint from
+# its record/settings only when the gateway resolved nothing, so without
+# this forwarding a session-selected or alias-configured URL silently lost
+# to the preset's shipped default.
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -6852,6 +6859,15 @@ class ConsoleProviderGateway:
         elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179, Qodo
+            # finding 2): pin the resolved endpoint so the engine's
+            # record/settings defaults never shadow a session-selected or
+            # alias-configured URL. The custom family keeps its own branch
+            # below (it also pins the gateway credential decision).
+            kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {"moonshot", "zai"}:
             kwargs["api_base_url"] = resolution.base_url or None
             kwargs["request_timeout"] = resolution.request_timeout
@@ -6940,6 +6956,13 @@ class ConsoleProviderGateway:
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
+            kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179,
+            # Qodo finding 2): pin the resolved endpoint on the plain-message
+            # path too; the custom family keeps its branch below.
             kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {
             "anthropic",

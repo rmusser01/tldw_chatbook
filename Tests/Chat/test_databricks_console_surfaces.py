@@ -166,3 +166,115 @@ def test_setup_persistence_accepts_databricks():
     assert canonical_provider_key("Databricks") == "databricks"
     assert canonical_provider_key("databricks") == "databricks"
     assert provider_endpoint_key("databricks") == "api_base_url"
+
+
+@pytest.mark.parametrize(
+    "base_url_key",
+    ["api_base_url", "api_base", "base_url", "api_url", "endpoint"],
+)
+def test_engine_send_resolution_accepts_every_readiness_alias(base_url_key):
+    """Qodo finding 2 (ADR-179): readiness accepts five base-URL alias
+    spellings; the engine's settings fallback consumes the same shared
+    helper, so every alias a user may have persisted yields the identical
+    ready gate AND send URL (suffix appended exactly once)."""
+    from tldw_chatbook.Chat.provider_readiness import _BASE_URL_SETTING_KEYS
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        resolve_hosted_request,
+    )
+    from tldw_chatbook.provider_registry import DATABRICKS
+
+    assert base_url_key in _BASE_URL_SETTING_KEYS
+    config = {
+        "api_settings": {
+            "databricks": {
+                "api_key": "dapi-stored-secret-canary",
+                base_url_key: _DATABRICKS_WORKSPACE_URL,
+            }
+        }
+    }
+    readiness = get_provider_readiness("Databricks", config, environ={})
+    assert readiness.ready is True
+
+    resolution = resolve_hosted_request(
+        DATABRICKS, app_config=config, environ={}
+    )
+    assert resolution.base_url == f"{_DATABRICKS_WORKSPACE_URL}/openai/v1"
+
+
+@pytest.mark.asyncio
+async def test_gateway_forwards_resolved_endpoint_for_engine_presets():
+    """Qodo finding 2 (ADR-179): engine-driven execution keys get the
+    resolution's effective base URL pinned as ``api_base_url`` in both
+    kwargs projections. A custom-configured base on an inference cloud is
+    actually used -- the preset's shipped default never shadows it, and a
+    Databricks workspace host reaches the handler instead of the engine
+    re-resolving (and failing on) an empty settings table."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    # Inference cloud with a custom-configured base: the forwarded URL must
+    # be the configured proxy, not https://api.together.xyz/v1.
+    together_gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "together": {
+                    "api_key": "together-secret-canary",
+                    "model": "together-model",
+                    "api_base_url": "https://proxy.internal.example/v1",
+                }
+            }
+        },
+        environ={},
+    )
+    together_resolution = await together_gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="Together")
+    )
+    assert together_resolution.ready is True
+    assert together_resolution.base_url == "https://proxy.internal.example/v1"
+    prepared = together_gateway.prepare_chat_request(
+        together_resolution, [{"role": "user", "content": "hi"}]
+    )
+    prepared_kwargs = ConsoleProviderGateway._chat_api_kwargs_from_prepared(
+        together_resolution, prepared
+    )
+    assert prepared_kwargs["api_base_url"] == "https://proxy.internal.example/v1"
+    plain_kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        together_resolution, [{"role": "user", "content": "hi"}]
+    )
+    assert plain_kwargs["api_base_url"] == "https://proxy.internal.example/v1"
+
+    # Databricks: the workspace host configured under an alias reaches the
+    # handler as the pinned endpoint (readiness accepted the alias; the
+    # gateway's effective endpoint resolves it for the send).
+    databricks_gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "databricks": {
+                    "api_key": "dapi-stored-secret-canary",
+                    "model": "databricks-gpt-4o",
+                    "base_url": _DATABRICKS_WORKSPACE_URL,
+                }
+            }
+        },
+        environ={},
+    )
+    databricks_resolution = await databricks_gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="Databricks")
+    )
+    assert databricks_resolution.ready is True
+    assert databricks_resolution.base_url == _DATABRICKS_WORKSPACE_URL
+    databricks_prepared = databricks_gateway.prepare_chat_request(
+        databricks_resolution, [{"role": "user", "content": "hi"}]
+    )
+    databricks_kwargs = ConsoleProviderGateway._chat_api_kwargs_from_prepared(
+        databricks_resolution, databricks_prepared
+    )
+    assert (
+        databricks_kwargs["api_base_url"] == _DATABRICKS_WORKSPACE_URL
+    )
+    databricks_plain = ConsoleProviderGateway._chat_api_kwargs(
+        databricks_resolution, [{"role": "user", "content": "hi"}]
+    )
+    assert databricks_plain["api_base_url"] == _DATABRICKS_WORKSPACE_URL

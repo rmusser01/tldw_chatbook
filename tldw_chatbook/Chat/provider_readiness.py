@@ -455,15 +455,37 @@ def _resolved_hosted_api_key(
     return None
 
 
-def _configured_base_url(
+def configured_workspace_base_url(
     provider_settings: Mapping[str, object],
 ) -> str | None:
-    """Return the first configured workspace base URL alias, if any."""
+    """Return the first configured workspace base URL alias, if any.
+
+    Single source of the base-URL setting aliases shared by readiness, the
+    hosted-provider engine's settings fallback (ADR-179, Qodo finding 2),
+    and the model catalog's engine branch: a URL spelled under any of
+    ``_BASE_URL_SETTING_KEYS`` resolves identically on every surface
+    (ready gate, send resolution, model discovery), in the precedence order
+    ``provider_setup_persistence`` persists endpoint keys.
+
+    Args:
+        provider_settings: One provider's ``api_settings.*`` table.
+
+    Returns:
+        The first non-empty alias value (stripped), or ``None`` when no
+        alias is configured.
+    """
     for key in _BASE_URL_SETTING_KEYS:
         value = provider_settings.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _configured_base_url(
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Legacy private spelling; delegates to the shared helper above."""
+    return configured_workspace_base_url(provider_settings)
 
 
 def _invalid_settings_readiness(
