@@ -1886,8 +1886,10 @@ asked for.
 Three tools do the work:
 
 - `character_search` — find or list your character cards.
-- `character_get` — read one card's editable fields (long fields are read in
-  pages).
+- `character_get` — read one card's editable fields. A field longer than
+  about 1,000 characters is shortened in the full-card read and read in
+  pages; the assistant cannot change such a field until it has read all of
+  it.
 - `character_save` — create a card, or update one. An update names the card's
   version, so a card changed elsewhere since the assistant read it is never
   silently overwritten ("re-read with character_get").
@@ -1908,8 +1910,11 @@ chat whose runtime is a tldw server they refuse: "Character editing is
 local-only; switch this chat to local to create or edit characters."
 
 After a save, the character is ready in Roleplay; if the Personas screen is
-open on that character it reloads it (or, if you have unsaved edits there,
-keeps them and tells you the card changed elsewhere).
+open on that character it reloads it. If you have unsaved edits there, it
+keeps them and says the character was changed from the Console: **Cancel**
+loads the new version, and **Save** is refused once ("Save again to overwrite
+that version with your edits") so the Console's change is never overwritten
+silently.
 
 **Turning them off.** The tools are gated by `character_tools_enabled` under
 `[tools]` (default on). The switch is also in the MCP hub: Servers ▸ built-in

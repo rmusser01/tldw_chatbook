@@ -30,6 +30,10 @@ import pytest
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterEditorCancelled,
+    CharacterSaveRequested,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,6 +77,7 @@ def _screen(
         _persona_visual_has_unsaved_authoring=lambda: persona_visual_unsaved,
         save_state=save_state or _default_save_state,
         _notify=lambda msg, sev="information": calls["notice"].append(msg),
+        _console_changed_character_ids=set(),
     )
     return screen, calls
 
@@ -87,7 +92,10 @@ async def test_form_dirty_keeps_edits_and_warns():
     screen, calls = _screen(7, has_unsaved_changes=True)
     await PersonasScreen._on_character_card_changed(screen, CharacterCardChanged(7))
     assert not calls["reload"]
-    assert "changed elsewhere" in calls["notice"][0]
+    assert "changed from the Console" in calls["notice"][0]
+    # Final review I1: the copy says what Save and Cancel actually do.
+    assert "Cancel" in calls["notice"][0] and "overwrite" in calls["notice"][0]
+    assert screen._console_changed_character_ids == {"7"}
 
 
 async def test_only_visual_identity_authoring_unsaved_keeps_edits_and_warns():
@@ -98,7 +106,7 @@ async def test_only_visual_identity_authoring_unsaved_keeps_edits_and_warns():
     screen, calls = _screen(7, visual_identity_unsaved=True)
     await PersonasScreen._on_character_card_changed(screen, CharacterCardChanged(7))
     assert not calls["reload"]
-    assert "changed elsewhere" in calls["notice"][0]
+    assert "changed from the Console" in calls["notice"][0]
 
 
 async def test_other_character_ignored():
@@ -139,6 +147,73 @@ async def test_select_character_exception_is_logged_and_does_not_propagate():
     await PersonasScreen._on_character_card_changed(screen, CharacterCardChanged(7))
     # No assertion beyond "did not raise" -- pytest fails the test itself if
     # the exception above propagates out of the awaited coroutine.
+
+
+# ---------------------------------------------------------------------------
+# Final review I1: a Personas save after a Console change is never silent
+# ---------------------------------------------------------------------------
+
+
+class _Pane:
+    def show_validation(self, *_args):
+        pass
+
+    def show_validation_editing(self):
+        pass
+
+
+def _save_screen(changed_ids):
+    screen, calls = _screen(7)
+    calls["saves"] = []
+    screen._console_changed_character_ids = set(changed_ids)
+    screen._local_character_actions_allowed = lambda: True
+    screen._actor_pack_session = None
+    screen._character_save_inflight = False
+    screen._edit_mode = "edit"
+    screen._validate_character = lambda data: ()
+    screen.query_one = lambda *_a, **_k: _Pane()
+    screen._save_character_worker = lambda data, sid, mode: calls["saves"].append(sid)
+    return screen, calls
+
+
+def _save(screen):
+    PersonasScreen._handle_save_requested(screen, CharacterSaveRequested({"name": "Aria"}))
+
+
+async def test_first_save_after_a_console_change_is_refused_with_a_way_forward():
+    screen, calls = _save_screen({"7"})
+    _save(screen)
+    assert calls["saves"] == []
+    assert "changed from the Console" in calls["notice"][-1]
+    assert "Save again" in calls["notice"][-1]
+
+
+async def test_second_deliberate_save_after_a_console_change_proceeds():
+    screen, calls = _save_screen({"7"})
+    _save(screen)
+    screen._character_save_inflight = False
+    _save(screen)
+    assert calls["saves"] == ["7"]
+
+
+async def test_save_without_a_console_change_is_normal():
+    screen, calls = _save_screen(set())
+    _save(screen)
+    assert calls["saves"] == ["7"] and calls["notice"] == []
+
+
+async def test_cancel_after_a_console_change_loads_the_new_version():
+    screen, calls = _screen(7)
+    screen._console_changed_character_ids = {"7"}
+    screen._finish_cancel_edit = lambda: None
+
+    async def _run_guarded(fn):
+        await fn()
+
+    screen._run_guarded = _run_guarded
+    await PersonasScreen._handle_editor_cancelled(screen, CharacterEditorCancelled())
+    assert [r[0] for r in calls["reload"]] == ["7"]
+    assert screen._console_changed_character_ids == set()
 
 
 # ---------------------------------------------------------------------------

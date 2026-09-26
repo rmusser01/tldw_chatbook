@@ -1410,6 +1410,11 @@ class PersonasScreen(BaseAppScreen):
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
         self._character_save_inflight: bool = False
+        # TASK-32954 final review I1: character ids the Console changed while
+        # this editor held unsaved edits. The first Save of such an id is
+        # refused (it would silently overwrite the Console's version); the
+        # second, deliberate Save proceeds. Cleared when the character loads.
+        self._console_changed_character_ids: set[str] = set()
         self._character_save_worker_handle: Any | None = None
         self._actor_pack_save_worker_handle: Any | None = None
         # ``_characters`` now holds only the CURRENT page of the library, not
@@ -5262,9 +5267,11 @@ class PersonasScreen(BaseAppScreen):
                 or self._persona_shared_visual_identity_has_unsaved_authoring()
                 or self._persona_visual_has_unsaved_authoring()
             ):
+                self._console_changed_character_ids.add(str(message.character_id))
                 self._notify(
-                    "This character was changed elsewhere. Your unsaved edits "
-                    "are kept; save or discard them to see the new version.",
+                    "This character was changed from the Console. Your unsaved "
+                    "edits are kept: Cancel them to load the new version, or "
+                    "Save twice to overwrite it with your edits.",
                     "warning",
                 )
                 return
@@ -5284,6 +5291,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self._console_changed_character_ids.discard(str(entity_id))
         self.conversations.close_conversation_preview()
         if self.size.width <= 60:
             self._compact_active_pane = "work"
@@ -15258,6 +15266,18 @@ class PersonasScreen(BaseAppScreen):
                 "Character save already in flight; ignoring duplicate request."
             )
             return
+        selected = str(self.state.selected_entity_id or "")
+        if self._edit_mode != "create" and selected in self._console_changed_character_ids:
+            # Final review I1: the save path writes the editor's full field
+            # set over the current version -- never do that silently.
+            self._console_changed_character_ids.discard(selected)
+            self._notify(
+                "This character was changed from the Console since you started "
+                "editing. Save again to overwrite that version with your edits, "
+                "or Cancel to load it.",
+                "warning",
+            )
+            return
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
         # The editor footer is the single in-editor validation surface: the
@@ -15798,6 +15818,11 @@ class PersonasScreen(BaseAppScreen):
 
         async def _finish() -> None:
             self._finish_cancel_edit()
+            selected = str(self.state.selected_entity_id or "")
+            if selected in self._console_changed_character_ids:
+                # Final review I1: Cancel loads the Console's newer version.
+                self._console_changed_character_ids.discard(selected)
+                await self._select_character(selected, self.state.selected_entity_name)
 
         await self._run_guarded(_finish)
 
