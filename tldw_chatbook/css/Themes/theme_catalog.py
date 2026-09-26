@@ -93,7 +93,9 @@ def _colour_hex(raw: Any) -> str:
     if not raw:
         return "#808080"
     try:
-        colour = Color.parse(str(raw))
+        # A saved theme holds Color objects (create_theme_from_dict), whose
+        # str() -- "Color(17, 34, 51)" -- does not parse.
+        colour = raw if isinstance(raw, Color) else Color.parse(str(raw))
     except Exception:  # noqa: BLE001
         return "#808080"
     if colour.ansi is not None:
