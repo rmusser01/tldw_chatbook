@@ -33,6 +33,7 @@ from .builtin_skills import (
     BUILTIN_SKILL_DIGESTS,
     builtin_skill_dir,
     builtin_skill_records,
+    snapshot_builtin_skill,
     verify_builtin_skill,
 )
 from .skill_trust_models import SkillTrustBlockedError
@@ -2758,12 +2759,20 @@ class LocalSkillsService:
         ``overwrite``. ``names`` limits the copy to those built-ins (Library
         Customize copies one); None copies every enabled built-in.
 
+        Each built-in is copied from a digest-verified private snapshot; one
+        that fails its integrity check is never imported (Qodo #2 on PR #2842:
+        a user copy is outside the built-in digest gate).
+
         Returns:
-            ``{"seeded": [names], "count": n}``.
+            ``{"seeded": [names], "count": n}``, plus ``"blocked": {name:
+            reason}`` when a built-in failed its integrity check.
         """
+        import tempfile
+
         self._enforce("skills.seed.launch.local")
         existing = self._load_index()
         seeded: list[str] = []
+        blocked: dict[str, str] = {}
         wanted = None if names is None else frozenset(names)
         # An explicit request (Library Customize) copies a disabled built-in
         # too; the blanket seed skips disabled ones. Built-ins stay off
@@ -2779,8 +2788,17 @@ class LocalSkillsService:
                 continue
             if name in existing and not overwrite:
                 continue
-            await self.import_skill_directory(
-                builtin_skill_dir(name), name=name, overwrite=overwrite
-            )
+            with tempfile.TemporaryDirectory() as scratch:
+                snapshot = Path(scratch) / name
+                reason = snapshot_builtin_skill(name, snapshot)
+                if reason:
+                    blocked[name] = reason
+                    continue
+                await self.import_skill_directory(
+                    snapshot, name=name, overwrite=overwrite
+                )
             seeded.append(name)
-        return {"seeded": seeded, "count": len(seeded)}
+        result: dict[str, Any] = {"seeded": seeded, "count": len(seeded)}
+        if blocked:
+            result["blocked"] = blocked
+        return result

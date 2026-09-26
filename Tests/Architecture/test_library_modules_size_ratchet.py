@@ -601,6 +601,10 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py
 # skills cluster (read-only preview, Customize, Enabled switch, review-link
 # route), split out so `library_skills_controller.py` stays within its budget.
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py"] = 253
+# 2026-09-26, TASK-32954 Qodo review #2 (PR #2842, pre-merge): +3 so Customize
+# says a tampered built-in failed its integrity check instead of blaming an
+# existing folder.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py"] = 256
 
 
 @lru_cache(maxsize=None)

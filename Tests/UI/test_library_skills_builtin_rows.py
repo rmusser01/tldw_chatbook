@@ -286,6 +286,29 @@ def test_customize_that_copied_nothing_says_so():
     assert "reset" not in fake.calls and "refresh" not in fake.calls
 
 
+def test_customize_of_a_modified_builtin_says_it_failed_integrity():
+    # Qodo #2 (PR #2842): the service refuses a tampered built-in; the
+    # notice must say why, not blame an existing folder.
+    async def seed_builtin_skills(**kwargs):
+        return {"seeded": [], "count": 0, "blocked": {NAME: "builtin_modified"}}
+
+    async def get_skill(name, **kwargs):
+        return {"name": name}
+
+    fake = _controller_stand_in(
+        app_instance=SimpleNamespace(
+            skills_scope_service=_service(
+                seed_builtin_skills=seed_builtin_skills, get_skill=get_skill
+            )
+        ),
+        _run_library_service_call=_direct_call,
+    )
+    asyncio.run(fake.builtin._customize_library_skill_builtin(NAME))
+    notices = [m[1] for m in fake.calls if isinstance(m, tuple) and m[0] == "notify"]
+    assert notices and "integrity check" in notices[0]
+    assert "reset" not in fake.calls and "refresh" not in fake.calls
+
+
 def test_rapid_enabled_toggles_leave_disk_matching_memory(monkeypatch):
     import itertools
     import time

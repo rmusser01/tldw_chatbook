@@ -177,12 +177,15 @@ class LibrarySkillsBuiltinController:
             logger.opt(exception=True).warning("Customize of a built-in skill failed.")
             s.app.notify("Couldn’t copy this built-in skill.", severity="error")
             return
-        seeded = result.get("seeded") if isinstance(result, Mapping) else None
+        result = result if isinstance(result, Mapping) else {}
+        seeded = result.get("seeded")
         if not seeded or skill_name not in seeded:
-            # e.g. a folder of that name exists in the store but is not indexed.
+            # Refused as tampered (Qodo #2), or an unindexed same-name folder exists.
             s.app.notify(
-                "Nothing was copied — a skill with this name may already exist "
-                "in your skills folder.",
+                "Nothing was copied — this built-in failed its integrity check."
+                if skill_name in (result.get("blocked") or {})
+                else "Nothing was copied — a skill with this name may already "
+                "exist in your skills folder.",
                 severity="warning",
             )
             return

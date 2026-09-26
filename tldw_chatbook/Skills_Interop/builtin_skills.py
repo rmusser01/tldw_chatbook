@@ -59,6 +59,33 @@ def verify_builtin_skill(name: str) -> str | None:
     return None
 
 
+def snapshot_builtin_skill(name: str, dest: Path) -> str | None:
+    """Copy a verified built-in's pinned files into ``dest`` (Customize).
+
+    Each file is re-hashed from the exact bytes written, so a package file
+    swapped after :func:`verify_builtin_skill` can never reach the copy, and
+    only pinned files are copied.
+
+    Returns:
+        None when copied, else the block reason code.
+    """
+    reason = verify_builtin_skill(name)
+    if reason:
+        return reason
+    root = builtin_skill_dir(name)
+    try:
+        for rel, digest in BUILTIN_SKILL_DIGESTS[name].items():
+            data = (root / rel).read_bytes()
+            if hashlib.sha256(data).hexdigest() != digest:
+                return "builtin_modified"
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+    except OSError:
+        return "builtin_missing"
+    return None
+
+
 def builtin_skill_records(disabled: frozenset[str]) -> dict[str, dict[str, Any]]:
     """Index-shaped stubs for enabled built-ins (front matter parsed by the service)."""
     return {
