@@ -2712,7 +2712,18 @@ def search_web_bing(
         session.mount("https://", HTTPAdapter(max_retries=retries))
 
         # Send the request with the session
-        response = session.get(search_url, headers=headers, params=params, timeout=10)
+        # `allow_redirects=False`: this call carries a CUSTOM API-key
+        # header, and `requests`' `rebuild_auth` strips only
+        # `Authorization` on a cross-host hop -- it would forward the
+        # key verbatim to whatever host a redirect names. A search API
+        # has no legitimate redirect, so refuse rather than follow.
+        response = session.get(
+            search_url,
+            headers=headers,
+            params=params,
+            timeout=10,
+            allow_redirects=False,
+        )
         response.raise_for_status()
 
 
@@ -2947,7 +2958,16 @@ def search_web_brave(
 
     # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
     # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
-    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    # `allow_redirects=False`: `X-Subscription-Token` is a custom header,
+    # which `requests`' `rebuild_auth` does not strip on a cross-host hop.
+    response = requests.get(
+        search_url,
+        headers=headers,
+        params=params,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+        allow_redirects=False,
+    )
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -3914,7 +3934,16 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    # `allow_redirects=False`: `X-API-KEY` is a custom header, which
+    # `requests`' `rebuild_auth` does not strip on a cross-host hop.
+    response = requests.post(
+        "https://google.serper.dev/search",
+        headers=headers,
+        json=payload,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+        allow_redirects=False,
+    )
     response.raise_for_status()
     return response.json()
 
@@ -3985,7 +4014,16 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+    # `allow_redirects=False`: `x-api-key` is a custom header, which
+    # `requests`' `rebuild_auth` does not strip on a cross-host hop.
+    response = requests.post(
+        "https://api.exa.ai/search",
+        headers=headers,
+        json=payload,
+        timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+        allow_redirects=False,
+    )
     response.raise_for_status()
     return response.json()
 
