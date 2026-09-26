@@ -71,7 +71,8 @@ field provenance, compaction draft, and exact origin into the full Model view wi
 applying or discarding it. Conversation resume performs the same provider-first
 rebase before applying the saved safe snapshot.
 
-The quick model-profile field mask is temperature and streaming. The full Model
+The quick model-profile field mask is temperature, max_tokens, and streaming
+(amended 2026-09-26, D3; originally temperature and streaming). The full Model
 mask is every supported sampler, reasoning/thinking, token-limit, and streaming
 field it exposes. Blank profile values delete the exact override so lower-precedence
 defaults apply; the conversation still stores the effective value resolved at Apply
@@ -253,8 +254,12 @@ What changes:
   any work.
 - **Chats with work get an explicit way in: `Use saved defaults`.** Chat
   settings offers this action for the chat's current provider and model.
-  - It rebases the draft onto the saved default chain for that provider and
-    model: the model profile first, then `chat_defaults`, then the provider.
+  - It rebases the draft onto exactly what a newly created chat on that
+    provider and model would resolve (`build_default_console_session_settings`).
+    That is the full saved default chain, in precedence order: the model profile,
+    the saved Console provider defaults (`[console.provider_defaults.<provider>]`),
+    any applicable extra sources (ADR-147 registry params), `chat_defaults`, and
+    then the raw provider settings.
   - It uses the controller's existing rebase path, and carries over no
     deliberate edits.
   - It changes only the draft. Nothing reaches the conversation until `Apply
