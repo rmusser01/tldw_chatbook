@@ -44,6 +44,8 @@ BUILTIN_TOOL_NAMES = {
     "create_note",
     "search_notes",
     "list_characters",
+    "create_character",
+    "update_character",
     "get_conversation_history",
     "export_conversation",
 }
@@ -63,8 +65,11 @@ LOCAL_TOOL_NAMES = {
     "web_fetch",
     "web_search",
     "web_crawl",
-    "watchlists_search_items",
-    "watchlists_get_item",
+    "watchlists_list_sources",
+    "watchlists_list_collections",
+    "watchlists_list_briefings",
+    "watchlists_get_operations_status",
+    "watchlists_get_operation_status",
 }
 RESOURCE_TEMPLATES = {
     "conversation://{conversation_id}",

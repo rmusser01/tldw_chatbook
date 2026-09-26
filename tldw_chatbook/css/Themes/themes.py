@@ -17,6 +17,7 @@
 #   text-error, block-cursor-blurred-background, input-selection-background,
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
+import re
 from pathlib import Path
 
 from textual.theme import BUILTIN_THEMES, Theme
@@ -56,10 +57,31 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
     return ensure_readable_text_hues(Theme(**theme_args))
 
 
-#: Generated text tints the Console rail paints ordinary text with
-#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
-_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+#: Generated text tints the app paints ordinary text with (TASK-31429:
+#: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent). TASK-32947
+#: adds the three status tints: the Settings > Theme card labels Save / Reset /
+#: Delete with them, and the only other consumers are Textual's own text uses
+#: (syntax highlighting, flat buttons, `$ds-status-error-readable`), so pinning
+#: them can only raise contrast -- 21 themes failed AA on text-success, 27 on
+#: text-warning (textual-light among them), 5 built-ins on text-error.
+_READABLE_TEXT_HUES = (
+    "text-primary",
+    "text-accent",
+    "text-success",
+    "text-warning",
+    "text-error",
+)
 _AA_RATIO = 4.5
+
+#: Review finding #3: ensure_readable_text_hues records the keys it wrote on
+#: the Theme under this attribute. A key a theme set by hand (22 shipped
+#: themes set text-error) is not in it, so the editor keeps that one.
+_PINNED_ATTR = "_tldw_pinned_text_hues"
+
+
+def pinned_text_hues(theme: Theme) -> set[str]:
+    """The readable text-* keys the AA guard generated for ``theme``."""
+    return set(getattr(theme, _PINNED_ATTR, ()))
 
 
 def _relative_luminance(color: Color) -> float:
@@ -81,7 +103,7 @@ def _contrast_ratio(a: Color, b: Color) -> float:
 
 
 def ensure_readable_text_hues(theme: Theme) -> Theme:
-    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+    """Pin the readable ``text-*`` tints (_READABLE_TEXT_HUES) to AA in place.
 
     Textual derives both as a 66% tint of the theme's contrast text toward
     the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
@@ -109,12 +131,14 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
     pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
     variables = dict(theme.variables or {})
+    pinned = set(getattr(theme, _PINNED_ATTR, ()))
     for token in _READABLE_TEXT_HUES:
         if token in variables:
             continue
         color = Color.parse(generated[token])
         if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
             continue
+        pinned.add(token)
         for step in range(1, 21):
             candidate = color.blend(pole, step / 20)
             if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
@@ -123,13 +147,67 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         else:
             variables[token] = pole.hex
     theme.variables = variables
+    setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme
+
+
+_VARIABLE_NAME = re.compile(r"^[a-z0-9-]+$")
+_TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
+_ALPHA_SUFFIX = re.compile(r"^(.+) (\d{1,3})%$")
+
+
+def _is_safe_variable_value(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    if all(word in _TEXT_STYLES for word in value.split(" ")):
+        return True
+    match = _ALPHA_SUFFIX.match(value)
+    if match and match.group(1) == "auto":
+        return True
+    try:
+        Color.parse(match.group(1) if match else value)
+    except Exception:  # noqa: BLE001 - anything unparseable is dropped
+        return False
+    return True
+
+
+def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
+    """Keep only ``[variables]`` entries Textual's CSS tokenizer can take.
+
+    Review finding #1: Textual tokenizes theme variables on the CSS refresh
+    AFTER ``app.theme = ...`` returns, so a value such as
+    ``"red; } Screen { display: none"`` or a bare number escapes every
+    try/except and kills the app (every launch, if it is the default theme).
+    Kept: lowercase-hyphen names whose value is a colour (optionally
+    ``" NN%"``), ``"auto NN%"``, or space-separated text-style keywords.
+
+    Args:
+        variables: The raw ``[variables]`` table from a theme file.
+        source: The file name, for the warning (never a full user path).
+
+    Returns:
+        The safe entries; every dropped one is logged as a warning.
+    """
+    from loguru import logger
+
+    if not isinstance(variables, dict):
+        return {}
+    safe: dict[str, str] = {}
+    for key, value in variables.items():
+        if isinstance(key, str) and _VARIABLE_NAME.match(key) and _is_safe_variable_value(value):
+            safe[key] = value
+        else:
+            # Name only (truncated), never the value: file content must not
+            # reach the persistent log verbatim.
+            logger.warning(f"Theme {source}: dropping invalid variable {str(key)[:40]!r}")
+    return safe
 
 
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
 
-    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``
+    and, when the palette has any, ``[variables]``.
     Unreadable files, and files without the primary colour Textual requires,
     are skipped with a warning so one bad file cannot block startup
     (TASK-31250).
@@ -157,6 +235,10 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
             name = str(meta.get("name") or path.stem).strip() or path.stem
             colors = dict(data.get("colors", {}) or {})
             colors["dark"] = bool(meta.get("dark", True))
+            # TASK-32940: extra colour variables the editor carried over.
+            variables = sanitize_theme_variables(data.get("variables", {}) or {}, path.name)
+            if variables:
+                colors["variables"] = variables
             themes.append(create_theme_from_dict(name, colors))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this

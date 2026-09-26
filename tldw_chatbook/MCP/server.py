@@ -156,6 +156,8 @@ def _annotation_to_property(node: ast.expr | None) -> dict:
             items = _annotation_to_property(inner)
             if items:
                 return {"type": "array", "items": items}
+        if node.value.id in ("Dict", "dict"):
+            return {"type": "object"}
     return {}
 
 
@@ -163,7 +165,7 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
     """Synthesize a JSON-schema ``inputSchema`` fragment from a tool function's AST signature.
 
     Keyword-only args (``fn.args.kwonlyargs``/``kw_defaults``) are
-    intentionally unhandled: none of the nine built-in ``@self.mcp.tool()``
+    intentionally unhandled: none of the built-in ``@self.mcp.tool()``
     registrations in this module use them (verified by reading
     ``server.py``'s ``_register_tools`` body), so there is nothing to map
     yet -- add support here if a future tool introduces one.
@@ -777,6 +779,64 @@ class TldwMCPServer:
         async def list_characters() -> List[Dict[str, Any]]:
             """List all available characters."""
             return await self.tools.list_available_characters()
+
+        @self.mcp.tool()
+        async def create_character(
+            name: str,
+            fields: Optional[dict[str, Any]] = None,  # noqa: UP045 -- AST schema parser
+        ) -> dict[str, Any]:
+            """Create a character card; fields: description, personality, scenario, system_prompt, post_history_instructions, first_message, message_example, creator_notes, alternate_greetings, tags, creator, character_version, extensions. No images. Requires operator permission.
+
+            Args:
+                name: Non-empty, unique character name.
+                fields: Optional mapping of the supported text/JSON fields above.
+                    Images, unknown fields, and null values are rejected.
+
+            Returns:
+                A receipt containing id, name, and version, or a mapping with
+                error_code and error for permission, validation, or storage failure.
+
+            Raises:
+                asyncio.CancelledError: If the caller cancels the request.
+            """
+            from .builtin_tool_policy import standalone_character_write_refusal
+
+            refusal = await asyncio.to_thread(
+                standalone_character_write_refusal, "create_character"
+            )
+            if refusal:
+                return refusal
+            return await self.tools.create_character(name, fields)
+
+        @self.mcp.tool()
+        async def update_character(
+            character_id: int, expected_version: int, fields: dict[str, Any]
+        ) -> dict[str, Any]:
+            """Update character fields using expected_version from list_characters; fields accepts name and the fields supported by create_character. No images or nulls. Requires operator permission.
+
+            Args:
+                character_id: Strict positive integer identifying the card.
+                expected_version: Strict positive version last read by the caller.
+                fields: Non-empty mapping of supported fields to replace.
+
+            Returns:
+                A receipt containing id, name, and the new version, or a mapping
+                with error_code and error for permission, validation, missing-card,
+                conflict, or storage failure. Stale versions leave the card intact.
+
+            Raises:
+                asyncio.CancelledError: If the caller cancels the request.
+            """
+            from .builtin_tool_policy import standalone_character_write_refusal
+
+            refusal = await asyncio.to_thread(
+                standalone_character_write_refusal, "update_character"
+            )
+            if refusal:
+                return refusal
+            return await self.tools.update_character(
+                character_id, expected_version, fields
+            )
 
         # Get conversation history tool
         @self.mcp.tool()
