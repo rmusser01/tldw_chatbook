@@ -304,3 +304,16 @@ def test_unreadable_display_name_has_no_control_characters():
     entries = build_catalog(_available(), set(), "nord", "nord", unreadable={"x\x1bc": "not valid TOML"})
     entry = next(e for e in entries if e.error)
     assert entry.display_name.isprintable()
+
+
+def test_saved_theme_colours_are_listed_not_grey():
+    """Found while measuring Qodo 4107495860: ``create_theme_from_dict``
+    stores ``Color`` objects, and ``str(Color)`` ("Color(17, 34, 51)") does
+    not parse -- every saved theme's explicit colours fell back to grey, via
+    a difflib suggestion search per colour (most of the 120 ms re-render)."""
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    theme = create_theme_from_dict("x", {"primary": "#112233", "background": "#0A0A0A"})
+    colours = dict(tc._colours(theme))
+    assert colours["primary"] == "#112233"
+    assert colours["background"] == "#0A0A0A"
