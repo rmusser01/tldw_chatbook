@@ -501,6 +501,31 @@ async def test_voice_resume_restores_all_non_secret_controls():
 
 
 @pytest.mark.asyncio
+async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: "ready")
+    resume = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_VOICE,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_VOICE: {"preset": "omnivoice", "use_as_default": True},
+        },
+    )
+    wizard = _make_wizard(resume_draft=resume)
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        step = container.steps[container._step_index_for_id(STEP_VOICE)]
+        assert step._preset == "omnivoice"
+        assert step.query_one("#setup-voice-omnivoice-panel").display is True
+        assert step.query_one("#setup-voice-default", Checkbox).value is True
+
+
+@pytest.mark.asyncio
 async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypatch):
     from types import SimpleNamespace
 
