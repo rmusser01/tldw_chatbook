@@ -97,55 +97,81 @@ def _tree(root: Path) -> Path:
     return root
 
 
-def test_setup_state_engine_missing_wins() -> None:
-    state = cat.omnivoice_setup_state(
-        None, missing_modules=lambda: ["onnxruntime"], managed_root=lambda: None
-    )
-    assert state == "engine_missing"
+class TestOmnivoiceSetupState:
+    """``omnivoice_setup_state`` behavior, isolated from any ambient
+    ``OMNIVOICE_MODEL_ROOT`` the host shell/CI might have set -- the function
+    reads it unconditionally and it wins over the ``model_root`` argument, so
+    every test here needs the same isolation, not just the ones that happen
+    to set it themselves.
+    """
 
+    @pytest.fixture(autouse=True)
+    def _no_ambient_model_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OMNIVOICE_MODEL_ROOT", raising=False)
 
-def test_setup_state_model_missing_without_any_root() -> None:
-    assert cat.omnivoice_setup_state(
-        None, missing_modules=list, managed_root=lambda: None
-    ) == "model_missing"
+    def test_setup_state_engine_missing_wins(self) -> None:
+        state = cat.omnivoice_setup_state(
+            None, missing_modules=lambda: ["onnxruntime"], managed_root=lambda: None
+        )
+        assert state == "engine_missing"
 
-
-def test_setup_state_ready_from_configured_root(tmp_path: Path) -> None:
-    root = _tree(tmp_path / "m")
-    assert cat.omnivoice_setup_state(
-        str(root), missing_modules=list, managed_root=lambda: None
-    ) == "ready"
-
-
-def test_setup_state_ready_from_managed_root(tmp_path: Path) -> None:
-    root = _tree(tmp_path / "m")
-    assert cat.omnivoice_setup_state(
-        "", missing_modules=list, managed_root=lambda: root
-    ) == "ready"
-
-
-def test_setup_state_env_model_root_wins_like_the_engine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The engine prefers OMNIVOICE_MODEL_ROOT from the environment; the
-    wizard must too, or an env-configured user is told to download 1.1 GB."""
-    root = _tree(tmp_path / "env-root")
-    monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(root))
-    assert cat.omnivoice_setup_state(
-        "", missing_modules=list, managed_root=lambda: None
-    ) == "ready"
-
-
-def test_setup_state_broken_model_root_is_model_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OMNIVOICE_MODEL_ROOT", raising=False)
-    partial = tmp_path / "partial"
-    partial.mkdir()
-    for model_root in (str(tmp_path / "does-not-exist"), str(partial), "bad\x00root"):
+    def test_setup_state_model_missing_without_any_root(self) -> None:
         assert cat.omnivoice_setup_state(
-            model_root, missing_modules=list, managed_root=lambda: None
+            None, missing_modules=list, managed_root=lambda: None
         ) == "model_missing"
+
+    def test_setup_state_ready_from_configured_root(self, tmp_path: Path) -> None:
+        root = _tree(tmp_path / "m")
+        assert cat.omnivoice_setup_state(
+            str(root), missing_modules=list, managed_root=lambda: None
+        ) == "ready"
+
+    def test_setup_state_ready_from_managed_root(self, tmp_path: Path) -> None:
+        root = _tree(tmp_path / "m")
+        assert cat.omnivoice_setup_state(
+            "", missing_modules=list, managed_root=lambda: root
+        ) == "ready"
+
+    def test_setup_state_env_model_root_wins_like_the_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The engine prefers OMNIVOICE_MODEL_ROOT from the environment over
+        the configured model_root; the wizard must too, or an env-configured
+        user is told to download 1.1 GB.
+
+        The configured root here is a nonexistent directory -- alone it
+        would resolve to model_missing -- while the env var points at a
+        complete tree, so this can only pass under real "env wins"
+        precedence, not under a hypothetical "config wins" ordering (both
+        would agree if the configured root were blank, which is why the
+        previous version of this test could not tell the two apart).
+        """
+        env_root = _tree(tmp_path / "env-root")
+        broken_configured_root = tmp_path / "does-not-exist"
+        monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(env_root))
+        assert cat.omnivoice_setup_state(
+            str(broken_configured_root), missing_modules=list, managed_root=lambda: None
+        ) == "ready"
+
+    def test_setup_state_env_model_root_wins_even_when_broken_itself(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mirror case: a broken env root beats a complete configured root --
+        proving precedence from the other side, not just that env CAN work."""
+        broken_env_root = tmp_path / "does-not-exist"
+        configured_root = _tree(tmp_path / "configured-root")
+        monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(broken_env_root))
+        assert cat.omnivoice_setup_state(
+            str(configured_root), missing_modules=list, managed_root=lambda: None
+        ) == "model_missing"
+
+    def test_setup_state_broken_model_root_is_model_missing(self, tmp_path: Path) -> None:
+        partial = tmp_path / "partial"
+        partial.mkdir()
+        for model_root in (str(tmp_path / "does-not-exist"), str(partial), "bad\x00root"):
+            assert cat.omnivoice_setup_state(
+                model_root, missing_modules=list, managed_root=lambda: None
+            ) == "model_missing"
 
 
 def test_catalog_serves_only_the_omnivoice_descriptor() -> None:
