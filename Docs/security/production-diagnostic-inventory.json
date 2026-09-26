@@ -2452,7 +2452,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "b06a7b09df9454f604b1",
+      "diagnostic_digest": "620d129b6dac14b1d349",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/character_tool_service.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

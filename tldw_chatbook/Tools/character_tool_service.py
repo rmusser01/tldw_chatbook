@@ -18,7 +18,6 @@ import logging
 import re
 import traceback
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -364,11 +363,11 @@ class CharacterToolService:
             detail = errors[0]["msg"] if errors else "invalid value"
             return _outcome("invalid_argument", f"'{field}': {detail}")
         except Exception as exc:  # noqa: BLE001 - boundary: never raise into the agent loop
-            # Frame metadata only (file basename:line:function) -- never the
-            # message or locals, which may carry card text or file paths.
-            # `from None` stays: the chain would expose that message upstream.
+            # Frame metadata only (function:line) -- never the message, locals
+            # or file names, which may carry card text or paths. `from None`
+            # stays: the chain would expose that message upstream.
             frames = " > ".join(
-                f"{Path(f.filename).name}:{f.lineno}:{f.name}"
+                f"{f.name}:{f.lineno}"
                 for f in traceback.extract_tb(exc.__traceback__)[-8:]
             )
             _LOGGER.error("Character tool execution failed category=%s frames=%s",

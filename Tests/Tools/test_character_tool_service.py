@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 
 import pytest
 
@@ -657,5 +658,5 @@ def test_unexpected_failure_logs_frames_but_no_message_text(env, caplog):
           pytest.raises(RuntimeError, match=cts._PUBLIC_EXECUTION_ERROR)):
         tool.search({})
     logged = "\n".join(r.getMessage() for r in caplog.records)
-    assert "character_tool_service.py:" in logged and "_search" in logged
+    assert re.search(r"_run:\d+ > _search:\d+ > _boom:\d+", logged)
     assert "SECRET" not in logged and "/Users/someone" not in logged
