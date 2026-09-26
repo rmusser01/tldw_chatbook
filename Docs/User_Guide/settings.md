@@ -502,7 +502,8 @@ and **Delete** — remove it. These three, plus **Export**, have no effect on a
 shipped or Textual theme (Clone or New it first to make your own copy).
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
-match '\<text\>'" and Enter does nothing.
+match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
+starts from the theme you are running.
 
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
@@ -552,14 +553,20 @@ row clears the next time you highlight a different theme.
 A saved file that can't be read — invalid TOML, a missing or unparseable
 primary colour, a `[colors]` key that isn't one of the ten base colours, a
 colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
-a name containing control characters ("name has control characters") —
-is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
+a name containing control characters ("name has control characters"), a
+name starting with a reserved prefix ("reserved name"), a symlinked or
+hard-linked file ("not a regular file"), or a second file claiming a name
+another file already holds ("duplicate of '\<name\>'"; the app uses the
+later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
 the reason as both a short label on the card and every disabled button's
 tooltip. It is listed even when its file name matches a shipped or Textual
 theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
 Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
 pressing one of their keys shows the reason instead. Only **Delete** works,
-so a broken file can always be cleared. Control characters in anything a
+so a broken file can always be cleared — except a symlinked or hard-linked
+one, which the app never writes through: Delete says to remove it outside
+the app. That one file no longer makes the whole themes folder read as
+unavailable. Control characters in anything a
 theme file puts on screen — an error, a key, a value — show as `?`.
 
 **Import…** (the button beside New, or the **i** key) brings a theme file
@@ -571,8 +578,9 @@ unescapes every backslash-escaped character a drop pastes on macOS
 `variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB`,
 `#RRGGBB` or `#RRGGBBAA` (the editor's own rule: "background: 'blue' is not
 #RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
-filename-safe, contains `[`, or contains control characters each refuse
-with a specific reason and write nothing. A `[variables]` entry that isn't a colour
+filename-safe, contains `[`, contains control characters, or starts with
+`custom_` or `unreadable:` each refuse with a specific reason and write
+nothing. A `[variables]` entry that isn't a colour
 (or `auto NN%`, or a text style) is dropped with a warning instead, the same
 as Save. Importing a name you already have asks first ("Replace the saved
 theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
@@ -594,7 +602,10 @@ the theme you just saved is the one currently running, it repaints live so it
 is never stale. Save no longer sets the launch default itself — use the
 picker's **Use** for that. **Save as…** prompts for a new name ("Save theme
 as", pre-filled `\<current\>_copy`) and always confirms an overwrite, even of
-the loaded theme's own name, since Save as always means a new file; like
+the loaded theme's own name, since Save as always means a new file. Save, Save as and Rename refuse a name
+starting with `custom_` or `unreadable:` ("names starting with 'custom_' or
+'unreadable:' are reserved") — the app uses those prefixes for its own
+entries; like
 Save, it then returns you to the picker with the new theme highlighted, not
 back into the editor. **Reset** reloads it as last saved;
 **Generate from Primary** derives a palette from the primary colour. **Color
@@ -613,8 +624,10 @@ style) is skipped with a warning when the theme loads. **Back** — or **Esc**
 twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different
-Settings category while the editor is open, and a Save that needs an
+Settings category while the editor is open, or leave Settings altogether
+(the tab bar, the command palette or a shortcut), and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
+Changing only the **Name** box counts as an unsaved edit.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
@@ -1297,3 +1310,11 @@ or the file is unreadable and skipped at startup (R41); a broken file named
 like a shipped theme is listed and deletable;
 blocked keys on an unreadable row say why; the Import prompt names what it
 wants. Pinned by pilot and unit tests, not driven live.*
+
+*Verified against `feat/theme-picker-pr3` @ 6c8bc4ea65 — 2026-09-25
+(TASK-32948 Qodo review fixes, TASK-32949): reserved `custom_`/`unreadable:`
+names are refused; a symlinked or hard-linked theme file is one "not a
+regular file" row, not an unavailable folder; a second file claiming a name
+is a "duplicate of" row; New works with a filter that matches nothing;
+leaving Settings with unsaved theme edits asks Stay / Discard / Save.
+Pinned by pilot and unit tests, not driven live.*

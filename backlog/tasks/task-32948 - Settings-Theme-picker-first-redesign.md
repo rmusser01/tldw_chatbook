@@ -794,3 +794,30 @@ test_theme_catalog.py`, `Tests/Utils/test_user_theme_loader.py`,
   reject non-printable values (`$` let a trailing `\n` through, and
   `Color.parse` accepts `"#fff\n"`); export notices pass the name through
   `printable()`.
+
+### Qodo review fixes
+
+Triage of 46 Qodo comments on #2830/#2832/#2837/#2839: 25 valid, 5 already fixed, 3 obsolete, 13 invalid. Every valid row is fixed except 4107495860 (see the scan bullet).
+
+- **Leave guards:**
+  - A name-only edit now marks the editor modified.
+  - Leaving the Settings screen by any route asks Stay / Discard / Save (TASK-32949, now Done).
+- **Reserved prefixes:** names starting with `custom_` (Apply's process-only registration) or `unreadable:` (the picker's broken-file id) are refused by Save, Save as, Rename and Import. The shared `theme_from_file_data` rejects them too, so startup and the listing agree.
+- **Listing identity:**
+  - Files are keyed by the normalised name that startup registers.
+  - A second file claiming a name is listed as "duplicate of '<name>'".
+  - A symlinked or hard-linked `*.toml` is one unreadable "not a regular file" entry. The backup layer records it for route `theme_directory` instead of raising, so it no longer makes the whole folder unavailable. Delete says to remove it outside the app.
+- **Stale state:**
+  - `load_user_theme` returns bool, and Edit/Clone of a vanished file stays on the picker.
+  - The Replace and overwrite confirmations re-resolve their target before writing.
+  - New after a zero-match filter starts from the running theme.
+- **Partial-success reporting:**
+  - Rename moves the launch default before removing the old file, and rolls the new file back if that write fails.
+  - Rename, the Delete fallbacks and Revert warn "configuration refresh failed — reopen Settings to refresh" when the cache reload fails (`revert_theme` now returns `(restored, caches_reloaded)`).
+- **Hygiene:**
+  - `_NEUTRAL`, `PREVIEW_CHARS` and the shared `CACHE_REFRESH_FAILED` suffix.
+  - The launch default passes through `printable()` in the picker notice and the Appearance summary.
+  - A pilot test drives the command palette through `app.theme`, the persisted default and the toast.
+  - Google-style docstrings on the named public API.
+- **Scan cost (4107495860, not changed as asked):** one backup-scoped listing measured a 254 ms median with 50 theme files (240–287 ms over 5 runs; 66 ms for 10), ~5–6.6 ms per file, almost all in the backup layer's per-file scope. Theme switches (Use, Try, Revert, the palette) now reuse the last listing (`refresh_catalog(rescan=False)`). Mount, Back and post-file-action rescans stay synchronous, because a worker would need a stale-result guard and would force rewriting the synchronous tests.
+- **Found out of triage:** saved themes showed grey strips and previews because `_colour_hex` parsed `str(Color)`. Fixed, which also cut a theme switch's picker re-render from ~120 ms to ~52 ms.
