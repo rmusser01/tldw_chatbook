@@ -132,10 +132,13 @@ class StorageAdapter(ABC):
                 return repaired
 
         except Exception as e:
+            # Deliberately NOT a default state. Returning one made an
+            # unreadable store indistinguishable from "no pet saved yet", and
+            # the caller then decayed those defaults and saved them back --
+            # publishing a transient read failure over the real progress.
+            # A raise lets the caller skip the tick and try again in 30 s.
             logger.error(f"Error loading state for {pet_id}: {e}")
-
-            # Create default state as fallback
-            return StateValidator.create_default_state(default_name)
+            raise
 
     def save_with_backup(self, pet_id: str, state: Dict[str, Any]) -> bool:
         """
