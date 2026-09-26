@@ -9,6 +9,7 @@
 #
 # Imports
 import time
+from types import SimpleNamespace
 
 from Tests.private_profile import private_profile_test
 
@@ -260,14 +261,23 @@ class TestThemeProvider:
 
     def test_switch_theme_success(self, theme_provider):
         """Test successful theme switching."""
-        with patch("tldw_chatbook.config.save_setting_to_cli_config") as mock_save:
+        with (
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog._apply_config_mutation"
+            ) as mock_apply,
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog.current_launch_default",
+                return_value="textual-dark",
+            ),
+        ):
+            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=True)
             theme_provider.switch_theme("test-theme")
 
             assert theme_provider.app.theme == "test-theme"
             theme_provider.app.notify.assert_called_once_with(
-                "Theme changed to test-theme", severity="information"
+                "Test Theme is now your theme", severity="information"
             )
-            mock_save.assert_called_once_with("general", "default_theme", "test-theme")
+            mock_apply.assert_called_once_with({"general": {"default_theme": "test-theme"}})
 
     def test_switch_theme_failure(self, theme_provider):
         """Test theme switching with error handling."""

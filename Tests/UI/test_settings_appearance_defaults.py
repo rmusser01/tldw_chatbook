@@ -110,7 +110,6 @@ def test_validate_appearance_defaults_accepts_web_runtime_minimum_font_size():
 
 def test_validate_appearance_defaults_rejects_invalid_values():
     invalid_values = (
-        ({"default_theme": ""}, "Theme"),
         ({"palette_theme_limit": -1}, "Palette theme limit"),
         ({"palette_theme_limit": 101}, "Palette theme limit"),
         ({"font_size": 5}, "Font size"),
@@ -151,11 +150,12 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
         ),
     )
 
+    # TASK-32948: Appearance never writes the draft's default_theme; the
+    # config had none, so none appears (the picker's Use owns it).
     assert sections == {
         "general": {
             "default_tab": "settings",
             "log_level": "INFO",
-            "default_theme": "textual-light",
             "palette_theme_limit": 5,
         },
         "web_server": {

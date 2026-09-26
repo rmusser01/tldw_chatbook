@@ -20,6 +20,9 @@ from textual.screen import ModalScreen
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
+from ..Backup_Recovery import raw_participants as raw
+from ..Backup_Recovery.bootstrap import RecoveryRequired
+from ..css.Themes.theme_catalog import is_catalog_theme
 from ..css.Themes.themes import (
     ALL_THEMES,
     create_theme_from_dict,
@@ -28,10 +31,7 @@ from ..css.Themes.themes import (
 )
 from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
-
-
-from ..Backup_Recovery import raw_participants as raw
-from ..Backup_Recovery.bootstrap import RecoveryRequired
+from .theme_preview import ThemePreview
 
 #: TASK-32942: shown in the tree while backup/recovery holds the theme files.
 THEMES_UNAVAILABLE_LABEL = "Theme files unavailable while backup/recovery is in progress"
@@ -131,28 +131,6 @@ class SettingsThemeEditor(Vertical):
         "Material": ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0"],
         "Pastels": ["#FFB3BA", "#BAFFC9", "#BAE1FF", "#FFFFBA", "#FFDFBA"],
         "Dark": ["#1A1A1A", "#2D2D2D", "#404040", "#525252", "#656565"],
-    }
-
-    # TASK-31259: the Live Preview is a Console-shaped stub. Each row is
-    # (id suffix, text); _PREVIEW_STYLE maps the suffix to the BASE_COLORS
-    # keys used for its background and text, painted by _refresh_preview.
-    _PREVIEW_ROWS = (
-        ("rail", " Console ▸ Conversation · ready"),
-        ("user", " You: summarise the attached paper"),
-        ("assistant", " Assistant: Here is the summary…"),
-        ("success", " ✓ tool web_search finished"),
-        ("warning", " ! approval needed before the next call"),
-        ("error", " ✗ provider returned 401"),
-        ("accent", " [ Send ]   Ctrl+P palette"),
-    )
-    _PREVIEW_STYLE = {
-        "rail": ("panel", "foreground"),
-        "user": ("primary", "foreground"),
-        "assistant": ("surface", "foreground"),
-        "success": ("background", "success"),
-        "warning": ("background", "warning"),
-        "error": ("background", "error"),
-        "accent": ("background", "accent"),
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -283,8 +261,7 @@ class SettingsThemeEditor(Vertical):
         # (INSTANT_APPLY_BEHAVIOR_COPY in UI/Screens/settings_screen.py -- the
         # widget must not import the screen).
         yield Static(
-            "Apply applies immediately - no Save needed; "
-            "Save stores the theme; Set as launch default makes it load at startup.",
+            "Apply previews this palette now - no Save needed; Save stores the theme file.",
             id="settings-theme-apply-hint",
             classes="settings-help-copy",
         )
@@ -297,24 +274,12 @@ class SettingsThemeEditor(Vertical):
                 id="settings-theme-generate",
                 classes="theme-editor-action",
             )
-            yield Button(
-                "Set as launch default",
-                id="settings-theme-set-default",
-                classes="theme-editor-action",
-            )
 
     def _compose_preview_section(self) -> ComposeResult:
         yield Static("Live Preview", classes="destination-section")
         # TASK-31259: painted from the palette being edited (see
         # _refresh_preview), so it follows every keystroke, not just Apply.
-        with Vertical(id="settings-theme-preview", classes="settings-theme-preview"):
-            for suffix, text in self._PREVIEW_ROWS:
-                yield Static(
-                    text,
-                    id=f"settings-theme-preview-{suffix}",
-                    classes="settings-theme-preview-row",
-                    markup=False,  # task-32946: "[ Send ]" is literal text
-                )
+        yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
 
     def on_mount(self) -> None:
         """Initialize after composed descendants are mounted."""
@@ -513,22 +478,10 @@ class SettingsThemeEditor(Vertical):
 
     def _refresh_preview(self) -> None:
         """Paint the preview rows from the palette being edited (TASK-31259)."""
-        for suffix, (bg_key, fg_key) in self._PREVIEW_STYLE.items():
-            try:
-                row = self.query_one(f"#settings-theme-preview-{suffix}", Static)
-            except QueryError:
-                return
-            background = self.current_theme_data.get(bg_key)
-            foreground = self.current_theme_data.get(fg_key)
-            try:
-                if background:
-                    # ds-runtime: preview the user-edited theme palette.
-                    row.set_styles(background=background)
-                if foreground:
-                    # ds-runtime: preview the user-edited theme palette.
-                    row.set_styles(color=foreground)
-            except Exception:  # noqa: BLE001 - a half-typed hex must not break painting
-                continue
+        try:
+            self.query_one("#settings-theme-preview", ThemePreview).paint(self.current_theme_data)
+        except QueryError:
+            return
 
     def _update_dark_mode_checkbox(self) -> None:
         """Update the dark mode checkbox."""
@@ -802,21 +755,6 @@ class SettingsThemeEditor(Vertical):
             data["variables"] = variables
         return data
 
-    @on(Button.Pressed, "#settings-theme-set-default")
-    def on_set_launch_default(self) -> None:
-        """Make the current saved theme the startup theme (TASK-31250)."""
-        name = self._require_theme_name()
-        if name is None:
-            return
-        saved = (self.custom_themes_path / f"{name}.toml").exists()
-        if not saved and not self._is_catalog_theme(name):
-            self.app.notify(
-                "Save the theme first, then set it as the launch default",
-                severity="warning",
-            )
-            return
-        self._save_launch_default(name, f"'{name}' will load at the next launch")
-
     def _save_launch_default(self, name: str, success_message: str) -> None:
         from ..config import apply_settings_mutation_to_cli_config
 
@@ -872,7 +810,7 @@ class SettingsThemeEditor(Vertical):
         user_theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
         if user_theme_path.exists():
             self.load_user_theme(self.current_theme_name)
-        elif self._is_catalog_theme(self.current_theme_name):
+        elif is_catalog_theme(self.current_theme_name):
             self.load_theme(self.current_theme_name)
         else:
             # TASK-31251: a renamed, never-saved theme has nothing to go back
@@ -883,12 +821,6 @@ class SettingsThemeEditor(Vertical):
             )
             return
         self.app.notify("Theme reset to original values", severity="information")
-
-    def _is_catalog_theme(self, name: str) -> bool:
-        """True for Textual built-ins and shipped ALL_THEMES names."""
-        return name in BUILTIN_THEMES or any(
-            getattr(theme, "name", None) == name for theme in ALL_THEMES
-        )
 
     @on(Button.Pressed, "#settings-theme-new")
     def on_new_theme(self) -> None:
