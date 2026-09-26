@@ -78,6 +78,32 @@ async def test_scope_pages_newest_first_and_searches_content_literally(draft_she
     ]
 
 
+def test_draft_shelf_page_uses_ordering_index_without_statistics(draft_shelf):
+    database, local, _scope = draft_shelf
+    for index in range(100):
+        local.create_prompt_draft(f"plan corpus {index}")
+
+    connection = database.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    query = """
+        SELECT draft_id, content, created_at, updated_at, version
+        FROM LocalPromptDrafts
+        ORDER BY updated_at DESC, draft_id DESC
+        LIMIT ? OFFSET ?
+    """
+    plan = " | ".join(
+        str(row[3])
+        for row in connection.execute("EXPLAIN QUERY PLAN " + query, (20, 0))
+    )
+
+    assert "USING INDEX idx_local_prompt_drafts_updated" in plan
+
+
 @pytest.mark.asyncio
 async def test_update_and_delete_refuse_stale_reviewed_versions(draft_shelf):
     _database, _local, scope = draft_shelf
