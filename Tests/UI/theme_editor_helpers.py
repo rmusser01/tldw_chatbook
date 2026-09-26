@@ -15,8 +15,8 @@ from textual.pilot import Pilot
 async def open_theme_editor(host: Any, pilot: Pilot) -> Any:
     """Clone the highlighted theme from the picker and return the editor.
 
-    Clone renames the working theme to ``<active>_copy`` and marks the editor
-    modified -- callers that need a clean editor reset ``is_modified``.
+    Clone renames the working theme to ``<active>_copy`` and leaves the editor
+    clean (TASK-32948 PR 2) -- callers that need it dirty make a real edit.
 
     Args:
         host: The running test app whose current screen is Settings ▸ Theme.

@@ -84,7 +84,7 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** act at once, and **Save** in the editor (behind **Clone** / **New**) stores a theme file. | Workspaces, [My Profile](settings/personal-context-profile.md), Theme |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | Workspaces, [My Profile](settings/personal-context-profile.md), Theme |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
 | **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
@@ -154,7 +154,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Density and visual defaults shared with the app shell, plus a read-only theme row that links to the Theme picker. | Draft — save with s |
-| Interface | **Theme** | A filterable picker of every theme (yours, shipped, Textual's) with live preview, Use/Try/Revert, and an editor behind Clone/New. | Applies immediately |
+| Interface | **Theme** | A filterable picker of every theme (yours, shipped, Textual's) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
@@ -442,7 +442,8 @@ editing and deeper visual preview." **Global visual defaults** leads with a
 read-only **Theme** row — "\<Launch theme\> (launch default) · active: \<Active
 theme\>" (or "launch default missing: \<id\> · active: …" if that theme is no
 longer registered) — and an **Open Theme** button that jumps straight to the
-Theme picker; Appearance itself no longer sets or saves a theme. Below that:
+Theme picker, highlighting the launch default (not whatever's merely active,
+if the two differ); Appearance itself no longer sets or saves a theme. Below that:
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Character expressions**, an **Animations** checkbox,
 and **Reduce motion**, **ASCII glyphs**, and **Smooth scrolling** toggles. **Shared Library rail**
@@ -488,6 +489,10 @@ launch default; **t** — **Try** it for this session only, without saving
 anything; **c** — **Clone**, **n** — **New**, both of which open the full
 editor below, pre-loaded from the highlighted theme; **↑** on the list's very
 top row returns focus to the filter box instead of wrapping to the bottom.
+When the highlighted theme is one of **yours**, three more keys work: **e** —
+**Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
+and **Delete** — remove it. These three, plus **Export**, have no effect on a
+shipped or Textual theme (Clone or New it first to make your own copy).
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
 match '\<text\>'" and Enter does nothing.
@@ -495,49 +500,90 @@ match '\<text\>'" and Enter does nothing.
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
 Try/Use, so one Revert always lands back where you started); it disappears
-once pressed. Toasts name what happened: Try says "Trying \<name\> for this
+once pressed. Renaming a theme the pending Revert would return to makes it
+return to the new name instead, and deleting that theme drops the Revert
+button, so it never targets a theme that no longer exists. When a persisted Use captures a moment where the active theme
+and the launch default already disagreed (e.g. an earlier Try left the
+active theme unsaved), the label also names the launch default: "Revert to
+\<theme\> (launch: \<launch theme\>)". Toasts name what happened: Try says
+"Trying \<name\> for this
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
-crashes and Revert stays available.
+crashes and Revert stays available. If the save lands but the in-process
+config cache fails to refresh, Use's toast instead adds "; configuration
+refresh failed — reopen Settings to refresh". One shared helper builds this
+toast, so the command palette's "Switch to \<theme\>" command — which also
+persists like Use — shows the exact same wording, cache-refresh warning
+included.
 
-**Clone** or **New** swap in the same full editor this category has always
-had, behind a **Back to themes** button. **Theme Library**: a **Name** box
-(live for anything but the two Textual built-ins) and a **Dark theme** On/Off
-toggle. **Actions**: **Apply** applies the palette **for this session only**
-and writes nothing; **Save** stores it as a TOML file in your profile's
-`themes/` folder and registers it at once, so it appears in the picker's YOUR
-THEMES group and in the palette's "Theme: Switch to…" list without a restart
-(built-ins can't be overwritten, and saving over another saved theme asks
-first) — Save no longer sets the launch default itself, use the picker's
-**Use** for that; **Reset** reloads it as last saved; **Generate from
-Primary** derives a palette from the primary colour. **Color Palette** is ten
-hex boxes, Primary through Error, each with a swatch showing the colour and
-its hex; an invalid value marks the box and the swatch reads "Invalid — use
-#RRGGBB". **Color Presets** fill the colour chosen in the **Presets fill** box
-(Primary by default), by click or by focusing a swatch and pressing Enter or
-Space. The **Live Preview** is a Console-shaped stub that repaints as you
-type. **New** starts a theme from the palette currently loaded; **Clone**
-does the same and appends `_copy` to the name. **Delete** removes a saved
-theme after confirmation and, if it was the launch default, resets the launch
-default to Textual Dark automatically; **Export** writes it to your Downloads
-folder and asks before replacing an earlier export. A theme cloned from a
-shipped one keeps that theme's extra readability colours (muted text, footer
-keys, input selection) through Apply, Save and Export — they are stored in a
-`[variables]` table in the TOML. They are tuned for that palette, so once you
-change any base colour or the dark flag they are dropped and derived from
-your colours instead. A `[variables]` entry that is not a colour (or `auto
-NN%`, or a text style) is skipped with a warning when the theme loads.
-Deleting a saved theme that reuses a shipped or built-in name (say `nord`)
-brings the original back. **Back** returns to the picker; with unsaved edits
-it asks **Stay**, **Discard**, or **Save** (Escape stays) — the same prompt
-appears if you switch to a different Settings category while the editor is
-open, and a Save that needs an overwrite confirmation or a valid name keeps
-you on the editor either way. While a backup or recovery holds the theme
-files, the editor's theme list reads "Theme files unavailable while
-backup/recovery is in progress" instead of listing them. The card's buttons
-are bracketed chips — Apply, Save, Reset and Delete keep their colour as
-label and brackets, and a focused button fills with that colour — and each
+**Your themes** get a second row of chips beneath Use/Try/Clone/New/Revert —
+**Edit**, **Rename**, **Delete** and **Export** — visible only when the
+highlighted theme is one of yours (a shipped or Textual theme shows neither
+the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
+group shows a disabled "(none yet)" row instead. **Edit** opens the full
+editor on the saved file, in place — unlike Clone, it does not append
+`_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
+("Rename theme '\<old\>'"); a name already in use answers "Name taken:
+'\<new\>'" and changes nothing. Renaming your launch default updates the
+saved launch default to the new name without changing the theme you are
+running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
+'\<name\>'? This removes the theme file and cannot be undone."); if the
+deleted theme is both the launch default and the one on screen, the launch
+default and the running theme both reset to Textual Dark and the toast says
+so; if it is the launch default but not the one on screen, only the launch
+default setting resets to Textual Dark — the running theme is left alone —
+and the toast says "launch default reset to Textual Dark"; if it was merely
+active (not the launch default) it switches to your launch default instead;
+and either way, deleting a saved theme that reuses a shipped or built-in
+name (say `nord`) brings the original back. **Export** writes the saved
+file to your Downloads folder and asks before replacing an earlier export.
+
+**Clone**, **New** or **Edit** swap in the full editor below, behind a **Back
+to themes** button; the editor no longer has its own theme list — the header
+says what you're editing ("Editing \<name\> · copy of \<source\>" for Clone,
+"· new" for New, "· saved theme" for Edit). It keeps a **Name** box (live for
+anything but the two Textual built-ins) and a **Dark theme** On/Off toggle.
+**Actions**: **Try** previews the palette **for this session only** and
+writes nothing (no Save needed); **Save** stores it as a TOML file in your
+profile's `themes/` folder, registers it at once — so it appears in the
+picker's YOUR THEMES group and the palette's "Theme: Switch to…" list without
+a restart — and returns you to the picker with that theme highlighted (built-
+ins can't be overwritten, and saving over another saved theme asks first); if
+the theme you just saved is the one currently running, it repaints live so it
+is never stale. Save no longer sets the launch default itself — use the
+picker's **Use** for that. **Save as…** prompts for a new name ("Save theme
+as", pre-filled `\<current\>_copy`) and always confirms an overwrite, even of
+the loaded theme's own name, since Save as always means a new file; like
+Save, it then returns you to the picker with the new theme highlighted, not
+back into the editor. **Reset** reloads it as last saved;
+**Generate from Primary** derives a palette from the primary colour. **Color
+Palette** is ten hex boxes, Primary through Error, each with a swatch showing
+the colour and its hex; an invalid value marks the box and the swatch reads
+"Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in the
+**Presets fill** box (Primary by default), by click or by focusing a swatch
+and pressing Enter or Space. The **Live Preview** is a Console-shaped stub
+that repaints as you type. A theme cloned from a shipped one keeps that
+theme's extra readability colours (muted text, footer keys, input selection)
+through Try, Save and Export — they are stored in a `[variables]` table in
+the TOML. They are tuned for that palette, so once you change any base
+colour or the dark flag they are dropped and derived from your colours
+instead. A `[variables]` entry that is not a colour (or `auto NN%`, or a text
+style) is skipped with a warning when the theme loads. **Back** — or **Esc**
+twice (the first releases the field you're typing in, the second acts as
+Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
+(Escape stays) — the same prompt appears if you switch to a different
+Settings category while the editor is open, and a Save that needs an
+overwrite confirmation or a valid name keeps you on the editor either way.
+
+While a backup or recovery holds the theme files, YOUR THEMES shows a
+disabled "Theme files unavailable while backup/recovery is in progress" row
+in place of your themes, and Edit, Rename, Delete and Export (list keys and
+picker buttons alike) are disabled with that same reason as a tooltip — Use
+and Try still work, and so does the editor's Try, but the editor's Save and
+Save as are disabled with the same tooltip too, since both write a file. The
+card's buttons are bracketed chips — Try, Save, Reset and (on the picker)
+Delete keep their colour as label and brackets even when focused — and each
 preset swatch is framed by thin side rules that thicken into brackets when it
 has focus, so a preset close to the card colour still reads as a cell.
 
@@ -880,8 +926,9 @@ a note on what would have to exist before Settings could own a default.
    one step. To try it first without committing, press **t** (**Try**); a
    **Revert** button appears either way if you change your mind. To build your
    own palette, press **c** (**Clone**) or **n** (**New**) to open the editor,
-   adjust the colours, press **Save** to store and register it, then **Back**
-   to the picker and **Use** it from there.
+   adjust the colours, and press **Save** — it stores the file, registers it,
+   and returns you to the picker with it highlighted; press **Use** there to
+   make it the launch default.
 4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
@@ -982,11 +1029,12 @@ not open an editor.
   (launch default + active theme) and an **Open Theme** button; switching or
   previewing a theme happens on the **Theme** category itself, via **Use**
   (switches and saves the launch default), **t**/**Try** (switches for this
-  session only, saves nothing), the Theme editor's **Apply** (session only),
-  or the command palette's "Theme: Switch to \<name\>" (applies *and* rewrites
-  the launch default). A theme you **Save** in the Theme editor is stored and
-  registered but not applied or made the launch default — press **Use** on it
-  from the picker for that.
+  session only, saves nothing), the Theme editor's **Try** (session only), or
+  the command palette's "Theme: Switch to \<name\>" (applies *and* rewrites
+  the launch default). A theme you **Save** in the Theme editor is stored,
+  registered, and repaints live if it happens to be the theme already
+  running, but it is not made the launch default — press **Use** on it from
+  the picker (where Save leaves you, highlighted) for that.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
@@ -1124,3 +1172,39 @@ Use), Clone opened the editor and Back with an edit showed the Stay /
 Discard / Save prompt, Appearance's read-only row and Open Theme button
 landed on the picker, and a full relaunch loaded the theme a prior session
 had Used.*
+
+*Verified against `feat/theme-picker-pr2` @ ed7c9f1cc7 — 2026-09-25
+(TASK-32948 PR 2, Task 5): the command palette's toast now matches the
+picker's wording and gains a cache-refresh-failed warning; Appearance's
+Open Theme highlights the launch default, not merely the active theme;
+the Revert chip names the launch default too when a persisted change left
+it disagreeing with the active theme. Pinned by pilot tests, not driven
+live.*
+
+*Verified against `feat/theme-picker-pr2` @ 7690d30c35 — 2026-09-25
+(TASK-32948 PR 2, Task 5, fix round 1): the Use toast and the palette's
+"Switch to \<theme\>" toast — cache-refresh warning included — now come
+from one shared helper (`theme_catalog.use_theme_toast`), so the picker's
+own Use button carries the same cache-refresh-failed warning the palette
+does; fixes the prior stamp's palette-only framing. Pinned by pilot tests,
+not driven live.*
+
+*Verified against `feat/theme-picker-pr2` @ 100ecd9e24 — 2026-09-25
+(TASK-32948 PR 2, Task 6): this section's Edit/Rename/Delete/Export
+paragraph, the reworked editor actions/header, and the pause copy above are
+rewritten for what PR 2 shipped. Driven live in a scratch profile at both
+80x24 and 190x55: Clone opened the editor on a copy, editing Primary and
+pressing Save wrote the file, returned to the picker with the new theme
+highlighted under YOUR THEMES, and showed "Theme '\<name\>' saved"; Rename
+prompted and renamed with "Renamed '\<old\>' to '\<new\>'"; Edit re-opened
+the saved file in place (header "Editing \<name\> · saved theme", the
+edited colour still applied — not a fresh clone); Save as… prompted
+"\<name\>_copy" and saved a second file; Use made that theme active and the
+launch default ("\<name\> is now your theme (was: Textual Dark)"); Delete
+then confirmed and removed it with "Deleted '\<name\>'; launch default and
+theme reset to Textual Dark" (AC #8's fallback); Export wrote a
+`<name>_theme.toml` file, and the toast named the scratch profile's own
+Downloads path. The real `~/.config/tldw_cli/config.toml` mtime and the
+real `~/.config/tldw_cli/themes/` directory were checked before and after
+both passes and never changed; both Export toasts pointed at the scratch
+HOME's Downloads, confirmed on disk, never the real `~/Downloads`.*

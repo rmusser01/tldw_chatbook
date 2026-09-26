@@ -3,14 +3,24 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import ComposeResult
+from textual.theme import Theme
 from textual.widgets import Button, OptionList
 
 from Tests.private_profile import private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.css.Themes import theme_catalog as tc
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.Widgets.settings_theme_editor import THEMES_UNAVAILABLE_LABEL
 from tldw_chatbook.Widgets.settings_theme_picker import ThemePicker
 from tldw_chatbook.Widgets.theme_preview import ThemePreview
+
+_FILE_ACTION_BUTTON_IDS = (
+    "#settings-theme-picker-edit",
+    "#settings-theme-picker-rename",
+    "#settings-theme-picker-delete",
+    "#settings-theme-picker-export",
+)
 
 
 def _app(*widgets):
@@ -54,8 +64,8 @@ def config_writes(monkeypatch, tmp_path):
     return calls
 
 
-async def _picker_app(size=(160, 45)):
-    picker = ThemePicker(id="settings-theme-picker")
+async def _picker_app(size=(160, 45), list_user_names=None):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=list_user_names)
     app = _app(picker)
     for theme in ALL_THEMES:
         app.register_theme(theme)
@@ -183,7 +193,8 @@ async def test_up_on_first_row_returns_to_filter(request, config_writes):
     async with app.run_test(size=(160, 45)) as pilot:
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.focus()
-        lst.highlighted = lst.get_option_index(_option_ids(picker)[1])  # first enabled row
+        # First enabled row (an empty YOUR THEMES now shows a disabled "(none yet)").
+        lst.highlighted = lst.get_option_index(next(i for i in _option_ids(picker) if i))
         await pilot.press("up")
         await pilot.pause()
         assert app.focused.id == "settings-theme-filter"
@@ -203,10 +214,25 @@ class _CaptureEditApp(IsolatedWidgetTestApp):
     def __init__(self, compose):
         super().__init__(compose)
         self.edits: list[tuple[str, str]] = []
+        self.renames: list[str] = []
+        self.deletes: list[str] = []
+        self.exports: list[str] = []
 
     @on(ThemePicker.EditRequested)
     def _capture(self, message: ThemePicker.EditRequested) -> None:
         self.edits.append((message.mode, message.theme_id))
+
+    @on(ThemePicker.RenameRequested)
+    def _capture_rename(self, message: ThemePicker.RenameRequested) -> None:
+        self.renames.append(message.theme_id)
+
+    @on(ThemePicker.DeleteRequested)
+    def _capture_delete(self, message: ThemePicker.DeleteRequested) -> None:
+        self.deletes.append(message.theme_id)
+
+    @on(ThemePicker.ExportRequested)
+    def _capture_export(self, message: ThemePicker.ExportRequested) -> None:
+        self.exports.append(message.theme_id)
 
 
 @pytest.mark.asyncio
@@ -240,6 +266,28 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
         await pilot.press("down", "enter")
         await pilot.pause()
         assert any("launch default was not saved" in n for n in notes)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_use_toast_warns_when_cache_reload_fails(request, monkeypatch, config_writes):
+    # Fix round 1 (TASK-32948 Task 5): the picker's Use toast must carry the
+    # same cache-refresh-failed warning as the palette's -- both persist
+    # through use_theme/use_theme_toast, one shared toast (spec §4).
+    monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False))
+    app, picker = await _picker_app()
+    notes = []
+    app.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+    async with app.run_test(size=(160, 45)) as pilot:
+        picker.query_one("#settings-theme-list").focus()
+        await pilot.press("down", "enter")  # Use (persisted, cache reload fails)
+        await pilot.pause()
+        assert any(
+            "is now your theme" in message
+            and "configuration refresh failed — reopen Settings to refresh" in message
+            and severity == "warning"
+            for message, severity in notes
+        )
 
 
 @pytest.mark.asyncio
@@ -303,3 +351,190 @@ async def test_pending_revert_survives_a_new_picker_instance(request, config_wri
         revert.press()
         await pilot.pause()
         assert app.theme == original and not revert.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_label_names_the_launch_default_when_it_differs(request, config_writes):
+    # Task 5 (TASK-32948 PR 2): a persisted Use captures where a Revert would
+    # land -- normally just the previously-active theme, but when the active
+    # theme and the (already-persisted) launch default disagree, name both.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"  # active diverges from the launch default (textual-dark)
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()
+        await pilot.pause()
+        revert = picker.query_one("#settings-theme-revert", Button)
+        assert str(revert.label) == (
+            f"Revert to {tc.display_name('nord')} (launch: {tc.display_name('textual-dark')})"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_label_stays_plain_for_a_try_even_when_launch_differs(request, config_writes):
+    # A Try never persists, so the chip never needs the launch-default
+    # qualifier even when active and launch disagree.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.try_highlighted()
+        await pilot.pause()
+        revert = picker.query_one("#settings-theme-revert", Button)
+        assert str(revert.label) == f"Revert to {tc.display_name('nord')}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_yours_actions_only_show_for_your_themes(request, config_writes):
+    app, picker = await _picker_app(list_user_names=lambda: {"mine"})
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause()
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            assert picker.query_one(button_id, Button).display, button_id
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            assert not picker.query_one(button_id, Button).display, button_id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_delete_export_edit_post_requests(request, config_writes):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("mine")
+        await pilot.pause()
+        await pilot.press("r", "delete", "e")
+        await pilot.pause()
+        picker.query_one("#settings-theme-picker-export", Button).press()
+        await pilot.pause()
+        assert app.renames == ["mine"]
+        assert app.deletes == ["mine"]
+        assert app.edits == [("edit", "mine")]
+        assert app.exports == ["mine"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_keys_ignored_for_catalog_themes(request, config_writes):
+    picker = ThemePicker(id="settings-theme-picker", list_user_names=lambda: {"mine"})
+
+    def compose() -> ComposeResult:
+        yield picker
+
+    app = _CaptureEditApp(compose)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        await pilot.press("r", "delete", "e")
+        await pilot.pause()
+        assert app.renames == [] and app.deletes == [] and app.edits == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pause_row_disables_file_actions(request, config_writes):
+    def raiser():
+        raise RecoveryRequired("x")
+
+    app, picker = await _picker_app(list_user_names=raiser)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert picker.files_available is False
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_UNAVAILABLE_LABEL in labels
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            button = picker.query_one(button_id, Button)
+            assert button.disabled, button_id
+            assert button.tooltip == THEMES_UNAVAILABLE_LABEL, button_id
+        before = app.theme
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.theme == "nord" and app.theme != before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_empty_your_themes_says_none_yet(request, config_writes):
+    """Spec §9 / task-32945: an empty YOUR THEMES group shows an inert
+    "(none yet)" row (the retired editor tree used to own this)."""
+    app, picker = await _picker_app(list_user_names=set)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        prompts = [str(lst.get_option_at_index(i).prompt) for i in range(3)]
+        assert prompts[:2] == ["YOUR THEMES", "(none yet)"]
+        assert lst.get_option_at_index(1).disabled
+        # The filter hides it: no match is not the same as no themes.
+        picker.query_one("#settings-theme-filter").value = "nord"
+        await pilot.pause()
+        prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert "(none yet)" not in prompts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pause_keeps_last_known_your_themes(request, config_writes):
+    """R27 (5): a pause after a good listing must not relabel your themes
+    as shipped -- the last successfully listed names keep their origin."""
+    state = {"paused": False}
+
+    def lister():
+        if state["paused"]:
+            raise RecoveryRequired("x")
+        return {"mine"}
+
+    app, picker = await _picker_app(list_user_names=lister)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        state["paused"] = True
+        picker.refresh_catalog()
+        await pilot.pause()
+        assert picker.files_available is False
+        origin = {e.id: e.origin for e in picker.entries}["mine"]
+        assert origin == "yours"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lister_oserror_reads_as_no_user_themes(request, config_writes):
+    """R27 (6): an OSError from the lister is "no user themes", not a crash
+    and not a backup/recovery pause."""
+
+    def broken():
+        raise OSError(13, "Permission denied")
+
+    app, picker = await _picker_app(list_user_names=broken)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        assert picker.files_available is True
+        assert not [e for e in picker.entries if e.origin == "yours"]
+        assert picker.entries  # the catalog still lists

@@ -184,6 +184,45 @@ def test_use_theme_persist_failure_reports_not_persisted(monkeypatch):
     assert app.app_config["general"]["default_theme"] == "textual-dark"
 
 
+def test_theme_change_default_caches_reloaded_is_true():
+    # Every existing 3-positional ThemeChange(...) construction must stay valid.
+    assert tc.ThemeChange("textual-dark", "textual-dark", True).caches_reloaded is True
+
+
+def test_use_theme_persist_reports_cache_reload_failure(monkeypatch):
+    # file_replaced True (persisted) but caches_reloaded False: the write
+    # landed, the in-process cache refresh after it did not.
+    monkeypatch.setattr(
+        tc, "_apply_config_mutation",
+        lambda m: SimpleNamespace(file_replaced=True, caches_reloaded=False),
+    )
+    monkeypatch.setattr(tc, "current_launch_default", lambda: "textual-dark")
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=True)
+    assert change.persisted is True
+    assert change.caches_reloaded is False
+
+
+def test_try_reports_caches_reloaded_true(writes):
+    # persist=False never calls _persist_launch_default; nothing to fail.
+    app = _FakeApp()
+    change = tc.use_theme(app, "nord", persist=False)
+    assert change.caches_reloaded is True
+
+
+def test_merge_surfaces_a_failed_cache_reload_from_either_leg():
+    ok = tc.ThemeChange("textual-dark", "textual-dark", True, caches_reloaded=True)
+    failed = tc.ThemeChange("nord", "textual-dark", True, caches_reloaded=False)
+    assert ok.merge(failed).caches_reloaded is False
+    assert failed.merge(ok).caches_reloaded is False
+
+
+def test_merge_keeps_caches_reloaded_true_when_both_legs_succeed():
+    first = tc.ThemeChange("textual-dark", "textual-dark", True, caches_reloaded=True)
+    second = tc.ThemeChange("nord", "textual-dark", True, caches_reloaded=True)
+    assert first.merge(second).caches_reloaded is True
+
+
 def test_revert_restores_active_and_launch_default(writes):
     app = _FakeApp()
     change = tc.use_theme(app, "nord", persist=True)

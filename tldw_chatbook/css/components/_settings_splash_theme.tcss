@@ -72,6 +72,26 @@
 #settings-theme-card-column .theme-editor-action {
     width: $ds-width-full;
 }
+/* R19/R23/R24 (TASK-32948 PR 2 Task 6): the editor's colour-keeping
+   `-error`/`-primary` focus rules below live under `#settings-theme-card`,
+   whose own Delete button Task 4 removed (Try, still `-primary` there,
+   keeps its rule). The picker's Delete (yours-only) and Use (always
+   visible, this column) need the same overrides, or the generic
+   `.settings-action-row Button:focus` (0,2,1) neutralises them into the
+   plain chip fill -- the same class of bug TASK-32947 found for the
+   editor's own buttons. */
+#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    color: $ds-surface-panel;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+#settings-theme-card-column .settings-action-row .theme-editor-action.-primary:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
 /* At compact width the preview shrinks to its two anchor rows (rail +
    accent); a CSS-only alternative to a compose-time `compact` parameter on
    ThemePreview (removed -- YAGNI, see theme_preview.py). */
@@ -95,12 +115,14 @@
 }
 
 /* ===== Settings theme editor ===== */
-#settings-theme-tree {
+/* TASK-32948: the theme list moved to the picker; the header says what is
+   being edited ("Editing x · copy of Y"). */
+#settings-theme-editor-header {
     width: $ds-width-full;
-    height: $ds-size-12;
-    min-height: $ds-size-8;
-    border: solid $ds-grid-line;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    height: auto;
+    color: $ds-text-primary;
+    text-style: bold;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
@@ -241,16 +263,11 @@
     border-left: outer $text-warning;
     border-right: outer $text-warning;
 }
-#settings-theme-card .settings-action-row .theme-editor-action.-error:focus {
-    background: $ds-status-error-readable;
-    border-left: outer $ds-status-error-readable;
-    border-right: outer $ds-status-error-readable;
-}
 
 
 /* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
    detail pane is ~45 cells; four 16-cell-minimum buttons cannot share a row,
-   so the library and action rows stack and each button takes the width. */
+   so the action rows stack and each button takes the width. */
 #settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
     layout: vertical;
     height: auto;

@@ -1213,20 +1213,15 @@ class ThemeProvider(Provider):
 
     def switch_theme(self, theme_name: str) -> None:
         """Switch to the specified theme and keep it as the launch default."""
-        from .css.Themes.theme_catalog import display_name, use_theme
+        from .css.Themes.theme_catalog import use_theme, use_theme_toast
 
         try:
             change = use_theme(self.app, theme_name, persist=True)
         except Exception as e:  # noqa: BLE001 - palette commands must not raise
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
             return
-        if change.persisted:
-            self.app.notify(f"{display_name(theme_name)} is now your theme", severity="information")
-        else:
-            self.app.notify(
-                f"{display_name(theme_name)} applied; the launch default was not saved",
-                severity="warning",
-            )
+        message, severity = use_theme_toast(theme_name, change)
+        self.app.notify(message, severity=severity)
 
 
 def _navigate_via_screen(
