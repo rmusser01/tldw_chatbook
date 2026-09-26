@@ -891,6 +891,16 @@ def _validated_options(
                 )
             normalized[key] = option
             continue
+        if key == "seed":
+            # OmniVoice per-request sampling seed (non-negative 31-bit int).
+            if type(option) is not int or not 0 <= option < 2**31:
+                raise TTSEffectiveResolutionError(
+                    code="invalid_selection",
+                    axis="provider_options",
+                    source=source,
+                )
+            normalized[key] = option
+            continue
         if key == "num_candidates":
             if type(option) is not int or not 1 <= option <= 5:
                 raise TTSEffectiveResolutionError(
