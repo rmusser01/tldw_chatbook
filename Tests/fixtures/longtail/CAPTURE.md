@@ -23,7 +23,7 @@ fixtures have `models_response: null` (the `GET /models` round is
 cloud-only by spec).
 
 llama-server was pointed at the gguf blob already on disk from the ollama
-pull (`~/.ollama/models/blobs/sha256-c539…`; override with `LLAMA_GGUF`).
+pull (`~/.ollama/models/blobs/sha256-c539…`; override with `LLAMA_GGUF`, which must be an existing file inside one of the home model directories -- ~/.ollama/models, ~/.lmstudio/models, ~/.cache/llama.cpp, ~/models -- and is refused outside them).
 Both servers ran on isolated loopback ports (8901/8902) and were stopped
 after capture; no developer-running instance was touched.
 

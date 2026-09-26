@@ -1118,6 +1118,12 @@ class HostedPresetFinishPolicy:
     reasoning_disposition: ReasoningDisposition
 
     def __init__(self, record: ProviderRecord) -> None:
+        """Freeze one record's finish/reasoning policy.
+
+        Args:
+            record: Registry preset whose finish sets and reasoning
+                disposition drive every validation decision.
+        """
         self._record = record
         # Registry data is maintainer-authored and typed ``str``; cast to
         # the protocol's literal. An unknown value behaves like the
@@ -1133,6 +1139,27 @@ class HostedPresetFinishPolicy:
         has_text: bool,
         has_calls: bool,
     ) -> str:
+        """Validate one turn's finish reason against the preset's sets.
+
+        Args:
+            finish_reason: Raw finish reason from the provider response or
+                stream terminal choice.
+            has_text: Whether the turn accumulated any visible text.
+            has_calls: Whether the turn accumulated any tool calls.
+
+        Returns:
+            The validated terminal finish reason.
+
+        Raises:
+            ChatProviderError: When the reason is one of the preset's
+                provider-terminal errors (record identity, 502, reason
+                text never included in the message).
+            HostedChatProtocolError: When the reason is outside the
+                preset's terminal set, or the reason/state pairing is
+                inconsistent (``tool_calls`` without calls; ``stop``/
+                ``length`` with calls; empty text and no calls outside the
+                tolerant profile).
+        """
         record = self._record
         if finish_reason in record.finish_provider_errors:
             raise ChatProviderError(
@@ -1165,6 +1192,21 @@ class HostedPresetFinishPolicy:
         return cast(str, finish_reason)
 
     def validate_reasoning_content(self, value: object) -> str | None:
+        """Validate one reasoning payload under the preset's disposition.
+
+        Args:
+            value: Raw ``reasoning_content`` value from a response message
+                or stream delta.
+
+        Returns:
+            The validated reasoning string, or ``None`` when the
+            disposition is ``"ignored"`` (always dropped) or the payload is
+            absent.
+
+        Raises:
+            HostedChatProtocolError: When a present payload is not a
+                string.
+        """
         if self.reasoning_disposition == "ignored":
             return None
         if value is None:
@@ -1281,6 +1323,19 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
         resolution: HostedProviderResolution | None = None,
         provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
     ) -> None:
+        """Wrap one validated boundary stream with the preset's visibility rules.
+
+        Args:
+            stream: The shared hosted boundary stream (already carrying the
+                record's allowances and finish policy).
+            record: Registry preset driving reasoning visibility and the
+                continuation candidate's identity.
+            resolution: The request resolution feeding the continuation
+                candidate, or ``None`` when the stream was built without
+                one (``provider_continuation`` then fails closed).
+            provider_continuations: Checkpoints restored into this request,
+                forwarded to the candidate builder for round growth.
+        """
         self._stream = stream
         self._record = record
         self._resolution = resolution
@@ -1288,9 +1343,26 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
         self._reasoning_visible = record.reasoning_disposition == "displayable"
 
     def __iter__(self) -> HostedProviderStream:
+        """Return the stream itself (iterator protocol)."""
         return self
 
     def __next__(self) -> dict[str, Any]:
+        """Return the next visible chunk.
+
+        The underlying validated event is deep-copied and projected for
+        visibility: ``reasoning_content`` is stripped from deltas unless
+        the record's disposition is ``"displayable"``, and reasoning/
+        control frames carry an explicit empty ``content`` so generic
+        consumers do not render fallback diagnostics.
+
+        Returns:
+            One caller-visible stream event.
+
+        Raises:
+            HostedChatProtocolError: On any malformed frame, read failure,
+                or state violation, propagated from the shared boundary.
+            StopIteration: After the clean terminal frame.
+        """
         event = deepcopy(next(self._stream))
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
@@ -1306,12 +1378,30 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
 
     @property
     def terminal_turn(self) -> HostedChatTurn:
-        """Return terminal state after clean stream exhaustion."""
+        """Return terminal state after clean stream exhaustion.
+
+        Returns:
+            The normalized assistant turn (text, calls, finish, usage).
+
+        Raises:
+            HostedChatProtocolError: When the stream has not been cleanly
+                exhausted yet.
+        """
         return self._stream.terminal_turn
 
     @property
     def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
-        """Return a canonical candidate only after clean stream exhaustion."""
+        """Return a canonical candidate only after clean stream exhaustion.
+
+        Returns:
+            The next canonical continuation checkpoint for the terminal
+            turn (record identity and protocol), or ``None`` when the turn
+            warrants none.
+
+        Raises:
+            HostedChatProtocolError: When the stream was built without a
+                resolution or has not been cleanly exhausted.
+        """
         if self._resolution is None:
             raise HostedChatProtocolError(
                 f"{self._record.display_name} stream metadata is incomplete."
@@ -1324,12 +1414,18 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
         )
 
     def close(self) -> None:
-        """Close the owned underlying stream."""
+        """Close the owned underlying stream (idempotent)."""
         self._stream.close()
 
 
 class HostedProviderResponse(dict[str, Any]):
-    """Public response mapping with terminal state kept out of the mapping."""
+    """Public response mapping with terminal state kept out of the mapping.
+
+    Behaves exactly like the OpenAI-shaped response ``dict`` it wraps; the
+    normalized turn and continuation candidate ride as private attributes
+    exposed by properties, so generic consumers that stringify or compare
+    the mapping never see them.
+    """
 
     def __init__(
         self,
@@ -1338,16 +1434,27 @@ class HostedProviderResponse(dict[str, Any]):
         terminal_turn: HostedChatTurn,
         provider_continuation: ProviderContinuationCheckpoint | None,
     ) -> None:
+        """Wrap one normalized response with its private terminal state.
+
+        Args:
+            value: The OpenAI-shaped response mapping (``choices``/``usage``).
+            terminal_turn: The normalized assistant turn the response was
+                built from.
+            provider_continuation: The turn's continuation candidate, or
+                ``None`` when the turn warrants none.
+        """
         super().__init__(value)
         self._terminal_turn = terminal_turn
         self._provider_continuation = provider_continuation
 
     @property
     def terminal_turn(self) -> HostedChatTurn:
+        """Return the normalized assistant turn behind this response."""
         return self._terminal_turn
 
     @property
     def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        """Return the response's continuation candidate, if any."""
         return self._provider_continuation
 
 

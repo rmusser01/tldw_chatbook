@@ -41,10 +41,96 @@ from typing import Mapping
 _CLOUD = "cloud"
 _LOCAL = "local"
 
+#: Shared hosted-transport defaults (Qodo finding 7): one source for the
+#: numeric transport policy every engine preset ships in
+#: ``settings_defaults``. Provider-specific overrides (streaming, custom
+#: timeouts, the custom family's 120/1/1.0 policy) stay explicit per
+#: record; records spread this into their own dict so no two presets share
+#: a mutable mapping.
+_HOSTED_TRANSPORT_DEFAULTS = {"timeout": 90, "retries": 3, "retry_delay": 5.0}
+
 
 @dataclass(frozen=True)
 class ProviderRecord:
-    """Identity (all providers) + preset data (engine-driven providers)."""
+    """Identity (all providers) + preset data (engine-driven providers).
+
+    Immutable transcription of one provider's identity and -- when
+    ``engine_driven`` -- its hosted-preset behavior data. Behavior never
+    lives here; consumers read these fields and act (ADR-179).
+
+    Attributes:
+        key: Canonical dispatch/execution key (e.g. ``"databricks"``); the
+            engine's provider identity in errors, metrics, and checkpoints.
+        config_key: The ``[providers]`` table spelling (e.g.
+            ``"Databricks"``); parity-gated against ``config.py``.
+        display_name: Human-readable label used to prefix user-facing
+            engine error copy.
+        classification: ``"cloud"`` or ``"local"``; selects the config-key
+            list the record feeds.
+        api_key_env_var: Conventional credential environment variable, or
+            ``None`` when the provider has none.
+        api_key_env_candidates: Full env-candidate chain (configured name
+            first, then canonical) the engine's credential resolution walks.
+        default_base_url: Shipped base URL fallback, or ``None`` when the
+            host is per-account (Databricks) or per-entry (custom family).
+        native_tools: Whether the provider's chat path advertises native
+            tool calling.
+        reasoning_effort: Whether the chat path consumes a
+            ``reasoning_effort`` parameter for this provider.
+        auto_refresh: Whether the model catalog auto-refreshes this
+            provider's model list.
+        settings_defaults: Shipped ``api_settings`` fallbacks (model,
+            streaming, transport policy, env-var name) read by engine
+            resolution after explicit kwargs and the settings table.
+        pricing_seeds: Seed per-model pricing (USD input/output token
+            pairs) for the pricing catalog; empty when pricing is deferred.
+        engine_driven: Whether dispatch executes this provider through the
+            strict hosted engine (``hosted_provider_engine``) instead of a
+            hand-written ``LLM_Calls`` module.
+        base_url_suffix: Path appended to a bare configured host (e.g.
+            Databricks ``"/openai/v1"``); ``None`` when the default URL is
+            already complete.
+        finish_terminal: Finish reasons the finish policy accepts as
+            terminal for a completed turn.
+        finish_provider_errors: Finish reasons treated as provider-side
+            failures (502 ``ChatProviderError``) rather than turn outcomes.
+        payload_flags: Optional body fields this preset emits; a
+            flag-off field with a caller-supplied value is a bad request.
+        reasoning_effort_key: Payload key for ``reasoning_effort`` when the
+            provider spells it differently; ``None`` keeps the standard key.
+        extra_body_fields: Preset-authored extra body fields merged last,
+            each validated bounded.
+        response_allowances: Tolerated extra top-level response/stream
+            event keys (validated then dropped, never passed through).
+        choice_allowances: Tolerated extra choice-level keys (value rule:
+            null, scalar, or shape-safe mapping).
+        message_allowances: Tolerated extra message/delta-level keys
+            (same value rule).
+        tolerant_response_extras: Long-tail tolerant profile switch
+            (custom family only, fixture-gated): shape-safe unknown
+            top/event keys and null-valued unknown choice/message keys are
+            dropped; tool-call objects may carry extra keys; a stream
+            terminal without usage becomes a usage-None turn; the finish
+            policy accepts stop/length with empty text and no calls.
+        reasoning_disposition: How reasoning content is handled:
+            ``"ignored"`` (dropped at the finish policy), ``"displayable"``
+            (kept visible in stream deltas and the response message), or
+            ``"proprietary"`` (private to the terminal turn).
+        auth_scheme: Credential contract of engine resolution and
+            transport: ``"bearer"`` hard-requires a key;
+            ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute
+            with no Authorization header; ``"api_key_header"`` is the Phase
+            3 scheme.
+        continuation_protocol: Protocol for provider continuation
+            checkpoints (``"chat_completions"``), or ``None`` when the
+            preset builds no checkpoints.
+        discovery_route: Route appended to the base URL for model
+            discovery (e.g. ``"models"``).
+        defaults_settings_section: Legacy ``api_settings`` section the
+            engine reads for per-call fallbacks under the legacy handler's
+            exact key spellings, or ``None`` to read the ``key``-named
+            table.
+    """
 
     key: str
     config_key: str
@@ -124,9 +210,7 @@ DATABRICKS = ProviderRecord(
         # gated); a shipped present-but-blank value would fail closed at
         # resolution, so the key stays absent (Task 12 review fix).
         "streaming": True,
-        "timeout": 90,
-        "retries": 3,
-        "retry_delay": 5.0,
+        **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},       # gateway pricing is workspace/model-config dependent
     engine_driven=True,
@@ -171,9 +255,7 @@ TOGETHER = ProviderRecord(
         # resolves to the payload-gated "" (Phase 1 blank-model lesson --
         # a shipped present-but-blank value would fail closed).
         "streaming": True,
-        "timeout": 90,
-        "retries": 3,
-        "retry_delay": 5.0,
+        **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},       # per-model pricing lands with the catalog
     engine_driven=True,
@@ -196,9 +278,7 @@ FIREWORKS = ProviderRecord(
         "api_key_env_var": "FIREWORKS_API_KEY",
         # No "model" key (see TOGETHER): discovery/seeding fills models.
         "streaming": True,
-        "timeout": 90,
-        "retries": 3,
-        "retry_delay": 5.0,
+        **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
     engine_driven=True,
@@ -221,9 +301,7 @@ CEREBRAS = ProviderRecord(
         "api_key_env_var": "CEREBRAS_API_KEY",
         # No "model" key (see TOGETHER): discovery/seeding fills models.
         "streaming": True,
-        "timeout": 90,
-        "retries": 3,
-        "retry_delay": 5.0,
+        **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
     engine_driven=True,

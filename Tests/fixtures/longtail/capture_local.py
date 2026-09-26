@@ -23,7 +23,9 @@ credential, so no key ever appears.  Servers whose binaries or models are
 absent are skipped with a printed note (their fixture is simply not
 written); ``CAPTURE.md`` records the skips.
 
-Usage (any python3 >= 3.12, stdlib only)::
+Usage (any python3 >= 3.12; stdlib only except the LLAMA_GGUF override,
+which is routed through the repo's ``tldw_chatbook.Utils.path_validation``
+and refused when that import is unavailable)::
 
     python3 Tests/fixtures/longtail/capture_local.py
 """
@@ -271,15 +273,69 @@ def _version_of(binary: str, *args: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _gguf_allowed_roots() -> tuple[Path, ...]:
+    """Return the default allowed roots for an LLAMA_GGUF override.
+
+    The override is untrusted environment input feeding a server process,
+    so it is confined (read-mode) to the user's home model directories --
+    anywhere else is refused rather than read.
+    """
+    home = Path.home()
+    return (
+        home / ".ollama" / "models",
+        home / ".lmstudio" / "models",
+        home / ".cache" / "llama.cpp",
+        home / "models",
+    )
+
+
+def _llama_gguf_override(override: str) -> Path | None:
+    """Resolve the LLAMA_GGUF override inside one allowed root, or refuse.
+
+    Routes the raw environment value through the repo's shared path
+    validation (read-mode containment: symlink-resolved, traversal-proof)
+    against the allowed model roots; only a returned, validated, existing
+    file is ever used.
+    """
+    repo_root = str(Path(__file__).resolve().parents[3])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    try:
+        from tldw_chatbook.Utils.path_validation import validate_path
+    except Exception:
+        print(
+            "  NOTE: LLAMA_GGUF override refused: the repo's path "
+            "validation could not be imported."
+        )
+        return None
+    for root in _gguf_allowed_roots():
+        try:
+            candidate = validate_path(override, root, allow_hidden=True)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _find_gguf() -> Path | None:
     """Locate a small gguf to serve.
 
-    Explicit override first, then any ollama blob (llama.cpp loads ollama's
-    gguf blobs directly), largest first (weights, not config shards).
+    Explicit override first (validated against the allowed model roots --
+    traversal or out-of-root values are refused, never read), then any
+    ollama blob (llama.cpp loads ollama's gguf blobs directly), largest
+    first (weights, not config shards).
     """
     override = os.environ.get("LLAMA_GGUF")
-    if override and Path(override).is_file():
-        return Path(override)
+    if override:
+        resolved = _llama_gguf_override(override)
+        if resolved is not None:
+            return resolved
+        print(
+            "  NOTE: LLAMA_GGUF override refused: it must be an existing "
+            "file inside one of the home model directories "
+            f"({', '.join(str(root) for root in _gguf_allowed_roots())})."
+        )
     blobs_dir = Path.home() / ".ollama" / "models" / "blobs"
     if blobs_dir.is_dir():
         candidates = sorted(blobs_dir.glob("sha256-*"), key=lambda p: p.stat().st_size, reverse=True)
