@@ -5257,7 +5257,8 @@ class PersonasScreen(BaseAppScreen):
         try:
             state = self.state
             if (
-                state.selected_entity_kind != "character"
+                state.runtime_source != "local"  # event ids are local ids (Qodo #8)
+                or state.selected_entity_kind != "character"
                 or str(state.selected_entity_id) != str(message.character_id)
             ):
                 return
@@ -5275,6 +5276,10 @@ class PersonasScreen(BaseAppScreen):
                     "warning",
                 )
                 return
+            # The fresh card arrives later from a thread worker; until then
+            # Edit must see "not loaded yet", not the pre-change card whose
+            # Save would silently overwrite the Console's edit (Qodo #1).
+            self.character_handler.current_character_data = {}
             await self._select_character(
                 str(message.character_id),
                 state.selected_entity_name,

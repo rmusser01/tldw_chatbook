@@ -78,6 +78,10 @@ def _screen(
         save_state=save_state or _default_save_state,
         _notify=lambda msg, sev="information": calls["notice"].append(msg),
         _console_changed_character_ids=set(),
+        character_handler=SimpleNamespace(
+            current_character_id=str(selected_id),
+            current_character_data={"id": selected_id, "name": "Aria", "version": 1},
+        ),
     )
     return screen, calls
 
@@ -133,6 +137,31 @@ async def test_reload_restores_the_live_preview_snapshot():
     assert len(calls["reload"]) == 1
     _entity_id, _entity_name, kwargs = calls["reload"][0]
     assert kwargs.get("restore_preview") == preview_snapshot
+
+
+async def test_server_selection_ignores_a_local_change_event():
+    """Qodo #8: local and tldw_server character ids share one integer space,
+    so a local Console save must not reload or stale-mark a server card."""
+    screen, calls = _screen(7, has_unsaved_changes=True)
+    screen.state.runtime_source = "server"
+    await PersonasScreen._on_character_card_changed(screen, CharacterCardChanged(7))
+    assert not calls["reload"] and not calls["notice"]
+    assert screen._console_changed_character_ids == set()
+
+
+async def test_reload_drops_the_stale_cached_card_before_it_yields():
+    """Qodo #1: the fresh card lands later from a thread worker. Until then
+    Edit must not open the pre-Console-save card (its Save would overwrite
+    the Console's change with no warning, since the reload cleared the
+    console-changed mark)."""
+    seen = []
+
+    async def _reload(entity_id, entity_name, **kwargs):
+        seen.append(PersonasScreen._full_character_record(screen, entity_id))
+
+    screen, _calls = _screen(7, select_character=_reload)
+    await PersonasScreen._on_character_card_changed(screen, CharacterCardChanged(7))
+    assert seen == [None]
 
 
 async def test_select_character_exception_is_logged_and_does_not_propagate():
