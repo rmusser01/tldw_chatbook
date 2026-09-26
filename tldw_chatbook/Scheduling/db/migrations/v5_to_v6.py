@@ -18,6 +18,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     class _MigrationCapableDB(Protocol):
         def _get_connection(self) -> Any: ...
 
+        def transaction(self) -> Any: ...
+
 
 _CREATE_INCIDENTS_TABLE = """
     CREATE TABLE IF NOT EXISTS task_incidents (
@@ -68,11 +70,17 @@ def migrate(db: _MigrationCapableDB) -> None:
 
 def rollback(db: _MigrationCapableDB) -> None:
     """Drop the incidents table, returning ``db`` to schema version 5."""
-    with closing(db._get_connection()) as conn:
+    # The shared `transaction()` context manager owns the commit and the
+    # rollback (CLAUDE.md's thread-safety rule); the explicit BEGIN is what
+    # makes the two halves ONE transaction. Python's sqlite3 opens an implicit
+    # transaction only for INSERT/UPDATE/DELETE/REPLACE, never for DDL, so a
+    # bare `DROP TABLE` commits on its own: a version stamp that then failed
+    # left `task_incidents` gone with the schema still claiming v6.
+    with db.transaction() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute("DROP TABLE IF EXISTS task_incidents")
         row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         current_version = int(row[0]) if row and row[0] is not None else 0
         if current_version >= 5:
             conn.execute("DELETE FROM schema_version")
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (4,))
-        conn.commit()
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (5,))
