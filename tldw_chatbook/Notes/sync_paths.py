@@ -10,7 +10,6 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -41,25 +40,6 @@ def _descriptor_guards_available() -> bool:
         and os.stat in os.supports_follow_symlinks
         and os.listdir in os.supports_fd
     )
-
-
-@dataclass(frozen=True)
-class SyncPathIssue:
-    """A bounded per-entry containment diagnostic."""
-
-    relative_path: Path
-    reason: str
-
-
-@dataclass(frozen=True)
-class SafeSyncFile:
-    """A file read through the pinned sync-root descriptor."""
-
-    absolute_path: Path
-    relative_path: Path
-    content: str
-    mtime: float
-    extension: str
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -349,12 +329,6 @@ class PinnedSyncRoot:
             raise SyncPathError("invalid_relative_path", selected)
         return selected
 
-    @classmethod
-    def validate_relative(cls, relative_path: Path | str) -> Path:
-        """Validate and normalize a stored legacy relative path."""
-
-        return cls._validate_relative(relative_path)
-
     def _verify_root_path_identity(self) -> None:
         _, root_stat = self._require_supported()
         try:
@@ -429,51 +403,6 @@ class PinnedSyncRoot:
         except Exception:
             os.close(current_fd)
             raise
-
-    def _read_file(
-        self,
-        parent_fd: int,
-        leaf: str,
-        relative_path: Path,
-        entry: os.stat_result,
-    ) -> SafeSyncFile:
-        if entry.st_nlink != 1:
-            raise SyncPathError("multiple_links", relative_path)
-        if not self._same_device(entry):
-            raise SyncPathError("cross_device", relative_path)
-        try:
-            file_fd = os.open(leaf, _FILE_READ_FLAGS, dir_fd=parent_fd)
-        except OSError as exc:
-            raise SyncPathError("link_or_reparse", relative_path) from exc
-        try:
-            opened = os.fstat(file_fd)
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or opened.st_nlink != 1
-                or not self._same_device(opened)
-                or not _same_identity(entry, opened)
-            ):
-                raise SyncPathError("target_identity_changed", relative_path)
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(file_fd, 1024 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            content = b"".join(chunks).decode("utf-8")
-            current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-            if not _same_identity(opened, current):
-                raise SyncPathError("target_identity_changed", relative_path)
-            self._verify_parent_identity(relative_path, parent_fd)
-            return SafeSyncFile(
-                absolute_path=self.canonical_root / relative_path,
-                relative_path=relative_path,
-                content=content,
-                mtime=opened.st_mtime,
-                extension=relative_path.suffix.lower(),
-            )
-        finally:
-            os.close(file_fd)
 
     @staticmethod
     def _descriptor_state(entry: os.stat_result) -> tuple[int, ...]:
@@ -597,99 +526,6 @@ class PinnedSyncRoot:
                 raise SyncPathError("parent_identity_changed", relative_path)
         finally:
             os.close(fresh_parent_fd)
-
-    def scan(
-        self,
-        extensions: Iterable[str],
-    ) -> tuple[dict[Path, SafeSyncFile], list[SyncPathIssue]]:
-        """Scan verified descendants without following aliases."""
-
-        if not self._supported:
-            return {}, [SyncPathIssue(Path("."), "unsupported_platform")]
-        root_fd, _ = self._require_supported()
-        self._verify_root_path_identity()
-        selected_extensions = {extension.lower() for extension in extensions}
-        files: dict[Path, SafeSyncFile] = {}
-        issues: list[SyncPathIssue] = []
-
-        def walk(directory_fd: int, relative_directory: Path) -> None:
-            for name in sorted(os.listdir(directory_fd)):
-                relative_path = relative_directory / name
-                try:
-                    entry = os.stat(
-                        name,
-                        dir_fd=directory_fd,
-                        follow_symlinks=False,
-                    )
-                    if stat.S_ISLNK(entry.st_mode) or _is_reparse(entry):
-                        raise SyncPathError("link_or_reparse", relative_path)
-                    if not self._same_device(entry):
-                        raise SyncPathError("cross_device", relative_path)
-                    if stat.S_ISDIR(entry.st_mode):
-                        child_fd = self._verified_child_directory(
-                            directory_fd,
-                            name,
-                            relative_path,
-                            create=False,
-                        )
-                        try:
-                            walk(child_fd, relative_path)
-                        finally:
-                            os.close(child_fd)
-                        continue
-                    if not stat.S_ISREG(entry.st_mode):
-                        raise SyncPathError("non_regular", relative_path)
-                    if relative_path.suffix.lower() not in selected_extensions:
-                        continue
-                    files[relative_path] = self._read_file(
-                        directory_fd,
-                        name,
-                        relative_path,
-                        entry,
-                    )
-                except SyncPathError as exc:
-                    issues.append(SyncPathIssue(relative_path, exc.reason))
-                except (OSError, UnicodeError):
-                    issues.append(SyncPathIssue(relative_path, "operation_failed"))
-
-        scan_fd = os.dup(root_fd)
-        try:
-            walk(scan_fd, Path())
-        finally:
-            os.close(scan_fd)
-        return files, issues
-
-    def read_file(self, relative_path: Path | str) -> SafeSyncFile:
-        """Read one verified regular file beneath the pinned root."""
-
-        selected = self._validate_relative(relative_path)
-        self._require_supported()
-        self._verify_root_path_identity()
-        try:
-            parent_fd = self._open_parent(selected, create=False)
-        except SyncPathError:
-            raise
-        except OSError:
-            raise SyncPathError("operation_failed", selected) from None
-        try:
-            entry = os.stat(
-                selected.name,
-                dir_fd=parent_fd,
-                follow_symlinks=False,
-            )
-            if stat.S_ISLNK(entry.st_mode) or _is_reparse(entry):
-                raise SyncPathError("link_or_reparse", selected)
-            if not stat.S_ISREG(entry.st_mode):
-                raise SyncPathError("non_regular", selected)
-            return self._read_file(parent_fd, selected.name, selected, entry)
-        except FileNotFoundError:
-            raise SyncPathError("missing_target", selected) from None
-        except SyncPathError:
-            raise
-        except OSError:
-            raise SyncPathError("operation_failed", selected) from None
-        finally:
-            os.close(parent_fd)
 
     def read_bytes(
         self,
@@ -891,9 +727,6 @@ class PinnedSyncRoot:
     def _before_replace(self, _relative_path: Path) -> None:
         """Test seam immediately before identity rechecks and replacement."""
 
-    def _before_create(self, _relative_path: Path) -> None:
-        """Test seam immediately before the exclusive create in ``create_new_text``."""
-
     def _before_commit(self, _relative_path: Path) -> None:
         """Test seam at the guarded native-rename boundary."""
 
@@ -928,182 +761,6 @@ class PinnedSyncRoot:
             if written <= 0:
                 raise OSError("short write")
             remaining = remaining[written:]
-
-    def create_new_text(
-        self,
-        relative_path: Path | str,
-        content: str,
-    ) -> SafeSyncFile:
-        """Create a NEW file beneath the pinned root; never replace one.
-
-        The counterpart to ``write_text`` for content that must not collide
-        with content already at the target. ``write_text`` writes a temporary
-        file and renames it over the destination, which is atomic but
-        **replacing** -- correct for a synced note (the file IS the note), and
-        wrong for a preserved conflict copy, where the thing already at that
-        name is another run's saved copy of user text.
-
-        The name is claimed with ``O_CREAT | O_EXCL`` (plus the usual
-        ``O_NOFOLLOW``), so the claim and the check are one syscall: two
-        concurrent runs cannot both decide a name is free. The loser gets
-        ``FileExistsError`` and is expected to pick another name rather than
-        overwrite. Anything that goes wrong after the create unlinks the file
-        this call made, so a caller never sees a half-written file it was told
-        had failed.
-
-        Args:
-            relative_path: Destination relative to the pinned root.
-            content: Text to write, encoded UTF-8.
-
-        Returns:
-            The created file, described the same way ``write_text`` describes
-            a replaced one.
-
-        Raises:
-            FileExistsError: If the name is already taken. This is the signal
-                to try another name -- it is NOT a boundary violation.
-            SyncPathError: If the path, its parent, or the resulting file
-                fails the pinned-root checks.
-            OSError: Propagated from the create or the write.
-        """
-        selected = self._validate_relative(relative_path)
-        self._require_supported()
-        self._verify_root_path_identity()
-        parent_fd = self._open_parent(selected, create=False)
-        created = False
-        try:
-            self._before_create(selected)
-            file_fd = os.open(
-                selected.name,
-                _FILE_WRITE_FLAGS,
-                0o600,
-                dir_fd=parent_fd,
-            )
-            created = True
-            try:
-                self._write_all(file_fd, content.encode("utf-8"))
-                os.fchmod(file_fd, 0o600)
-                os.fsync(file_fd)
-                opened = os.fstat(file_fd)
-            finally:
-                os.close(file_fd)
-
-            self._verify_root_path_identity()
-            self._verify_parent_identity(selected, parent_fd)
-            current = os.stat(selected.name, dir_fd=parent_fd, follow_symlinks=False)
-            if not _same_identity(opened, current):
-                raise SyncPathError("target_identity_changed", selected)
-            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-                raise SyncPathError("multiple_links", selected)
-            if not self._same_device(current):
-                raise SyncPathError("cross_device", selected)
-            return SafeSyncFile(
-                absolute_path=self.canonical_root / selected,
-                relative_path=selected,
-                content=content,
-                mtime=current.st_mtime,
-                extension=selected.suffix.lower(),
-            )
-        except Exception:
-            # Only ever our own file: ``created`` is False when the create
-            # itself failed, so a name someone else holds is never unlinked.
-            if created:
-                try:
-                    os.unlink(selected.name, dir_fd=parent_fd)
-                except OSError:
-                    pass
-            raise
-        finally:
-            os.close(parent_fd)
-
-    def write_text(
-        self,
-        relative_path: Path | str,
-        content: str,
-    ) -> SafeSyncFile:
-        """Atomically write beneath the pinned root, preserving prior mode."""
-
-        selected = self._validate_relative(relative_path)
-        self._require_supported()
-        self._verify_root_path_identity()
-        try:
-            parent_fd = self._open_parent(selected, create=True)
-        except SyncPathError:
-            raise
-        except OSError:
-            raise SyncPathError("operation_failed", selected) from None
-        temporary_leaf: str | None = None
-        try:
-            parent_identity = os.fstat(parent_fd)
-            existing = self._existing_target(
-                parent_fd,
-                selected.name,
-                selected,
-            )
-            selected_mode = (
-                stat.S_IMODE(existing.st_mode) if existing is not None else 0o600
-            )
-            for _ in range(32):
-                candidate = f".{selected.name}.tmp-{uuid.uuid4().hex}"
-                try:
-                    temporary_fd = os.open(
-                        candidate,
-                        _FILE_WRITE_FLAGS,
-                        selected_mode,
-                        dir_fd=parent_fd,
-                    )
-                    temporary_leaf = candidate
-                    break
-                except FileExistsError:
-                    continue
-            else:
-                raise SyncPathError("temporary_name_exhausted", selected)
-
-            try:
-                self._write_all(temporary_fd, content.encode("utf-8"))
-                os.fchmod(temporary_fd, selected_mode)
-                os.fsync(temporary_fd)
-            finally:
-                os.close(temporary_fd)
-
-            self._before_replace(selected)
-            self._verify_root_path_identity()
-            self._verify_parent_identity(selected, parent_fd)
-            if not _same_identity(parent_identity, os.fstat(parent_fd)):
-                raise SyncPathError("parent_identity_changed", selected)
-
-            current = self._existing_target(parent_fd, selected.name, selected)
-            if (existing is None) != (current is None) or (
-                existing is not None
-                and current is not None
-                and not _same_identity(existing, current)
-            ):
-                raise SyncPathError("target_identity_changed", selected)
-
-            os.rename(
-                temporary_leaf,
-                selected.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-            )
-            temporary_leaf = None
-            final = self._existing_target(parent_fd, selected.name, selected)
-            if final is None or stat.S_IMODE(final.st_mode) != selected_mode:
-                raise SyncPathError("replacement_postcondition_failed", selected)
-            return SafeSyncFile(
-                absolute_path=self.canonical_root / selected,
-                relative_path=selected,
-                content=content,
-                mtime=final.st_mtime,
-                extension=selected.suffix.lower(),
-            )
-        finally:
-            if temporary_leaf is not None:
-                try:
-                    os.unlink(temporary_leaf, dir_fd=parent_fd)
-                except FileNotFoundError:
-                    pass
-            os.close(parent_fd)
 
     @staticmethod
     def _matches_reviewed_state(
