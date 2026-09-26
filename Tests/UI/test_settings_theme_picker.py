@@ -878,3 +878,25 @@ async def test_theme_switches_reuse_the_last_listing(request, config_writes):
         assert calls == []
         picker.refresh_catalog()  # an explicit refresh (after a file action) still scans
         assert calls == [1]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_label_strips_control_characters_from_the_launch_default(
+    request, monkeypatch, config_writes
+):
+    """Review follow-up 3: the chip names the launch default, which comes
+    from a hand-editable config.toml -- ESC must not reach the terminal."""
+    hostile = "gone\x1b]52;c;eA==\x07"
+    monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.current_launch_default", lambda: hostile)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: hostile)
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.theme = "nord"
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()
+        await pilot.pause()
+        label = str(picker.query_one("#settings-theme-revert", Button).label)
+        assert "(launch: Gone?]52;C;Ea==?)" in label, label
+        assert label.isprintable(), repr(label)

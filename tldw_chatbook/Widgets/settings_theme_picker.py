@@ -207,13 +207,14 @@ class ThemePicker(Vertical):
         revert.display = change is not None
         if change is None:
             return
-        # Button labels parse markup; theme names are untrusted file text (R28).
-        label = f"Revert to {escape_markup(display_name(change.previous_active))}"
+        # Button labels parse markup; theme names are untrusted file text (R28),
+        # and the launch default is hand-editable config text (printable()).
+        label = f"Revert to {escape_markup(printable(display_name(change.previous_active)))}"
         # Only worth naming the launch default too when it persisted AND
         # disagrees with the active theme it's reverting to -- otherwise
         # they're the same theme and the parenthetical is noise.
         if change.persisted and change.previous_active != change.previous_launch_default:
-            label = f"{label} (launch: {escape_markup(display_name(change.previous_launch_default))})"
+            label = f"{label} (launch: {escape_markup(printable(display_name(change.previous_launch_default)))})"
         revert.label = label
 
     def compose(self) -> ComposeResult:
