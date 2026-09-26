@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual import on
-from textual.widgets import Button, Checkbox, Collapsible, RadioSet, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static
 
 import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 from Tests.Wizards.test_first_run_setup_wizard import _StepHost
@@ -70,6 +70,60 @@ async def test_selecting_omnivoice_swaps_panels(monkeypatch: pytest.MonkeyPatch)
         assert step.query_one("#setup-voice-advanced", Collapsible).display is True
 
 
+async def test_custom_edit_survives_a_round_trip_through_omnivoice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix round 1, Important 1, Scenario A: Custom -> Pocket -> Custom ->
+    edit -> OmniVoice -> Custom must keep the edit, not revert it."""
+    _state(monkeypatch, "ready")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        step.query_one("#setup-voice-endpoint", Input).value = (
+            "http://example.test/v1/audio/speech"
+        )
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        assert (
+            step.query_one("#setup-voice-endpoint", Input).value
+            == "http://example.test/v1/audio/speech"
+        )
+
+
+async def test_custom_edit_survives_omnivoice_via_a_third_preset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix round 1, Important 1, Scenario B: Custom (edited) -> OmniVoice ->
+    Pocket -> Custom must keep the edit, not lose it."""
+    _state(monkeypatch, "ready")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        step.query_one("#setup-voice-endpoint", Input).value = (
+            "http://example.test/v1/audio/speech"
+        )
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        assert (
+            step.query_one("#setup-voice-endpoint", Input).value
+            == "http://example.test/v1/audio/speech"
+        )
+
+
 @pytest.mark.parametrize(
     ("state", "copy", "install_enabled", "test_enabled"),
     [
@@ -120,9 +174,71 @@ async def test_install_runs_consent_then_provision_then_rereads(monkeypatch) -> 
         assert str(step.query_one("#setup-voice-omnivoice-status", Static).renderable) == vs.OMNIVOICE_READY_COPY
 
 
+async def test_declining_consent_leaves_model_missing_and_reenables_install(
+    monkeypatch,
+) -> None:
+    """Fix round 1, Minor 4: declining the consent modal must not provision,
+    and must land back on an actionable model_missing state."""
+    _state(monkeypatch, "model_missing")
+    provision_calls: list = []
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def provision(report, *, progress=None, **_):
+        provision_calls.append(report)
+        return None
+
+    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(False))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+        assert provision_calls == []
+        assert step._omnivoice_state == "model_missing"
+        install = step.query_one("#setup-voice-omnivoice-install", Button)
+        assert install.display is True
+        assert install.disabled is False
+
+
+async def test_provision_failure_shows_message_and_reenables_install(
+    monkeypatch,
+) -> None:
+    """Fix round 1, Minor 4: a provision failure must surface
+    install_failure_message's text and leave Install re-enabled to retry."""
+    _state(monkeypatch, "model_missing")
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def failing_provision(report, *, progress=None, **_):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", failing_provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+        status = str(step.query_one("#setup-voice-omnivoice-status", Static).renderable)
+        assert status and status != vs.OMNIVOICE_MODEL_MISSING_COPY
+        install = step.query_one("#setup-voice-omnivoice-install", Button)
+        assert install.disabled is False
+
+
 async def test_install_double_press_runs_one_preflight(monkeypatch) -> None:
     _state(monkeypatch, "model_missing")
-    started = asyncio.Event()
     count = {"preflight": 0}
 
     async def slow_preflight(**_):

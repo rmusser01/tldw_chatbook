@@ -4501,11 +4501,6 @@ class VoiceSetupStep(SetupStep):
         }.get(event.pressed.id)
         if preset is None or preset == self._preset:
             return
-        if preset == voice_state.VOICE_PRESET_OMNIVOICE:
-            self._preset = preset
-            self._set_omnivoice_mode(True)
-            return
-        leaving_omnivoice = self._preset == voice_state.VOICE_PRESET_OMNIVOICE
         try:
             current = self._draft_from_controls()
         except (TypeError, ValueError):
@@ -4513,9 +4508,19 @@ class VoiceSetupStep(SetupStep):
                 "Enter a valid speed before changing the service preset."
             )
             return
+        # Fix round 1, Important 1: capture the outgoing Custom draft BEFORE
+        # switching, whether the destination is OmniVoice or anything else --
+        # the old code captured this only on the non-OmniVoice path, so a
+        # Custom edit made just before entering OmniVoice was silently lost
+        # (never reached _custom_draft) and a later return to Custom replayed
+        # the stale cached draft over it.
         if self._preset == voice_state.VOICE_PRESET_CUSTOM:
             self._custom_draft = current
+        leaving_omnivoice = self._preset == voice_state.VOICE_PRESET_OMNIVOICE
         self._preset = preset
+        if preset == voice_state.VOICE_PRESET_OMNIVOICE:
+            self._set_omnivoice_mode(True)
+            return
         if leaving_omnivoice:
             self._set_omnivoice_mode(False)
         base = (
@@ -4551,6 +4556,18 @@ class VoiceSetupStep(SetupStep):
         self.query_one("#setup-voice-advanced", Collapsible).display = not enabled
         if enabled:
             self.query_one("#setup-voice-add-key", Button).display = False
+            # Fix round 1, Minor 2: the PREVIOUS visit's state/status text
+            # would otherwise stay live (e.g. a stale "ready") until the
+            # fresh read lands, briefly letting Test and Hear enable on
+            # data that no longer reflects this visit. Reset to "checking"
+            # up front -- unless an install is actively running, in which
+            # case that state is still correct and must not flicker.
+            if not self._omnivoice_installing:
+                self._omnivoice_state = None
+                self.query_one("#setup-voice-omnivoice-status", Static).update(
+                    voice_state.OMNIVOICE_CHECKING_COPY
+                )
+                self._refresh_sample_state()
             self._load_omnivoice_state()
         self._invalidate_sample_evidence()
 
@@ -4579,9 +4596,19 @@ class VoiceSetupStep(SetupStep):
             "ready": voice_state.OMNIVOICE_READY_COPY,
         }[state]
         try:
-            self.query_one("#setup-voice-omnivoice-status", Static).update(
-                message or copy
-            )
+            # Fix round 1, Minor 3: a re-read while an install is running
+            # (e.g. the step was hidden and re-shown mid-download) must not
+            # stomp the status line with e.g. OMNIVOICE_MODEL_MISSING_COPY --
+            # the progress bar already shows the install, and this would
+            # otherwise be an invented, misleading "not started" message
+            # while Install itself correctly stays disabled below. A
+            # genuine failure message (`message`) always reaches the user:
+            # by the time one is produced, the caller has already reset
+            # `_omnivoice_installing` to False.
+            if not self._omnivoice_installing:
+                self.query_one("#setup-voice-omnivoice-status", Static).update(
+                    message or copy
+                )
             install = self.query_one("#setup-voice-omnivoice-install", Button)
             install.display = state in {"engine_missing", "model_missing"}
             install.disabled = state != "model_missing" or self._omnivoice_installing
