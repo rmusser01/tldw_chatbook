@@ -1413,3 +1413,80 @@ async def test_leave_prompts_never_stack(request):
         assert nav.result is False
         assert _leave_modals(host) == []
         assert settings.active_category == SettingsCategoryId.THEME.value and editor.is_modified
+
+
+def _real_app_on(host, settings, monkeypatch):
+    """The harness's real TldwCli, looking at the live Settings screen.
+
+    The TldwCli is not itself running, so its ``screen`` is pointed at the
+    harness's Settings screen and the final ``switch_screen`` is recorded --
+    the same seams test_screen_navigation's real-handler tests patch.
+    """
+    tldw = host.app_instance
+    tldw._initial_screen_pushed = True
+    monkeypatch.setattr(type(tldw), "screen", property(lambda self: settings))
+    switched = []
+
+    async def fake_switch_screen(screen):
+        switched.append(screen)
+
+    class _Target:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    monkeypatch.setattr(tldw, "_resolve_screen_navigation_target", lambda target: ("chat", "chat", _Target))
+    monkeypatch.setattr(tldw, "switch_screen", fake_switch_screen)
+    return tldw, switched
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_with_theme_edits_prompts_and_stay_keeps_the_app(request, monkeypatch):
+    """Review follow-up 1: ``action_quit``'s worker (``_confirm_and_quit``)
+    asks the screen's ``confirm_quit``; Settings now answers with the theme
+    leave prompt, and Stay stops the quit before any cleanup."""
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False  # stop the real quit flow right after the screen's answer
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.2)
+        await quit_flow.wait()
+        assert past_screen_check == [] and tldw._quit_in_progress is False
+        assert host.is_running and host.screen is settings and editor.is_modified
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_without_theme_edits_does_not_prompt(request, monkeypatch):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        await tldw._confirm_and_quit()
+        assert past_screen_check == [True]  # the screen let the quit through
+        assert _leave_modals(host) == []

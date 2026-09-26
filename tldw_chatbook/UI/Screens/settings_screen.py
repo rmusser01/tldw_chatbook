@@ -24010,6 +24010,17 @@ class SettingsScreen(BaseAppScreen):
             return not editor.is_modified
         return True
 
+    async def confirm_quit(self) -> bool:
+        """Ask before quitting with unsaved theme edits (review follow-up).
+
+        ``TldwCli._confirm_and_quit`` consults ``confirm_quit``, not
+        ``confirm_navigation``; same prompt, same outcomes.
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        return await self.confirm_navigation()
+
     def _theme_editor_shown(self) -> bool:
         try:
             pane = self.query_one("#settings-theme-pane", ThemePane)
