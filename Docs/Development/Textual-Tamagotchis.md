@@ -14,6 +14,38 @@ A modular, customizable tamagotchi widget system for Textual applications. This 
 8. [Advanced Features](#advanced-features)
 9. [Troubleshooting](#troubleshooting)
 
+## How tldw_chatbook itself uses this (TASK-32905)
+
+The rest of this document describes the widget system in the abstract. In this
+app it has exactly one host: **the footer status bar**, which is integration
+example #1 below.
+
+* **Config gate** — `[tamagotchi] enabled` in `~/.config/tldw_cli/config.toml`,
+  **`false` by default**. Nothing is imported, constructed, mounted, or ticked
+  until it is turned on. `name` and `personality` are optional siblings.
+* **Where it mounts** — `AppFooterStatus._build_tamagotchi()` yields a
+  `CompactTamagotchi` with `id="footer-tamagotchi"`. Every screen composes an
+  `AppFooterStatus`, so the pet follows the user around the app.
+* **Storage** — `ConfigFileStorage`, specifically. `Widgets/Tamagotchi/
+  recovery.py` registers *that* adapter's path
+  (`~/.config/tldw_chatbook/tamagotchi_pets.json` and its dated backups) as the
+  `tamagotchi.config` backup/recovery owner; any other adapter writes somewhere
+  backup/recovery has no locator for.
+* **Messages** — `AppFooterStatus.on_tamagotchi_death` and
+  `on_tamagotchi_stat_critical` turn the two alarms into `app.notify()` toasts.
+  `TamagotchiStatCritical` is edge-triggered from `_check_critical_stats()` at
+  the thresholds in the [Notification Integration](#4-notification-integration)
+  example, so a neglected pet raises one alarm per stat, not one per tick.
+* **One pet, several widgets** — Textual *suspends* an installed screen rather
+  than unmounting it, so every screen the user has visited keeps its own footer
+  and its own pet instance, all sharing one storage key. `_periodic_update()`
+  therefore advances and saves only the pet whose screen is active; the rest
+  reload from storage on their way back to the foreground. Without that guard
+  the stalest writer wins and the visible pet's progress is silently rolled
+  back.
+
+Pinned by `Tests/Widgets/test_tamagotchi_footer_gate.py`.
+
 ## Quick Start
 
 ### Basic Usage

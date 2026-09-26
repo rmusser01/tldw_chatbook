@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable, Mapping
@@ -276,6 +277,10 @@ def warn_unknown_top_level_keys(raw: Any, tables: ModalityConfigTables) -> None:
 # ponytail: a key added with `keyring set` shows up within this window.
 _KEYRING_READ_TTL_SECONDS = 10.0
 _KEYRING_READS: dict[tuple[str, str], tuple[float, str | None]] = {}
+# TASK-32926 (Qodo on #2831): Settings workers can overlap, so a miss is
+# single-flight per key -- one blocking lookup (one unlock prompt), not N.
+_KEYRING_READ_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_KEYRING_READ_LOCKS_GUARD = threading.Lock()
 
 
 def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
@@ -291,22 +296,28 @@ def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
         after the lookup returns.
     """
     key = (tables.keyring_namespace, backend)
-    now = time.monotonic()
     hit = _KEYRING_READS.get(key)
-    if hit is not None and hit[0] > now:
+    if hit is not None and hit[0] > time.monotonic():
         return hit[1]
-    try:
-        value = keyring.get_password(tables.keyring_namespace, backend)
-    except Exception as e:  # keyring backend may be unavailable
-        logger.debug(
-            "keyring lookup failed for {}/{} (error_type={})",
-            tables.keyring_label,
-            backend,
-            type(e).__name__,
-        )
-        value = None
-    # Expiry starts when the (possibly blocking) lookup returns.
-    _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
+    with _KEYRING_READ_LOCKS_GUARD:
+        lock = _KEYRING_READ_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        # A concurrent caller may have filled the cache while we waited.
+        hit = _KEYRING_READS.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
+        try:
+            value = keyring.get_password(tables.keyring_namespace, backend)
+        except Exception as e:  # keyring backend may be unavailable
+            logger.debug(
+                "keyring lookup failed for {}/{} (error_type={})",
+                tables.keyring_label,
+                backend,
+                type(e).__name__,
+            )
+            value = None
+        # Expiry starts when the (possibly blocking) lookup returns.
+        _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
     return value
 
 
