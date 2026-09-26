@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-25 16:16'
-updated_date: '2026-09-26 06:41'
+updated_date: '2026-09-26 14:17'
 labels: []
 dependencies: []
 references:
@@ -39,6 +39,7 @@ Reason: Adds public tools and defines conflict and permission behavior across tw
 3. Register both tools in each runtime and the existing runtime-policy action map.
 4. Enforce code-owned mutation tags across catalog and by-key resolution; reuse the permission store for standalone dispatch.
 5. Update inventory contracts and user documentation, run targeted checks, and review the resulting diff.
+6. Rebase PR #2843 onto current dev; verify and address Qodo packaging, diagnostic, docstring, and validation feedback; rerun targeted tests and required checks before authorized merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -82,4 +83,12 @@ Fresh verification on the isolated dev-based PR tree: 293 MCP cases passed, plus
 Reviewed the sole added persistent diagnostic statement, logger.error("MCP character write failed."), which contains no runtime values. Regenerated the diagnostic inventory; its two already-stale summary aggregates now match its existing owner rows. Dropped unrelated formatting hunks from the port. New Python files pass Ruff/format; touched existing files add no Ruff diagnostics; scoped whitespace checks pass. Evidence: /tmp/tldw-mcp-pr-final.log, /tmp/tldw-mcp-pr-final.xml, /tmp/tldw-mcp-review-admission-red3.log, /tmp/tldw-mcp-review-admission-green.log, and /tmp/tldw-mcp-pr-adjacent.log.
 
 Final PR preflight: all 10 derived-artifact and governance checks pass on the completed implementation (/tmp/tldw-mcp-pr-preflight-complete.log). Final self-review found no remaining issue.
+
+Rebased PR #2843 onto dev c4225b5d38896adb99e992efebeaa206090cdcce and addressed all five Qodo findings. Packaging inventory now matches the two new built-ins and current-dev public Watchlists metadata tools; exact equality and private-tool exclusions remain intact. MCP boundary models own strict argument validation and reuse shared character schemas before worker dispatch, detaching accepted payloads from subsequent caller mutations. Public tools and policy helpers now document Args/Returns and cancellation where applicable.
+
+Storage failures now use the existing metadata-only persistent diagnostic boundary: operation, exception type, and raising module/function/line are retained, while card contents, identifiers, raw exception messages, paths, and traceback locals are excluded. Reviewed the removed static logger statement and its replacement; the refreshed inventory changes only the MCP owner row and aggregate. ADR-183 remains the governing contract; no new architectural decision was needed.
+
+Verification: 343 targeted MCP/protocol/UI-form/native-admission tests passed (9 known adjacent profile-fixture cases deselected); 29 packaging tests passed, including real isolated wheel/sdist installs and tools/list. The packaging wire test reproduced the failure before the fix. Two caller-mutation tests and two actual persistent-log regressions failed before their fixes and pass afterward. All 10 preflight checks pass. New modules/tests pass Ruff and formatting; touched existing files add zero lint findings. Independent review found no actionable issue. No full suite ran.
+
+Limits: the expanded real-SQLite matrix reports an existing worker-thread connection cleanup warning (+207 file descriptors in the focused authoring run). The adjacent static persona diagnostic assertion also fails on an unchanged provider logging statement already present on dev; three real sink controls pass. These unrelated checks were not weakened. Evidence: /tmp/tldw-pr2843-rebased-mcp.{log,xml}, /tmp/tldw-pr2843-packaging-green.{log,xml}, /tmp/tldw-pr2843-diagnostics-{red,green}.log, /tmp/mcp-boundary-final.{log,xml}, and /tmp/tldw-pr2843-rebased-preflight.log.
 <!-- SECTION:NOTES:END -->

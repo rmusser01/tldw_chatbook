@@ -5,12 +5,28 @@ BUILTIN_MCP_SERVER_KEY = "builtin:tldw_chatbook"
 
 
 def builtin_tool_risk_tags(name: str) -> tuple[str, ...]:
-    """Return trusted tags; inventory data cannot declare built-in policy."""
+    """Return trusted tags; inventory data cannot declare built-in policy.
+
+    Args:
+        name: Canonical built-in tool name.
+
+    Returns:
+        Code-owned risk tags, or an empty tuple for an untagged tool.
+    """
     return ("mutates",) if name in CHARACTER_WRITE_TOOLS else ()
 
 
 def standalone_character_write_refusal(name: str) -> dict[str, str] | None:
-    """Check current operator grants; standalone clients cannot approve calls."""
+    """Check current operator grants; standalone clients cannot approve calls.
+
+    Args:
+        name: Canonical character-write tool name being invoked.
+
+    Returns:
+        None when the current permission store explicitly allows the call;
+        otherwise an error_code/error mapping explaining the refusal. The kill
+        switch and unavailable permissions both deny the call.
+    """
     from ..config import get_user_data_dir
     from .permission_store import MCPPermissionStore, resolve_effective_state_by_key
 

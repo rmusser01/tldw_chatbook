@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections import UserDict
+from enum import IntEnum
+
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -56,11 +60,17 @@ async def test_create_list_update_and_stale_version_preserve_card(character_tool
     "name,fields",
     [
         (" ", None),
+        (None, None),
+        (123, None),
+        (b"Ada", None),
+        ("A" * 501, None),
         ("Ada", {"image_base64": "abc"}),
         ("Ada", {"unknown": "value"}),
         ("Ada", {"name": "Override"}),
         ("Ada", {"description": "x" * 50001}),
         ("Ada", []),
+        ("Ada", UserDict({"description": "Mapped"})),
+        ("Ada", {"description": None}),
     ],
 )
 async def test_invalid_create_is_explicit_and_does_not_write(
@@ -82,6 +92,16 @@ async def test_invalid_create_is_explicit_and_does_not_write(
         (1, {}),
         (1, {"name": " "}),
         (1, {"description": None}),
+        (1, None),
+        (1, []),
+        (1, UserDict({"description": "Mapped"})),
+        (1, {"name": 123}),
+        (1, {"name": "A" * 501}),
+        (1, {"image_base64": "abc"}),
+        (1, {"unknown": "value"}),
+        (1, {"creator": "x" * 501}),
+        (1, {"character_version": "x" * 101}),
+        (1, {"system_prompt": "x" * 100001}),
     ],
 )
 async def test_invalid_update_preserves_card(character_tools, version, fields):
@@ -93,6 +113,33 @@ async def test_invalid_update_preserves_card(character_tools, version, fields):
             "version"
         ]
         == 1
+    )
+
+
+class _CharacterInteger(IntEnum):
+    VERSION = 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("argument", ["character_id", "expected_version"])
+@pytest.mark.parametrize(
+    "value", [True, False, 0, -1, "1", 1.0, None, _CharacterInteger.VERSION]
+)
+async def test_update_requires_exact_positive_integer_arguments(
+    character_tools, argument, value
+):
+    created = await character_tools.create_character("Ada")
+    before = character_tools.chachanotes_db.get_character_card_by_id(created["id"])
+    arguments = {
+        "character_id": created["id"],
+        "expected_version": 1,
+        "fields": {"description": "Invalid"},
+    }
+    arguments[argument] = value
+    result = await character_tools.update_character(**arguments)
+    assert result["error_code"] == "invalid_arguments"
+    assert (
+        character_tools.chachanotes_db.get_character_card_by_id(created["id"]) == before
     )
 
 
@@ -110,8 +157,14 @@ async def test_missing_update_has_structured_error(character_tools):
     [
         ("tags", "null"),
         ("tags", '"science"'),
+        ("tags", "123"),
+        ("tags", "{}"),
+        ("tags", ["math", 123]),
         ("alternate_greetings", "null"),
+        ("alternate_greetings", '"Hello"'),
         ("extensions", "null"),
+        ("extensions", '"topic"'),
+        ("extensions", "[]"),
     ],
 )
 async def test_normalized_empty_or_scalar_json_fields_cannot_report_success(
@@ -131,11 +184,68 @@ async def test_encoded_json_collections_are_normalized_before_authoring(
     character_tools,
 ):
     created = await character_tools.create_character(
-        "Ada", {"tags": '["math"]', "extensions": '{"topic":"arithmetic"}'}
+        "Ada",
+        {
+            "tags": '["math"]',
+            "alternate_greetings": '["Hello"]',
+            "extensions": '{"topic":"arithmetic"}',
+        },
     )
     record = character_tools.chachanotes_db.get_character_card_by_id(created["id"])
     assert record["tags"] == ["math"]
+    assert record["alternate_greetings"] == ["Hello"]
     assert record["extensions"] == {"topic": "arithmetic"}
+    updated = await character_tools.update_character(
+        created["id"],
+        1,
+        {"tags": "[]", "alternate_greetings": "[]", "extensions": "{}"},
+    )
+    assert updated["version"] == 2
+    record = character_tools.chachanotes_db.get_character_card_by_id(created["id"])
+    assert record["tags"] == []
+    assert record["alternate_greetings"] == []
+    assert record["extensions"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update"])
+async def test_authoring_keeps_validated_fields_while_worker_is_pending(
+    character_tools, monkeypatch, operation
+):
+    """A caller changing its arguments cannot replace an accepted card patch."""
+    from tldw_chatbook.MCP import tools as module
+
+    character_id = None
+    if operation == "update":
+        created = await character_tools.create_character("Ada")
+        character_id = created["id"]
+    fields = {"description": "Accepted", "tags": ["math"]}
+    pending = asyncio.Event()
+    release = asyncio.Event()
+    in_worker = module.in_worker
+
+    async def delayed_worker(*args):
+        pending.set()
+        await release.wait()
+        return await in_worker(*args)
+
+    monkeypatch.setattr(module, "in_worker", delayed_worker)
+    request = asyncio.create_task(
+        character_tools.create_character("Ada", fields)
+        if operation == "create"
+        else character_tools.update_character(character_id, 1, fields)
+    )
+    try:
+        await asyncio.wait_for(pending.wait(), 3)
+        fields["description"] = "Replaced after validation"
+        fields["tags"].append(123)
+    finally:
+        release.set()
+    receipt = await request
+    assert "error_code" not in receipt, receipt
+    record = character_tools.chachanotes_db.get_character_card_by_id(receipt["id"])
+    assert record["description"] == "Accepted"
+    assert record["tags"] == ["math"]
 
 
 @pytest.mark.parametrize("name", ["create_character", "update_character"])
