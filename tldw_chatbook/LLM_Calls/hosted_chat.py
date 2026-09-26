@@ -294,7 +294,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
             else:
                 self._trailing_usage_seen = True
-            return deepcopy(dict(event))
+            return self._filtered_event(event)
         if self._finish_reason is not None:
             raise HostedChatProtocolError(
                 "Hosted Chat stream data followed terminal state."
@@ -367,7 +367,74 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             raise HostedChatProtocolError(
                 "Hosted Chat stream usage preceded terminal state."
             )
-        return deepcopy(dict(event))
+        return self._filtered_event(event)
+
+    @staticmethod
+    def _filtered_event(event: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the caller-visible event with tolerated extras dropped.
+
+        Validation tolerates (allowance-listed or tolerant-profile) unknown
+        keys, but the spec's contract is DROP, not passthrough: the visible
+        frame keeps only the known protocol keys at every level -- event,
+        choice, delta, and tool-call objects (normalized to
+        index/id/type/function). Terminal accounting above always reads the
+        ORIGINAL validated values, so filtering never affects the turn.
+        Records without allowances or tolerance can never carry unknown
+        keys past validation, so their visible frames are unchanged.
+        """
+        safe: dict[str, Any] = {
+            key: deepcopy(event[key])
+            for key in _KNOWN_TOP_LEVEL_KEYS
+            if key in event
+        }
+        choices = safe.get("choices")
+        if isinstance(choices, list):
+            safe["choices"] = [
+                HostedChatStream._filtered_choice(choice)
+                for choice in choices
+                if isinstance(choice, Mapping)
+            ]
+        return safe
+
+    @staticmethod
+    def _filtered_choice(choice: Mapping[str, Any]) -> dict[str, Any]:
+        safe_choice: dict[str, Any] = {
+            key: deepcopy(choice[key])
+            for key in _KNOWN_STREAM_CHOICE_KEYS
+            if key in choice
+        }
+        delta = safe_choice.get("delta")
+        if isinstance(delta, Mapping):
+            safe_delta: dict[str, Any] = {
+                key: deepcopy(delta[key])
+                for key in _KNOWN_MESSAGE_KEYS
+                if key in delta
+            }
+            tool_calls = safe_delta.get("tool_calls")
+            if isinstance(tool_calls, list):
+                safe_delta["tool_calls"] = [
+                    HostedChatStream._filtered_tool_call(call)
+                    for call in tool_calls
+                    if isinstance(call, Mapping)
+                ]
+            safe_choice["delta"] = safe_delta
+        return safe_choice
+
+    @staticmethod
+    def _filtered_tool_call(call: Mapping[str, Any]) -> dict[str, Any]:
+        safe_call: dict[str, Any] = {
+            key: deepcopy(call[key])
+            for key in _KNOWN_STREAM_TOOL_KEYS
+            if key in call
+        }
+        function = safe_call.get("function")
+        if isinstance(function, Mapping):
+            safe_call["function"] = {
+                key: deepcopy(function[key])
+                for key in ("name", "arguments")
+                if key in function
+            }
+        return safe_call
 
     def _consume_tool_deltas(self, value: object) -> None:
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):

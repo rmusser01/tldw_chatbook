@@ -105,7 +105,13 @@ def test_stream_allowlisted_extra_key_is_ignored():
         finish_policy=_Policy(),
         allowed_extra_keys=frozenset({"service_tier"}),
     )
-    assert list(stream) == events
+    # Qodo finding 5: tolerated extras are validated then DROPPED from the
+    # visible frames (spec: drop, not passthrough). Terminal accounting is
+    # unchanged.
+    frames = list(stream)
+    assert len(frames) == 2
+    assert all("service_tier" not in frame for frame in frames)
+    assert frames[0]["choices"][0]["delta"]["content"] == "hi"
     assert stream.terminal_turn.text == "hi"
     assert stream.terminal_turn.usage == {
         "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2
@@ -462,3 +468,93 @@ def test_hosted_chat_request_forwards_level_allowances_and_tolerance(
     assert len(list(result)) == 2
     assert result.terminal_turn.text == "hi"
     assert result.terminal_turn.usage is None
+
+
+# Matrix 4 (Qodo finding 5): visible stream frames keep known protocol
+# keys only -- tolerated/allowanced extras never reach the caller.
+def test_stream_tolerant_unknown_event_key_dropped_from_visible_frame():
+    chunk = _stream_chunk_event(prompt="You said hi")  # llama-server extra
+    frames = list(
+        HostedChatStream(
+            _stream_records(chunk, _STREAM_TERMINAL_EVENT),
+            finish_policy=_Policy(),
+            tolerant_top_level_extras=True,
+        )
+    )
+    assert "prompt" not in frames[0]
+    assert frames[0]["choices"][0]["delta"] == {"role": "assistant", "content": "hi"}
+
+
+def test_stream_allowanced_null_choice_and_delta_extras_dropped():
+    events = [_stream_chunk_event(), deepcopy(_STREAM_TERMINAL_EVENT)]
+    for event in events:
+        event["choices"][0]["logprobs"] = None
+    events[0]["choices"][0]["delta"]["refusal"] = None
+    frames = list(
+        HostedChatStream(
+            _stream_records(*events),
+            finish_policy=_Policy(),
+            allowed_choice_keys=_CHOICE_ALLOWANCES,
+            allowed_message_keys=frozenset({"refusal"}),
+        )
+    )
+    for frame in frames:
+        assert set(frame["choices"][0]) <= {"index", "delta", "finish_reason"}
+        assert set(frame["choices"][0]["delta"]) <= {
+            "role", "content", "reasoning_content", "tool_calls"
+        }
+
+
+def test_stream_tolerant_tool_call_extras_normalized_in_visible_frame():
+    chunk = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            # ollama-style extra on the call object:
+                            "extra": "dropped",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"city":"Tokyo"}',
+                            },
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ]
+    }
+    terminal = {
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+    }
+    frames = list(
+        HostedChatStream(
+            _stream_records(chunk, terminal),
+            finish_policy=_ToolCallsPolicy(),
+            tolerant_top_level_extras=True,
+        )
+    )
+    assert frames[0]["choices"][0]["delta"]["tool_calls"] == [
+        {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city":"Tokyo"}'},
+        }
+    ]
+
+
+def test_stream_known_keys_only_frames_pass_through_unchanged():
+    # zai/moonshot byte-identity: they carry no allowances and no tolerance,
+    # so validation admits known keys only and the filtered frame is the
+    # original event, value for value.
+    events = [_stream_chunk_event(), deepcopy(_STREAM_TERMINAL_EVENT)]
+    frames = list(
+        HostedChatStream(_stream_records(*events), finish_policy=_Policy())
+    )
+    assert frames == events
