@@ -851,6 +851,7 @@ from ..Library_Modules.screen_helpers import (
     _transcribe_cpp_gguf_filters,
     _library_carries_forward_line,
     _unbreakable_size_text,
+    _active_library_principal_id,
     _active_library_sync_scope,
     _record_value,
     _library_collection_record_data,
@@ -21219,17 +21220,34 @@ class LibraryScreen(BaseAppScreen):
             return cli_rail_state["lifecycle"], True
         return None, False
 
-    def _library_onboarding_admission_key(self) -> tuple[Any, ...]:
-        """Return the profile and active-source authority for one evidence read."""
-        scope = _active_library_sync_scope(self.app_instance)
+    def _library_onboarding_admission_key(
+        self, authenticated_principal_id: str | None = None
+    ) -> tuple[Any, ...]:
+        """Return the profile and active-source authority for one evidence read.
+
+        Never reads the principal itself: that is an auth-token (keyring)
+        read, resolved off the event loop by
+        ``_resolve_library_onboarding_admission_key`` (TASK-32926).
+        """
+        scope = _active_library_sync_scope(self.app_instance, resolve_principal=False)
         return (
             id(self.app_instance.app_config),
             getattr(self.app_instance, "notes_user_id", None) or "default_user",
             scope["source_authority"],
             scope["server_profile_id"],
-            scope["authenticated_principal_id"],
+            authenticated_principal_id,
             scope["workspace_scope"],
         )
+
+    async def _resolve_library_onboarding_admission_key(self) -> tuple[Any, ...]:
+        """The full admission key, principal included, read off the loop."""
+        key = self._library_onboarding_admission_key()
+        if key[2] != "server":
+            return key
+        principal = await asyncio.to_thread(
+            _active_library_principal_id, self.app_instance
+        )
+        return self._library_onboarding_admission_key(principal)
 
     def _sync_library_onboarding_status_copy(self) -> None:
         """Keep the Task 4/5 presentation seam in sync with evidence status."""
@@ -21260,10 +21278,7 @@ class LibraryScreen(BaseAppScreen):
         elif self.is_mounted:
             self._sync_library_landing_lifecycle_presentation()
         return self.run_worker(
-            self._gather_library_onboarding_evidence(
-                generation,
-                self._library_onboarding_admission_key(),
-            ),
+            self._gather_library_onboarding_evidence(generation),
             group="library_onboarding_evidence",
             exclusive=True,
         )
@@ -21402,12 +21417,9 @@ class LibraryScreen(BaseAppScreen):
             else LibraryContentEvidence.UNKNOWN
         )
 
-    async def _gather_library_onboarding_evidence(
-        self,
-        generation: int,
-        admission_key: tuple[Any, ...],
-    ) -> None:
+    async def _gather_library_onboarding_evidence(self, generation: int) -> None:
         """Progressively settle evidence under one overall bounded deadline."""
+        admission_key = await self._resolve_library_onboarding_admission_key()
         source_authority = str(admission_key[2])
 
         tasks = {
@@ -21449,6 +21461,7 @@ class LibraryScreen(BaseAppScreen):
                             generation,
                             admission_key,
                             evidence,
+                            await self._resolve_library_onboarding_admission_key(),
                         )
                         return
             evidence.extend(LibraryContentEvidence.UNKNOWN for _task in pending)
@@ -21456,6 +21469,7 @@ class LibraryScreen(BaseAppScreen):
                 generation,
                 admission_key,
                 evidence,
+                await self._resolve_library_onboarding_admission_key(),
             )
         finally:
             for task in tasks:
@@ -21468,12 +21482,17 @@ class LibraryScreen(BaseAppScreen):
         generation: int,
         admission_key: tuple[Any, ...],
         evidence: Sequence[LibraryContentEvidence],
+        current_admission_key: tuple[Any, ...],
     ) -> None:
-        """Apply accepted evidence against the lifecycle current at settlement."""
+        """Apply accepted evidence against the lifecycle current at settlement.
+
+        ``current_admission_key`` is resolved off the loop by the caller
+        (TASK-32926) so this fence never reads the keyring.
+        """
         if (
             generation != self._library_onboarding_generation
             or not self.is_attached
-            or admission_key != self._library_onboarding_admission_key()
+            or admission_key != current_admission_key
         ):
             return
         previous_lifecycle = self._library_lifecycle
