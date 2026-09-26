@@ -5346,6 +5346,7 @@ StatCard:hover {
     text-style: bold;
 }
 
+
 .color-preset-swatch {
     width: $ds-size-3;
     min-width: $ds-size-3;
@@ -5353,11 +5354,15 @@ StatCard:hover {
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
+    border-left: vkey $foreground;
+    border-right: vkey $foreground;
 }
 
 
 .color-preset-swatch:focus {
-    outline: solid $ds-focus-accent;
+    outline: none;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
     text-style: bold;
 }
 
@@ -5370,11 +5375,66 @@ StatCard:hover {
     border: none;
     padding: $ds-space-0;
 }
+
 #settings-theme-dark-mode > .toggle--button {
-    color: $ds-surface-panel;
+    color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
     color: $success;
+}
+
+
+.theme-editor-action {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
+}
+.theme-editor-action.-primary:enabled {
+    background: $ds-surface-panel;
+    color: $text-primary;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+.theme-editor-action.-success:enabled {
+    background: $ds-surface-panel;
+    color: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+.theme-editor-action.-warning:enabled {
+    background: $ds-surface-panel;
+    color: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+.theme-editor-action.-error:enabled {
+    background: $ds-surface-panel;
+    color: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+
+#settings-theme-card .settings-action-row .theme-editor-action:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-success:focus {
+    background: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-warning:focus {
+    background: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
 }
 
 
