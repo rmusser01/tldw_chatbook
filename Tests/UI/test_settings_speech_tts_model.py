@@ -591,6 +591,7 @@ def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_c
         "chatterbox",
         "higgs",
         "alltalk",
+        "omnivoice",
     )
     assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS) == set(BUILT_IN_TTS_PROVIDER_ORDER)
 
@@ -632,6 +633,9 @@ def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_c
         "dtype",
     } <= set(GLOBAL_TTS_PROVIDER_FIELD_IDS["higgs"])
     assert {"server_url"} <= set(GLOBAL_TTS_PROVIDER_FIELD_IDS["alltalk"])
+    assert {"model_root", "voice_resource_directory", "num_steps"} <= set(
+        GLOBAL_TTS_PROVIDER_FIELD_IDS["omnivoice"]
+    )
 
     rendered_names = " ".join(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]).lower()
     for forbidden in (

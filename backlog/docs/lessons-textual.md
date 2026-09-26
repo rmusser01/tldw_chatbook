@@ -1146,3 +1146,88 @@ stored IDs. Preserve those values through form snapshots and recomposition;
 calling `str(Select.value)` erases that distinction and breaks control dispatch.
 Real-service regressions
 and four native cells verified exact saved IDs, labels and memory confirmation.
+
+## `is_mounted` never goes False, and `push_screen_wait` needs a worker (Qodo review of PR #2799, 2026-09-23)
+
+Two Textual facts that turned three "crash guard" fixes into no-ops. Both were
+found only by mounting a real app; both were invisible to the `__new__`-plus-fake
+unit tests that shipped with the fixes.
+
+- **`widget.is_mounted` is sticky True.** In Textual 8.2.8 `_is_mounted` is
+  assigned `False` once in `MessagePump.__init__` and `True` in exactly one
+  other place (`message_pump.py:612`); nothing ever clears it. A removed widget
+  and a popped screen both still report `is_mounted is True`. Measured:
+  after `await widget.remove()`, `is_mounted=True`, `is_attached=False`,
+  `is_running=False`. **`is_attached` is the liveness predicate** — it walks
+  `_parent` to the DOM root. `SchedulesWorkbench._run_sync`'s `finally:` guard
+  was entered on the very teardown it was written to skip, raised `NoMatches`,
+  and was swallowed by the `except` under it. (There are ~40 more
+  `is_mounted`-as-liveness reads in `FirstRunSetupWizard.py` alone; they were
+  left alone as out of that PR's scope, but they are the same class.)
+- **Removing a node cancels that node's workers** (`Widget._on_unmount` →
+  `WorkerManager.cancel_node`), and the cancellation lands ON the await — so a
+  worker's post-await DOM code never runs on the dismiss path at all. The
+  corollary matters for testing: you *cannot* reproduce "dismiss the wizard
+  mid-await and watch the app exit" by removing the widget. A screen's OWN
+  worker is different — cancellation propagates through `finally:`, so a
+  `finally:` body still runs against a detached DOM. That is the case worth a
+  test.
+- **`App.push_screen_wait` raises `NoActiveWorker` outside a Textual worker.**
+  `VoiceCloningWindow._delete_profile` is reached from `on_button_pressed` (the
+  message pump) and from `action_delete_profile` (a bare `asyncio.create_task`)
+  — neither is a worker. The fix that replaced a compose-time `AttributeError`
+  with `push_screen_wait` therefore still showed no dialog and deleted nothing;
+  a unit test whose fake app defined `push_screen_wait` asserted the dialog's
+  `message` and hid it. Use the `push_screen(dialog, callback)` form unless you
+  are already inside `@work`.
+
+**The method lesson:** a fake that lets you *set* the state under test
+(`step._is_mounted = False`, `app.push_screen_wait = ...`) is asserting about a
+state production may never reach. For a guard whose whole subject is the Textual
+lifecycle, mount it. Mutation-check the new test too: two of the four mounted
+journeys added here stayed green when `exit_on_error=False` was deleted, because
+the cancellation above makes that path unreachable — the AST pin is what actually
+holds that kwarg.
+
+## A keyring read measured on macOS is not what the UI loop pays on Linux (TASK-32921/32922/32924, 2026-09-23)
+
+A Fedora user reported random multi-second UI lag that nobody could reproduce
+on the macOS dev machines. The cause that best fit: keyring reads on the UI loop,
+repeated per item. Every send and every Chat visit computed a trust status for
+**each installed skill**, and each one re-read a keyring entry (`load_marker`).
+Server mode re-read one on **every API call**, and the Image/Video Gen panels
+did up to 7 per `compose()`. The costs recorded in the code comments were macOS
+numbers (11.3–18.2 ms, Keychain via ctypes). On Linux each read is a
+SecretService round trip over D-Bus to gnome-keyring, and a **locked**
+keyring can block on an unlock prompt. N skills meant N prompts per send.
+
+- Treat any `keyring.get_password` reachable from a handler, timer, `compose()`
+  or send path as a potential multi-second call, whatever the macOS timing says.
+- Cache in the store's **read method**, the one place every caller routes
+  through. Have the store's own writes clear the cache (after the write, with a
+  generation bump so an in-flight read cannot re-cache the old value). Cache
+  failures only briefly (2 s here), so one pass raises once but a user's Retry
+  still reads fresh; `skill_trust_service.py:240-258` explains why failures
+  must never be latched.
+- A cached rollback marker is safe **only** because verification is an exact
+  match (generation plus digest): staleness can fail closed but never accept a
+  rolled-back manifest. Re-check that property before caching any other
+  security anchor.
+
+## Read the stall record's frames before theorising about lag (TASK-32920, 2026-09-23)
+
+The first diagnosis of that Fedora report ranked six causes by reading code.
+Measurement demoted two of them: the quadratic thinking-delta capture costs
+0.2 ms per delta, and the per-tick store walk costs 3.7 ms at 1,000 messages.
+It also missed the keyring reads entirely. This machine's own log held 42
+`event_loop_stall` records, up to 9.6 s, and none could be attributed:
+`active_timers` lists what was *scheduled*, not what was *running*. The
+2-minute `footer-db-size-periodic` timer appeared in every record without
+being the cause. Stall records now carry the loop's sampled stack: `leaf_*` is
+the innermost frame, often a library; `site_*`/`caller_*` are the two deepest
+tldw_chatbook frames. **Ask for those lines first.** One sample marks where
+the loop was when it crossed the threshold. That pinpoints a single long call
+(keyring, locked SQLite write). For a long run of short calls it is only a
+representative point: the first live capture named
+`Backup_Recovery.native_files.pinned_directory` during boot, which is cheap
+syscalls inside a longer synchronous stretch.

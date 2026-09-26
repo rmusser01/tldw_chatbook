@@ -42,6 +42,15 @@ class TamagotchiValidator:
         Raises:
             ValidationError: If name is invalid
         """
+        # Type first: these values arrive from hand-edited TOML, where
+        # `name = 123` is perfectly valid syntax. Reaching `.strip()` with a
+        # non-string raises `AttributeError`, which escapes every caller that
+        # guards on `ValidationError` -- including the footer, which composes
+        # on every screen.
+        if name is not None and not isinstance(name, str):
+            raise ValidationError(
+                f"Pet name must be a string, got {type(name).__name__}"
+            )
         if not name:
             raise ValidationError("Pet name cannot be empty")
 
@@ -113,6 +122,12 @@ class TamagotchiValidator:
         Raises:
             ValidationError: If personality is invalid
         """
+        # See `validate_name`: a non-string from TOML must fail as a
+        # `ValidationError`, not as an `AttributeError` from `.lower()`.
+        if personality is not None and not isinstance(personality, str):
+            raise ValidationError(
+                f"Personality must be a string, got {type(personality).__name__}"
+            )
         if not personality:
             return "balanced"  # Default
 

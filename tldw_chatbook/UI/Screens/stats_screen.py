@@ -64,13 +64,21 @@ class TopicBar(Container):
         with Horizontal(classes="topic-bar-container"):
             yield Label(f"{self.topic} ({self.count})", classes="topic-label")
             with Container(classes="topic-bar-bg"):
-                yield Container(classes="topic-bar-fill", id=f"bar-{self.topic}")
+                # TASK-32892: NO id derived from the topic. Topics come from
+                # the user's own conversations, and Textual rejects an id
+                # holding a space, a leading digit or any non-ASCII character
+                # -- `BadIdentifier` inside compose is a mount-time crash of
+                # the whole Stats screen, not a missing bar. Slugifying would
+                # only trade that for a duplicate-id crash on two topics that
+                # slugify alike; the bar is already uniquely reachable by
+                # class inside its own `TopicBar`.
+                yield Container(classes="topic-bar-fill")
 
     def on_mount(self) -> None:
         """Set the width of the bar after mounting."""
         percentage = (self.count / self.max_count * 100) if self.max_count > 0 else 0
         try:
-            bar = self.query_one(f"#bar-{self.topic}")
+            bar = self.query_one(".topic-bar-fill")
             # ds-runtime: scale the bar to the measured share of usage.
             bar.set_styles(width=f"{percentage}%")
         except Exception:

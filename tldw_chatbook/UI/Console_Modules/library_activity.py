@@ -105,56 +105,16 @@ class ConsoleLibraryActivityController:
         """
         if turn_context is None:
             return None
-        app = self.app_instance
-        activity_kwargs = self.capture_kwargs(turn_context)
-        if not turn_context.library_authority.direct_library_tools:
-            from tldw_chatbook.Agents.library_rag_tool_provider import (
-                LibraryRagToolProvider,
-            )
+        # One builder, shared with the runtime-owned factory. The runtime's
+        # copy is what `ensure_chat_controller` actually binds, so a second
+        # body here is a copy that silently rots (TASK-32892 P0-1).
+        from tldw_chatbook.Chat.console_runtime import _library_provider_for_app
 
-            return LibraryRagToolProvider(
-                getattr(app, "library_rag_search_service", None),
-                **activity_kwargs,
-            )
-        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-        from tldw_chatbook.Library.local_library_tool_service import (
-            LocalLibraryToolService,
+        return _library_provider_for_app(
+            self.app_instance,
+            turn_context,
+            **self.capture_kwargs(turn_context),
         )
-
-        media_chunk_service = None
-        media_reading_service = getattr(app, "local_media_reading_service", None)
-        media_db = getattr(app, "media_db", None) or getattr(
-            media_reading_service, "media_db", None
-        )
-        if media_db is not None or media_reading_service is not None:
-            from tldw_chatbook.Chunking.chunking_interop_library import (
-                get_chunking_service,
-            )
-            from tldw_chatbook.Library.local_media_chunk_tool_service import (
-                LocalMediaChunkToolService,
-            )
-
-            media_chunk_service = LocalMediaChunkToolService(
-                media_db,
-                media_reading_service,
-                template_interop=(
-                    get_chunking_service(media_db) if media_db is not None else None
-                ),
-                policy_enforcer=getattr(app, "service_policy_enforcer", None),
-            )
-        service = LocalLibraryToolService(
-            media_service=media_reading_service,
-            notes_service=getattr(app, "notes_service", None),
-            prompt_service=getattr(app, "local_prompt_service", None),
-            skills_service=getattr(app, "local_skills_service", None),
-            conversation_service=getattr(
-                app, "local_chat_conversation_service", None
-            ),
-            media_chunk_service=media_chunk_service,
-            notes_scope_service=getattr(app, "notes_scope_service", None),
-            policy_enforcer=getattr(app, "service_policy_enforcer", None),
-        )
-        return LibraryToolProvider(service, **activity_kwargs)
 
     def invalidate_projection(self) -> None:
         """Force the next synchronization to rebuild its store projection."""

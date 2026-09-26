@@ -195,6 +195,14 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("server_url", "Server URL"),
         ("language", "Default language"),
     ),
+    "omnivoice": (
+        ("model_root", "Model root"),
+        ("voice_resource_directory", "Voice resource directory"),
+        ("num_steps", "Diffusion steps"),
+        ("guidance_scale", "Guidance (CFG)"),
+        ("max_reference_duration", "Max reference duration"),
+        ("language", "Default language"),
+    ),
 }
 
 

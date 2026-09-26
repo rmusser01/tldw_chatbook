@@ -12527,6 +12527,8 @@ class TldwCli(
             self.ui_responsiveness_monitor.record_timer_created("ui-heartbeat")
             if getattr(self, "_ui_responsiveness_heartbeat_timer", None) is None:
                 self.ui_responsiveness_monitor.reset_heartbeat_baseline()
+                # Attribute stalls from the timer's install, not its first beat.
+                self.ui_responsiveness_monitor.arm()
                 self._ui_responsiveness_heartbeat_timer = self.set_interval(
                     interval_seconds,
                     self._record_ui_heartbeat,

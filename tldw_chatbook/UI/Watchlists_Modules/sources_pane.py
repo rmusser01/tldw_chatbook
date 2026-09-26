@@ -26,7 +26,7 @@ from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .bulk_sources_modal import OpenBulkSourcesRequested
 from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
-from .table_selection import IdSelectionModel
+from .table_selection import IdSelectionModel, row_with_id
 
 
 DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
@@ -1743,12 +1743,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def select_source_by_id(self, source_id: str) -> None:
         """Select the source with the given id and notify listeners."""
-        source = None
-        for candidate in self.sources:
-            if str(candidate.get("id") or "") == source_id:
-                source = candidate
-                break
-        self.selected_source = source
+        self.selected_source = row_with_id(self.sources, source_id)
 
     def watch_selected_source(self, source: dict[str, Any] | None) -> None:
         if self.is_mounted:

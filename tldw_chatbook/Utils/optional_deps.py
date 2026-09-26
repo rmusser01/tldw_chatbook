@@ -70,6 +70,7 @@ DEPENDENCIES_AVAILABLE = {
     "kokoro_onnx": False,
     "chatterbox": False,
     "higgs_tts": False,
+    "omnivoice_tts": False,
     "pydub": False,
     "pyaudio": False,
     "av": False,
@@ -321,6 +322,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("torch", "torchaudio", "librosa", "soundfile"),
         "STTS",
         "Higgs Audio TTS",
+        OWNER_LIBRARY_MEDIA,
+    ),
+    "omnivoice_tts": _feature(
+        "omnivoice_tts",
+        "OmniVoice ONNX TTS",
+        AREA_MEDIA,
+        ("onnxruntime", "tokenizers"),
+        "STTS",
+        "OmniVoice ONNX TTS",
         OWNER_LIBRARY_MEDIA,
     ),
     "image_generation": _feature(
