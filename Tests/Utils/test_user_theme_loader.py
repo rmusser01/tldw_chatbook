@@ -208,3 +208,36 @@ def test_variables_with_trailing_newline_are_dropped():
     assert sanitize_theme_variables(
         {"foo\n": "red", "bar": "#fff\n", "baz": "auto 50%\n", "ok": "#fff"}, "t.toml"
     ) == {"ok": "#fff"}
+
+
+def test_startup_loader_skips_linked_theme_files(tmp_path):
+    """R43: startup agrees with the picker and the backup layer -- a
+    symlinked, dangling or hard-linked ``*.toml`` is skipped with a warning,
+    never registered (a linked copy of ``nord`` no longer shadows SHIPPED)."""
+    import os
+
+    from loguru import logger
+
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    good = '[theme]\nname = "{0}"\n[colors]\nprimary = "#112233"\n'
+    themes = tmp_path / "themes"
+    themes.mkdir()
+    (themes / "plain.toml").write_text(good.format("plain"), encoding="utf-8")
+    outside = tmp_path / "nord_source.toml"
+    outside.write_text(good.format("nord"), encoding="utf-8")
+    os.symlink(outside, themes / "nord.toml")
+    os.symlink(tmp_path / "nowhere.toml", themes / "gone.toml")
+    hard_source = tmp_path / "hard_source.toml"
+    hard_source.write_text(good.format("hard"), encoding="utf-8")
+    os.link(hard_source, themes / "hard.toml")
+
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        names = [t.name for t in load_user_themes(themes)]
+    finally:
+        logger.remove(sink)
+    assert names == ["plain"]
+    for stem in ("gone", "hard", "nord"):
+        assert any(f"{stem}.toml" in m and "not a regular file" in m for m in messages), messages

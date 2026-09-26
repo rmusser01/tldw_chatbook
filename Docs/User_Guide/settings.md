@@ -563,10 +563,14 @@ tooltip. It is listed even when its file name matches a shipped or Textual
 theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
 Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
 pressing one of their keys shows the reason instead. Only **Delete** works,
-so a broken file can always be cleared — except a symlinked or hard-linked
-one, which the app never writes through: Delete says to remove it outside
-the app. That one file no longer makes the whole themes folder read as
-unavailable. Control characters in anything a
+so a broken file can always be cleared — except a symlinked (even a
+dangling symlink) or hard-linked one, which the app never writes through or
+replaces: Delete, Save, Save as, Import and Rename onto that name all say
+"'\<name\>.toml' is a link, not a regular file; remove it outside the app".
+Such a file is also skipped at startup, so it never registers a theme —
+a linked `nord.toml` shows only as "Nord (unreadable)" under YOUR THEMES,
+next to the shipped Nord it would otherwise have replaced. That one file no
+longer makes the whole themes folder read as unavailable. Control characters in anything a
 theme file puts on screen — an error, a key, a value — show as `?`.
 
 **Import…** (the button beside New, or the **i** key) brings a theme file
@@ -625,7 +629,7 @@ twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different
 Settings category while the editor is open, or leave Settings altogether
-(the tab bar, the command palette or a shortcut), and a Save that needs an
+(the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
 Changing only the **Name** box counts as an unsaved edit.
 
@@ -1316,5 +1320,6 @@ wants. Pinned by pilot and unit tests, not driven live.*
 names are refused; a symlinked or hard-linked theme file is one "not a
 regular file" row, not an unavailable folder; a second file claiming a name
 is a "duplicate of" row; New works with a filter that matches nothing;
-leaving Settings with unsaved theme edits asks Stay / Discard / Save.
-Pinned by pilot and unit tests, not driven live.*
+leaving Settings or quitting with unsaved theme edits asks Stay / Discard /
+Save (one prompt at a time); linked theme files are never replaced and are
+skipped at startup (R43). Pinned by pilot and unit tests, not driven live.*

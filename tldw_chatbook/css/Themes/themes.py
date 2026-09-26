@@ -339,7 +339,10 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     and, when the palette has any, ``[variables]``.
     Unreadable files, and files without the primary colour Textual requires,
     are skipped with a warning so one bad file cannot block startup
-    (TASK-31250).
+    (TASK-31250). So is a file that is not a regular single-link file (a
+    symlink, dangling symlink or hard link): R43, the same rule the Settings
+    listing and the backup layer apply, so startup never registers a theme
+    the picker shows as unreadable.
 
     Args:
         themes_dir: Directory holding the saved theme files (normally the
@@ -350,8 +353,12 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     Returns:
         The successfully parsed themes, in file-name order.
     """
+    import stat
+
     import toml
     from loguru import logger
+
+    from ...Backup_Recovery.settings_file_participants import NOT_REGULAR
 
     themes: list[Theme] = []
     root = Path(themes_dir)
@@ -359,6 +366,10 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
         return themes
     for path in sorted(root.glob("*.toml")):
         try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                logger.warning(f"Skipping user theme {printable(path.name)}: {NOT_REGULAR}")
+                continue
             themes.append(theme_from_file_data(toml.load(path), path.stem, path.name))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this
