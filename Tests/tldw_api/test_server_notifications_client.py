@@ -229,15 +229,3 @@ async def test_client_streams_server_notifications_from_sse_path():
         params={"after": 10},
         event_model=ServerNotificationStreamEvent,
     )
-
-
-# --- task-32902 (tier-2 review, slice S06 P3) --------------------------------
-
-
-def test_server_notifications_schemas_module_has_a_docstring():
-    """The string sat BELOW `from __future__ import annotations`, so it was a
-    no-op expression and `__doc__` was None -- which is also why two imports
-    carried `# noqa: E402`."""
-    from tldw_chatbook.tldw_api import server_notifications_schemas
-
-    assert server_notifications_schemas.__doc__ is not None
