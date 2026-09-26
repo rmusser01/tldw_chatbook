@@ -94,13 +94,15 @@ def test_nonblank_draft_adds_a_direct_improve_destination_before_library():
     drafted = build_composer_menu_entries(draft_available=True)
 
     assert "improve-current-draft" not in {entry.action_id for entry in empty}
-    assert [entry.action_id for entry in drafted[:2]] == [
+    assert [entry.action_id for entry in drafted[:3]] == [
         "improve-current-draft",
+        "save-prompt-draft",
         "prompts",
     ]
     assert drafted[0].label == "Improve current draft…"
     assert drafted[0].enabled is True
-    assert drafted[1].label == "Browse Prompt Library…"
+    assert drafted[1].label == "Save draft to shelf…"
+    assert drafted[2].label == "Browse Prompt Library…"
 
 
 @pytest.mark.unit

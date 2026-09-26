@@ -16504,3 +16504,24 @@ the artifact, before claiming the engine works. For a new provider in an
 existing pipeline, drive one request through the real admission and
 persistence layers: both defects above lived in code the provider's own tests
 never touched.
+
+### A timing assertion can fail consistently without being your regression (TASK-18930)
+
+**What happened.** Adding the Prompts DB v5 Draft Shelf migration prompted a
+broader `Tests/Prompts_DB` run. The legacy
+`test_concurrent_updates_to_same_prompt` failed because both unversioned
+updates succeeded; five immediate reruns on the feature branch failed the same
+way. That looked like a schema regression until the exact base commit
+(`461668df00`) was checked out in a detached worktree: the same test failed
+5/5 there too. A different, older developer checkout passed 5/5, which would
+have been misleading baseline evidence because it was not the branch point.
+
+**What to do.** Compare suspicious regression failures against the exact base
+commit, not whichever checkout is convenient. For concurrency tests, also
+inspect whether the test supplies an explicit version/barrier at the mutation
+boundary or merely hopes two operations overlap. This test passes no
+`expected_version`; a scheduler may legitimately let the second transaction
+read the first transaction's committed version, so its conflict expectation
+is timing-dependent. Record the exact-base result, exclude only that named
+baseline case for the remaining regression sweep, and do not broaden the
+feature to repair unrelated concurrency semantics.

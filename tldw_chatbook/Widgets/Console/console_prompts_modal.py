@@ -7,7 +7,7 @@ import inspect
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from textual import on
 from textual.app import ComposeResult
@@ -16,7 +16,7 @@ from textual.css.query import NoMatches
 from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
-from textual.widgets import Button, Checkbox, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
     decode_prompt_artifact,
@@ -31,6 +31,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
     decompose_legacy_lanes,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import (
     RECIPE_MAPPED_CONTEXT_BLOCKED_COPY,
     PromptBlockEditor,
@@ -39,19 +40,18 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
-from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-from .console_prompts_browse import ConsolePromptsBrowse
+from .console_composer_bar import ComposerDraftSnapshot
 from .console_prompt_improve_view import (
-    ConsolePromptImprovementContext,
-    ConsolePromptImproveView,
     SYSTEM_ANALYSIS_ABSENT_DISCLOSURE,
     SYSTEM_ANALYSIS_ABSENT_TOOLTIP,
     SYSTEM_ANALYSIS_DISCLOSURE,
     SYSTEM_ANALYSIS_LABEL,
+    ConsolePromptImprovementContext,
+    ConsolePromptImproveView,
     improvement_provider_summary,
 )
-from .console_composer_bar import ComposerDraftSnapshot
+from .console_prompts_browse import ConsolePromptsBrowse
 from .console_prompts_state import (
     ConsolePromptsState,
     PromptBrowseResult,
@@ -59,6 +59,8 @@ from .console_prompts_state import (
     PromptSource,
 )
 
+if TYPE_CHECKING:
+    from .console_prompt_draft_editor import ConsolePromptDraftEditor
 
 _PER_PAGE = 10
 _OUTCOME_FIRST_OPTIONAL_BLOCK_IDS = frozenset(
@@ -193,7 +195,7 @@ class ConsolePromptsModal(
 ):
     """One responsive modal shell with internal prompt-workbench modes."""
 
-    MODES = ("browse", "edit", "improve", "recipe")
+    MODES = ("browse", "edit", "improve", "recipe", "draft_edit")
 
     DEFAULT_CSS = """
     ConsolePromptsModal { align: center middle; }
@@ -241,6 +243,12 @@ class ConsolePromptsModal(
         retry_improvement_persistence: Callable[[ConsolePromptsResult], Any]
         | None = None,
         open_library_prompt: Callable[[PromptSource, str], Any] | None = None,
+        update_draft: Callable[..., Any] | None = None,
+        delete_draft: Callable[..., Any] | None = None,
+        insert_draft: Callable[[str], Any] | None = None,
+        list_draft_collections: Callable[[], Any] | None = None,
+        assign_draft_collection: Callable[..., Any] | None = None,
+        initial_source: PromptSource = "local",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -260,16 +268,26 @@ class ConsolePromptsModal(
         self._apply_improvement_result = apply_improvement_result
         self._retry_improvement_persistence = retry_improvement_persistence
         self._open_library_prompt = open_library_prompt
+        self._update_draft = update_draft
+        self._delete_draft = delete_draft
+        self._insert_draft = insert_draft
+        self._list_draft_collections = list_draft_collections
+        self._assign_draft_collection = assign_draft_collection
         if initial_mode not in {"browse", "improve"}:
             raise ValueError(f"Unsupported initial Prompt mode: {initial_mode}")
-        self.state = ConsolePromptsState(mode_stack=(initial_mode,))
+        if initial_source not in {"local", "server", "draft_shelf"}:
+            raise ValueError(f"Unsupported initial Prompt source: {initial_source}")
+        self.state = ConsolePromptsState(
+            mode_stack=(initial_mode,), source=initial_source
+        )
         self.browse_result = PromptBrowseResult(
-            source="local", items=(), page=1, total_pages=1, total_items=0
+            source=initial_source, items=(), page=1, total_pages=1, total_items=0
         )
         self._capabilities_by_source: dict[str, object] = {}
         self._debounce_timer: Timer | None = None
         self._editor_state: PromptBlockEditorState | None = None
         self._selected_record: Mapping[str, Any] | None = None
+        self._draft_collection_options: tuple[tuple[str, int], ...] = ()
         self._decoded: DecodedPromptArtifact | None = None
         self._compatibility_state = ""
         self._request_counter = 0
@@ -322,7 +340,7 @@ class ConsolePromptsModal(
                 )
             with Vertical(id="console-prompts-dirty-guard"):
                 yield Static(
-                    "Unsaved block changes would be lost. Keep editing, or discard them and go back.",
+                    "Unsaved changes would be lost. Keep editing, or discard them and go back.",
                     markup=False,
                 )
                 with Horizontal():
@@ -352,6 +370,7 @@ class ConsolePromptsModal(
                 exclusive=False,
                 group=f"console-prompts-load-{id(self)}",
             )
+            self.call_after_refresh(self._browse_widget_focus_search)
         else:
             self._sync_improve_gates()
             if self._improve_unavailable_reason:
@@ -398,6 +417,11 @@ class ConsolePromptsModal(
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         widget_id = event.widget.id
+        if (
+            self.state.mode == "draft_edit"
+            and widget_id != "console-prompt-draft-delete"
+        ):
+            self._reset_draft_delete_confirmation()
         if not widget_id:
             return
         try:
@@ -443,7 +467,11 @@ class ConsolePromptsModal(
             return
         if self._recipe_selecting and self.state.mode == "browse":
             self._recipe_selecting = False
-        if self.state.mode in {"edit", "recipe"} and self.state.dirty and not discard:
+        if (
+            self.state.mode in {"edit", "recipe", "draft_edit"}
+            and self.state.dirty
+            and not discard
+        ):
             self._show_dirty_guard()
             return
         if len(self.state.mode_stack) == 1:
@@ -493,6 +521,17 @@ class ConsolePromptsModal(
                 self._sync_editor_host_gates(editor)
             else:
                 await self._mount_compatibility(body)
+        elif mode == "draft_edit":
+            from .console_prompt_draft_editor import ConsolePromptDraftEditor
+
+            record = self._selected_record or {}
+            await body.mount(
+                ConsolePromptDraftEditor(
+                    content=str(record.get("content") or ""),
+                    collection_options=self._draft_collection_options,
+                    id="console-prompt-draft-editor",
+                )
+            )
         elif mode == "improve":
             await body.mount(self._improve_widget())
             self._sync_improve_gates()
@@ -500,7 +539,8 @@ class ConsolePromptsModal(
             await self._mount_recipe_choices(body)
 
     def _location_copy(self, mode: PromptModalMode) -> str:
-        parts = ["Prompts", mode.title()]
+        mode_label = "Draft Shelf" if mode == "draft_edit" else mode.title()
+        parts = ["Prompts", mode_label]
         if mode == "edit" and self.state.selected_source:
             parts.append(self.state.selected_source.title())
             selected_name = str((self._selected_record or {}).get("name") or "").strip()
@@ -511,6 +551,12 @@ class ConsolePromptsModal(
             if self.state.working_copy_unsaved:
                 parts.append("Unsaved working copy")
         return " / ".join(parts)
+
+    def _browse_widget_focus_search(self) -> None:
+        try:
+            self.query_one(ConsolePromptsBrowse).focus_search()
+        except NoMatches:
+            return
 
     def _can_offer_provider_recovery(self) -> bool:
         """Return whether the current blocker is repairable in provider settings."""
@@ -711,6 +757,7 @@ class ConsolePromptsModal(
         self.state = self.state.with_source(source)
         await self._clear_cross_source_results(source)
         await self.reload_browse(token_already_started=True)
+        self._browse_widget_focus_search()
 
     async def _clear_cross_source_results(self, source: PromptSource) -> None:
         if self.browse_result.source == source:
@@ -745,6 +792,15 @@ class ConsolePromptsModal(
             if not query:
                 raw = await _maybe_await(self._list_page(source, self.state.page))
                 result = self._normalize_list_result(raw, source, self.state.page)
+                if result.total_items > 0 and result.page > result.total_pages:
+                    if not self.state.accepts(token, source):
+                        return
+                    fallback_page = result.total_pages
+                    self.state = self.state.with_page(fallback_page)
+                    raw = await _maybe_await(self._list_page(source, fallback_page))
+                    result = self._normalize_list_result(
+                        raw, source, fallback_page
+                    )
             else:
                 raw = await _maybe_await(self._search(source, query))
                 result = self._normalize_search_result(raw, source)
@@ -791,45 +847,54 @@ class ConsolePromptsModal(
             return raw
         if isinstance(raw, Mapping):
             items_value = raw.get("items", ())
+            raw_total = raw.get("total_items", len(items_value))
         else:
             items_value = raw or ()
+            raw_total = len(items_value)
         items = tuple(item for item in items_value if isinstance(item, Mapping))
+        total_items = (
+            raw_total
+            if type(raw_total) is int and raw_total >= len(items)
+            else len(items)
+        )
         return PromptBrowseResult(
             source=source,
             items=items,
             page=1,
             total_pages=1,
-            total_items=len(items),
+            total_items=total_items,
         )
 
     def _show_browse_error(
         self, exc: Exception, *, source: PromptSource, query: str
     ) -> None:
         browse = self.query_one(ConsolePromptsBrowse)
+        source_label = "Draft Shelf" if source == "draft_shelf" else source.title()
         if query:
             message = (
-                f"Search failed for {source.title()} — results were not changed. "
+                f"Search failed for {source_label} — results were not changed. "
                 "Retry, change the query, or switch source."
             )
         elif "unavailable" in str(exc).lower() or isinstance(exc, ValueError):
             message = (
-                f"{source.title()} Prompt source is unavailable — its Library cannot be shown. "
+                f"{source_label} is unavailable — its items cannot be shown. "
                 "Retry or switch source."
             )
         else:
             message = (
-                f"{source.title()} Prompt Library failed to load — no items were replaced. "
+                f"{source_label} failed to load — no items were replaced. "
                 "Retry or switch source."
             )
         browse.show_status(message, retry=True)
 
     async def open_artifact(self, identifier: str) -> None:
         source = self.state.source
+        source_label = "Draft Shelf" if source == "draft_shelf" else source.title()
         self.state = self.state.begin_detail(identifier)
         detail_token = self.state.detail_token
         browse = self.query_one(ConsolePromptsBrowse)
         browse.show_status(
-            f"Loading latest {source.title()} detail before editing…",
+            f"Loading latest {source_label} detail before editing…",
             retry=False,
         )
         try:
@@ -851,6 +916,30 @@ class ConsolePromptsModal(
             return
 
         if not self.state.accepts_detail(detail_token, source, identifier):
+            return
+
+        if source == "draft_shelf":
+            collection_options = await self._load_draft_collections()
+            if (
+                not self.is_mounted
+                or not self.state.accepts_detail(detail_token, source, identifier)
+            ):
+                return
+            self._selected_record = record
+            self._decoded = None
+            self._editor_state = None
+            self._draft_collection_options = collection_options
+            self.state = (
+                self.state.select(
+                    identity=identity,
+                    version=_record_version(record),
+                    source=source,
+                    capabilities=capabilities,
+                )
+                .as_unsaved_copy(False)
+                .with_dirty(False)
+            )
+            await self.enter_mode("draft_edit", focus_id="console-prompt-draft-content")
             return
 
         try:
@@ -928,6 +1017,31 @@ class ConsolePromptsModal(
         self._editor_state = None
         self._compatibility_state = decoded.state.replace("_", " ")
         await self.enter_mode("edit")
+
+    async def _load_draft_collections(self) -> tuple[tuple[str, int], ...]:
+        """Return optional local collection choices for draft promotion."""
+
+        if self._list_draft_collections is None:
+            return ()
+        try:
+            raw = await _maybe_await(self._list_draft_collections())
+        except Exception:  # noqa: BLE001 - collection choices are optional recovery
+            return ()
+        if isinstance(raw, Mapping):
+            values = raw.get("collections", raw.get("items", ()))
+        else:
+            values = raw or ()
+        options: list[tuple[str, int]] = []
+        for item in values:
+            if not isinstance(item, Mapping):
+                continue
+            collection_id = item.get("collection_id", item.get("id"))
+            if type(collection_id) is not int or collection_id < 1:
+                continue
+            name = str(item.get("display_name") or item.get("name") or "").strip()
+            if name:
+                options.append((name, collection_id))
+        return tuple(options)
 
     async def _capture_manual_apply_target(self) -> None:
         """Pin the provider resolution used to guard a later manual Apply."""
@@ -1663,7 +1777,7 @@ class ConsolePromptsModal(
             return
         if self._improvement_is_cancelling():
             return
-        if self.state.mode in {"edit", "recipe"} and self.state.dirty:
+        if self.state.mode in {"edit", "recipe", "draft_edit"} and self.state.dirty:
             self._show_dirty_guard()
             return
         self.dismiss_safe_once(None)
@@ -1673,6 +1787,9 @@ class ConsolePromptsModal(
         if guard.display:
             if source == "escape":
                 self._keep_editing()
+            return
+        if source == "escape" and self.state.mode == "draft_edit":
+            await self._back_internal()
             return
         self._request_close()
 
@@ -1743,6 +1860,25 @@ class ConsolePromptsModal(
     ) -> None:
         event.stop()
         await self.open_artifact(event.identifier)
+
+    @on(TextArea.Changed, "#console-prompt-draft-content")
+    def _draft_content_changed(self, event: TextArea.Changed) -> None:
+        event.stop()
+        self.mark_dirty()
+        try:
+            self._draft_editor().reset_delete_confirmation()
+        except NoMatches:
+            pass
+
+    @on(Input.Changed, "#console-prompt-draft-library-name")
+    def _draft_library_name_changed(self, event: Input.Changed) -> None:
+        del event
+        self._reset_draft_delete_confirmation()
+
+    @on(Select.Changed, "#console-prompt-draft-library-collection")
+    def _draft_library_collection_changed(self, event: Select.Changed) -> None:
+        del event
+        self._reset_draft_delete_confirmation()
 
     @on(PromptBlockEditor.BlockFieldChanged)
     def _block_changed(self, event: PromptBlockEditor.BlockFieldChanged) -> None:
@@ -2021,6 +2157,205 @@ class ConsolePromptsModal(
         self._sync_editor_host_gates()
         self.notify("Prompt saved.")
 
+    def _selected_draft_target(self) -> tuple[int, int]:
+        """Return the selected draft's local ID and reviewed version."""
+
+        record = self._selected_record or {}
+        draft_id = record.get("draft_id")
+        version = self.state.selected_version
+        if type(draft_id) is not int or draft_id < 1 or type(version) is not int:
+            raise ValueError("The selected draft is no longer available.")
+        return draft_id, version
+
+    def _reset_draft_delete_confirmation(self) -> None:
+        """Disarm hard deletion after any non-delete editor interaction."""
+
+        try:
+            self._draft_editor().reset_delete_confirmation()
+        except NoMatches:
+            pass
+
+    def _draft_editor(self) -> ConsolePromptDraftEditor:
+        """Return the first-use Draft Shelf editor mounted for edit mode."""
+        from .console_prompt_draft_editor import ConsolePromptDraftEditor
+
+        return self.query_one(ConsolePromptDraftEditor)
+
+    def _replace_cached_draft_row(self, updated: Mapping[str, Any]) -> None:
+        """Keep the shelf row truthful when returning after an in-place update."""
+
+        selected_identity = self.state.selected_identity
+        if not selected_identity or self.browse_result.source != "draft_shelf":
+            return
+        replaced = False
+        items: list[Mapping[str, Any]] = []
+        for item in self.browse_result.items:
+            try:
+                matches = _record_identifier(item) == selected_identity
+            except ValueError:
+                matches = False
+            if matches:
+                items.append(updated)
+                replaced = True
+            else:
+                items.append(item)
+        if replaced:
+            self.browse_result = replace(self.browse_result, items=tuple(items))
+
+    async def _update_selected_draft(self) -> None:
+        editor = self._draft_editor()
+        editor.reset_delete_confirmation()
+        if self._update_draft is None:
+            editor.show_status("Draft update is unavailable.", error=True)
+            return
+        content = editor.content
+        if not content.strip():
+            editor.show_status("A saved draft cannot be empty.", error=True)
+            return
+        try:
+            draft_id, version = self._selected_draft_target()
+            raw = await _maybe_await(
+                self._update_draft(
+                    draft_id=draft_id,
+                    content=content,
+                    expected_version=version,
+                )
+            )
+            if not isinstance(raw, Mapping):
+                raise TypeError("Draft update did not return the saved revision.")
+            updated = dict(raw)
+            updated_version = _record_version(updated)
+            if updated_version is None:
+                raise ValueError("Draft update did not return a version.")
+        except Exception as exc:  # noqa: BLE001 - surface backend refusal in-place
+            editor.show_status(
+                str(exc).strip()
+                or "Draft update failed. Reload the shelf and try again.",
+                error=True,
+            )
+            return
+        self._replace_cached_draft_row(updated)
+        self._selected_record = updated
+        self.state = self.state.select(
+            identity=_record_identifier(updated),
+            version=updated_version,
+            source="draft_shelf",
+            capabilities=self.state.selected_capabilities,
+        ).with_dirty(False)
+        editor.show_status("Draft updated.")
+
+    async def _insert_selected_draft(self) -> None:
+        editor = self._draft_editor()
+        editor.reset_delete_confirmation()
+        if self._insert_draft is None:
+            editor.show_status("Insert is unavailable.", error=True)
+            return
+        try:
+            inserted = await _maybe_await(self._insert_draft(editor.content))
+        except Exception:  # noqa: BLE001 - keep editor and composer intact on refusal
+            editor.show_status(
+                "The draft could not be inserted. The composer was unchanged.",
+                error=True,
+            )
+            return
+        if not inserted:
+            editor.show_status(
+                "The active Console changed. Reopen the shelf and try again.",
+                error=True,
+            )
+            return
+        self.state = self.state.with_dirty(False)
+        self.dismiss_safe_once(None)
+
+    async def _delete_selected_draft(self) -> None:
+        editor = self._draft_editor()
+        if not editor.delete_armed:
+            editor.arm_delete()
+            return
+        if self._delete_draft is None:
+            editor.reset_delete_confirmation()
+            editor.show_status("Draft deletion is unavailable.", error=True)
+            return
+        try:
+            draft_id, version = self._selected_draft_target()
+            deleted = await _maybe_await(
+                self._delete_draft(
+                    draft_id=draft_id,
+                    expected_version=version,
+                )
+            )
+            if deleted is not True:
+                raise ValueError("Draft deletion was not confirmed.")
+        except Exception as exc:  # noqa: BLE001 - surface backend refusal in-place
+            editor.reset_delete_confirmation()
+            editor.show_status(
+                str(exc).strip()
+                or "Draft deletion failed. Reload the shelf and try again.",
+                error=True,
+            )
+            return
+        self.state = self.state.with_dirty(False).go_back().begin_search()
+        await self._mount_mode("browse")
+        await self.reload_browse(token_already_started=True)
+        self.call_after_refresh(self._browse_widget_focus_search)
+
+    async def _promote_selected_draft(self) -> None:
+        editor = self._draft_editor()
+        editor.reset_delete_confirmation()
+        name = editor.library_name
+        if not name:
+            editor.show_status(
+                "Add a Prompt name before saving to Library.", error=True
+            )
+            return
+        if not editor.content.strip():
+            editor.show_status(
+                "Draft content must contain non-whitespace text before saving to Library.",
+                error=True,
+            )
+            return
+        try:
+            saved = await _maybe_await(
+                self._save(
+                    source="local",
+                    name=name,
+                    system_prompt="",
+                    user_prompt=editor.content,
+                    artifact_type="prompt",
+                    prompt_format="legacy",
+                )
+            )
+            if not isinstance(saved, Mapping):
+                raise TypeError("Library save did not return the new Prompt.")
+            prompt_id = saved.get("local_id")
+            if type(prompt_id) is not int:
+                raw_id = saved.get("id")
+                prompt_id = int(raw_id) if str(raw_id or "").isdecimal() else None
+            if type(prompt_id) is not int or prompt_id < 1:
+                raise ValueError("Library save did not return a local Prompt ID.")
+        except Exception as exc:  # noqa: BLE001 - preserve draft on Library failure
+            editor.show_status(
+                str(exc).strip() or "The Prompt could not be saved to Library.",
+                error=True,
+            )
+            return
+        collection_id = editor.selected_collection_id
+        if collection_id is not None and self._assign_draft_collection is not None:
+            try:
+                await _maybe_await(
+                    self._assign_draft_collection(
+                        prompt_id=prompt_id,
+                        collection_ids=(collection_id,),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - Prompt save already committed
+                editor.show_status(
+                    "Prompt saved to Library, but collection assignment failed.",
+                    error=True,
+                )
+                return
+        editor.show_status("Prompt saved to Library. The Draft Shelf copy was kept.")
+
     def _show_recipe_saved_confirmation(self, saved: Any) -> None:
         """Expose the Library destination when a saved Recipe has an identity."""
 
@@ -2078,7 +2413,19 @@ class ConsolePromptsModal(
     @on(Button.Pressed)
     async def _shell_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id == "console-prompts-back":
+        if button_id == "console-prompt-draft-update":
+            event.stop()
+            await self._update_selected_draft()
+        elif button_id == "console-prompt-draft-insert":
+            event.stop()
+            await self._insert_selected_draft()
+        elif button_id == "console-prompt-draft-delete":
+            event.stop()
+            await self._delete_selected_draft()
+        elif button_id == "console-prompt-draft-promote":
+            event.stop()
+            await self._promote_selected_draft()
+        elif button_id == "console-prompts-back":
             event.stop()
             await self._back_internal()
         elif button_id == "console-prompts-close":

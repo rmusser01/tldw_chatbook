@@ -528,6 +528,12 @@ AUDITED_CAPABILITY_SEEDS = (
                 domain_id="prompts",
             ),
             _resource(
+                "prompts.drafts",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE),
+                sources=LOCAL_ONLY_SOURCES,
+                domain_id="prompts",
+            ),
+            _resource(
                 "chatbooks",
                 actions=_combine_action_sets(CRUD_ACTIONS, (IMPORT, EXPORT)),
                 domain_id="chatbooks",

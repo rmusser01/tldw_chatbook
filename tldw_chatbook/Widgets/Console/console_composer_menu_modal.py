@@ -40,6 +40,7 @@ ACTION_ATTACH_CONTEXT = "attach-context"
 ACTION_SAVE_CHATBOOK = "save-chatbook"
 ACTION_PROMPTS = "prompts"
 ACTION_IMPROVE_CURRENT_DRAFT = "improve-current-draft"
+ACTION_SAVE_PROMPT_DRAFT = "save-prompt-draft"
 ACTION_UNDO_PROMPT_IMPROVEMENT = "undo-prompt-improvement"
 
 
@@ -82,7 +83,7 @@ def build_composer_menu_entries(
         attachment_kind: ``"image"``, ``"other"``, or ``"none"``.
         ephemeral: Whether the active session is temporary.
         can_save_chatbook: Whether a Chatbook artifact is available to save.
-        draft_available: Whether a nonblank unsent message can be improved.
+        draft_available: Whether a nonblank unsent message can be improved or saved.
 
     Returns:
         The menu entries in display order.
@@ -109,6 +110,17 @@ def build_composer_menu_entries(
                     ACTION_IMPROVE_CURRENT_DRAFT,
                     "Improve current draft…",
                     "Improve the unsent message with the current provider and model",
+                ),
+            )
+            if draft_available
+            else ()
+        ),
+        *(
+            (
+                ComposerMenuEntry(
+                    ACTION_SAVE_PROMPT_DRAFT,
+                    "Save draft to shelf…",
+                    "Save the unsent message without sending it",
                 ),
             )
             if draft_available
