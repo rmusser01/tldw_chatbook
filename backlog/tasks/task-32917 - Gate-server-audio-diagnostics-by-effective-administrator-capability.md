@@ -4,7 +4,7 @@ title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
 created_date: '2026-09-23 20:15'
-updated_date: '2026-09-26 01:02'
+updated_date: '2026-09-26 21:39'
 labels: []
 dependencies: []
 references:
@@ -47,6 +47,14 @@ Qodo wildcard review resolved by server can_run_audio_diagnostics capability. Re
 2026-09-25: rebased PR #2822 onto Chatbook dev 50f6096db after the tier-2 P2 Notes/Library/Media merge. All five prior PR commits are patch-identical by range-diff. The 22 focused audio/API tests passed (one pre-existing from_config bootstrap failure deselected), and git diff --check is clean. Await the required latest-head derived-artifact gate.
 
 2026-09-25: rebased PR #2822 onto Chatbook dev 1b61ee2c0 after the off-by-default Tamagotchi merge. All six prior PR commits are patch-identical by range-diff; 22 focused tests passed with one pre-existing from_config bootstrap failure deselected; git diff --check is clean. Latest-head required CI must rerun.
+
+2026-09-26 CI repair: PR Fast Lane and UI Fast Lane passed; Derived Artifacts failed on diagnostic inventory summary drift. Rebased onto dev 0053a0a40; all seven prior patches are identical. Local red checker reports only aggregate owner_files 596->597 and task_494_calls 7539->7541. The committed pin already contains 597 unique owner rows totaling 7541 TASK-494 calls; owner rows, diagnostics digests, and sink topology show no drift. Regenerate with the official script and verify that only these stale summary fields change.
+
+Inventory red/green complete: official --write changed only owner_files and task_494_calls; a fresh --diff checker passes with 597 owners, 7541 TASK-494 calls and unchanged 14 sink files. The 22 focused audio/API tests passed (one known unrelated bootstrap test deselected); git diff --check passes. No Python source changed, so prior touched-source Bandit remains applicable. Commit the generated JSON plus plan/task records and require latest-head CI before merging.
+
+2026-09-26 integration: dev c4225b5d3 merged tier-2 P3c and re-pinned the inventory. Rebase conflict was only our superseded two summary counters. Kept the newer upstream inventory unchanged, including its source_readiness owner addition. The first seven PR patches are identical by range-diff; the eighth now retains only plan/task evidence. Official inventory checker passes with 598 owners and 7542 TASK-494 calls; 22 focused audio/API tests pass (one known bootstrap test deselected). No Python source changed and diff check passes. Require fresh CI on this current-dev head before merge.
+
+2026-09-26 late integration: required Derived Artifacts passed on 85426dd9f, but dev advanced to a3001f0ee with theme UX and MCP character authoring. Rebase completed cleanly and all eight prior PR patches are identical by range-diff. Official inventory checker passes with 598 owners and 7543 TASK-494 calls, retaining the upstream pin unchanged. The 22 focused audio/API tests pass with the same known bootstrap test deselected; git diff --check passes. No Python source changed and prior security qualification remains applicable. Fresh required CI must qualify the new head before merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
