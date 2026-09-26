@@ -30,10 +30,17 @@
   - sample failed: `Couldn't play a test sample — you can still save and test later in Speech Lab.`
   - default without model: `Install the OmniVoice model first, or uncheck Use as default.`
 
+## Notes from plan review
+
+- The sample request (`generate_audio_stream`) is NOT admission-validated — the legacy adapter passes the `OpenAISpeechRequest` object through untouched — so the engine's own seed check (Task 2: ignore anything but an int in `[0, 2**31)`) is the real guard; the admission branch keeps the Lab/studio path consistent.
+- `_omnivoice_settings()` reads `wizard.app_instance.app_config` (raw section first). This is fresh: the STTS save handler replaces `app.app_config` with reloaded settings after every save (`stts_events.py` ~L2140), and each wizard run builds new steps, so a same-session re-run sees a seed saved earlier.
+- The TTS service is bound in `TldwCli.on_mount`; the wizard is offered later from `_push_initial_screen` (or from Settings), so `get_tts_service()` is available to the sample.
+- The Summary step shows no Voice rows, so no summary change is needed.
+
 ## Review Focus
 
 1. Re-running setup on a machine that already has `[OmniVoiceSettings] seed` must keep that seed (a re-run never changes the user's voice) — Task 4 `test_choose_seed_keeps_existing_valid_seed`.
-2. A configured `model_root` that points at a missing or partial directory must read as `model_missing`, not crash the step — Task 3 `test_setup_state_broken_model_root_is_model_missing`.
+2. A configured `model_root` that points at a missing or partial directory must read as `model_missing`, not crash the step — Task 3 `test_setup_state_broken_model_root_is_model_missing`; and an `OMNIVOICE_MODEL_ROOT` env var must count as installed, exactly as the engine treats it — Task 3 `test_setup_state_env_model_root_wins_like_the_engine`.
 3. Pressing Install twice quickly must start only one preflight — Task 5 `test_install_double_press_runs_one_preflight`.
 4. Leaving the step mid-download and coming back must re-read the model state (not show a stale "installing" forever, not cancel the download) — Task 5 `test_reshow_rereads_state_without_cancelling_install`.
 5. A sample response that is not WAV audio or exceeds the byte bound must be refused, not played — Task 4 `test_sample_rejects_non_wav_and_oversize`.
@@ -364,7 +371,22 @@ def test_setup_state_ready_from_managed_root(tmp_path: Path) -> None:
     ) == "ready"
 
 
-def test_setup_state_broken_model_root_is_model_missing(tmp_path: Path) -> None:
+def test_setup_state_env_model_root_wins_like_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine prefers OMNIVOICE_MODEL_ROOT from the environment; the
+    wizard must too, or an env-configured user is told to download 1.1 GB."""
+    root = _tree(tmp_path / "env-root")
+    monkeypatch.setenv("OMNIVOICE_MODEL_ROOT", str(root))
+    assert cat.omnivoice_setup_state(
+        "", missing_modules=list, managed_root=lambda: None
+    ) == "ready"
+
+
+def test_setup_state_broken_model_root_is_model_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OMNIVOICE_MODEL_ROOT", raising=False)
     partial = tmp_path / "partial"
     partial.mkdir()
     for model_root in (str(tmp_path / "does-not-exist"), str(partial), "bad\x00root"):
@@ -424,7 +446,7 @@ async def test_wrappers_pass_the_pinned_sources(monkeypatch: pytest.MonkeyPatch)
 Run: `PYTHONPATH=$PWD <venv-python> -m pytest -q -p no:cacheprovider Tests/TTS/test_omnivoice_artifact_catalog.py`
 Expected: FAIL with `AttributeError: ... has no attribute 'omnivoice_setup_state'`.
 
-- [ ] **Step 3: Implement** (append to `tldw_chatbook/TTS/omnivoice_artifact_catalog.py`; add `from pathlib import Path`, `from typing import Callable, Literal` to the imports)
+- [ ] **Step 3: Implement** (append to `tldw_chatbook/TTS/omnivoice_artifact_catalog.py`; add `import os`, `from pathlib import Path`, `from typing import Callable, Literal` to the imports)
 
 ```python
 OmniVoiceSetupState = Literal["engine_missing", "model_missing", "ready"]
@@ -458,8 +480,9 @@ def omnivoice_setup_state(
 ) -> OmniVoiceSetupState:
     """Report what OmniVoice still needs before it can speak here.
 
-    Resolves the model exactly as the engine does (a configured
-    ``model_root`` layout first, else the active managed artifact). Does
+    Resolves the model exactly as the engine does (``OMNIVOICE_MODEL_ROOT``
+    from the environment, else the configured ``model_root``, else the
+    active managed artifact). Does
     filesystem work — call it off the UI thread.
 
     Args:
@@ -479,9 +502,11 @@ def omnivoice_setup_state(
 
     if (missing_modules or missing_omnivoice_modules)():
         return "engine_missing"
+    # Same precedence as TTS_Backends: the environment variable beats config.
+    configured = os.environ.get("OMNIVOICE_MODEL_ROOT") or model_root or ""
     try:
         resolve_model_root(
-            {"OMNIVOICE_MODEL_ROOT": model_root or ""},
+            {"OMNIVOICE_MODEL_ROOT": configured},
             managed_root or managed_model_root,
         )
     except (OmniVoiceModelError, OmniVoiceNotConfiguredError):
@@ -991,9 +1016,11 @@ async def test_install_double_press_runs_one_preflight(monkeypatch) -> None:
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await _select_omnivoice(step, pilot)
-        button = step.query_one("#setup-voice-omnivoice-install", Button)
-        button.press()
-        button.press()
+        # Button.press() is a no-op on a disabled button, so pressing twice
+        # would pass even without the guard: drive the handler directly.
+        pressed = SimpleNamespace(stop=lambda: None)
+        step._on_omnivoice_install(pressed)
+        step._on_omnivoice_install(pressed)
         for _ in range(20):
             await pilot.pause(0.05)
         assert count["preflight"] == 1
@@ -1116,7 +1143,8 @@ async def test_service_row_fits_at_80_columns(monkeypatch) -> None:
         painted = html.unescape(
             "".join(re.findall(r">([^<>]*)</text>", host.export_screenshot()))
         ).replace("\xa0", " ")
-        for label in ("PocketTTS", "OmniVoice"):
+        # Each service label must start legibly (clipping eats the tail).
+        for label in ("PocketTTS", "Official", "Custom", "OmniVoice"):
             assert label in painted
 ```
 
