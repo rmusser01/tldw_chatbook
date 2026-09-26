@@ -53,6 +53,10 @@
     text-style: bold;
 }
 
+/* TASK-32947: 22/40 presets measured <3:1 against the dark card (17/40 on
+   light), so near-card colours read as gaps. Thin side rules in the theme's
+   foreground frame every cell; border cells keep the swatch's own fill, so
+   all three columns still show the colour. */
 .color-preset-swatch {
     width: $ds-size-3;
     min-width: $ds-size-3;
@@ -60,14 +64,20 @@
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
+    border-left: vkey $foreground;
+    border-right: vkey $foreground;
 }
 
 /* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
-   Space), so they need a visible focus indicator. An outline paints over the
-   swatch's own cells without needing a border row, so the colour stays
-   visible (TASK-31254). */
+   Space), so they need a visible focus indicator. TASK-32947: the old
+   `outline: solid $ds-focus-accent` drew box glyphs in $primary ON the
+   swatch (1.51:1 on the blue preset) and hid the colour. Focus now thickens
+   the side rules into half-block brackets at the cell's outer edges -- a
+   shape change judged against the card beside it, not the swatch. */
 .color-preset-swatch:focus {
-    outline: solid $ds-focus-accent;
+    outline: none;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
     text-style: bold;
 }
 
@@ -82,11 +92,80 @@
     border: none;
     padding: $ds-space-0;
 }
+/* TASK-32947: the off glyph was painted in the card's own fill (1.0:1), so
+   an unchecked box showed nothing. Off now shows Textual's own convention --
+   a dimmed X in the muted text tone -- and on keeps the success X; the
+   On/Off label still carries the state in words. */
 #settings-theme-dark-mode > .toggle--button {
-    color: $ds-surface-panel;
+    color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
     color: $success;
+}
+
+/* TASK-32947: theme-card action buttons. Textual's variant fills paint an
+   `auto 87%` label whose black/white pick uses perceived brightness, not
+   WCAG luminance (Apply 3.78:1 on textual-dark, Delete 4.47:1, 2.93:1 on
+   gruvbox_dark); default buttons filled with the card colour and read as
+   bold prose; and `.settings-action-row Button:focus` swapped every fill
+   for neutral, erasing Apply/Delete's meaning. Here each button is a
+   bracketed chip on the card: label and brackets in a readable hue (the
+   AA-pinned `text-*` tints, ensure_readable_text_hues), focus inverts the
+   chip into that hue. Low specificity on purpose: app-wide
+   `Button:hover`/`Button:disabled` still win for the neutral chips, and the
+   variant rules are `:enabled` so a disabled Delete never paints as live. */
+.theme-editor-action {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
+}
+.theme-editor-action.-primary:enabled {
+    background: $ds-surface-panel;
+    color: $text-primary;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+.theme-editor-action.-success:enabled {
+    background: $ds-surface-panel;
+    color: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+.theme-editor-action.-warning:enabled {
+    background: $ds-surface-panel;
+    color: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+.theme-editor-action.-error:enabled {
+    background: $ds-surface-panel;
+    color: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+/* Must beat the Settings screen sheet's `#settings-shell Button:hover:focus`
+   (1,2,1) and `.settings-action-row Button:focus` (0,2,1), hence (1,3,0). */
+#settings-theme-card .settings-action-row .theme-editor-action:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-success:focus {
+    background: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-warning:focus {
+    background: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
 }
 
 
