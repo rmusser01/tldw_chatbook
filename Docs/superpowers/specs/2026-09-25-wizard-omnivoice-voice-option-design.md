@@ -117,6 +117,33 @@ drift) and change the ready-state copy to: "Replies may vary in voice
 until you create a voice profile in Voice Cloning." — never claim a
 stability the measurement did not show.
 
+**Measurement (2026-09-25):** Ran the plan task 1 probe against
+`ct03/omnivoice-onnx-int8hq` revision `65c840ba966f4b50cd6bd73f234fb1eba72f9a16`
+(32 diffusion steps, English), synthesizing 4 sentences once with
+`OMNIVOICE_SEED=1234567` and once with no seed, and transcribing each clip with
+faster-whisper ("base", int8, CPU). Median F0 per clip:
+- Seeded: `[164, 101, 127, 106]` Hz — spread (max−min)/mean = **50.3%**
+- Unseeded: `[135, 213, 215, 110]` Hz — spread = **62.8%**
+
+Per-sentence transcript agreement (both runs): sentence 1 ("Good morning,
+here is your daily summary.") and sentence 2 ("The meeting has been moved
+to three o'clock on Thursday.") transcribed correctly modulo punctuation
+and digit/word numerals; sentence 3 ("I found four articles that match
+your search.") transcribed exactly; sentence 4 ("Would you like me to read
+the next section aloud?") was mis-transcribed as "...allowed?" in **both**
+the seeded and unseeded run — an identical Whisper homophone slip in both
+conditions, not something the seed changed.
+
+Decision by the stated rule (seeded spread ≤ 12% AND ≤ half the unseeded
+spread AND every transcript matches): the seeded spread (50.3%) is far
+above the 12% ceiling, and the seed only narrows the spread from 62.8% to
+50.3% (not to half), so the first two conditions already fail —
+**`SEED_STABLE = False`**. The numbers are unambiguous; no clips needed to
+be listened to. Per the fallback above, the wizard keeps the fixed seed
+(it still reduces drift, 62.8% → 50.3%) but the ready-state copy is:
+"Replies may vary in voice until you create a voice profile in Voice
+Cloning."
+
 ### Errors and concurrency
 
 - Preflight failure (offline, disk) → shared `install_failure_message`
