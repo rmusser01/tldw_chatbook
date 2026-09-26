@@ -14,6 +14,8 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .builtin_tool_policy import builtin_tool_risk_tags
+
 _MAX_TAGS = 5
 _RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 
@@ -186,7 +188,7 @@ def builtin_tools_from_inventory(inventory: dict) -> list[HubTool]:
                 name=name,
                 description=_text(raw_tool.get("description")),
                 input_schema=_normalized_schema(raw_tool.get("inputSchema")),
-                tags=(),
+                tags=builtin_tool_risk_tags(name),
                 stale=False,
                 executable=True,
             )

@@ -17,6 +17,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
 from ..Utils.input_validation import validate_number_range, validate_text_input
+from .activation import in_worker
 
 # Bounds for `search_conversations`' free-text `query` / integer `limit`
 # inputs, mirroring the same query+limit validation shape already used for
@@ -219,11 +220,7 @@ class MCPTools:
             limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
         ):
             return [
-                {
-                    "error": (
-                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
-                    )
-                }
+                {"error": (f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}")}
             ]
         limit = int(limit)
 
@@ -322,11 +319,7 @@ class MCPTools:
             ]
         if not 1 <= limit <= MAX_SEARCH_RESULTS_LIMIT:
             return [
-                {
-                    "error": (
-                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
-                    )
-                }
+                {"error": (f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}")}
             ]
 
         try:
@@ -370,11 +363,14 @@ class MCPTools:
             List of character profiles
         """
         try:
-            characters = self.chachanotes_db.list_character_cards()
+            characters = await asyncio.to_thread(
+                self.chachanotes_db.list_character_cards
+            )
             return [
                 {
                     "id": char["id"],
                     "name": char["name"],
+                    "version": char["version"],
                     "description": char.get("description", ""),
                     "message_count": char.get("message_count", 0),
                 }
@@ -383,6 +379,134 @@ class MCPTools:
         except Exception as e:
             logger.error(f"Error listing characters: {e}")
             return [{"error": str(e)}]
+
+    async def create_character(
+        self, name: str, fields: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Create a character through the validated local persona service.
+
+        Args:
+            name: Non-empty, unique character name.
+            fields: Optional text/JSON card fields; images are unsupported.
+
+        Returns:
+            An id/name/version receipt or a structured application error.
+        """
+        if not isinstance(name, str) or not name.strip():
+            return {
+                "error_code": "invalid_arguments",
+                "error": "name must be non-empty.",
+            }
+        if fields is not None and (not isinstance(fields, dict) or "name" in fields):
+            return {
+                "error_code": "invalid_arguments",
+                "error": "fields must be an object without name; use the name argument.",
+            }
+        return await in_worker(
+            self, self._write_character, {"name": name, **(fields or {})}
+        )
+
+    async def update_character(
+        self, character_id: int, expected_version: int, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Edit selected card fields using the version read by the caller.
+
+        Args:
+            character_id: Positive character id.
+            expected_version: Positive version returned by list/create/update.
+            fields: Non-empty patch of supported text/JSON card fields.
+
+        Returns:
+            An id/name/version receipt or a structured application error.
+        """
+        if any(
+            type(value) is not int or value < 1
+            for value in (character_id, expected_version)
+        ):
+            return {
+                "error_code": "invalid_arguments",
+                "error": "character_id and expected_version must be positive integers.",
+            }
+        return await in_worker(
+            self, self._write_character, fields, character_id, expected_version
+        )
+
+    def _write_character(
+        self,
+        fields: dict[str, Any],
+        character_id: int | None = None,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        from ..Character_Chat.local_character_persona_service import (
+            LocalCharacterPersonaService,
+        )
+        from ..DB.ChaChaNotes_DB import ConflictError, InputError
+        from ..tldw_api.character_persona_schemas import (
+            CharacterCreateRequest,
+            CharacterUpdateRequest,
+        )
+
+        allowed = CharacterCreateRequest.model_fields.keys() - {"image_base64"}
+        if (
+            not isinstance(fields, dict)
+            or not fields
+            or fields.keys() - allowed
+            or any(value is None for value in fields.values())
+            or (
+                "name" in fields
+                and (not isinstance(fields["name"], str) or not fields["name"].strip())
+            )
+        ):
+            return {
+                "error_code": "invalid_arguments",
+                "error": "Provide supported, non-null text/JSON card fields; images and empty updates are unsupported.",
+            }
+        try:
+            request_type = (
+                CharacterCreateRequest
+                if character_id is None
+                else CharacterUpdateRequest
+            )
+            fields = request_type.model_validate(fields).model_dump(exclude_unset=True)
+            for key, expected_type in (
+                ("tags", list),
+                ("alternate_greetings", list),
+                ("extensions", dict),
+            ):
+                if key in fields and not isinstance(fields[key], expected_type):
+                    return {
+                        "error_code": "invalid_arguments",
+                        "error": "tags and alternate_greetings must be arrays; extensions must be an object.",
+                    }
+            service = LocalCharacterPersonaService(self.chachanotes_db)
+            if character_id is None:
+                record = service.create_character(fields)
+            else:
+                if self.chachanotes_db.get_character_card_by_id(character_id) is None:
+                    return {
+                        "error_code": "not_found",
+                        "error": "Character was not found.",
+                    }
+                record = service.update_character(
+                    character_id, fields, expected_version=expected_version
+                )
+            return {key: record[key] for key in ("id", "name", "version")}
+        except ConflictError:
+            return {
+                "error_code": "conflict",
+                "error": "Character name already exists or the version has changed. Read the roster before retrying.",
+            }
+        except (ValueError, InputError):
+            return {
+                "error_code": "invalid_arguments",
+                "error": "Character fields failed validation.",
+            }
+        except Exception:  # noqa: BLE001 -- bounded MCP error boundary
+            logger.error("MCP character write failed.")
+            return {
+                "error_code": "storage_error",
+                "error": "Character could not be saved.",
+            }
 
     async def get_conversation_history(
         self, conversation_id: int, limit: Optional[int] = None

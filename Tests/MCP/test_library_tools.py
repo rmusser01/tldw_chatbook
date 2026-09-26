@@ -45,6 +45,8 @@ LEGACY_TOOL_NAMES = [
     "create_note",
     "search_notes",
     "list_characters",
+    "create_character",
+    "update_character",
     "get_conversation_history",
     "export_conversation",
 ]
