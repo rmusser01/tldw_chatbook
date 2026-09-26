@@ -1368,3 +1368,48 @@ async def test_edit_of_a_vanished_file_stays_on_the_picker(request):
         await pilot.press("e")
         await pilot.pause(0.2)
         assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
+
+
+# -- Review follow-up: quit, no stacked prompts, a real NavigateToScreen -------
+
+
+def _leave_modals(host):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    return [s for s in host.screen_stack if isinstance(s, ThemeLeaveModal)]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leave_prompts_never_stack(request):
+    """Review follow-up 2: while one theme leave prompt is open, neither a
+    screen navigation nor a category switch opens a second one."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        # Category prompt open -> a navigation vetoes at once, no second modal.
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        assert await settings.confirm_navigation() is False
+        await pilot.pause(0.2)
+        assert len(_leave_modals(host)) == 1
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.3)
+        assert _leave_modals(host) == [] and settings.active_category == SettingsCategoryId.THEME.value
+
+        # Navigation prompt open -> a category switch does nothing.
+        nav = settings.run_worker(settings.confirm_navigation(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.3)
+        await nav.wait()
+        assert nav.result is False
+        assert _leave_modals(host) == []
+        assert settings.active_category == SettingsCategoryId.THEME.value and editor.is_modified
