@@ -1,5 +1,42 @@
 # Lessons: what counts as evidence a change works
 
+## A config section code reads from `app_config` must be copied in `load_settings()`
+
+**TASK-32954, 2026-09-25.** The built-in skills' off switch reads
+`[skills] disabled_builtins` from the in-memory `app_config`. The Library
+**Enabled** switch updated that dict and saved `config.toml`, and every unit
+test passed -- they all seeded `app_config["skills"]` by hand. Only the Task 7
+live restart check caught it: a disabled built-in came back after restart,
+because `_load_settings_uncached` builds `app_config` from an explicit list of
+sections and `[skills]` was not in it, so the saved value was on disk but never
+loaded. Adding `"skills": copy.deepcopy(toml_config_data.get("skills", {}))`
+fixed it, pinned by `Tests/Skills/test_builtin_skills.py::
+test_persisted_disabled_builtins_reach_app_config_after_restart` (writes the
+TOML, reloads, reads the setting). When new code reads a section from `app_config`, check the section is
+in `load_settings()`'s returned dict and test through a real save-then-load, not
+a hand-seeded dict.
+
+## Tests/UI `RecoveryRequired` at setup is a profile-selection trip, not a broken test
+
+**TASK-32954, 2026-09-25.** Task 5's `Tests/UI/test_personas_character_changed.py`
+failed at fixture setup with `RecoveryRequired: raw_source_selection_changed`
+(ADR-126) before any test body ran: `Tests/UI/conftest.py`'s autouse fixture
+imported `tldw_chatbook.app` for the first time inside the per-test
+`isolate_test_environment` sandbox, where the bound config selection no longer
+matches. Importing `tldw_chatbook.app` at module scope (collection time) fixed
+it. That is not a bypass of the guard: it moves WHEN the import-time config
+reads happen to before the per-test redirect, exactly what the root
+`Tests/conftest.py` already does for `tldw_chatbook.Chunking` (TASK-32908).
+It is not enough for a mounted app, though. Task 8's mounted Console UAT still
+tripped inside the test body, because `_build_test_app` calls `load_settings()`
+and `load_cli_config_and_ensure_existence(force_reload=True)` re-reads config
+under the sandbox -- the same failure `test_console_watchlists_mounted_uat.py`
+shows on clean `origin/dev`. Wrapping the test in `Tests/private_profile.py`'s
+`@private_profile_test` (a fresh profile selected before a child pytest
+collects) made it run and pass locally. Pick the cheapest fix that matches
+where the config read happens: collection-time import for import-time reads,
+`@private_profile_test` for tests that build or reload app config.
+
 ## Executable QA documentation can retain removed production imports
 
 **TASK-32882, 2026-09-21.** A native MCP launch stopped before app startup because

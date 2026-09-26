@@ -521,7 +521,10 @@ _BUDGETS: dict[str, int] = {
     # 1897 -> 1898.
     "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
-    "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+    # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
+    # Library-only `include_disabled_builtins` flag through the browse read so
+    # a disabled built-in stays listed and re-enableable. 413 -> 416.
+    "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 416,
     # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 86 moved methods (byte-for-byte) + a
@@ -562,7 +565,13 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+    # 2026-09-25, TASK-32954 (built-in skills): a new feature cluster, not
+    # creep -- the built-in row's read-only preview (open/refresh), Customize
+    # (seed one copy, honest nothing-copied notice), the Enabled switch
+    # (in-memory `[skills] disabled_builtins` + serialized persist) and the
+    # review-link route to the preview. Skills-surface behaviour, so it lives
+    # with the Skills controller rather than on LibraryScreen. 3142 -> 3344.
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3344,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
