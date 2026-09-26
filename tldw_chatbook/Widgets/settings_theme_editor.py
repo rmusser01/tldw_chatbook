@@ -1411,7 +1411,7 @@ class SettingsThemeEditor(Vertical):
                         raw._unlink(operation, new_path)
                 except (RecoveryRequired, OSError) as exc:
                     logger.error(
-                        f"Could not remove '{new}' after a failed rename: {self._failure_reason(exc)}"
+                        f"Could not remove '{printable(new)}' after a failed rename: {self._failure_reason(exc)}"
                     )
                 self.app.notify(
                     f"Could not rename '{escape_markup(old)}': the launch default could not be saved; "
