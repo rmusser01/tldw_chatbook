@@ -708,6 +708,50 @@ async def test_keyless_custom_hosted_send_sends_no_authorization(
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
+async def test_keyless_resolved_send_never_leaks_global_custom_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qodo finding 1 (ADR-179): resolved keyless must not back-fill config.
+
+    A keyless entry's URL is user-controlled, so with a global
+    ``[api_settings.custom]`` key AND ``CUSTOM_API_KEY`` present in the
+    environment, the gateway's ``api_key_resolved=True`` keyless decision
+    must survive to the wire: no Authorization header, no error.
+    """
+    import tldw_chatbook.LLM_Calls.hosted_provider_engine as engine
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    class _Snapshot:
+        values = {
+            "api_settings": {
+                "custom": {
+                    "api_key": "GLOBAL-CUSTOM-KEY",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+
+    monkeypatch.setattr(engine, "get_runtime_config_snapshot", lambda: _Snapshot)
+    monkeypatch.setenv("CUSTOM_API_KEY", "ENV-CUSTOM-KEY")
+    session = _canned_session(monkeypatch)
+    response = chat_api_call(
+        api_endpoint="custom-hosted",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key_resolved=True,
+        api_base_url="https://keyless.example/v1",
+        model="m",
+        streaming=False,
+    )
+    assert response["choices"][0]["message"]["content"] == "ok"
+    post = session.posts[0]
+    assert post["url"].startswith("https://keyless.example/v1/")
+    assert post["headers"].get("Authorization") is None
+    assert "GLOBAL-CUSTOM-KEY" not in str(post)
+    assert "ENV-CUSTOM-KEY" not in str(post)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
 async def test_custom_hosted_send_composes_reasoning_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

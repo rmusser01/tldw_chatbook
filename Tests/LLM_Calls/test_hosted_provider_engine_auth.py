@@ -36,7 +36,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     owned_json_post,
 )
 from tldw_chatbook.LLM_Calls.hosted_provider_engine import resolve_hosted_request
-from tldw_chatbook.provider_registry import DATABRICKS
+from tldw_chatbook.provider_registry import CUSTOM_HOSTED, DATABRICKS
 
 from Tests.LLM_Calls.test_qwencloud import _RecordingSession, _TransportResponse
 
@@ -48,6 +48,60 @@ _OPTIONAL = dataclasses.replace(
     api_key_env_candidates=(),
     auth_scheme="bearer_optional",
 )
+
+# The global-credential trap (Qodo finding 1, ADR-179): a keyless custom
+# entry's URL is user-controlled, so a globally configured
+# [api_settings.custom] key (or CUSTOM_API_KEY) must never back-fill the
+# gateway's explicit keyless decision.
+_GLOBAL_KEY_CONFIG = {
+    "api_settings": {
+        "custom": {
+            "api_key": "GLOBAL-CUSTOM-KEY",
+            "api_key_env_var": "CUSTOM_API_KEY",
+        }
+    }
+}
+
+
+def test_resolved_keyless_decision_ignores_global_custom_key_and_env() -> None:
+    resolution = resolve_hosted_request(
+        CUSTOM_HOSTED,
+        explicit_base_url="https://user-entry.example/v1",
+        api_key_resolved=True,
+        app_config=_GLOBAL_KEY_CONFIG,
+        environ={"CUSTOM_API_KEY": "ENV-CUSTOM-KEY"},
+    )
+    # The keyless decision survives: no Authorization header (see the
+    # transport contract below), no error, and neither fallback value.
+    assert resolution.api_key == ""
+    assert resolution.base_url == "https://user-entry.example/v1"
+
+
+def test_resolved_keyed_decision_uses_supplied_key_only() -> None:
+    resolution = resolve_hosted_request(
+        CUSTOM_HOSTED,
+        explicit_api_key="entry-key",
+        explicit_base_url="https://user-entry.example/v1",
+        api_key_resolved=True,
+        app_config=_GLOBAL_KEY_CONFIG,
+        environ={"CUSTOM_API_KEY": "ENV-CUSTOM-KEY"},
+    )
+    assert resolution.api_key == "entry-key"
+
+
+def test_resolved_unusable_credential_fails_closed_for_bearer_records() -> None:
+    with pytest.raises(ChatConfigurationError):
+        resolve_hosted_request(
+            DATABRICKS,
+            explicit_base_url="https://dbc-1.cloud.databricks.com",
+            api_key_resolved=True,
+            app_config={
+                "api_settings": {
+                    "databricks": {"api_key": "GLOBAL-DATABRICKS-KEY"}
+                }
+            },
+            environ={"DATABRICKS_TOKEN": "ENV-DATABRICKS-KEY"},
+        )
 
 
 def test_bearer_preset_still_requires_a_key():

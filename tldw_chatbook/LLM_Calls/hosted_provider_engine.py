@@ -181,6 +181,7 @@ def resolve_hosted_request(
     explicit_timeout: object = None,
     explicit_retries: object = None,
     explicit_retry_delay: object = None,
+    api_key_resolved: bool | None = None,
     app_config: Mapping[str, Any] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> HostedProviderResolution:
@@ -193,8 +194,16 @@ def resolve_hosted_request(
         explicit_base_url: Caller-supplied base URL; wins over settings.
         explicit_model: Caller-supplied model; wins over settings.
         explicit_timeout: Caller-supplied timeout override.
-        explicit_retries: Caller-supplied retry override.
+        explicit_retries: Caller-supplied retries override.
         explicit_retry_delay: Caller-supplied retry-delay override.
+        api_key_resolved: Whether a trusted caller (the Console gateway)
+            already made the final credential decision. When True the
+            supplied ``explicit_api_key`` is the exact credential: an
+            unusable/empty supply is the explicit keyless decision (no
+            Authorization header) for ``bearer_optional`` records and still
+            fails closed for strict ``bearer`` records -- the settings/env
+            chain is never consulted as a fallback, so a globally configured
+            key can never leak to a caller-controlled endpoint URL.
         app_config: Canonical config mapping; defaults to the runtime
             snapshot. Never mutated.
         environ: Environment mapping; defaults to ``os.environ``.
@@ -252,7 +261,11 @@ def resolve_hosted_request(
         transport_settings["retry_delay"] = explicit_retry_delay
     environment = os.environ if environ is None else environ
     api_key = _resolve_api_key(
-        record, explicit=explicit_api_key, settings=settings, environ=environment
+        record,
+        explicit=explicit_api_key,
+        settings=settings,
+        environ=environment,
+        resolved=api_key_resolved,
     )
     base_url = _resolve_base_url(record, explicit=explicit_base_url, settings=settings)
     section_sampling = (
@@ -345,8 +358,16 @@ def _resolve_api_key(
     explicit: object,
     settings: Mapping[str, object],
     environ: Mapping[str, str],
+    resolved: bool | None = None,
 ) -> str:
     """Resolve the request credential under the record's auth scheme.
+
+    ``resolved=True`` is the trusted-caller credential decision (the Console
+    gateway's ``api_key_resolved``): the supplied ``explicit`` value is the
+    FINAL credential, used exactly as supplied with no settings/env
+    fallback -- an empty or absent supply is the keyless decision for
+    ``bearer_optional`` records (the transport then sends no Authorization
+    header at all) and still fails closed for strict ``bearer`` records.
 
     ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
     stored value, or an unresolved env chain, is an actionable configuration
@@ -357,6 +378,15 @@ def _resolve_api_key(
     """
     validators = _validators_for(record)
     optional = record.auth_scheme == "bearer_optional"
+    if resolved is True:
+        supplied = resolve_provider_api_key(explicit)
+        if supplied is not None:
+            return supplied
+        if optional:
+            return ""
+        raise validators.configuration_error(
+            f"{record.display_name} explicit API key is invalid."
+        )
     if explicit is not None:
         resolved = resolve_provider_api_key(explicit)
         if resolved is not None:
@@ -1377,6 +1407,7 @@ def resolve_hosted_engine_request(
     explicit_timeout: object = None,
     explicit_retries: object = None,
     explicit_retry_delay: object = None,
+    api_key_resolved: bool | None = None,
     app_config: Mapping[str, Any] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> HostedProviderResolution:
@@ -1394,8 +1425,10 @@ def resolve_hosted_engine_request(
         explicit_base_url: Caller-supplied base URL; wins over settings.
         explicit_model: Caller-supplied model; wins over settings.
         explicit_timeout: Caller-supplied timeout override.
-        explicit_retries: Caller-supplied retry override.
+        explicit_retries: Caller-supplied retries override.
         explicit_retry_delay: Caller-supplied retry-delay override.
+        api_key_resolved: Whether a trusted caller already made the final
+            credential decision (see :func:`resolve_hosted_request`).
         app_config: Canonical config mapping; defaults to the runtime
             snapshot. Never mutated.
         environ: Environment mapping; defaults to ``os.environ``.
@@ -1415,6 +1448,7 @@ def resolve_hosted_engine_request(
         explicit_timeout=explicit_timeout,
         explicit_retries=explicit_retries,
         explicit_retry_delay=explicit_retry_delay,
+        api_key_resolved=api_key_resolved,
         app_config=app_config,
         environ=environ,
     )
@@ -1474,11 +1508,10 @@ def build_hosted_chat_handler(
     ) -> dict[str, Any] | HostedProviderStream:
         del custom_prompt_arg
         # api_key_resolved: the Console gateway passes it after making the
-        # credential decision itself. The engine's explicit ``api_key``
-        # already wins resolution, so the flag needs no separate handling
-        # here -- accepting it keeps the shared custom param map (and the
-        # gateway's kwargs projection) loadable for this handler.
-        del api_key_resolved
+        # credential decision itself (keyed OR explicitly keyless); it is
+        # threaded into resolution so the supplied ``api_key`` is the exact
+        # credential and the settings/env chain never back-fills a global
+        # key onto a caller-controlled endpoint URL.
         started_at = time.time()
         labels = {"model": model or "configured", "streaming": str(bool(streaming))}
         log_counter(f"{record.key}_api_request", labels=labels)
@@ -1488,6 +1521,7 @@ def build_hosted_chat_handler(
                 input_data=input_data,
                 model=model,
                 api_key=api_key,
+                api_key_resolved=api_key_resolved,
                 system_message=system_message,
                 temp=temp,
                 maxp=maxp,
@@ -1543,6 +1577,7 @@ def _send_hosted_chat_request(
     input_data: list[dict[str, Any]],
     model: str | None,
     api_key: str | None,
+    api_key_resolved: bool | None,
     system_message: str | None,
     temp: float | None,
     maxp: float | None,
@@ -1579,6 +1614,7 @@ def _send_hosted_chat_request(
         explicit_timeout=request_timeout,
         explicit_retries=request_retries,
         explicit_retry_delay=request_retry_delay,
+        api_key_resolved=api_key_resolved,
     )
     payload = build_hosted_chat_payload(
         record,
