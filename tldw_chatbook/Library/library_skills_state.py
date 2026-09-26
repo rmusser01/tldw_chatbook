@@ -871,10 +871,13 @@ def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str]
         # task-32363 (critique #10, B D5): with no trust store every skill
         # reads "needs review", including ones approved earlier -- the list
         # looked wrong rather than unverifiable. The banner now states the
-        # precedence instead of leaving the reader to infer it.
+        # precedence instead of leaving the reader to infer it. TASK-32954:
+        # built-in skills skip the trust store (their rows show ✓), so the
+        # banner scopes the claim to the user's own skills.
         return (
-            "Skill trust isn't set up, so every skill reads \"needs review\" — "
-            "set it up to review and use skills.",
+            "Skill trust isn't set up, so every skill you added reads "
+            "\"needs review\" — built-in skills don't need it. Set it up to "
+            "review and use yours.",
             "setup",
         )
     if posture == "needs_resetup":
