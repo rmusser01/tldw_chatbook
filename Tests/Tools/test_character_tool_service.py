@@ -653,9 +653,9 @@ def test_unexpected_failure_logs_frames_but_no_message_text(env, caplog):
         raise RuntimeError("SECRET card text /Users/someone/card.png")
 
     tool._service_loader = _boom
-    with caplog.at_level("ERROR", logger=cts.__name__):
-        with pytest.raises(RuntimeError, match=cts._PUBLIC_EXECUTION_ERROR):
-            tool.search({})
+    with (caplog.at_level("ERROR", logger=cts.__name__),
+          pytest.raises(RuntimeError, match=cts._PUBLIC_EXECUTION_ERROR)):
+        tool.search({})
     logged = "\n".join(r.getMessage() for r in caplog.records)
     assert "character_tool_service.py:" in logged and "_search" in logged
     assert "SECRET" not in logged and "/Users/someone" not in logged
