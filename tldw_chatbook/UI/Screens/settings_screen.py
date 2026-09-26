@@ -23985,8 +23985,8 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             True to let navigation proceed; False to stay on Settings ▸ Theme
-            (Stay, or a Save that was refused or waits on its overwrite
-            confirmation).
+            (Stay, a Save that was refused or waits on its overwrite
+            confirmation, or a theme leave prompt that is already open).
         """
         try:
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
@@ -23994,7 +23994,15 @@ class SettingsScreen(BaseAppScreen):
             return True
         if not editor.is_modified:
             return True
-        choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
+            # One prompt at a time: a category-leave (or earlier navigation)
+            # prompt is already asking about these edits; stay put.
+            return False
+        self._theme_leave_in_progress = True
+        try:
+            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        finally:
+            self._theme_leave_in_progress = False
         if choice == "cancel":
             return False
         if choice == "save":
