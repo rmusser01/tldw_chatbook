@@ -118,6 +118,7 @@ from ...Chat.provider_test_evidence import (
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
+    supported_generation_fields,
 )
 from ...Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -885,6 +886,24 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
 }
+# Generation defaults row labels, as the one-line hidden-rows summary names
+# them (TASK-33001.2). TASK-33002 owns the single field table.
+MODEL_PROFILE_ROW_LABELS = {
+    "model_profile_temperature": "Temperature",
+    "model_profile_top_p": "Top P",
+    "model_profile_min_p": "Min P",
+    "model_profile_top_k": "Top K",
+    "model_profile_max_tokens": "Response max tokens",
+    "model_profile_seed": "Seed",
+    "model_profile_presence_penalty": "Presence",
+    "model_profile_frequency_penalty": "Frequency",
+    "model_profile_reasoning_effort": "Reasoning",
+    "model_profile_reasoning_summary": "Summary",
+    "model_profile_verbosity": "Verbosity",
+    "model_profile_thinking_effort": "Thinking",
+    "model_profile_thinking_budget_tokens": "Think budget",
+    "model_profile_streaming": "Streaming",
+}
 REASONING_EFFORT_OPTIONS = frozenset(
     {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
@@ -933,21 +952,6 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
         "model_profile_verbosity",
         "model_profile_thinking_effort",
         "model_profile_streaming",
-    }
-)
-OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
-REASONING_EFFORT_PROVIDER_KEYS = frozenset({"openai", "moonshot", "zai"})
-ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
-OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_reasoning_summary",
-        "model_profile_verbosity",
-    }
-)
-ANTHROPIC_THINKING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_thinking_effort",
-        "model_profile_thinking_budget_tokens",
     }
 )
 MODEL_PROFILE_INPUT_PLACEHOLDERS = {
@@ -6831,7 +6835,9 @@ class SettingsScreen(BaseAppScreen):
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
         """Build the staged closed-enum Select for a model-profile field."""
-        supported = self._model_profile_field_supported(provider, draft_key)
+        supported = self._model_profile_field_supported(
+            provider, draft_key, values.get("model")
+        )
         allowed = (
             self._model_profile_reasoning_effort_options(provider, values.get("model"))
             if draft_key == "model_profile_reasoning_effort"
@@ -12562,18 +12568,6 @@ class SettingsScreen(BaseAppScreen):
         raise ValueError("Streaming must be true or false.")
 
     @staticmethod
-    def _provider_supports_openai_reasoning(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in OPENAI_REASONING_PROVIDER_KEYS
-        )
-
-    @staticmethod
-    def _provider_supports_reasoning_effort(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in REASONING_EFFORT_PROVIDER_KEYS
-        )
-
-    @staticmethod
     def _model_profile_reasoning_effort_options(
         provider: object, model: object
     ) -> tuple[str, ...]:
@@ -12592,19 +12586,19 @@ class SettingsScreen(BaseAppScreen):
         return REASONING_EFFORT_SELECT_OPTIONS
 
     @staticmethod
-    def _provider_supports_anthropic_thinking(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
-        )
+    def _model_profile_field_supported(
+        provider: object, draft_key: str, model: object
+    ) -> bool:
+        """Whether the provider+model request carries this model-default row.
 
-    def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
-        if draft_key == "model_profile_reasoning_effort":
-            return self._provider_supports_reasoning_effort(provider)
-        if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_openai_reasoning(provider)
-        if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_anthropic_thinking(provider)
-        return True
+        TASK-33001.2: a thin draft-key adapter over the one field-support
+        decision (``supported_generation_fields``) the Console shares.
+        """
+        return PROVIDER_MODEL_PROFILE_FIELD_KEYS[
+            draft_key
+        ] in supported_generation_fields(
+            str(provider or ""), str(model or "").strip() or None
+        )
 
     def _unsupported_model_profile_placeholder(self, provider: object) -> str:
         provider_label = self._provider_display_name(str(provider or "").strip())
@@ -12612,8 +12606,10 @@ class SettingsScreen(BaseAppScreen):
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
 
-    def _model_profile_input_placeholder(self, provider: object, draft_key: str) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+    def _model_profile_input_placeholder(
+        self, provider: object, draft_key: str, model: object
+    ) -> str:
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return self._unsupported_model_profile_placeholder(provider)
         return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
 
@@ -12621,34 +12617,35 @@ class SettingsScreen(BaseAppScreen):
         self,
         provider: object,
         draft_key: str,
+        model: object,
         value: object,
     ) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return ""
         return self._profile_input_value(value)
 
-    def _provider_generation_support_copy(self, provider: object) -> str:
-        """Summarize gated generation controls in one line (task-189).
+    def _provider_generation_support_copy(self, provider: object, model: object) -> str:
+        """Name the hidden generation rows in one line (task-189, TASK-33001.2).
 
         Instead of rendering rows of "Unavailable for <provider>" placeholder
         fields, the Generation defaults disclosure shows this single summary
-        and hides the dead rows entirely.
+        and hides the rows the provider+model request does not carry.
 
         Returns:
-            Copy such as ``"Reasoning/Thinking controls: unavailable for
-            llama.cpp."`` or ``""`` when every gated control is available.
+            Copy such as ``"Hidden for Anthropic: Min P, Seed, Presence,
+            Frequency, ..."`` or ``""`` when every row is supported.
         """
         provider_label = self._provider_display_name(str(provider or "").strip())
         if not provider_label:
             provider_label = "this provider"
-        unavailable: list[str] = []
-        if not self._provider_supports_reasoning_effort(provider):
-            unavailable.append("Reasoning")
-        if not self._provider_supports_anthropic_thinking(provider):
-            unavailable.append("Thinking")
-        if not unavailable:
+        hidden = [
+            label
+            for draft_key, label in MODEL_PROFILE_ROW_LABELS.items()
+            if not self._model_profile_field_supported(provider, draft_key, model)
+        ]
+        if not hidden:
             return ""
-        return f"{'/'.join(unavailable)} controls: unavailable for {provider_label}."
+        return f"Hidden for {provider_label}: {', '.join(hidden)}."
 
     @staticmethod
     def _gated_profile_row_classes(supported: bool) -> str:
@@ -12762,14 +12759,7 @@ class SettingsScreen(BaseAppScreen):
         model_profile_streaming = self._streaming_select_text(
             self.query_one("#settings-model-profile-streaming", Select).value
         )
-        if not self._provider_supports_openai_reasoning(provider):
-            model_profile_reasoning_effort = ""
-            model_profile_reasoning_summary = ""
-            model_profile_verbosity = ""
-        if not self._provider_supports_anthropic_thinking(provider):
-            model_profile_thinking_effort = ""
-            model_profile_thinking_budget_tokens = ""
-        return {
+        values = {
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
@@ -12792,6 +12782,10 @@ class SettingsScreen(BaseAppScreen):
             "model_profile_thinking_budget_tokens": model_profile_thinking_budget_tokens,
             "model_profile_streaming": model_profile_streaming,
         }
+        for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                values[draft_key] = ""
+        return values
 
     def _stage_provider_value(self, key: str, value: object) -> None:
         self._discard_openai_reconnect_review()
@@ -14020,8 +14014,9 @@ class SettingsScreen(BaseAppScreen):
             else {}
         )
         for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
-            if not self._model_profile_field_supported(provider, draft_key):
-                next_profile.pop(profile_key, None)
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                # TASK-33001.2: the request never carries this field, so a
+                # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
             if value == "":
@@ -14160,7 +14155,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             for draft_key, value in input_values.items():
                 selector = f"#settings-{draft_key.replace('_', '-')}"
-                supported = self._model_profile_field_supported(provider, draft_key)
+                supported = self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
                 if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
                     try:
                         select = self.query_one(selector, Select)
@@ -14204,7 +14201,7 @@ class SettingsScreen(BaseAppScreen):
                         continue
                     widget.disabled = not supported
                     widget.placeholder = self._model_profile_input_placeholder(
-                        provider, draft_key
+                        provider, draft_key, model
                     )
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
@@ -14221,7 +14218,7 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_model_profile = False
         self._sync_provider_context_window_widget(provider, model)
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
 
     def _sync_provider_context_window_widget(self, provider: str, model: str) -> None:
         state = model_context_window_state(self._app_config_mapping(), provider, model)
@@ -14265,9 +14262,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue.append(value)
         context_window_input.value = value
 
-    def _refresh_generation_support_summary(self, provider: str) -> None:
+    def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
-        support_copy = self._provider_generation_support_copy(provider)
+        support_copy = self._provider_generation_support_copy(provider, model)
         try:
             summary = self.query_one("#settings-provider-generation-support", Static)
         except QueryError:
@@ -15598,7 +15595,7 @@ class SettingsScreen(BaseAppScreen):
             reconnect.disabled = self._openai_reconnect_busy
         except QueryError:
             pass
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._refresh_provider_field_guidance()
 
@@ -15879,7 +15876,11 @@ class SettingsScreen(BaseAppScreen):
         if field_id in model_profile_guidance:
             label, purpose, key, validation = model_profile_guidance[field_id]
             draft_key = field_id.removeprefix("settings-").replace("-", "_")
-            if not self._model_profile_field_supported(provider, draft_key):
+            if not self._model_profile_field_supported(
+                provider,
+                draft_key,
+                self._provider_setting_values_mapping().get("model"),
+            ):
                 return (
                     ("Focused setting", label),
                     (
@@ -17212,6 +17213,15 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_custom_endpoints_section()
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
+            model = str(values["model"])
+            # TASK-33001.2: a row the provider+model request does not carry is
+            # hidden and disabled (never a focus stop), as the gated rows were.
+            row_supported = {
+                draft_key: self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
+                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS
+            }
             with Collapsible(
                 title="Generation defaults",
                 collapsed=self._generation_defaults_collapsed,
@@ -17237,28 +17247,46 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-compact-input",
                         placeholder="0.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_p"]
+                    ),
+                ):
                     yield Static("Top P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_p"]),
                         id="settings-model-profile-top-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_p"],
                         placeholder="0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-min-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_min_p"]
+                    ),
+                ):
                     yield Static("Min P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_min_p"]),
                         id="settings-model-profile-min-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_min_p"],
                         placeholder="optional 0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-k-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_k"]
+                    ),
+                ):
                     yield Static("Top K", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_k"]),
                         id="settings-model-profile-top-k",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_k"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
@@ -17273,16 +17301,27 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-seed-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_seed"]
+                    ),
+                ):
                     yield Static("Seed", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_seed"]),
                         id="settings-model-profile-seed",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_seed"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-presence-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_presence_penalty"]
+                    ),
+                ):
                     yield Static("Presence", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17290,9 +17329,15 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-presence-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_presence_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-frequency-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_frequency_penalty"]
+                    ),
+                ):
                     yield Static("Frequency", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17300,11 +17345,12 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-frequency-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_frequency_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
                 # task-189: one summary line replaces per-row "Unavailable
                 # for <provider>" placeholders; unsupported rows are hidden.
-                support_copy = self._provider_generation_support_copy(provider)
+                support_copy = self._provider_generation_support_copy(provider, model)
                 support_summary = Static(
                     support_copy,
                     id="settings-provider-generation-support",
@@ -17317,10 +17363,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_effort",
-                        )
+                        row_supported["model_profile_reasoning_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17333,10 +17376,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-summary-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_summary",
-                        )
+                        row_supported["model_profile_reasoning_summary"]
                     )
                     + " settings-select-row",
                 ):
@@ -17349,10 +17389,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-verbosity-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_verbosity",
-                        )
+                        row_supported["model_profile_verbosity"]
                     )
                     + " settings-select-row",
                 ):
@@ -17365,10 +17402,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_effort",
-                        )
+                        row_supported["model_profile_thinking_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17381,10 +17415,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-budget-tokens-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        )
+                        row_supported["model_profile_thinking_budget_tokens"]
                     ),
                 ):
                     yield Static("Think budget", classes="settings-input-label")
@@ -17392,6 +17423,7 @@ class SettingsScreen(BaseAppScreen):
                         value=self._model_profile_input_value(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                             values["model_profile_thinking_budget_tokens"],
                         ),
                         id="settings-model-profile-thinking-budget-tokens",
@@ -17399,12 +17431,12 @@ class SettingsScreen(BaseAppScreen):
                         placeholder=self._model_profile_input_placeholder(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                         ),
                         restrict=r"^[0-9]*$",
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        ),
+                        disabled=not row_supported[
+                            "model_profile_thinking_budget_tokens"
+                        ],
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static("Streaming", classes="settings-input-label")
@@ -30194,7 +30226,7 @@ class SettingsScreen(BaseAppScreen):
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
-                and self._model_profile_field_supported(provider, key)
+                and self._model_profile_field_supported(provider, key, model)
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )

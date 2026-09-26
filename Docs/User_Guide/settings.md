@@ -198,7 +198,7 @@ The biggest page, and where to start.
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
+| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, Summary, Verbosity."). Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
 **Space** to check a model. Checked rows survive leaving this category and
@@ -212,7 +212,12 @@ operation cannot replace the new form’s results or Model value.
 
 Open **Generation defaults** to edit overrides for the selected provider and
 model. Supported controls remain reachable with **Tab**; unsupported controls
-are hidden. Leave an override blank and save to remove it and inherit the
+are hidden. "Supported" is the same answer Console uses: the provider's
+capability rules (reasoning and thinking follow the model, e.g. a Claude model
+that rejects a fixed thinking budget hides **Think budget**) narrowed to the
+fields that provider's request actually sends. A value saved earlier for a
+field that is now hidden stays in `config.toml` untouched, and it is never
+sent. Leave an override blank and save to remove it and inherit the
 fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
 lets you keep editing or discard the draft. The section remembers whether
 you opened or closed it while moving between Settings categories; resizing or
@@ -1436,3 +1441,12 @@ is a "duplicate of" row; New works with a filter that matches nothing;
 leaving Settings or quitting with unsaved theme edits asks Stay / Discard /
 Save (one prompt at a time); linked theme files are never replaced and are
 skipped at startup (R43). Pinned by pilot and unit tests, not driven live.*
+
+*Verified against feat/model-config-p1-root-fixes @ c28979b31d + TASK-33001.2
+— 2026-09-26: Generation defaults show only the rows the provider + model
+request carries. Driven live at 211x44 on a scratch profile (Anthropic /
+claude-sonnet-4-5): Min P, Seed, Presence and Frequency are hidden and the
+summary reads "Hidden for Anthropic: Min P, Seed, Presence, Frequency,
+Reasoning, Summary, Verbosity."; Temperature, Top P, Top K, Response max
+tokens, Thinking, Think budget and Streaming stay. The rest of this page's
+content unchanged from the prior stamp.*

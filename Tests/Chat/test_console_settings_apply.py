@@ -30,21 +30,18 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 
 
-_COMMON_MODEL_FIELDS = frozenset(
+# TASK-33001.2: Anthropic's request map carries no Min P, Seed or penalties,
+# so its draft never exposes them (this pin used to list all nine samplers).
+_ANTHROPIC_MODEL_FIELDS = frozenset(
     {
         "temperature",
         "top_p",
-        "min_p",
         "top_k",
         "max_tokens",
-        "seed",
-        "presence_penalty",
-        "frequency_penalty",
         "streaming",
+        "thinking_effort",
+        "thinking_budget_tokens",
     }
-)
-_ANTHROPIC_MODEL_FIELDS = _COMMON_MODEL_FIELDS | frozenset(
-    {"thinking_effort", "thinking_budget_tokens"}
 )
 
 
@@ -354,6 +351,38 @@ def test_rebase_uses_target_defaults_keeps_supported_dirty_fields_and_clears_oth
     )
 
 
+def test_rebase_drops_fields_the_target_request_never_sends() -> None:
+    """TASK-33001.2: the draft keeps only fields the target request carries.
+
+    llama.cpp forwards Min P and Seed; Anthropic's request drops both, so a
+    dirty value never carries into the Anthropic draft, while Top P does.
+    """
+    explicit = ConsoleSettingsFieldProvenance.EXPLICIT
+    source = _state(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="local-gguf",
+            top_p=0.9,
+            min_p=0.07,
+            seed=11,
+        ),
+        _field("top_p", 0.9, profile_override=0.9, provenance=explicit, dirty=True),
+        _field("min_p", 0.07, profile_override=0.07, provenance=explicit, dirty=True),
+        _field("seed", 11, profile_override=11, provenance=explicit, dirty=True),
+    )
+
+    rebased = _rebase(
+        source,
+        provider="anthropic",
+        model="claude-sonnet-4-5",
+        app_config={"api_settings": {"anthropic": {"api_key": "test-key"}}},
+    )
+
+    assert {field.name for field in rebased.field_drafts} == _ANTHROPIC_MODEL_FIELDS
+    assert (rebased.settings.min_p, rebased.settings.seed) == (None, None)
+    assert rebased.settings.top_p == 0.9
+
+
 def test_rebase_quick_materializes_inherited_profile_values() -> None:
     source = _state(
         ConsoleSessionSettings(provider="openai", model="source"),
@@ -526,8 +555,10 @@ def test_rebase_full_inherit_same_target_uses_refreshed_lower_precedence_default
             False,
             ConsoleSettingsFieldProvenance.EXPLICIT,
         ),
+        # TASK-33001.2: OpenAI's request carries no top_k, so this int case
+        # uses seed, which takes the same optional-int normalization path.
         (
-            "top_k",
+            "seed",
             "0",
             7,
             0,
@@ -986,8 +1017,7 @@ def test_rebase_exact_key_restores_provenance_exactly_as_remembered() -> None:
         "temperature": ConsoleSettingsFieldProvenance.EXPLICIT,
         "top_p": ConsoleSettingsFieldProvenance.INHERITED,
         "streaming": ConsoleSettingsFieldProvenance.CARRIED,
-        "min_p": ConsoleSettingsFieldProvenance.INHERITED,
-        "top_k": ConsoleSettingsFieldProvenance.INHERITED,
+        # TASK-33001.2: no min_p or top_k -- OpenAI's request drops both.
         "max_tokens": ConsoleSettingsFieldProvenance.INHERITED,
         "seed": ConsoleSettingsFieldProvenance.INHERITED,
         "presence_penalty": ConsoleSettingsFieldProvenance.INHERITED,

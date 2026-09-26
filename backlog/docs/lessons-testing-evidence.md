@@ -16525,3 +16525,29 @@ read the first transaction's committed version, so its conflict expectation
 is timing-dependent. Record the exact-base result, exclude only that named
 baseline case for the remaining regression sweep, and do not broaden the
 feature to repair unrelated concurrency semantics.
+
+### A model-default save test through `apply_console_default_intent` is red in a clean worktree (TASK-33001.2)
+
+**What happened.** The first AC#9 test for TASK-33001.2 wrote a scratch
+`config.toml`, pointed `TLDW_CONFIG_PATH` at it and called
+`apply_console_default_intent`. It failed with `file_replaced is False`, and so
+does the existing `test_quick_save_patches_only_temperature_and_streaming` at
+BASE: the log says `Configuration mutation failed (phase=lock, ...,
+error_type=RecoveryRequired)`. It is the ADR-126 admission gate, not the
+feature. The failure looks like "the writer refused the save", so it is easy to
+misread as RED evidence for a writer change.
+
+**What to do.** Drive the writer at its gate-free seam: build the mutation with
+`console_settings_defaults._build_locked_default_mutation(intent, provider,
+model, AtomicLiteralMutationSnapshot(generation=1, raw_values=cfg,
+effective_values=cfg))`, then merge it into a deep copy with
+`config._apply_literal_mutation_unlocked(copy, mutation)`. That is the same
+builder and the same merge the locked transaction runs, so the resulting dict is
+what the file would hold. Keep the full `apply_console_default_intent` tests for
+CI, and never count their local `False is True` as RED. The same session found
+a fourth copy of the "is this field supported" decision hiding in Settings'
+form reader (`_provider_form_values_from_widgets` blanked reasoning effort for
+every provider but OpenAI; read from the code, Moonshot and Z.ai reasoning
+edited in Settings was never saved, and a saved value was dropped by the next
+save). When you replace a duplicated projection, grep for every
+place that answers the question, not just the functions named after it.

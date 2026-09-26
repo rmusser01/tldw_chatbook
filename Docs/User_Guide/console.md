@@ -423,6 +423,11 @@ button, the Model section's **Configure** button in the left rail, or the
   URL serves, and the **Base URL** field for local/self-hosted endpoints.
 - **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
   related knobs), then **Provider-specific**, **Context**, and **Identity**.
+  The modal still shows every sampling field, but a field the selected
+  provider's request does not carry is dropped: for Anthropic, Min P, Seed,
+  Presence and Frequency are accepted without error, never sent, and not
+  written by **Save as model default**. A value saved for such a field earlier
+  stays in `config.toml` untouched.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."

@@ -4436,20 +4436,30 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line()
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
+        # TASK-33001.2: the summary names exactly the rows the request drops.
+        # llama.cpp's request carries reasoning effort and a thinking budget
+        # (chat_template_kwargs / reasoning_budget_tokens), so only these hide.
         summary = screen.query_one("#settings-provider-generation-support", Static)
         assert (
             str(summary.renderable)
-            == "Reasoning/Thinking controls: unavailable for llama.cpp."
+            == "Hidden for llama.cpp: Summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
         for row_id in (
-            "#settings-model-profile-reasoning-effort-row",
             "#settings-model-profile-reasoning-summary-row",
             "#settings-model-profile-verbosity-row",
             "#settings-model-profile-thinking-effort-row",
-            "#settings-model-profile-thinking-budget-tokens-row",
         ):
             assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
+        for row_id in (
+            "#settings-model-profile-reasoning-effort-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-top-k-row",
+        ):
+            assert not screen.query_one(row_id).has_class(
                 "settings-gated-profile-hidden"
             ), row_id
         assert "Unavailable for" not in _visible_text(screen)
@@ -4458,13 +4468,116 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line()
         screen._sync_provider_model_profile_widgets("openai", "gpt-4.1")
         await pilot.pause()
 
-        assert str(summary.renderable) == "Thinking controls: unavailable for OpenAI."
+        assert (
+            str(summary.renderable)
+            == "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+        )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
         ).has_class("settings-gated-profile-hidden")
-        assert screen.query_one(
-            "#settings-model-profile-thinking-effort-row"
-        ).has_class("settings-gated-profile-hidden")
+        for row_id in (
+            "#settings-model-profile-thinking-effort-row",
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-top-k-row",
+        ):
+            assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("Anthropic", "claude-sonnet-4-5"),
+        ("anthropic", "claude-sonnet-5"),
+        ("OpenAI", "gpt-5"),
+        ("moonshot", "kimi-k3"),
+        ("moonshot", "moonshot-v1-8k"),
+        ("llama_cpp", "qwen"),
+        ("custom_2", "private-model"),
+        ("acme-private-llm", "any"),
+    ],
+)
+def test_settings_model_profile_rows_ask_the_request_field_decision(provider, model):
+    """TASK-33001.2: every model-default row asks supported_generation_fields
+    for the draft provider AND model -- no sampler is supported by default."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        supported_generation_fields,
+    )
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    expected = supported_generation_fields(provider, model)
+
+    assert {
+        field
+        for draft_key, field in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+        if screen._model_profile_field_supported(provider, draft_key, model)
+    } == expected
+
+
+def test_settings_generation_summary_names_every_hidden_row():
+    """TASK-33001.2: one line names the rows Anthropic's request drops."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+
+    assert screen._provider_generation_support_copy(
+        "anthropic", "claude-sonnet-4-5"
+    ) == (
+        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+        "Summary, Verbosity."
+    )
+    assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
+        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+        "Summary, Verbosity, Think budget."
+    )
+    assert screen._provider_generation_support_copy("openai", "gpt-5") == (
+        "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+    )
+
+
+def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
+    """TASK-33001.2 AC#9: a saved value for a now-hidden field stays in config.
+
+    The Settings writer used to pop every unsupported field from the saved
+    profile; it now leaves the fields the request drops exactly as saved.
+    """
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    saved = {
+        "claude-sonnet-4-5": {
+            "temperature": 0.8,
+            "min_p": 0.05,
+            "seed": 7,
+            "reasoning_summary": "auto",
+        },
+        "sibling": {"temperature": 0.4},
+    }
+    screen._provider_model_defaults = lambda _provider: saved
+    values = {draft_key: "" for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS}
+    values["model_profile_temperature"] = 0.3
+
+    updated = screen._updated_model_defaults_for_values(
+        "anthropic", "claude-sonnet-4-5", values
+    )
+
+    assert updated == {
+        "claude-sonnet-4-5": {
+            "temperature": 0.3,
+            "min_p": 0.05,
+            "seed": 7,
+            "reasoning_summary": "auto",
+        },
+        "sibling": {"temperature": 0.4},
+    }
 
 
 @pytest.mark.asyncio
@@ -8896,7 +9009,8 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
-        assert "Thinking controls: unavailable for OpenAI." in text
+        # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
+        assert "Hidden for OpenAI: Min P, Top K, Thinking, Think budget." in text
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -8922,8 +9036,6 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
         "o3": {
             "temperature": 0.3,
             "top_p": 0.86,
-            "min_p": 0.04,
-            "top_k": 42,
             "max_tokens": 2048,
             "seed": 123,
             "presence_penalty": 0.2,
@@ -9009,8 +9121,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
         "provider": "Anthropic",
         "model": "claude-opus-4-7",
     }
+    # TASK-33001.2 AC#9: a Min P saved before stays untouched by the save.
     app.app_config["api_settings"] = {
-        "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
+        "anthropic": {"model_defaults": {"claude-opus-4-7": {"min_p": 0.05}}},
     }
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
@@ -9037,7 +9150,22 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
-        assert "Reasoning controls: unavailable for Anthropic." in text
+        # TASK-33001.2: Anthropic's request carries no Min P, Seed or
+        # penalties, and Opus 4.7 rejects a fixed thinking budget.
+        assert (
+            "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+            "Summary, Verbosity, Think budget."
+        ) in text
+        for row_id in (
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-seed-row",
+            "#settings-model-profile-presence-penalty-row",
+            "#settings-model-profile-frequency-penalty-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+        ):
+            assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
         assert (
             screen.query_one(
                 "#settings-model-profile-reasoning-effort", Select
@@ -9067,9 +9195,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     sections, _deletes = mutations[0]
     assert sections["api_settings.anthropic"]["model_defaults"] == {
         "claude-opus-4-7": {
+            "min_p": 0.05,
             "max_tokens": 12000,
             "thinking_effort": "xhigh",
-            "thinking_budget_tokens": 4096,
             "streaming": False,
         },
     }

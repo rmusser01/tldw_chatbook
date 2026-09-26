@@ -80,7 +80,7 @@ This task fixes the data. The one-line 'hidden for <provider>' summary in the Co
 - [ ] #5 For OpenAI, Top P stays supported (its map forwards 'maxp')
 - [ ] #6 A provider with no PROVIDER_PARAM_MAP entry keeps today's field set (TASK-30012 AC#3)
 - [ ] #7 A table-driven test over every key in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS fails if a field the request drops is reported supported, or a field it forwards is reported unsupported
-- [ ] #8 Settings Providers & Models shows its existing 'Unavailable for Anthropic' state on those four rows, captured rendered at 211x44
+- [ ] #8 Settings Providers & Models hides those four rows for Anthropic and names them in its one summary line ("Hidden for Anthropic: Min P, Seed, Presence, Frequency, ..."), captured rendered at 211x44 (reworded per preflight ruling R1)
 - [ ] #9 A value already saved for a field that becomes unsupported stays in config untouched and never reaches the request
 - [ ] #10 A surface that still renders a now-unsupported field (the Conversation settings modal) keeps working: editing the field raises no error, and its value is neither sent nor saved as a model default
 

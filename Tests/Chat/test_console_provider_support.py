@@ -1,5 +1,19 @@
+import inspect
+from dataclasses import replace
+from functools import cache
+
 import pytest
 
+from tldw_chatbook.Chat import console_provider_support as support_module
+from tldw_chatbook.Chat.Chat_Functions import (
+    PROVIDER_PARAM_MAP,
+    project_chat_handler_kwargs,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+    build_llamacpp_chat_payload,
+)
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     ConsoleControlSupport,
@@ -9,7 +23,12 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
+    supported_generation_fields,
 )
+from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+)
+from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
 
 
 @pytest.mark.parametrize(
@@ -257,4 +276,166 @@ def test_unsupported_provider_returns_not_supported_without_crashing() -> None:
         readiness_key="definitely_not_real",
         execution_key="definitely_not_real",
         is_supported=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-33001.2: one field-support decision that matches what the request
+# forwards.
+# ---------------------------------------------------------------------------
+
+_ANTHROPIC_DROPPED = frozenset(
+    {"min_p", "seed", "presence_penalty", "frequency_penalty"}
+)
+_TABLE_MODELS = (
+    None,
+    "gpt-5",
+    "claude-sonnet-4-5",
+    "claude-sonnet-5",
+    "kimi-k3",
+    "moonshot-v1-8k",
+    "glm-5.2",
+    "glm-4.6",
+)
+# One non-default value per field; each is sent on its own and compared with
+# a request that leaves the field unset, so nothing depends on value
+# collisions between fields.
+_PROBE_VALUES: dict[str, object] = {
+    "temperature": 0.37,
+    "top_p": 0.61,
+    "min_p": 0.07,
+    "top_k": 23,
+    "max_tokens": 777,
+    "seed": 4242,
+    "presence_penalty": 0.31,
+    "frequency_penalty": 0.29,
+    "reasoning_effort": "low",
+    "reasoning_summary": "detailed",
+    "verbosity": "high",
+    "thinking_effort": "xhigh",
+    "thinking_budget_tokens": 4096,
+    "streaming": False,
+}
+
+
+@cache
+def _fields_the_request_forwards(provider: str) -> frozenset[str]:
+    """Measure which fields reach the provider request, field by field.
+
+    The Console sends direct llama.cpp providers through
+    ``build_llamacpp_chat_payload`` and every other provider through
+    ``chat_api_call`` (``_chat_api_kwargs`` then
+    ``project_chat_handler_kwargs``), so each path is driven for real. A field
+    is forwarded when setting it changes what the provider receives.
+    """
+
+    identity = resolve_console_provider_identity(provider)
+    if identity.uses_direct_llama_path:
+        accepted = inspect.signature(build_llamacpp_chat_payload).parameters
+
+        def request(**fields: object) -> dict[str, object]:
+            stream = fields.pop("streaming", True)
+            return build_llamacpp_chat_payload(
+                model="probe-model",
+                messages=[{"role": "user", "content": "hi"}],
+                stream=stream,
+                **{name: value for name, value in fields.items() if name in accepted},
+            )
+
+    else:
+        base = ConsoleProviderResolution(
+            provider=provider,
+            base_url="",
+            model="probe-model",
+            ready=True,
+            execution_key=identity.execution_key,
+        )
+
+        def request(**fields: object) -> dict[str, object]:
+            kwargs = ConsoleProviderGateway._chat_api_kwargs(
+                replace(base, **fields),
+                [{"role": "user", "content": "hi"}],
+            )
+            return project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+
+    unset = request()
+    return frozenset(
+        name
+        for name, value in _PROBE_VALUES.items()
+        if request(**{name: value}) != unset
+    )
+
+
+@pytest.mark.parametrize("model", _TABLE_MODELS)
+@pytest.mark.parametrize("provider", sorted(CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS))
+def test_supported_generation_fields_match_what_the_request_forwards(
+    provider: str, model: str | None
+) -> None:
+    """AC#7: supported == capability rules ∩ fields the request really sends."""
+
+    forwarded = _fields_the_request_forwards(provider)
+    supported = supported_generation_fields(provider, model)
+
+    dropped_but_reported = supported - forwarded
+    assert not dropped_but_reported, (
+        f"{provider}/{model}: the request drops {sorted(dropped_but_reported)}"
+    )
+    assert supported == (
+        support_module._capability_generation_fields(provider, model) & forwarded
+    )
+
+
+def test_anthropic_hides_only_the_fields_its_request_drops() -> None:
+    """AC#4: Min P, Seed and both penalties are gone; the rest keeps support."""
+
+    fields = supported_generation_fields("anthropic", "claude-sonnet-4-5")
+
+    assert fields.isdisjoint(_ANTHROPIC_DROPPED)
+    assert fields == frozenset(
+        {
+            "temperature",
+            "top_p",
+            "top_k",
+            "max_tokens",
+            "streaming",
+            "thinking_effort",
+            "thinking_budget_tokens",
+        }
+    )
+    # The model-gated fixed thinking budget keeps its existing rule.
+    assert "thinking_budget_tokens" not in supported_generation_fields(
+        "Anthropic", "claude-sonnet-5"
+    )
+
+
+def test_openai_top_p_rides_maxp() -> None:
+    """AC#5: OpenAI's map forwards top_p only as ``maxp``."""
+
+    fields = supported_generation_fields("openai", "gpt-5")
+
+    assert "top_p" in fields
+    assert "maxp" in PROVIDER_PARAM_MAP["openai"]
+    assert "topp" not in PROVIDER_PARAM_MAP["openai"]
+
+
+def test_provider_without_a_request_map_keeps_todays_fields(monkeypatch) -> None:
+    """AC#6 (TASK-30012 AC#3): no map entry means no intersection."""
+
+    everyday = FULL_MODEL_DEFAULT_FIELDS - frozenset(
+        {
+            "reasoning_effort",
+            "reasoning_summary",
+            "verbosity",
+            "thinking_effort",
+            "thinking_budget_tokens",
+        }
+    )
+    assert supported_generation_fields("acme-private-llm", "any") == everyday
+
+    monkeypatch.delitem(PROVIDER_PARAM_MAP, "anthropic")
+    assert supported_generation_fields(
+        "anthropic", "claude-sonnet-4-5"
+    ) == support_module._capability_generation_fields("anthropic", "claude-sonnet-4-5")
+    assert _ANTHROPIC_DROPPED <= supported_generation_fields(
+        "anthropic", "claude-sonnet-4-5"
     )

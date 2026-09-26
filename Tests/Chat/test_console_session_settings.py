@@ -2935,6 +2935,115 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
         assert app.screen is popover
 
 
+@pytest.mark.asyncio
+async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() -> None:
+    """TASK-33001.2 AC#10: the modal still renders Min P for Anthropic.
+
+    Editing it after a real provider switch raises nothing and stays on the
+    conversation draft, but the real model-default writer leaves it out and
+    the real ``chat_api_call`` projection never sends it.
+    """
+    from textual.widgets import Input
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+    from tldw_chatbook.Chat.console_settings_defaults import (
+        _build_locked_default_mutation,
+        build_console_default_intent,
+    )
+
+    def real_rebase(state, **kwargs):
+        return ConsoleChatController.rebase_console_settings_draft(
+            object(), state, **kwargs
+        )
+
+    model = "claude-sonnet-4-5"
+    app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-gguf"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+            "anthropic": {
+                "api_key": "test-key",
+                "model": model,
+                "model_defaults": {model: {"min_p": 0.05}},
+            },
+        },
+    }
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="local-gguf"),
+        app_config=app_config,
+        providers_models={"llama_cpp": ["local-gguf"], "anthropic": [model]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="unavailable"
+        ),
+        can_save=True,
+        draft_rebaser=real_rebase,
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        await pilot.pause()
+        assert "min_p" not in {field.name for field in modal._draft.field_drafts}
+
+        modal.query_one("#console-settings-min-p", Input).value = "0.13"
+        await pilot.pause()
+        submission = modal._submission_for_action(
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+        )
+
+    assert submission is not None
+    draft = submission.draft
+    assert (draft.settings.provider, draft.settings.model) == ("anthropic", model)
+    assert draft.settings.min_p == 0.13
+
+    intent = build_console_default_intent(
+        generation=1,
+        action=submission.action,
+        provider_config_key="anthropic",
+        literal_model_id=model,
+        field_drafts=draft.field_drafts,
+        field_mask=submission.default_field_mask,
+        endpoint=None,
+    )
+    assert intent.values["min_p"] == 0.13
+    mutation = _build_locked_default_mutation(
+        intent,
+        "anthropic",
+        model,
+        config_module.AtomicLiteralMutationSnapshot(
+            generation=1, raw_values=app_config, effective_values=app_config
+        ),
+    )
+    profile_path = ("api_settings", "anthropic", "model_defaults", model)
+    assert "min_p" not in mutation.section_values[profile_path]
+    assert "min_p" not in mutation.delete_keys[profile_path]
+
+    resolution = ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="",
+        model=model,
+        ready=True,
+        execution_key="anthropic",
+        api_key="test-key",
+        min_p=draft.settings.min_p,
+        temperature=draft.settings.temperature,
+    )
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+    assert kwargs["minp"] == 0.13
+    projected = project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+    assert 0.13 not in projected.values()
+
+
 @pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_settings_memory_reset_close_sources_show_one_three_choice_guard(
