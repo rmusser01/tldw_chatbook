@@ -565,3 +565,97 @@ def test_avatar_only_update_that_fails_reports_not_saved(env, tmp_path):
     assert out["status"] == "avatar_failed" and out["message"]
     assert db.get_character_card_by_id(saved["id"])["version"] == saved["version"]
     assert changed == []
+
+
+# ---------------------------------------------------------------------------
+# Qodo review (PR #2842)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("avatar", [
+    {"source": "generate", "prompt": "p" * 2_001},     # over the schema bound
+    {"source": "generate", "prompt": {"not": "text"}},  # wrong type, was str()'d
+    {"source": "file", "path": "x" * 4_097},
+    {"source": "bogus"},
+    {"source": "generate", "extra": 1},
+])
+def test_malformed_avatar_never_reaches_the_backend(env, avatar):
+    # Qodo #3: the raw avatar mapping reached resolve_avatar (and the paid
+    # image backend) with no model validation.
+    _tool, local, *_ = env
+    calls = []
+    tool = cts.CharacterToolService(
+        service_loader=lambda: local, runtime_source_loader=lambda: "local",
+        read_guard=cts.CharacterReadGuard(),
+        generate_avatar=lambda prompt: (calls.append(prompt), PNG)[1],
+    )
+    out = j(tool.save({"name": "Aria", "description": "d", "avatar": avatar}))
+    assert out["status"] == "invalid_argument"
+    assert calls == []
+
+
+def test_query_search_offset_is_capped(env):
+    # Qodo #4: the query path fetches offset + limit + 1 full cards (image
+    # blobs included) and slices in Python, so offset must be bounded.
+    tool, *_ = env
+    cap = cts.CHARACTER_SEARCH_QUERY_MAX_OFFSET
+    assert j(tool.search({"query": "x", "offset": cap}))["status"] == "ok"
+    out = j(tool.search({"query": "x", "offset": cap + 1}))
+    assert out["status"] == "invalid_argument"
+    # The browse path pages in SQL and stays uncapped.
+    assert j(tool.search({"offset": cap + 1}))["status"] == "ok"
+
+
+def test_query_search_never_offers_a_next_offset_past_the_cap(env, monkeypatch):
+    tool, local, *_ = env
+    rows = [{"id": n, "name": f"N{n}", "version": 1} for n in range(1, 400)]
+    monkeypatch.setattr(local, "search_characters", lambda q, limit: rows[:limit])
+    cap = cts.CHARACTER_SEARCH_QUERY_MAX_OFFSET
+    out = j(tool.search({"query": "n", "limit": 25, "offset": cap}))
+    assert "next_offset" not in out
+
+
+class _PublicOnly:
+    """The tool must reach the character service through its public API only."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(f"private service seam used: {name}")
+        return getattr(self._inner, name)
+
+
+def test_duplicate_name_checks_use_the_public_service_api(env):
+    # Qodo #5: `service._require_db()` skipped the service's guarded
+    # (chat-source admission) boundary.
+    _tool, local, *_ = env
+    tool = cts.CharacterToolService(
+        service_loader=lambda: _PublicOnly(local), runtime_source_loader=lambda: "local",
+        read_guard=cts.CharacterReadGuard())
+    first = j(tool.save({"name": "Aria"}))
+    assert first["status"] == "saved"
+    assert j(tool.save({"name": "Aria"}))["status"] == "duplicate_name"
+    other = j(tool.save({"name": "Bea"}))
+    out = j(tool.save({"id": other["id"], "expected_version": other["version"],
+                       "name": "Aria"}))
+    assert out["status"] == "duplicate_name"
+
+
+def test_unexpected_failure_logs_frames_but_no_message_text(env, caplog):
+    # Qodo #7: the boundary logged only the class name. It must log where it
+    # failed (frame metadata) -- never the message, which may carry card
+    # text or file paths.
+    tool, *_ = env
+
+    def _boom():
+        raise RuntimeError("SECRET card text /Users/someone/card.png")
+
+    tool._service_loader = _boom
+    with caplog.at_level("ERROR", logger=cts.__name__):
+        with pytest.raises(RuntimeError, match=cts._PUBLIC_EXECUTION_ERROR):
+            tool.search({})
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "character_tool_service.py:" in logged and "_search" in logged
+    assert "SECRET" not in logged and "/Users/someone" not in logged

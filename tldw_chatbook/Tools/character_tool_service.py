@@ -16,10 +16,12 @@ import base64
 import json
 import logging
 import re
+import traceback
 from collections.abc import Callable, Mapping
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Character_Chat.character_avatar import (
     image_backend_configured,
@@ -64,6 +66,21 @@ SERVER_REFUSAL = (
     "edit characters."
 )
 _PUBLIC_EXECUTION_ERROR = "Character tool execution failed"
+#: The query path has no SQL OFFSET: it loads offset + limit + 1 full cards
+#: (image blobs included) and slices, so its offset is capped (Qodo #4).
+CHARACTER_SEARCH_QUERY_MAX_OFFSET = 100
+
+
+class _AvatarRequest(BaseModel):
+    """``character_save``'s ``avatar`` argument, validated before any backend call.
+
+    Mirrors the tool schema's bounds (the provider does not enforce them).
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: Literal["generate", "file", "remove"]
+    prompt: str | None = Field(default=None, max_length=2_000)
+    path: str | None = Field(default=None, max_length=4_096)
 
 
 class _InvalidArgument(ValueError):
@@ -247,6 +264,15 @@ def save_approval_summary(arguments: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class CharacterToolService:
+    """Console ``character_search``/``character_get``/``character_save`` handlers.
+
+    Each public handler takes the model's raw tool arguments and returns a
+    JSON string: ``{"status": "ok"|"saved", ...}`` on success, or
+    ``{"status": <reason>, "message": ...}`` (``invalid_argument``,
+    ``not_found``, ``stale_version``, ``duplicate_name``, ``unsupported``,
+    ...). Local-only: a server-backed chat gets ``unsupported``.
+    """
+
     def __init__(
         self,
         *,
@@ -264,12 +290,45 @@ class CharacterToolService:
 
     # -- public handlers (LocalToolSpec.handler: dict -> str) ---------------
     def search(self, arguments: object) -> str:
+        """Search (``query``) or browse the local character cards.
+
+        Args:
+            arguments: ``{"query"?, "limit"? (1-25), "offset"?}``.
+
+        Returns:
+            JSON ``{"status": "ok", "items": [...], "next_offset"?}``.
+
+        Raises:
+            RuntimeError: Generic public error on an unexpected failure.
+        """
         return self._run(self._search, arguments)
 
     def get(self, arguments: object) -> str:
+        """Read one card's editable fields, or one page of one field.
+
+        Args:
+            arguments: ``{"id", "field"?, "offset"?}``.
+
+        Returns:
+            JSON ``{"status": "ok", "id", "version", "fields"|"field"+"text", ...}``.
+
+        Raises:
+            RuntimeError: Generic public error on an unexpected failure.
+        """
         return self._run(self._get, arguments)
 
     def save(self, arguments: object) -> str:
+        """Create (no ``id``) or update (``id`` + ``expected_version``) a card.
+
+        Args:
+            arguments: Editable fields to set, plus optional ``avatar``.
+
+        Returns:
+            JSON ``{"status": "saved", "id", "version", "changed_fields", "avatar"}``.
+
+        Raises:
+            RuntimeError: Generic public error on an unexpected failure.
+        """
         return self._run(self._save, arguments)
 
     def approval_summary(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -305,8 +364,15 @@ class CharacterToolService:
             detail = errors[0]["msg"] if errors else "invalid value"
             return _outcome("invalid_argument", f"'{field}': {detail}")
         except Exception as exc:  # noqa: BLE001 - boundary: never raise into the agent loop
-            _LOGGER.error("Character tool execution failed category=%s",
-                          re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64])
+            # Frame metadata only (file basename:line:function) -- never the
+            # message or locals, which may carry card text or file paths.
+            # `from None` stays: the chain would expose that message upstream.
+            frames = " > ".join(
+                f"{Path(f.filename).name}:{f.lineno}:{f.name}"
+                for f in traceback.extract_tb(exc.__traceback__)[-8:]
+            )
+            _LOGGER.error("Character tool execution failed category=%s frames=%s",
+                          re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64], frames)
             raise RuntimeError(_PUBLIC_EXECUTION_ERROR) from None
 
     # -- search -------------------------------------------------------------
@@ -315,15 +381,20 @@ class CharacterToolService:
         offset = _bounded_int(args, "offset", 0)
         if not 1 <= limit <= 25 or offset < 0:
             raise _InvalidArgument("limit must be 1-25 and offset >= 0")
-        service = self._service_loader()
         query = str(args.get("query") or "").strip()
+        if query and offset > CHARACTER_SEARCH_QUERY_MAX_OFFSET:
+            raise _InvalidArgument(
+                f"offset must be <= {CHARACTER_SEARCH_QUERY_MAX_OFFSET} with a query; "
+                "narrow the query instead")
+        service = self._service_loader()
         if query:
             # search_characters has no DB-level offset, so fetch enough rows
             # to slice the requested page ourselves and detect more beyond
             # it (fix-round-1 item 6: offset was silently ignored here).
             rows = list(service.search_characters(query, limit=offset + limit + 1) or [])
             page_rows = rows[offset:offset + limit]
-            has_more = len(rows) > offset + limit
+            has_more = (len(rows) > offset + limit
+                        and offset + limit <= CHARACTER_SEARCH_QUERY_MAX_OFFSET)
         else:
             rows = list(service.list_characters(limit=limit + 1, offset=offset) or [])
             page_rows = rows[:limit]
@@ -407,6 +478,9 @@ class CharacterToolService:
         avatar_req = args.get("avatar")
         if avatar_req is not None and not isinstance(avatar_req, Mapping):
             raise _InvalidArgument("'avatar' must be an object")
+        if avatar_req is not None:
+            avatar_req = _AvatarRequest.model_validate(dict(avatar_req)).model_dump(
+                exclude_none=True)
         service = self._service_loader()
         creating = args.get("id") is None
         character_id: int | None = None
@@ -415,7 +489,7 @@ class CharacterToolService:
             if not str(changes.get("name") or "").strip():
                 raise _InvalidArgument("name is required to create a character")
             name = str(changes["name"]).strip()
-            existing = service._require_db().get_character_card_by_name(name)
+            existing = service.get_character_by_name(name)
             if existing:
                 return _outcome("duplicate_name", _duplicate_name_message(name, existing["id"]))
             card_for_prompt: Mapping[str, Any] = changes
@@ -467,7 +541,7 @@ class CharacterToolService:
                 record = service.create_character(payload)
             except ConflictError:
                 name = str(changes["name"]).strip()
-                existing = service._require_db().get_character_card_by_name(name)
+                existing = service.get_character_by_name(name)
                 return _outcome("duplicate_name",
                                 _duplicate_name_message(name, existing["id"] if existing else None))
         else:
@@ -478,7 +552,7 @@ class CharacterToolService:
             except ConflictError as exc:
                 if "already exists" in str(exc):
                     name = str(changes.get("name") or "").strip()
-                    existing = service._require_db().get_character_card_by_name(name)
+                    existing = service.get_character_by_name(name)
                     return _outcome("duplicate_name", _duplicate_name_message(
                         name, existing["id"] if existing else None))
                 return _outcome("stale_version",

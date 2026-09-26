@@ -4492,7 +4492,8 @@ def _default_specs(
                 parameters={"type": "object", "properties": {
                     "query": {"type": "string", "maxLength": 200},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
-                    "offset": {"type": "integer", "minimum": 0, "default": 0}},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0,
+                               "description": "At most 100 when a query is given."}},
                     "additionalProperties": False},
                 handler=character_service.search,
                 exposure=LocalToolExposure.CONSOLE_ONLY,

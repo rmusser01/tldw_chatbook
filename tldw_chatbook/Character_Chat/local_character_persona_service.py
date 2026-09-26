@@ -777,6 +777,11 @@ class LocalCharacterPersonaService:
         return record
 
     @_chat_sources.guarded
+    def get_character_by_name(self, name: str) -> Any:
+        """Return the non-deleted card named exactly ``name``, or None."""
+        return self._require_db().get_character_card_by_name(name)
+
+    @_chat_sources.guarded
     def create_character(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterCreateRequest
