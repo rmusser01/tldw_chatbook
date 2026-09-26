@@ -1178,7 +1178,7 @@ explicitly instead of counting them as the `☑`/`☐` selection pair. The
 glyphs come from the same shared constants as the RAG modal's toggles, so a
 future legend change cannot pass this surface by.)*
 
-*Added — 2026-09-24 (task-32926 Task 21, SSH remote workspace bindings,
+*Added — 2026-09-24 (task-32929 Task 21, SSH remote workspace bindings,
 ADR-181): the "SSH workspace folders (remote bindings)" section, its
 `[console_ssh]` settings bullet, and the unreachable-remote quirks entry
 were written against the shipped feature code and its suites (Settings

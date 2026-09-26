@@ -1,5 +1,5 @@
 ---
-id: TASK-32926
+id: TASK-32929
 title: SSH remote workspace bindings
 status: Done
 assignee:
@@ -63,3 +63,11 @@ decisions; spec revision 5 is the binding design.
   lint gate for the supertype, sync `ssh -G` on the Settings UI thread,
   rc-noise live check (byte-level strip covered by fake-ssh), git_*/change
   review on remote bindings are v1 non-goals.
+
+## Renumbering
+
+Renumbered from TASK-32926 to TASK-32929 (2026-09-25) per the TASK-19601
+owner rule: an earlier-arriving `task-32926` (Keyring reads on a cache miss,
+created 2026-09-23 19:58) exists on `dev`; this task (created 2026-09-24
+22:35) is the younger arrival and renumbers. No dependencies referenced the
+old id; doc/code references updated in ADR-181 and the user guide.
