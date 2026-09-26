@@ -238,3 +238,33 @@ def test_repo_census_is_in_sync_with_the_tree():
     ]
     assert not utcnow, f"un-pinned datetime.utcnow(): {utcnow}"
     assert not grown, f"un-pinned non-canonical timestamp write: {grown}"
+
+
+def test_flags_a_bare_datetime_utcnow_reference_used_as_a_factory():
+    """Tier-2 review S06, P2 [D1]: the guard matched CALLS only.
+
+    `Field(default_factory=datetime.utcnow)` passes the function itself,
+    so the node is an `ast.Attribute`, never the `func` of an `ast.Call` --
+    and the guard reported "0 datetime.utcnow() site(s) ... OK" while
+    `tldw_api/chat_loop_schemas.py:37` carried exactly that. The guard is
+    the artifact the repo trusts to know this is clean; it reported clean
+    while it was not.
+    """
+    src = (
+        "from datetime import datetime\n"
+        "from pydantic import BaseModel, Field\n"
+        "class E(BaseModel):\n"
+        "    ts: datetime = Field(default_factory=datetime.utcnow)\n"
+    )
+    hits = _scan(src)
+    assert hits[("m", "E", _mod.KIND_UTCNOW)] == 1
+
+
+def test_a_utcnow_call_is_still_counted_exactly_once():
+    """The bare-reference rule must not double-count `datetime.utcnow()`.
+
+    A call's `func` IS an `ast.Attribute`, so the naive widening would see
+    every call twice.
+    """
+    hits = _scan("import datetime\ndef f():\n    return datetime.utcnow()\n")
+    assert hits[("m", "f", _mod.KIND_UTCNOW)] == 1
