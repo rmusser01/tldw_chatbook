@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -34,7 +34,11 @@ class ChatLoopEvent(BaseModel):
 
     run_id: str = Field(..., min_length=1)
     seq: int = Field(..., ge=1)
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    # AWARE UTC, not `datetime.utcnow` (ADR-173): the naive value it
+    # produced serialised through `model_dump(mode="json")` with no
+    # offset, so a server event with no `ts` carried a timestamp that
+    # reads as local time wherever it lands.
+    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event: ChatLoopEventType
     data: dict[str, Any] = Field(default_factory=dict)
 

@@ -1301,6 +1301,48 @@ def validate_buddy_import_path(value: object) -> str:
 
 
 
+def validate_request_endpoint_path(endpoint: object) -> str:
+    """Refuse an API request path that an interpolated value has escaped.
+
+    Clients build request paths with f-strings (``f"/api/v1/sharing/public/
+    {token}"``); most of those segments are ``str``-annotated parameters that
+    reach no ``quote()``. httpx resolves the path via ``base_url.join()``,
+    which treats ``?``/``#`` as delimiters and normalises ``..`` -- so a
+    pasted share token containing ``?`` appends attacker-chosen query
+    parameters to an authenticated request, and one containing ``../`` walks
+    out of the API namespace with the credential header still attached.
+
+    Lives here rather than in the client so the delimiter and traversal
+    policy cannot drift away from the repository's shared input boundary.
+    Fails CLOSED: no endpoint in `tldw_api` carries a literal ``?``/``#``.
+    It deliberately does not re-encode ``/`` -- per-segment quoting remains
+    the complete fix.
+
+    Args:
+        endpoint: The request path assembled by the calling method.
+
+    Returns:
+        The endpoint, unchanged, when it is safe to send.
+
+    Raises:
+        ValueError: On a non-string, a query/fragment delimiter, or a ``..``
+            segment. Callers translate this into their own error family.
+    """
+    if not isinstance(endpoint, str):
+        raise ValueError("Refusing to send a non-string request path.")
+    if "?" in endpoint or "#" in endpoint:
+        raise ValueError(
+            "Refusing to send a request path containing '?' or '#': a value "
+            "interpolated into the endpoint escaped its path segment."
+        )
+    if ".." in endpoint.split("/"):
+        raise ValueError(
+            "Refusing to send a request path containing a '..' segment: a "
+            "value interpolated into the endpoint escaped its path segment."
+        )
+    return endpoint
+
+
 def validate_url(url: str) -> bool:
     """Validate an http/https URL by scheme and host.
 
