@@ -350,7 +350,6 @@ def test_snapshot_launch_prepares_private_directory_before_popen_and_preserves_l
     [
         ("127.0.0.1", ("--ssl-key-file", "/private/key"), {}, "TLS"),
         ("127.0.0.1", ("--api-prefix=/private-api",), {}, "API prefix"),
-        ("127.0.0.1", ("--models-dir", "/private/models"), {}, "Router"),
         ("0.0.0.0", (), {}, "loopback"),
         ("127.0.0.1", (), {"LLAMA_ARG_SSL_CERT_FILE": "/private/cert"}, "TLS"),
         ("127.0.0.1", (), {"LLAMA_ARG_API_PREFIX": "/private-api"}, "API prefix"),
@@ -418,6 +417,8 @@ async def test_snapshot_unsupported_management_preserves_ordinary_launch(
             "/ordinary/llama-server",
             "--model",
             str(model),
+            "--alias",
+            "chatbook-llamacpp",
             "--host",
             host,
             "--port",
@@ -597,6 +598,8 @@ def test_snapshot_disabled_next_launch_omits_all_snapshot_setup(tmp_path, monkey
         "/ordinary/llama-server",
         "--model",
         str(model),
+        "--alias",
+        "chatbook-llamacpp",
         "--host",
         "127.0.0.1",
         "--port",
@@ -919,6 +922,8 @@ async def test_handlers_preserve_auxiliary_models_alongside_primary_authority(
         primary = managed_payload if mode is GGUFSourceMode.MANAGED else external
         primary_flag = "--model" if provider == "llamacpp" else "-m"
         expected.extend((primary_flag, str(primary)))
+    if provider == "llamacpp":
+        expected.extend(("--alias", "chatbook-llamacpp"))
     expected.extend(("--host", "127.0.0.1", "--port", "8123"))
     expected.extend(_AUXILIARY_MODEL_ARGUMENTS)
     assert command == expected
@@ -1017,6 +1022,9 @@ async def test_handlers_reject_source_overrides_before_reserving_claim(
     assert app._llm_server_launch_claims == {}
     assert app.notifications == [
         (
+            ("Invalid tuning or conflicting expert arguments. Use one value per "
+             "tuning option; model, alias, host and port belong to the launch controls.")
+            if provider == "llamacpp" else
             "Additional arguments cannot select another model source. "
             "Remove the model source option and try again.",
             "error",
@@ -1256,6 +1264,8 @@ def test_source_command_matrix_uses_only_active_authority(
             managed_payload if selection.mode is GGUFSourceMode.MANAGED else external
         )
         expected.extend((model_flag, str(expected_model)))
+    if provider == "llamacpp":
+        expected.extend(("--alias", "chatbook-llamacpp"))
     expected.extend(("--host", "127.0.0.1", "--port", "8123", "--threads", "2"))
     assert command == expected
     assert str(outside / "PRIVATE_INACTIVE_EXTERNAL.gguf") not in command
@@ -2390,3 +2400,44 @@ def test_managed_source_failure_is_path_private_and_does_not_overwrite_newer_cla
     assert private_marker not in captured
     assert app.destination.state_changes == []
     server_lifecycle.release_server_claim(app, "llamacpp", current)
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_listener_admission(monkeypatch):
+    # Source/lease fixtures do not own network listeners. Actual admission has
+    # separate loopback tests in test_llamacpp_launch_contract.py.
+    monkeypatch.setattr(events, "_preflight_llamacpp_listener", lambda *_args: None)
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_handler_merges_tuning_and_defaults_port_before_worker(monkeypatch, tmp_path):
+    from tldw_chatbook.LLM_Management.llamacpp_profiles import LlamaCppTuning
+    executable = tmp_path / 'llama-server'
+    executable.touch()
+    model = tmp_path / 'model.gguf'
+    _write_sparse_gguf(model)
+    window = _Window({
+        '#llamacpp-exec-path': _InputWidget(value=str(executable)),
+        '#llamacpp-host': _InputWidget(value=''),
+        '#llamacpp-port': _InputWidget(value=''),
+        '#llamacpp-additional-args': _InputWidget(value='--threads 2'),
+        '#llamacpp-log-output': _LogWidget(),
+    })
+    window.gguf_source_snapshot = lambda _provider: _selection(GGUFSourceMode.EXTERNAL, external_path=model)
+    window.llamacpp_tuning = lambda: LlamaCppTuning(context_size=4096, gpu_layers=-1)
+    app = _App()
+    captured = []
+    monkeypatch.setattr(events, 'run_server_subprocess', lambda *args, **kwargs: captured.append((args[2], kwargs)))
+    await events.handle_start_llamacpp_server_button_pressed(window, app, Button.Pressed(Button('Start')))
+    work, _ = app.workers[0]
+    work()
+    command, options = captured[0]
+    assert command[command.index('--port') + 1] == '8080'
+    assert command[command.index('--host') + 1] == '127.0.0.1'
+    assert command[command.index('--ctx-size') + 1] == '4096'
+    assert command[command.index('--n-gpu-layers') + 1] == '-1'
+    assert command.count('--threads') == command.count('--alias') == 1
+    assert options['diagnostics'] is not None
+    claim = server_lifecycle.current_server_claim(app, 'llamacpp')
+    assert claim._connection_url == 'http://127.0.0.1:8080'
+    assert server_lifecycle.release_server_claim(app, 'llamacpp', claim)

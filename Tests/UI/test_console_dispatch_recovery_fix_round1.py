@@ -22,12 +22,12 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
 )
+from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
+from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
 )
 from tldw_chatbook.UI.Console_Modules.prompt_queue import ConsolePromptQueueRegion
-from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
-from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -72,7 +72,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("must remain blocked")
 
-        # A healthy provider-owned turn blocks a second send but is not recovery UI.
+        # A healthy accepted turn permits queue admission and has no recovery UI.
         store.begin_ephemeral_dispatch(
             session.id,
             assistant_message_id=assistant.id,
@@ -85,7 +85,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         )
         send = composer.query_one("#console-send-message", Button)
         assert region.display is False
-        assert send.disabled is True
+        assert send.disabled is False
 
         # A delivery-unknown owner is visible even though the queue is empty.
         store.mark_dispatch_recovery_needed(session.id, assistant.id)

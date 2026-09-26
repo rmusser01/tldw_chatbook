@@ -72,6 +72,31 @@ The existing product identity and Settings layout remain authoritative. The
 new panel is modular; it does not add another Settings surface or redesign the
 application shell.
 
+## Subscription setup preservation (TASK-32711, 2026-09-17)
+
+Completing first-run setup with Anthropic's existing `claude_subscription`
+auth source and no API-key edit preserves the inactive `api_key`,
+`api_key_env_var`, and `credential_source` fields. Subscription readiness is
+a secret-free observation; its lack of an API-key value is not a Clear
+instruction. The borrowed token remains outside setup drafts and mutations.
+
+The shared provider-setup builder owns this distinction. It may issue a sparse
+credential-preserving mutation only for an unchanged (`none`) draft under
+Anthropic subscription configuration. That mutation omits all three credential
+fields from writes and deletes. Its `none` semantic identity describes the
+setup observation, not the persisted API-key routing choice. Explicit Clear
+and typed replacement retain their existing deletion and replacement behavior.
+Immutable issuance checks, provider ownership validation, and atomic config
+preconditions continue to apply. The auth source is part of those preconditions,
+so changing from subscription to API-key auth invalidates a queued setup save.
+
+Alternatives rejected: inferring deletion from missing borrowed API-key material
+silently destroys unrelated configuration; copying inactive secrets into the
+mutation needlessly rewrites values and can erase concurrent edits; rewriting
+an issued immutable mutation in the wizard bypasses the shared owner's
+validation boundary. No new credential storage or authentication fallback is
+introduced.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-06-30-provider-credentials-console-setup-polish-design.md)

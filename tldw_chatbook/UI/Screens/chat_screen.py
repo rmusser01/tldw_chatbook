@@ -194,6 +194,7 @@ from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
 )
 from ...Chat.console_settings_apply import (
+    console_settings_provider_key,
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
@@ -803,6 +804,11 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-32904: during active streams the settings context estimate ran on
+# every 0.2s tick, re-tokenizing the entire growing streamed reply (the
+# token memo cannot hit while the content keeps changing). 1s staleness on
+# an estimate chip -- same spirit as the cost tick's 10s bound above.
+CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS = 1.0
 # task-13 (Console Inspector environment redesign): cadence for the
 # Environment panel's LOCAL tier (git status + the mtime-cached backlog
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
@@ -2930,7 +2936,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=console_settings_provider_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -2998,7 +3004,7 @@ class ChatScreen(BaseAppScreen):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
-                provider_config_key=provider_config_key(
+                provider_config_key=console_settings_provider_key(
                     submission.draft.settings.provider
                 ),
                 literal_model_id=str(submission.draft.settings.model or ""),
@@ -3208,6 +3214,8 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     async def _test_console_connection(
         identity: ProviderDraftIdentity,
+        *,
+        app_config: Mapping[str, object] | None = None,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
         from .settings_endpoint_probe import (
@@ -3216,10 +3224,32 @@ class ChatScreen(BaseAppScreen):
             provider_probe_result_from_settings_outcome,
         )
 
+        probe_kwargs = {}
+        if identity.custom_endpoint_id is not None:
+            from tldw_chatbook.Chat.custom_endpoint_registry import (
+                entry_for,
+                family_execution_key,
+                resolve_entry_credential,
+            )
+            from tldw_chatbook.Chat.provider_endpoint_contract import (
+                canonical_connection_identity,
+            )
+
+            entry = entry_for(app_config or {}, identity.custom_endpoint_id)
+            if (
+                entry is None
+                or canonical_connection_identity(
+                    family_execution_key(entry.family), entry.base_url
+                )
+                != identity.connection_identity
+            ):
+                return ProviderProbeResult("unreachable", (), "connection_error")
+            probe_kwargs["api_key"] = resolve_entry_credential(entry)[0]
         outcome = await probe_settings_endpoint(
             identity.connection_identity[1],
             provider=identity.provider_key,
             purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+            **probe_kwargs,
         )
         return provider_probe_result_from_settings_outcome(outcome)
 
@@ -3377,6 +3407,9 @@ class ChatScreen(BaseAppScreen):
             app_config=self._provider_readiness_app_config(),
             providers_models=providers_models,
             context_estimate=context_estimate,
+            context_window_resolver=lambda settings: (
+                self._ensure_console_provider_gateway().resolve_context_window(settings)
+            ),
             context_state=context_state,
             can_save=(
                 controller.run_state_for(session_id).is_send_allowed and not active_run
@@ -3398,7 +3431,9 @@ class ChatScreen(BaseAppScreen):
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
             suspended_draft=suspended_draft,
-            connection_tester=self._test_console_connection,
+            connection_tester=lambda identity: self._test_console_connection(
+                identity, app_config=self._provider_readiness_app_config()
+            ),
             generation_tester=lambda request: self._test_console_generation(
                 session_id, request
             ),
@@ -4134,6 +4169,7 @@ class ChatScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             snapshot.settings.provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         recovery_copy = ""
         if (
@@ -5495,6 +5531,7 @@ class ChatScreen(BaseAppScreen):
                 initial_draft=initial_draft,
                 providers_models=providers_models,
                 context_state=context_state,
+                context_window_resolver=lambda settings: self._ensure_console_provider_gateway().resolve_context_window(settings),
                 scope_copy="Applies to this conversation",
                 durability_copy=(
                     "Temporary until this chat is promoted"
@@ -7387,6 +7424,8 @@ class ChatScreen(BaseAppScreen):
         # collapse state IS persisted, via `_set_console_rail_preference`).
         self._console_environment_expanded: set[str] = set()
         self._console_environment_poll_timer: Any | None = None
+        self._console_credential_poll_timer: Any | None = None
+        self._console_credential_revision = -1
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -8073,22 +8112,51 @@ class ChatScreen(BaseAppScreen):
     def consume_pending_vllm_console_intent(self) -> bool:
         """Apply one current verified vLLM target to the active session only."""
 
+        return self._consume_verified_console_intent(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent,
+            "vllm",
+            "_vllm_connection_owner",
+            owner_has_current_intent,
+        )
+
+    def consume_pending_llamacpp_console_intent(self) -> bool:
+        """Apply one current verified llama.cpp target to this session only."""
+
+        from ..Navigation.llamacpp_handoff import (
+            LlamaCppConsoleIntent,
+            owner_has_current_intent as llama_owner_has_current_intent,
+        )
+
+        return self._consume_verified_console_intent(
+            HandoffChannel.LLAMACPP_CONSOLE,
+            LlamaCppConsoleIntent,
+            "llama_cpp",
+            "_llamacpp_connection_owner",
+            llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_console_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the exact session adoption and compensation transaction."""
+
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
-        if store.release_recovery(HandoffChannel.VLLM_CONSOLE) is not None:
+        if store.release_recovery(channel) is not None:
             recovery_result = store.retry_release_recovery(
-                HandoffChannel.VLLM_CONSOLE,
+                channel,
                 automatic=False,
             )
             if recovery_result != "released":
                 self.app_instance.notify(
-                    "vLLM session handoff cleanup is still pending. It will "
+                    "verified provider session handoff cleanup is still pending. It will "
                     "retry on the next Console activation.",
                     severity="warning",
                 )
                 return False
-        claim = store.claim(HandoffChannel.VLLM_CONSOLE)
+        claim = store.claim(channel)
         if claim is None:
             return False
         session_store = None
@@ -8104,11 +8172,11 @@ class ChatScreen(BaseAppScreen):
         replacement_started = False
         try:
             intent = claim.value
-            if type(intent) is not VllmConsoleIntent:
-                raise TypeError("vLLM Console handoff was not exact")
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Console handoff is stale")
+            if type(intent) is not intent_type:
+                raise TypeError("verified provider Console handoff was not exact")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if not current_intent(owner, intent):
+                raise ValueError("verified provider Console handoff is stale")
             if not self.is_attached:
                 raise RuntimeError("Console is detached")
             session_store = self._ensure_console_chat_store()
@@ -8126,20 +8194,20 @@ class ChatScreen(BaseAppScreen):
             current_controller = self._console_chat_controller
             current_provider_selection = self._build_console_provider_selection()
             current_summary_state = self._build_console_settings_summary_state()
-            configured_vllm = build_target_default_console_session_settings(
+            configured_target = build_target_default_console_session_settings(
                 self._provider_readiness_app_config(),
-                "vllm",
+                provider,
                 intent.model_id,
             )
             next_settings = replace(
                 current,
-                provider="vllm",
+                provider=provider,
                 model=intent.model_id,
-                base_url=configured_vllm.base_url,
+                base_url=configured_target.base_url,
                 source="user",
             )
             endpoint_policy = ConsoleEphemeralEndpointPolicy(
-                provider="vllm",
+                provider=provider,
                 model=intent.model_id,
                 base_url=intent.api_url,
             )
@@ -8148,7 +8216,7 @@ class ChatScreen(BaseAppScreen):
                 app_config=self._provider_readiness_app_config(),
             )
             if errors:
-                raise ValueError("vLLM Console session settings are invalid")
+                raise ValueError("verified provider Console session settings are invalid")
             adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
                 session_id,
                 settings=next_settings,
@@ -8160,10 +8228,10 @@ class ChatScreen(BaseAppScreen):
             if (
                 not self.is_attached
                 or session_store.active_session_id != session_id
-                or not owner_has_current_intent(owner, intent)
+                or not current_intent(owner, intent)
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Console handoff changed during adoption")
+                raise RuntimeError("verified provider Console handoff changed during adoption")
         except BaseException as error:
             if (
                 replacement_started
@@ -8187,7 +8255,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
                         raise RuntimeError(
-                            "vLLM Console rollback lost its session fence"
+                            "verified provider Console rollback lost its session fence"
                         )
                     if (
                         outcome is ConsoleEndpointRollbackOutcome.RESTORED
@@ -8219,7 +8287,7 @@ class ChatScreen(BaseAppScreen):
                         and session_store.active_session_id == session_id
                     ):
                         self.app_instance.notify(
-                            "vLLM session endpoint blocked because the prior "
+                            "verified provider session endpoint blocked because the prior "
                             "conversation metadata could not be restored. Retry "
                             "the handoff or choose a provider before sending.",
                             severity="error",
@@ -8228,13 +8296,13 @@ class ChatScreen(BaseAppScreen):
                         self._sync_console_settings_summary()
                 except BaseException as rollback_error:
                     logger.warning(
-                        "vLLM Console handoff rollback failed "
+                        "verified provider Console handoff rollback failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(rollback_error).__name__,
                     )
                     self.app_instance.notify(
-                        "vLLM session handoff could not restore its exact prior "
+                        "verified provider session handoff could not restore its exact prior "
                         "state. Review the current provider before sending.",
                         severity="error",
                     )
@@ -8245,7 +8313,7 @@ class ChatScreen(BaseAppScreen):
                 released = False
                 release_failure = "exception"
                 logger.warning(
-                    "vLLM Console handoff claim release failed "
+                    "verified provider Console handoff claim release failed "
                     "(revision={}, exception_category={})",
                     claim.revision,
                     type(release_error).__name__,
@@ -8260,13 +8328,13 @@ class ChatScreen(BaseAppScreen):
                     )
                 except BaseException as retention_error:
                     logger.warning(
-                        "vLLM Console handoff cleanup ownership transfer failed "
+                        "verified provider Console handoff cleanup ownership transfer failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(retention_error).__name__,
                     )
                 self.app_instance.notify(
-                    "vLLM session handoff could not be re-queued yet. Console "
+                    "verified provider session handoff could not be re-queued yet. Console "
                     "retained cleanup ownership and will retry before adoption.",
                     severity="error",
                 )
@@ -8276,7 +8344,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 raise
             logger.warning(
-                "vLLM Console handoff will retry "
+                "verified provider Console handoff will retry "
                 "(channel={}, revision={}, exception_category={})",
                 claim.channel.value,
                 claim.revision,
@@ -8284,7 +8352,7 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self.app_instance.notify(
-            "Using the verified vLLM target for this Console session only.",
+            "Using the verified provider target for this Console session only.",
             severity="information",
         )
         return True
@@ -8313,6 +8381,8 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_settings_context_estimate_for_session(session_id)
 
+    _console_estimate_cache: tuple[tuple[object, ...], float, Any] | None = None
+
     def _console_settings_context_estimate_for_session(
         self,
         session_id: str,
@@ -8325,6 +8395,30 @@ class ChatScreen(BaseAppScreen):
         if settings is None:
             raise KeyError(session_id)
         include_active_staging = store.active_session_id == session_id
+        try:
+            session_messages = store.messages_for_session(session_id)
+        except KeyError:
+            session_messages = []
+        composer = self._console_composer_or_none() if include_active_staging else None
+        draft_text = composer.draft_text() if composer is not None else ""
+        # task-32904: brief TTL so active streams stop re-tokenizing the
+        # whole growing reply every 0.2s tick; key changes (new message,
+        # settings revision, draft edit) still recompute immediately.
+        estimate_cache_key = (
+            session_id,
+            len(session_messages),
+            store.session_settings_revision(session_id),
+            len(draft_text),
+            self._pending_console_launch_context is not None,
+        )
+        now = time.monotonic()
+        cached_estimate = self._console_estimate_cache
+        if (
+            cached_estimate is not None
+            and cached_estimate[0] == estimate_cache_key
+            and now - cached_estimate[1] < CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ):
+            return cached_estimate[2]
         workspace_context = (
             self._workspace._current_console_workspace_context()
             if include_active_staging
@@ -8334,12 +8428,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context if include_active_staging else None
         )
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        try:
-            session_messages = store.messages_for_session(session_id)
-        except KeyError:
-            session_messages = []
         greeting = ""
-        composer = self._console_composer_or_none() if include_active_staging else None
         if include_active_staging:
             controller = self._ensure_console_chat_controller()
             history = spend.build_console_spend_history_projection(
@@ -8352,12 +8441,12 @@ class ChatScreen(BaseAppScreen):
             messages = spend.build_console_context_messages(
                 session_messages,
                 history.request_ids,
-                composer.draft_text() if composer is not None else "",
+                draft_text,
             )
             greeting = controller._seeded_greeting_text(session_id, session_messages)
         else:
             messages = spend.build_console_context_messages(session_messages, None, "")
-        return build_console_context_estimate(
+        estimate = build_console_context_estimate(
             messages,
             settings.provider,
             settings.model,
@@ -8379,7 +8468,10 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(pending_launch),
+            context_window=self._ensure_console_provider_gateway().cached_context_window(settings),
         )
+        self._console_estimate_cache = (estimate_cache_key, now, estimate)
+        return estimate
 
     def _active_console_context_control_state(
         self,
@@ -11915,6 +12007,29 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-environment-poll")
             self._console_environment_poll_timer = None
 
+    def _poll_console_credential_readiness(self) -> None:
+        """Refresh send controls after a nonblocking subscription check completes."""
+        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_readiness_revision,
+        )
+
+        if not self._console_attach_reconciled or not self.is_current:
+            return
+        revision = subscription_readiness_revision()
+        if revision == self._console_credential_revision:
+            return
+        self._console_credential_revision = revision
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+
+    def _stop_console_credential_poll_timer(self) -> None:
+        """Stop completion polling when the mounted Console view goes away."""
+        timer = getattr(self, "_console_credential_poll_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._console_credential_poll_timer = None
+            self._record_ui_timer_stopped("console-credential-poll")
+
     def _build_console_staged_context_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -15005,6 +15120,10 @@ class ChatScreen(BaseAppScreen):
         if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
         if readiness.recovery_action == "configure_credential":
+            if readiness.subscription_status == "pending":
+                return "Checking Claude subscription credential."
+            if readiness.subscription_status in {"missing", "expired"}:
+                return "Log in with Claude Code to refresh the subscription credential."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Conversation settings before sending."
@@ -15026,7 +15145,7 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "hidden", "Open provider settings")
         presentation = build_console_readiness_presentation(readiness)
         label = presentation.action_label
-        if readiness.recovery_action == "configure_credential":
+        if readiness.recovery_action == "configure_credential" and readiness.subscription_status is None:
             label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         return label, presentation.action_target, presentation.action_tooltip
 
@@ -16632,6 +16751,7 @@ class ChatScreen(BaseAppScreen):
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_llamacpp_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
@@ -16672,6 +16792,10 @@ class ChatScreen(BaseAppScreen):
             CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
         self._record_ui_timer_created("console-environment-poll")
+        self._console_credential_poll_timer = self.set_interval(
+            0.25, self._poll_console_credential_readiness
+        )
+        self._record_ui_timer_created("console-credential-poll")
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -16857,6 +16981,7 @@ class ChatScreen(BaseAppScreen):
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
         self._stop_console_environment_poll_timer()
+        self._stop_console_credential_poll_timer()
         self._console_draft_spend_refresh.stop()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
@@ -18696,6 +18821,10 @@ class ChatScreen(BaseAppScreen):
             # while the turn is preparing and admits Queue after acceptance;
             # only actual provider setup gaps belong in this gate.
             if readiness.recovery_action == "configure_credential":
+                if readiness.subscription_status == "pending":
+                    return "Checking Claude subscription credential. Your draft is preserved."
+                if readiness.subscription_status in {"missing", "expired"}:
+                    return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
                 provider = readiness.provider_display_name or "this provider"
                 return (
                     f"Console send blocked: Add an API key for {provider} before "
@@ -20905,22 +21034,28 @@ class ChatScreen(BaseAppScreen):
         def schedule() -> None:
             from tldw_chatbook.config import get_canvas_config_policy
 
-            policy = get_canvas_config_policy()
-            if (
-                not self._console_runtime().canvas_enabled()
-                or not policy.auto_open_on_create
-            ):
+            if not self._console_runtime().canvas_enabled():
                 return
             gateway = self._console_runtime().canvas_gateway
             if gateway is not None and gateway.has_browser_session_for(session_id):
                 return
-            self.run_worker(
-                self._open_console_canvas_selection(
+
+            async def open_when_policy_allows() -> None:
+                # task-32904: policy resolution can fall back to the OS
+                # keyring (remote web_server token) -- never resolve it on
+                # the UI event loop that runs this worker.
+                policy = await asyncio.to_thread(get_canvas_config_policy)
+                if not policy.auto_open_on_create:
+                    return
+                await self._open_console_canvas_selection(
                     session_id=session_id,
                     canvas_id=info.canvas_id,
                     revision_id=info.revision_id,
                     follow_latest=True,
-                ),
+                )
+
+            self.run_worker(
+                open_when_policy_allows(),
                 exclusive=True,
                 group="console-canvas-auto-open",
             )
@@ -23365,6 +23500,10 @@ class ChatScreen(BaseAppScreen):
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self.consume_pending_vllm_console_intent,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_llamacpp_console_intent,
                 ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on

@@ -163,7 +163,11 @@ class ImageGenSettingsPanel(Vertical):
         self.overlay: Mapping[str, Any] = overlay or {}
 
     def compose(self) -> ComposeResult:
-        cfg = get_image_generation_config(reload=True)
+        # task-32904: reload=False -- the snapshot is refreshed off the UI
+        # loop by the screen before every (re)compose; a reload here would
+        # resolve up to 7 backend secrets through the OS keyring
+        # (SecretService/D-Bus on Linux) on the event loop.
+        cfg = get_image_generation_config(reload=False)
         # Display-only, UNMERGED with config.py's baked default template --
         # see load_user_image_generation_table()'s docstring. Using the
         # merged SettingsConfigAdapter().load() config here would make an

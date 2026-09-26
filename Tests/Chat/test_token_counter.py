@@ -90,10 +90,9 @@ class TestTokenCounter:
         assert get_model_token_limit("mistral-large", "mistral") == 128000
 
     def test_get_model_token_limit_prefers_capabilities_over_table(self, monkeypatch):
-        # Capabilities must be consulted before the table: patch get_context_window
-        # to a sentinel and confirm even a model WITH a table entry returns it.
+        # Capabilities must be consulted before the table, including overrides.
         import tldw_chatbook.model_capabilities as mc
-        monkeypatch.setattr(mc, "get_context_window", lambda provider, model: 999999)
+        monkeypatch.setattr(mc, "_global_capabilities", mc.ModelCapabilities({"models": {"gpt-4": {"context_window": 999999}}}))
         assert get_model_token_limit("gpt-4", "openai") == 999999  # table would say 8192
 
     def test_get_model_token_limit_longest_prefix_wins(self):
@@ -276,10 +275,10 @@ class TestEstimator:
 # --- Roleplay UAT regression: the unknown-model fallback window ---
 # A local llama.cpp GGUF resolved to the legacy 4096 fallback even though the
 # server advertised n_ctx=64000, so history was trimmed almost immediately.
-# Modern local models are >= 16k; the fallback now reflects that.
+# Without serving metadata or a model/API default the fallback is 32,000.
 
 
-def test_unknown_local_model_falls_back_to_16k_window():
+def test_unknown_local_model_falls_back_to_32000_window():
     """An unknown local model must not resolve to the legacy 4k window."""
     from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
@@ -287,15 +286,15 @@ def test_unknown_local_model_falls_back_to_16k_window():
         get_model_token_limit(
             "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf", "llama_cpp"
         )
-        == 16384
+        == 32000
     )
 
 
-def test_unknown_provider_and_model_falls_back_to_16k_window():
+def test_unknown_provider_and_model_falls_back_to_32000_window():
     """The generic default applies to any unrecognized provider/model pair."""
     from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
-    assert get_model_token_limit("some-unknown-model", "some-unknown-provider") == 16384
+    assert get_model_token_limit("some-unknown-model", "some-unknown-provider") == 32000
 
 
 # TASK-17610: list-shaped (vision/attachment) message content must never

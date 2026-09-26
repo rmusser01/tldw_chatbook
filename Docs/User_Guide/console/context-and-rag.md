@@ -73,6 +73,23 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Model context capacity
+
+The model controls use the selected server's reported context size when it is
+available. Otherwise they use the model or API default, then **32,000 tokens**
+if neither is defined. Server lookups run in the background; a slow or unavailable
+server does not freeze the controls. Provider and system fallbacks are labeled
+as estimates.
+
+The displayed model window and request budget use the same resolved capacity.
+Response tokens, the safety margin, and required request material are subtracted
+from that total before calculating the conversation budget. Your explicit custom
+budget is retained and limited to the available capacity for each request.
+
+Applying settings preserves the values shown for the conversation, including
+previous edits. Making a new default also saves that profile for subsequent
+chats; changing only Streaming does not reset other fields.
+
 ### Per-turn micro-compaction
 
 With compaction mode **Automatic**, setting `[console]

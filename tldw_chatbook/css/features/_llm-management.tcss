@@ -515,3 +515,25 @@
 }
 
 /* --- End of LLM Management Tab --- */
+
+
+/* llama.cpp verified connection and typed tuning controls (ADR-165). */
+#llamacpp-setup-view Button {
+    margin-right: $ds-space-inline;
+}
+#llamacpp-setup-view .llamacpp-status {
+    color: $ds-text-muted;
+    margin-bottom: $ds-space-stack;
+}
+
+/* Redacted launch drafts remain readable inside narrow Models panes. */
+#llamacpp-setup-view .llamacpp-preview-actions Button {
+    width: 1fr;
+    min-width: 0;
+}
+#llamacpp-preview-command,
+#llamacpp-current-launch {
+    height: auto;
+    color: $text;
+    margin-bottom: $ds-space-stack;
+}

@@ -2701,9 +2701,16 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
 
     assert resolved.ready is True
     assert resolved.base_url == "http://127.0.0.1:9099"
-    assert seen_urls == [
-        "http://127.0.0.1:9099/v1/models",
+    # task-32904: the send itself only resolves the model list; serving
+    # metadata is refreshed in the background and must not delay the send.
+    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+    await asyncio.gather(
+        *set(gateway._reasoning_metadata_refreshes),
+        *set(gateway._context_window_refreshes),
+    )
+    assert sorted(seen_urls[1:]) == [
         "http://127.0.0.1:9099/props",
+        "http://127.0.0.1:9099/props?model=server-model&autoload=false",
     ]
 
 
@@ -8026,6 +8033,11 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
                 explicit_model="keyless-model",
             )
         )
+        # task-32904: /props template metadata is a background refresh now.
+        await asyncio.gather(
+            *set(gateway._reasoning_metadata_refreshes),
+            *set(gateway._context_window_refreshes),
+        )
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8041,6 +8053,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
     assert chunks == ["ok"]
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
+        ("GET", "/props"),
         ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
@@ -8090,6 +8103,11 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
                 explicit_model="authenticated-model",
             )
         )
+        # task-32904: /props template metadata is a background refresh now.
+        await asyncio.gather(
+            *set(gateway._reasoning_metadata_refreshes),
+            *set(gateway._context_window_refreshes),
+        )
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8106,9 +8124,11 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
         ("GET", "/props"),
+        ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
     assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",

@@ -69,6 +69,7 @@ from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+    from ..LLM_Management.llamacpp_launch_preview import LlamaCppLaunchOptions
 #
 #######################################################################################################################
 #
@@ -1092,6 +1093,8 @@ class LLMManagementWindow(Container):
         initial_active = {
             provider: self._server_active(provider) for provider in self.GGUF_PROVIDERS
         }
+        from .LLM_Management.llamacpp_setup_view import LlamaCppSetupView
+
         # Main content area
         with _LLMMainContent(id="llm-main-content"):
             # Llama.cpp View
@@ -1154,10 +1157,14 @@ class LLMManagementWindow(Container):
                 yield Input(id="llamacpp-host", value="127.0.0.1")
 
                 yield Label("Port:", classes="label")
-                yield Input(id="llamacpp-port", placeholder="8001")
+                yield Input(id="llamacpp-port", placeholder="8080")
                 yield Static(
-                    "Default 8001 — change it if another server already uses that port.",
+                    "Default 8080 — change it if another server already uses that port.",
                     classes="prereq-hint",
+                )
+
+                yield LlamaCppSetupView(
+                    self.app_instance, launch_options=self.llamacpp_launch_options
                 )
 
                 yield Label("Additional Arguments (single line):", classes="label")
@@ -1596,6 +1603,8 @@ class LLMManagementWindow(Container):
             or any(self._server_active(item) for item in self.GGUF_PROVIDERS)
         ):
             return False
+        if provider == "llamacpp":
+            self._invalidate_llamacpp_connection()
         self.active_view = "llama-cpp" if provider == "llamacpp" else "llamafile"
         self._pending_managed_gguf_handoff = (provider, reference)
         if reference in {choice.reference for choice in self._managed_gguf_choices}:
@@ -1737,6 +1746,8 @@ class LLMManagementWindow(Container):
         """Apply source mode and exact managed-reference selections."""
 
         select_id = event.select.id or ""
+        if select_id in {"llamacpp-gguf-source-mode", "llamacpp-gguf-managed-select"}:
+            self._invalidate_llamacpp_connection()
         for provider in self.GGUF_PROVIDERS:
             if select_id == f"{provider}-gguf-source-mode":
                 if event.value is not Select.NULL:
@@ -1764,6 +1775,14 @@ class LLMManagementWindow(Container):
         """Retain external GGUF paths while preserving lifecycle fencing."""
 
         input_id = event.input.id or ""
+        if input_id in {
+            "llamacpp-exec-path",
+            "llamacpp-model-path",
+            "llamacpp-host",
+            "llamacpp-port",
+            "llamacpp-additional-args",
+        }:
+            self._invalidate_llamacpp_connection()
         for provider in self.GGUF_PROVIDERS:
             if input_id != f"{provider}-model-path":
                 continue
@@ -2020,6 +2039,13 @@ class LLMManagementWindow(Container):
                 )
             start.disabled = active or not source_ready
             stop.disabled = not active
+            if provider == "llamacpp":
+                for control_id in (
+                    "llamacpp-host",
+                    "llamacpp-port",
+                    "llamacpp-additional-args",
+                ):
+                    self.query_one(f"#{control_id}", Input).disabled = False
             if provider in self.GGUF_PROVIDERS:
                 for control_id in self.GGUF_SOURCE_CONTROLS[provider]:
                     control = self.query_one(f"#{control_id}")
@@ -2042,6 +2068,44 @@ class LLMManagementWindow(Container):
                 provider,
             )
 
+    def llamacpp_launch_options(self) -> "LlamaCppLaunchOptions":
+        """Prepare the same launch settings as Start without probing any resources."""
+        import os
+
+        from tldw_chatbook.LLM_Management.llamacpp_launch_preview import (
+            prepare_launch_options,
+        )
+        from tldw_chatbook.LLM_Management.snapshot_settings import (
+            load_snapshot_preferences,
+        )
+
+        return prepare_launch_options(
+            self.query_one("#llamacpp-host", Input).value,
+            self.query_one("#llamacpp-port", Input).value,
+            self.query_one("#llamacpp-additional-args", Input).value,
+            self.llamacpp_tuning(),
+            snapshots_enabled=load_snapshot_preferences().enabled,
+            environment=os.environ,
+        )
+
+    def llamacpp_tuning(self):
+        return self.query_one("#llamacpp-setup-view").tuning()
+
+    def llamacpp_launch_started(self, host, port, claim) -> None:
+        self.query_one("#llamacpp-setup-view").launch_started(host, port, claim)
+
+    def _invalidate_llamacpp_connection(self) -> None:
+        try:
+            self.query_one("#llamacpp-setup-view").launch_draft_changed()
+        except QueryError:
+            pass
+
+    def deactivate_llamacpp(self) -> None:
+        try:
+            self.query_one("#llamacpp-setup-view").deactivate()
+        except QueryError:
+            pass
+
     def _handle_server_process_state_change(
         self,
         provider: str,
@@ -2053,6 +2117,11 @@ class LLMManagementWindow(Container):
             self._sync_vllm_lifecycle(status)
         else:
             self._sync_process_controls(provider)
+        if provider == "llamacpp":
+            try:
+                self.query_one("#llamacpp-setup-view").refresh_state()
+            except QueryError:
+                pass
         if status is not None:
             self.app_instance.notify(status[:200], severity="error")
 
@@ -2129,6 +2198,9 @@ class LLMManagementWindow(Container):
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
+
+        if old_view == "llama-cpp" and new_view != old_view:
+            self.deactivate_llamacpp()
 
         # Update view visibility
         for view_id in self.view_mapping.values():

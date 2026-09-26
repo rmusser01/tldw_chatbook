@@ -5175,6 +5175,11 @@ class LLMScreen(LabScreen):
             return
         self.llm_window.active_view = view_key
 
+    def on_screen_suspend(self) -> None:
+        """Fence llama.cpp evidence on departure, preserving exact handoffs."""
+        if self.llm_window is not None:
+            self.llm_window.deactivate_llamacpp()
+
     async def on_screen_resume(self) -> None:
         """Refresh server status when a modal pops back over this screen."""
         self.refresh_lab_status()

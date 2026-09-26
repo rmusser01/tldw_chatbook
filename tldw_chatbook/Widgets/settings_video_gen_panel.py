@@ -100,7 +100,10 @@ class VideoGenSettingsPanel(Vertical):
         self.overlay: Mapping[str, Any] = overlay or {}
 
     def compose(self) -> ComposeResult:
-        cfg = get_video_generation_config(reload=True)
+        # task-32904: reload=False -- the screen refreshes the snapshot off
+        # the UI loop before every (re)compose; a reload here would resolve
+        # the backend secret through the OS keyring on the event loop.
+        cfg = get_video_generation_config(reload=False)
         raw_top: Mapping = load_user_video_generation_table()
         rows = build_backend_rows(cfg)
         overlay = self.overlay

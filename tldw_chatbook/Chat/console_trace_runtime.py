@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_trace_errors import TraceSurfaceChangeRefused
 from tldw_chatbook.Chat.console_trace_final_values import (
     CompletedToolTurnWitness,
     _checkpoint_semantic_value,
@@ -618,23 +619,32 @@ class ConsoleTraceBoundaryFactory:
                                     else None
                                 ),
                             )
-                admission, surface_boundary = (
-                    self.service.prepare_current_surface_delta(
-                        cursor,
-                        owner_id=owner.owner_id,
-                        segment_id=owner.root_segment_id,
-                        route_identity=route_identity,
-                        preparation_identity=preparation_identity,
-                        provenance=provenance,
-                        values=tuple(request.messages_payload) + continuation_values,
-                        completed_tool_turn=completed_tool_turn,
-                        current_turn_id=turn_id,
-                        current_policy_id=policy.policy_id,
-                        known_credentials=(
-                            getattr(_resolution, "api_key", None) or "",
-                        ),
+                try:
+                    admission, surface_boundary = (
+                        self.service.prepare_current_surface_delta(
+                            cursor,
+                            owner_id=owner.owner_id,
+                            segment_id=owner.root_segment_id,
+                            route_identity=route_identity,
+                            preparation_identity=preparation_identity,
+                            provenance=provenance,
+                            values=tuple(request.messages_payload)
+                            + continuation_values,
+                            completed_tool_turn=completed_tool_turn,
+                            current_turn_id=turn_id,
+                            current_policy_id=policy.policy_id,
+                            known_credentials=(
+                                getattr(_resolution, "api_key", None) or "",
+                            ),
+                        )
                     )
-                )
+                except ValueError as exc:
+                    if exc.args != ("unsupported_surface_change",):
+                        raise
+                    # This refusal precedes reserve_call in this transaction.
+                    # A successful rollback proves no reservation was created;
+                    # an error while unwinding remains an unknown failure.
+                    raise TraceSurfaceChangeRefused() from exc
                 reserved = self.repository.reserve_call(
                     cursor,
                     owner_id=owner.owner_id,

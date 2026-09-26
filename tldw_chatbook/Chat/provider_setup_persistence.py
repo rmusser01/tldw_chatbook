@@ -55,6 +55,7 @@ _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _ROUTING_SETTING_KEYS = (
     *_ENDPOINT_KEY_PRECEDENCE,
+    "auth_source",
     "api_endpoint",
     "router_base_url",
     "huggingface_router_base_url",
@@ -795,8 +796,17 @@ def resolve_remembered_provider_model(
 def build_provider_setup_mutation(
     draft: ProviderSetupDraft,
     app_config: object,
+    *,
+    preserve_credentials: bool = False,
 ) -> ProviderSetupMutation:
-    """Build one provider-owned sparse mutation without performing I/O."""
+    """Build one provider-owned sparse mutation without performing I/O.
+
+    Args:
+        draft: Validated provider, model, and credential decision.
+        app_config: Existing provider configuration.
+        preserve_credentials: Leave API-key fields and their routing untouched
+            for an unchanged Anthropic subscription selection only.
+    """
 
     if type(draft) is not ProviderSetupDraft:
         raise ValueError("Provider setup draft is invalid.")
@@ -809,6 +819,17 @@ def build_provider_setup_mutation(
 
     provider_section = f"api_settings.{_configured_section_key(app_config, ownership)}"
     provider_settings = _provider_settings(app_config, ownership)
+    if type(preserve_credentials) is not bool:
+        raise ValueError("Credential preservation is invalid.")
+    if preserve_credentials:
+        from ..LLM_Calls.anthropic_subscription import anthropic_auth_source
+
+        if (
+            ownership.provider_key != "anthropic"
+            or draft.credential_source != "none"
+            or anthropic_auth_source(provider_settings) != "claude_subscription"
+        ):
+            raise ValueError("Credential preservation is invalid.")
     endpoint_key = _selected_endpoint_key(provider_settings, ownership)
     provider_values: dict[str, object] = {ownership.model_key: model}
     section_values: dict[str, dict[str, object]] = {
@@ -875,9 +896,10 @@ def build_provider_setup_mutation(
             raise ValueError("Credential setup is invalid.")
         provider_values[environment_key] = env_var
         deletes.setdefault(provider_section, []).append(stored_key)
-    else:
+    elif not preserve_credentials:
         deletes.setdefault(provider_section, []).extend((stored_key, environment_key))
-    provider_values["credential_source"] = saved_credential_source
+    if not preserve_credentials:
+        provider_values["credential_source"] = saved_credential_source
 
     if endpoint:
         semantic_identity = ProviderDraftIdentity(
@@ -1660,9 +1682,19 @@ def _validate_provider_setup_mutation(
     if provider_values.get(ownership.model_key) != model:
         raise error
     configured_source = provider_values.get("credential_source")
-    if configured_source not in {"none", "stored", "environment"}:
-        raise error
     provider_deletes = delete_keys.get(provider_section, ())
+    preserve_credentials = (
+        ownership.provider_key == "anthropic"
+        and "credential_source" not in provider_values
+        and set(ownership.credential_keys).isdisjoint(provider_values)
+        and set(ownership.credential_keys).isdisjoint(provider_deletes)
+    )
+    if not preserve_credentials and configured_source not in {
+        "none",
+        "stored",
+        "environment",
+    }:
+        raise error
     if not set(provider_deletes).issubset(
         {*ownership.credential_keys, *_ENDPOINT_KEY_PRECEDENCE}
     ):
@@ -1705,7 +1737,7 @@ def _validate_provider_setup_mutation(
         desired_source: CredentialSource = "stored"
     elif environment_is_set and stored_is_deleted and not stored_is_set:
         desired_source = "environment"
-    elif (
+    elif preserve_credentials or (
         stored_is_deleted
         and environment_is_deleted
         and not stored_is_set
@@ -1714,7 +1746,7 @@ def _validate_provider_setup_mutation(
         desired_source = "none"
     else:
         raise error
-    if configured_source != desired_source:
+    if not preserve_credentials and configured_source != desired_source:
         raise error
 
     if set_endpoint_keys:

@@ -1112,7 +1112,15 @@ class SkillsScreen(BaseAppScreen):
         method_name: str,
         *args: Any,
     ) -> tuple[Any, bool]:
-        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        # task-32904: the first build performs OS keyring backend discovery
+        # (D-Bus SecretService on Linux) -- resolve it off the UI loop.
+        ensure = getattr(self.app_instance, "ensure_local_skill_trust_service", None)
+        if callable(ensure):
+            trust_service = await ensure()
+        else:
+            trust_service = getattr(
+                self.app_instance, "local_skill_trust_service", None
+            )
         method = getattr(trust_service, method_name, None)
         if not callable(method):
             self._notify_skill_trust_warning(

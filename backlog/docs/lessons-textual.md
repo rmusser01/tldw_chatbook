@@ -1052,3 +1052,38 @@ been invoked. `call_after_refresh` works too where a layout pass is wanted.
   first, or the pointer-derived half of your logic is untested.
 - `Input.select_on_focus` defaults to `True` already; the reason click-to-
   focus behaved differently from Tab-to-focus is entirely this ordering.
+
+---
+
+## Initial selection events are not profile choices, and a mounted parent is not a complete form
+
+**TASK-32721/32722, 2026-09-17.** The first llama.cpp profile pane composed a retained context of 4096 and a draft name, but its initial `Select(value="defaults")` event was handled as a user reset. A mounted regression observed both fields erased and the app draft overwritten before profile loading finished. A hydration fence, plus ignored selection events until profiles load, keeps initialization separate from a deliberate Runtime defaults choice.
+
+The same milestone's combined regression run found that `query(LlamaCppSetupView)` could succeed before the sibling source selector and snapshot manager were available. The test now waits for all controls it will use and the hydration fence to clear. On teardown, Textual had already removed child inputs before the parent's Unmount handler; attempting to read the form then raised `NoMatches`. Retain edits as they occur and read controls on departure only while they still exist. Regression evidence: `Tests/UI/test_llamacpp_setup_view.py`.
+
+## A raising `exit_on_error=False` worker surfaces as a missing widget, not an error
+
+**TASK-32904, settings category swap, 2026-09-23.** An off-loop config
+refresh added to `_swap_category_panes` passed `reload=True` POSITIONALLY
+through `asyncio.to_thread` to the keyword-only `get_image_generation_config`
+-- a `TypeError` raised inside the `exit_on_error=False` swap worker. The
+worker's `finally` still cleared `_category_pane_swap_pending`, so the swap
+looked settled, the panes simply never recomposed, and 16 image/video panel
+tests failed with bare `NoMatches: '#settings-imagegen-panel'` while the
+captured logs showed no traceback at all. Surfacing it required calling the
+swap coroutine DIRECTLY (outside the worker, correct revision token) and
+reading the raise. Two traps in one: keyword-only real signatures reject
+`to_thread(fn, True)`, and a swallowed worker error reads as "widget never
+mounted", sending you hunting through compose logic that is innocent.
+
+**What to do.** When a worker-driven rebuild silently produces nothing,
+invoke the worker's coroutine directly in a repro before reading anything
+into the compose path. And treat `asyncio.to_thread(fn, <scalar>)` as a
+smell for keyword-only APIs -- pass `fn(kw=...)` explicitly, and prefer
+test doubles whose signatures match the real keyword-only contract.
+
+Separately, same task: moving that refresh off-loop also broke the shared
+`_open_settings_category` helper, whose single `pilot.pause()` assumed the
+click-to-mounted path was synchronous. Any awaited off-loop work inserted
+into a swap/compose chain needs the helper to WAIT for the swap's settle
+flag (poll `_category_pane_swap_pending`), not assume one pause covers it.

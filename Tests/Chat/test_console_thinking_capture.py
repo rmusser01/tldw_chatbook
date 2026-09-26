@@ -206,3 +206,54 @@ def test_no_event_means_no_recorded_evidence() -> None:
     capture.observe("answer")
 
     assert capture.settle("complete").envelope is None
+
+
+def test_text_append_deltas_skip_full_canonical_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-32904: per-delta work must not serialize the whole envelope.
+
+    Each thinking delta used to run a full canonical encode/parse/encode
+    round-trip of the ENTIRE accumulated envelope (and the store seam
+    re-ran it), making long reasoning streams quadratic. Text-appends now
+    validate incrementally; only structural changes hit the dumper.
+    """
+    from tldw_chatbook.Chat import console_thinking_capture
+
+    calls = 0
+    real_dump = console_thinking_capture.dump_thinking_blocks_json
+
+    def counting_dump(envelope):
+        nonlocal calls
+        calls += 1
+        return real_dump(envelope)
+
+    monkeypatch.setattr(
+        console_thinking_capture, "dump_thinking_blocks_json", counting_dump
+    )
+
+    capture = ThinkingCapture(assistant_owner_id="perf-owner")
+    delta = _delta("x" * 64)
+    capture.observe(delta)
+    for _ in range(200):
+        capture.observe(_delta("y" * 64))
+
+    # One structural install (the first block); appends validated inline.
+    # settle() on an already-"complete" block is not a structural change.
+    assert calls == 1
+    settled = capture.settle("complete")
+    assert settled.envelope is not None
+    assert len(settled.envelope.blocks) == 1
+    assert calls == 1
+    assert settled.envelope.blocks[0].text == "x" * 64 + "y" * 64 * 200
+
+
+def test_text_append_caps_still_fail_capture_at_exact_limits() -> None:
+    """task-32904: incremental checks preserve the canonical size caps."""
+    capture = ThinkingCapture(assistant_owner_id="cap-owner")
+    chunk = "z" * 4096
+    capture.observe(_delta(chunk))
+    # MAX_THINKING_TEXT_BYTES per block, enforced without per-delta dumps.
+    with pytest.raises(ProviderThinkingCaptureError):
+        for _ in range(MAX_THINKING_TEXT_BYTES // 4096 + 2):
+            capture.observe(_delta(chunk))

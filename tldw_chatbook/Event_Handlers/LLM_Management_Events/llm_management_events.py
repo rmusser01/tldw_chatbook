@@ -6,6 +6,7 @@ from __future__ import annotations
 
 #
 import functools
+import ipaddress
 import os
 import shlex
 import socket
@@ -64,43 +65,15 @@ _GGUF_RUNTIME_LOAD_FAILURE = (
     "The runtime could not load this GGUF. Check that its architecture and "
     "quantization are supported."
 )
-_GGUF_PRIMARY_SOURCE_ARGUMENTS = frozenset(
-    {
-        "-m",
-        "--model",
-        "-mu",
-        "--model-url",
-        "-dr",
-        "--docker-repo",
-        "-hf",
-        "-hfr",
-        "--hf-repo",
-        "-hff",
-        "--hf-file",
-        "--models-dir",
-        "--models-preset",
-        "--embd-gemma-default",
-        "--fim-qwen-1.5b-default",
-        "--fim-qwen-3b-default",
-        "--fim-qwen-7b-default",
-        "--fim-qwen-7b-spec",
-        "--fim-qwen-14b-spec",
-        "--fim-qwen-30b-default",
-        "--gpt-oss-20b-default",
-        "--gpt-oss-120b-default",
-        "--vision-gemma-4b-default",
-        "--vision-gemma-12b-default",
-    }
-)
 
 
 def _validate_gguf_additional_args(arguments: tuple[str, ...]) -> None:
-    """Reject primary source selectors while preserving accepted arguments exactly."""
-    if any(
-        argument.partition("=")[0] in _GGUF_PRIMARY_SOURCE_ARGUMENTS
-        for argument in arguments
-    ):
-        raise ValueError("additional arguments cannot select a model source")
+    """Keep the shared primary-source validator available to legacy callers."""
+    from tldw_chatbook.LLM_Management.llamacpp_launch_preview import (
+        validate_gguf_additional_args,
+    )
+
+    validate_gguf_additional_args(arguments)
 
 
 __all__ = [
@@ -237,6 +210,8 @@ def _gguf_server_source_failure_message(error: BaseException) -> str:
             "Snapshot management owns the slot options. Remove custom slot flags "
             "and slot environment settings, or disable snapshots for this launch."
         )
+    if isinstance(error, OSError) and error.errno in {48, 98, 10048, 49, 99, 10049}:
+        return "Host or port is unavailable. Choose an unused local listener and retry."
     if isinstance(error, GGUFSourceChangedError):
         return "The selected external GGUF changed during validation. Retry."
     if isinstance(error, GGUFPathError):
@@ -265,10 +240,30 @@ def _build_gguf_server_command(
     additional_args: tuple[str, ...],
 ) -> list[str]:
     command = [executable]
+    if provider == "llamacpp":
+        from tldw_chatbook.LLM_Management.llamacpp_profiles import (
+            LlamaCppTuning,
+            build_tuning_arguments,
+        )
+
+        _validate_gguf_additional_args(additional_args)
+        build_tuning_arguments(LlamaCppTuning(), additional_args)
     if model_path is not None:
         command.extend(["--model" if provider == "llamacpp" else "-m", str(model_path)])
+    if provider == "llamacpp":
+        command.extend(("--alias", "chatbook-llamacpp"))
     command.extend(("--host", host, "--port", port, *additional_args))
     return command
+
+
+def _preflight_llamacpp_listener(host: str, port: str) -> None:
+    """Refuse a occupied local listener before starting a model process."""
+    from tldw_chatbook.LLM_Management.llamacpp_connection import local_launch_url
+
+    local_launch_url(host, port)
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(port)))
 
 
 def _snapshot_listener_exists(base_url: str) -> bool:
@@ -369,7 +364,22 @@ def _run_gguf_server_worker(
             port,
             additional_args,
         )
+        if provider == "llamacpp":
+            _preflight_llamacpp_listener(host, port)
         command, snapshot_options = _prepare_snapshot_launch(app, command, claim)
+        if claim._launch_preview is not None:
+            from tldw_chatbook.LLM_Management.llamacpp_launch_preview import (
+                finalize_launch_preview,
+            )
+
+            context = claim._snapshot_context
+            claim._launch_preview = finalize_launch_preview(
+                claim._launch_preview,
+                snapshots_active=context is not None and context.directory is not None,
+            )
+        diagnostics = getattr(claim, "_diagnostics", None)
+        if diagnostics is not None:
+            snapshot_options["diagnostics"] = diagnostics
         if claim.cancel_event.is_set():
             _settle_source_preparation(app, provider, claim)
             return f"{provider} launch cancelled"
@@ -600,12 +610,38 @@ async def handle_start_llamacpp_server_button_pressed(
         additional_args_input = window.query_one("#llamacpp-additional-args", Input)
         log_output_widget = window.query_one("#llamacpp-log-output", RichLog)
 
-        exec_path = exec_path_input.value.strip()
-        host = host_input.value.strip() or "127.0.0.1"
-        port = port_input.value.strip() or "8001"
-        additional_args_str = additional_args_input.value.strip()
-        selection = _source_snapshot(window, "llamacpp", "llamacpp-model-path")
+        from tldw_chatbook.LLM_Management.llamacpp_connection import local_launch_url
+        from tldw_chatbook.LLM_Management.llamacpp_launch_preview import (
+            INVALID_TUNING_MESSAGE,
+            LlamaCppLaunchValidationError,
+            prepare_launch_options,
+        )
+        from tldw_chatbook.LLM_Management.llamacpp_profiles import LlamaCppTuning
+        from tldw_chatbook.LLM_Management.snapshot_settings import (
+            load_snapshot_preferences,
+        )
 
+        try:
+            get_tuning = getattr(window, "llamacpp_tuning", None)
+            tuning = get_tuning() if callable(get_tuning) else LlamaCppTuning()
+            options = prepare_launch_options(
+                host_input.value,
+                port_input.value,
+                additional_args_input.value,
+                tuning,
+                snapshots_enabled=load_snapshot_preferences().enabled,
+                environment=os.environ,
+            )
+        except LlamaCppLaunchValidationError as error:
+            app.notify(str(error), severity="error")
+            return
+        except (TypeError, ValueError):
+            app.notify(INVALID_TUNING_MESSAGE, severity="error")
+            return
+
+        host, port = options.host, options.port
+        additional_args = options.additional_args
+        exec_path = exec_path_input.value.strip()
         if not exec_path:
             app.notify("Executable path is required.", severity="error")
             exec_path_input.focus()
@@ -614,16 +650,7 @@ async def handle_start_llamacpp_server_button_pressed(
             app.notify("Llama.cpp executable was not found.", severity="error")
             exec_path_input.focus()
             return
-        additional_args = tuple(shlex.split(additional_args_str))
-        try:
-            _validate_gguf_additional_args(additional_args)
-        except ValueError:
-            app.notify(
-                "Additional arguments cannot select another model source. "
-                "Remove the model source option and try again.",
-                severity="error",
-            )
-            return
+        selection = _source_snapshot(window, "llamacpp", "llamacpp-model-path")
         claim = reserve_server_launch(
             app,
             "llamacpp",
@@ -635,6 +662,18 @@ async def handle_start_llamacpp_server_button_pressed(
                 "Llama.cpp server is already starting or running.", severity="warning"
             )
             return
+        from tldw_chatbook.LLM_Management.llamacpp_diagnostics import DiagnosticSink
+
+        claim._diagnostics = DiagnosticSink()
+        claim._launch_preview = options.preview
+        claim._connection_url = local_launch_url(host, port)
+        claim._connection_exposed = (
+            host != "localhost" and not ipaddress.ip_address(host).is_loopback
+        )
+        app._llamacpp_diagnostics_claim = claim
+        launch_started = getattr(window, "llamacpp_launch_started", None)
+        if callable(launch_started):
+            launch_started(host, port, claim)
         window._sync_process_controls("llamacpp")
         log_output_widget.clear()
         log_output_widget.write("Starting Llama.cpp server.\n")
@@ -659,8 +698,7 @@ async def handle_start_llamacpp_server_button_pressed(
         )
 
         app.notify(
-            f"Llama.cpp server starting… — endpoint will be "
-            f"http://{host}:{port} once the chip shows 'running'."
+            "Llama.cpp is starting. Connection readiness requires a successful API check."
         )
     except Exception as err:
         if "claim" in locals():

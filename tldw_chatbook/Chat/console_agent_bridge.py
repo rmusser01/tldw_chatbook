@@ -175,6 +175,7 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     build_console_request,
     freeze_json,
@@ -2812,6 +2813,9 @@ def _agent_can_reuse_descriptor(
     }
 
 
+_CALL_THINKING_OWNER_KEY = "_tldw_call_thinking_owner"
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleAgentTraceRequestFactory:
     """Rebuild agent-loop requests under one already-admitted trace policy."""
@@ -2838,7 +2842,24 @@ class ConsoleAgentTraceRequestFactory:
 
         provenance = self.admitted_request.provenance
         assert provenance is not None
-        base_rows = self.admitted_request.flattened_messages()
+
+        # Agent transport renames the private thinking owner marker. Normalize
+        # only that spelling; saved owner identity and every message value must
+        # still match the admitted request before reusing its provenance.
+        def comparable(message: Mapping[str, Any]) -> object:
+            row = dict(message)
+            if _CALL_THINKING_OWNER_KEY in row:
+                owner = row.pop(_CALL_THINKING_OWNER_KEY)
+                if THINKING_OWNER_KEY in row and row[THINKING_OWNER_KEY] != owner:
+                    # Conflicting private markers must not match an admitted row.
+                    row[_CALL_THINKING_OWNER_KEY] = owner
+                else:
+                    row[THINKING_OWNER_KEY] = owner
+            return freeze_json(row)
+
+        base_rows = tuple(
+            comparable(row) for row in self.admitted_request.flattened_messages()
+        )
         base_descriptors = provenance.flattened_messages()
         search_from = 0
         descriptors: list[TraceProvenance] = []
@@ -2846,7 +2867,7 @@ class ConsoleAgentTraceRequestFactory:
             # Prepared rows are recursively frozen, while agent transport rows
             # carry mutable JSON arrays. Compare the same representation so an
             # unchanged multimodal message keeps its admitted saved owner.
-            frozen_message = freeze_json(message)
+            frozen_message = comparable(message)
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
@@ -3178,7 +3199,7 @@ class _StreamingModelAdapter:
         # Resolve sidecars after the trace factory has built the neutral request.
         # The reserved canonical key is valid only once its groups are attached.
         # This temporary scalar also keeps mandatory continuation ownership separate.
-        call_thinking_owner_key = "_tldw_call_thinking_owner"
+        call_thinking_owner_key = _CALL_THINKING_OWNER_KEY
         if not is_subagent and self._thinking_sidecar and self._thinking_owner_key:
             historical_owners = {
                 sidecar.owner_message_id for sidecar in self._thinking_sidecar
@@ -3413,10 +3434,15 @@ class _StreamingModelAdapter:
                     if not is_subagent:
                         update = self._thinking_capture.observe(chunk)
                         if update.envelope is not None:
+                            # task-32904: validated=True -- the capture
+                            # enforces the canonical limits incrementally
+                            # per delta; re-validating the whole growing
+                            # envelope here was quadratic.
                             self._store.replace_message_thinking(
                                 self._assistant_message_id,
                                 update.envelope,
                                 generation_token=self._generation_token,
+                                validated=True,
                             )
                     if stream_cut():
                         break
@@ -5023,7 +5049,11 @@ class ConsoleAgentBridge:
                 sandbox_supported,
             )
 
-            script_tool_enabled = sandbox_supported()
+            script_tool_enabled = False
+        # A disposable preview cannot execute chat-create closures; the
+        # run path builds real ones above its own plan, and these flags
+        # honestly report them unavailable here.
+        fork_chat_tool = new_chat_tool = None
         run_budget = console_run_budget()
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget

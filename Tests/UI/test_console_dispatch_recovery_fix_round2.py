@@ -25,6 +25,9 @@ async def test_mounted_retry_resumes_interrupted_postcommit_on_app_owned_control
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
         db, store, controller, gateway = _controller(tmp_path)
+        monkeypatch.setattr(
+            gateway, "cached_context_window", lambda _settings: 4096, raising=False
+        )
         runtime = console._console_runtime()
         runtime.set_chat_store(store)
         runtime.set_provider_gateway(gateway)

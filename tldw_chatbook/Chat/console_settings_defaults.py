@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleEndpointDraft,
     ConsoleSettingsAction,
     ConsoleSettingsFieldDraft,
+    console_settings_provider_key,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
@@ -1100,7 +1101,7 @@ def _validate_intent(intent: ConsoleDefaultMutationIntent) -> tuple[str, str]:
         raise ValueError("Intent action cannot mutate defaults")
     if type(intent.provider_config_key) is not str:
         raise TypeError("Provider must be a string")
-    canonical_provider = provider_config_key(intent.provider_config_key)
+    canonical_provider = console_settings_provider_key(intent.provider_config_key)
     if not canonical_provider:
         raise ValueError("Provider is required")
     if type(intent.literal_model_id) is not str:
@@ -1143,7 +1144,8 @@ def _endpoint_patch_is_authorized(
         and intent.field_mask == FULL_MODEL_DEFAULT_FIELDS
         and patch.dirty is True
         and patch.checked is True
-        and provider_config_key(patch.bound_provider_config_key) == canonical_provider
+        and console_settings_provider_key(patch.bound_provider_config_key)
+        == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
     )
 
@@ -1157,7 +1159,7 @@ def _build_locked_default_mutation(
     """Build one exact mutation from locked authoritative raw/effective views."""
 
     # ADR-146 (registry seam): a registry-entry provider (``custom-ep:<slug>``
-    # id, canonicalized to ``custom_ep:<slug>`` by ``provider_config_key``)
+    # id with its immutable slug preserved)
     # persists NOTHING under ``api_settings`` -- the entry itself is the
     # endpoint and model carrier under ``[custom_endpoints.<slug>]``, and an
     # api_settings table keyed by a custom-ep id would be stray and

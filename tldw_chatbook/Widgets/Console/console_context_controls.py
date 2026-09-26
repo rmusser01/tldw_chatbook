@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryOriginKind,
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
+from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
 from tldw_chatbook.Chat.cost_display import format_cost_amount
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -314,9 +315,17 @@ def build_console_context_control_state(
     """
     local_overrides = overrides or ConsoleContextPolicyOverrides()
     inherited = merge_context_policy(global_overrides=global_overrides)
-    response_max = max(0, int(settings.max_tokens or 0))
+    request_capacity = resolve_request_capacity(
+        context_window_tokens=estimate.token_limit,
+        requested_response_tokens=settings.max_tokens,
+        context_window_verified=estimate.token_limit_verified is not False,
+    )
+    response_max = request_capacity.effective_response_tokens
+    if safety_margin_tokens is None:
+        safety_margin_tokens = request_capacity.safety_margin_tokens
     capacity = ConsoleContextCapacity(
         model_context_window_tokens=estimate.token_limit,
+        model_window_verified=estimate.token_limit_verified is not False,
         provider_input_cap_tokens=provider_input_cap_tokens,
         response_reservation_tokens=response_max,
         safety_margin_tokens=max(0, int(safety_margin_tokens or 0)),

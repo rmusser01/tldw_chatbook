@@ -103,6 +103,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
     ) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
+        self._recovery_snapshot = recovery
         self._presentation = derive_dispatch_recovery_presentation(recovery)
         self._on_action = on_action
         self._assistant_message_id = (
@@ -145,6 +146,15 @@ class ConsoleDispatchRecoveryRegion(Widget):
         assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
+        if session_id != self._session_id or recovery is not self._recovery_snapshot:
+            # A claim and refusal can finish between paints, yielding the same
+            # labels in a new immutable store snapshot. Acknowledge that result
+            # even without recomposition; polling the original snapshot must
+            # still suppress duplicate clicks before the controller claims it.
+            self._intent_in_flight = (
+                recovery.in_flight if recovery is not None else False
+            )
+            self._recovery_snapshot = recovery
         if (
             session_id == self._session_id
             and assistant_message_id == self._assistant_message_id
@@ -154,7 +164,6 @@ class ConsoleDispatchRecoveryRegion(Widget):
         self._session_id = session_id
         self._assistant_message_id = assistant_message_id
         self._presentation = updated
-        self._intent_in_flight = recovery.in_flight if recovery is not None else False
         self.set_class(updated.visible, "-visible")
         if self.is_mounted:
             self.refresh(recompose=True, layout=True)

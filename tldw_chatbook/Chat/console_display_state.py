@@ -250,6 +250,10 @@ def build_console_disabled_reason(
     setup_reason = _clean(setup_blocked_reason, "")
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
+        if setup_reason == "Checking Claude subscription credential.":
+            return "Checking Claude subscription credential"
+        if setup_reason == "Log in with Claude Code to refresh the subscription credential.":
+            return "Send blocked — log in with Claude Code"
         # TX-07 follow-up (TASK-2154.12): "api key"/"endpoint" must be
         # checked BEFORE "model" -- the real blocker copy points at the
         # "Settings > Providers & Models" screen (e.g. "Add API key in

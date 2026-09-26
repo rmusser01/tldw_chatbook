@@ -24,6 +24,7 @@ from .audio_cpp_model_handoff import (
 )
 from .conversation_settings_navigation import ConversationSettingsReturnIntent
 from .vllm_handoff import VllmConsoleIntent, VllmDefaultIntent
+from .llamacpp_handoff import LlamaCppConsoleIntent, LlamaCppDefaultIntent
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -118,6 +119,8 @@ class HandoffChannel(StrEnum):
     CONSOLE_FIRST_CHAT = "console_first_chat"
     VLLM_CONSOLE = "vllm_console"
     VLLM_DEFAULT = "vllm_default"
+    LLAMACPP_CONSOLE = "llamacpp_console"
+    LLAMACPP_DEFAULT = "llamacpp_default"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
@@ -722,6 +725,23 @@ class PendingHandoffStore:
                 settings_revision=value.settings_revision,
                 active_view=value.active_view,
                 focus_control_id=value.focus_control_id,
+            )
+        if channel in {
+            HandoffChannel.LLAMACPP_CONSOLE,
+            HandoffChannel.LLAMACPP_DEFAULT,
+        }:
+            intent_type = (
+                LlamaCppConsoleIntent
+                if channel is HandoffChannel.LLAMACPP_CONSOLE
+                else LlamaCppDefaultIntent
+            )
+            if type(value) is not intent_type:
+                raise TypeError("llama.cpp handoff must be exact")
+            return intent_type(
+                api_url=value.api_url,
+                model_id=value.model_id,
+                generation=value.generation,
+                runtime_owner=value.runtime_owner,
             )
         if channel is HandoffChannel.VLLM_CONSOLE:
             if type(value) is not VllmConsoleIntent:

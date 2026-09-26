@@ -16,6 +16,8 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderToolCalls,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_ENVELOPE_BYTES,
+    MAX_THINKING_TEXT_BYTES,
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
     ThinkingBlock,
@@ -29,6 +31,10 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
 
 CALL_THINKING_KEY = "_tldw_call_thinking"
+
+#: Conservative headroom for the envelope byte cap's structural fields
+#: (block ids, provenance, status -- bounded per block, far below this).
+_ENVELOPE_SIZE_HEADROOM_BYTES = 128 * 1024
 
 
 def consume_call_thinking(
@@ -98,6 +104,10 @@ class ThinkingCapture:
         self._boundary_reached = False
         self._collapsed_block_ids: set[str] = set()
         self._terminal_outcome: ThinkingStatus | None = None
+        # task-32904: exact running byte totals for the incremental
+        # text-append path -- see observe_thinking_delta.
+        self._append_text_bytes: int | None = None
+        self._envelope_text_bytes = 0
 
     def snapshot(self) -> ThinkingCaptureUpdate:
         """Return the current process-local projection without changing it."""
@@ -136,7 +146,7 @@ class ThinkingCapture:
                 status="complete",
                 text=event.text,
             )
-            blocks = (*self._blocks, candidate)
+            self._install((*self._blocks, candidate))
         elif isinstance(current, DisplayableThinkingBlock) and (
             current.provider,
             current.model,
@@ -148,14 +158,31 @@ class ThinkingCapture:
             event.protocol,
             event.source_format,
         ):
-            try:
-                candidate = replace(current, text=current.text + event.text)
-            except ThinkingEnvelopeValidationError:
+            # task-32904: a text-append cannot change the envelope's
+            # structure -- only the current block's text grows -- so the
+            # full canonical encode/parse/encode round-trip per delta (which
+            # made long reasoning streams quadratic) reduces to these exact
+            # incremental size checks. Structural changes still run the
+            # full validation in _install.
+            candidate_text = current.text + event.text
+            delta_bytes = len(event.text.encode("utf-8"))
+            if self._append_text_bytes is None:
+                self._append_text_bytes = len(current.text.encode("utf-8"))
+            append_total = self._append_text_bytes + delta_bytes
+            envelope_total = self._envelope_text_bytes + delta_bytes
+            if (
+                not candidate_text
+                or append_total > MAX_THINKING_TEXT_BYTES
+                or envelope_total
+                > MAX_THINKING_ENVELOPE_BYTES - _ENVELOPE_SIZE_HEADROOM_BYTES
+            ):
                 self._capture_failed()
-            blocks = (*self._blocks[:-1], candidate)
+            self._append_text_bytes = append_total
+            self._envelope_text_bytes = envelope_total
+            candidate = replace(current, text=candidate_text)
+            self._blocks = (*self._blocks[:-1], candidate)
         else:
             self._capture_failed()
-        self._install(blocks)
         return self._evidence_update(candidate.block_id)
 
     def observe_proprietary_evidence(
@@ -279,6 +306,14 @@ class ThinkingCapture:
         except ThinkingEnvelopeValidationError:
             self._capture_failed()
         self._blocks = blocks
+        # task-32904: refresh the incremental append-path counters exactly;
+        # this runs only on structural changes, not per text delta.
+        self._append_text_bytes = None
+        self._envelope_text_bytes = sum(
+            len(block.text.encode("utf-8"))
+            for block in blocks
+            if isinstance(block, DisplayableThinkingBlock)
+        )
 
     def _envelope(self) -> ThinkingEnvelope | None:
         return ThinkingEnvelope(self._blocks) if self._blocks else None

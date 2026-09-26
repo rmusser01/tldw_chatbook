@@ -426,6 +426,10 @@ from ..Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from ...Constants import TAB_CHAT
+from ..Navigation.llamacpp_handoff import (
+    LlamaCppDefaultIntent,
+    owner_has_current_intent as llama_owner_has_current_intent,
+)
 from ..Navigation.vllm_handoff import (
     VllmDefaultIntent,
     owner_has_current_intent,
@@ -2862,10 +2866,15 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
         self._provider_credential_revision = 0
+        self._subscription_readiness_timer = None
+        self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
+            None
+        )
+        self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
-        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
+        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None
         self._vllm_default_before_presentation: (
             _VllmDefaultPresentationSnapshot | None
         ) = None
@@ -3587,6 +3596,21 @@ class SettingsScreen(BaseAppScreen):
             try:
                 if not getattr(self, "is_mounted", False):
                     return
+                # task-32904: the Image/Video Gen panels' compose resolves
+                # backend secrets through the OS keyring (SecretService/D-Bus
+                # on Linux -- up to 7 sequential lookups for image gen), which
+                # can block the UI loop for seconds with a locked keyring.
+                # Refresh the config snapshots off the loop BEFORE the panes
+                # recompose, so compose() reads the cached snapshot cheaply.
+                try:
+                    swap_category = SettingsCategoryId(self.active_category)
+                except ValueError:
+                    swap_category = None
+                if swap_category in (
+                    SettingsCategoryId.IMAGE_GENERATION,
+                    SettingsCategoryId.VIDEO_GENERATION,
+                ):
+                    await self._refresh_generation_config_snapshots_off_loop()
                 focus_id = self._focused_id_in_category_panes()
                 self.release_mouse_capture_for_teardown()
                 async with self.batch():
@@ -3837,6 +3861,9 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        self._subscription_readiness_timer = self.set_interval(
+            0.25, self._poll_subscription_readiness
+        )
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         # task-15475: claim this visit's sync-rows refresh -- but only if one
@@ -3853,6 +3880,7 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
         self.call_after_refresh(self._consume_pending_vllm_default_intent)
+        self.call_after_refresh(self._consume_pending_llamacpp_default_intent)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
@@ -3860,8 +3888,12 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_provider_return_continuation)
 
     def on_unmount(self) -> None:
-        """Fence any late Model Library review before this screen is replaced."""
+        """Fence late credential and Model Library results before replacement."""
 
+        if self._subscription_readiness_timer is not None:
+            self._subscription_readiness_timer.stop()
+            self._subscription_readiness_timer = None
+        self._provider_subscription_test = None
         self._rollback_vllm_default_intent()
         if (
             self._advanced_config_settings is not None
@@ -3882,6 +3914,57 @@ class SettingsScreen(BaseAppScreen):
             self._retry_audio_cpp_result_cleanup(force_overlap=True)
         except BaseException:
             pass
+
+    def _poll_subscription_readiness(self) -> None:
+        """Refresh only the current mounted projection after completion or expiry."""
+        if not self.is_attached or not self.is_current:
+            return
+        category = self._active_category_id()
+        if category not in {
+            SettingsCategoryId.OVERVIEW,
+            SettingsCategoryId.PROVIDERS_MODELS,
+        }:
+            self._subscription_readiness_observation = None
+            return
+        provider = (
+            str(self._resolve_provider_model_for_settings().provider or "")
+            if category is SettingsCategoryId.OVERVIEW
+            else self._provider_widget_value()
+        )
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+            background_credentials=True,
+        )
+        observation = (category.value, provider, readiness.subscription_status)
+        if observation == self._subscription_readiness_observation:
+            return
+        self._subscription_readiness_observation = observation
+        if category is SettingsCategoryId.OVERVIEW:
+            presentation = self._settings_overview_presentation()
+            for row in presentation.primary_rows:
+                if row.key == "configuration":
+                    self._set_static_text(
+                        "#settings-overview-configuration",
+                        f"{row.label}: {_fold_long_tokens(row.value)}",
+                    )
+            return
+        self._set_static_text(
+            "#settings-provider-key-status", self._provider_key_status(provider)
+        )
+        self._set_static_text(
+            "#settings-provider-credential-status",
+            self._provider_credential_status(provider),
+        )
+        tested_draft = self._provider_subscription_test
+        if tested_draft is None:
+            return
+        if tested_draft != (provider, self._provider_draft_generation):
+            self._provider_subscription_test = None
+            return
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        self._provider_test_result = detail
+        self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -6675,6 +6758,19 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_raw_section_cache = raw if isinstance(raw, Mapping) else {}
         return self._image_gen_raw_section_cache
 
+    async def _refresh_generation_config_snapshots_off_loop(self) -> None:
+        """Reload image/video generation config off the UI event loop.
+
+        task-32904: ``reload=True`` resolves backend secrets through the OS
+        keyring; on Linux that is D-Bus SecretService and can block for
+        seconds, so every reload runs via ``asyncio.to_thread`` before a
+        panel compose reads the refreshed snapshot with ``reload=False``.
+        """
+        await asyncio.gather(
+            asyncio.to_thread(get_image_generation_config, reload=True),
+            asyncio.to_thread(get_video_generation_config, reload=True),
+        )
+
     def _image_gen_overlay_values(self) -> dict[str, object]:
         draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
         return dict(draft.values) if draft is not None else {}
@@ -6686,7 +6782,9 @@ class SettingsScreen(BaseAppScreen):
         construct `#settings-imagegen-default_backend` with, for `overlay`
         -- must mirror that compose() logic exactly (see
         `_queue_image_gen_select_suppression`'s docstring)."""
-        cfg = get_image_generation_config(reload=True)
+        # task-32904: reads the cached snapshot only; every caller has either
+        # just refreshed it off-loop or is mid-open with a fresh startup load.
+        cfg = get_image_generation_config(reload=False)
         effective_default_backend = overlay.get("default_backend", cfg.default_backend)
         return (
             effective_default_backend
@@ -6990,13 +7088,12 @@ class SettingsScreen(BaseAppScreen):
     def _image_gen_test_form_values(
         self, panel: ImageGenSettingsPanel, backend_id: str
     ) -> dict[str, str]:
-        """Gather the CURRENT non-secret form values for `backend_id`'s Test
-        probe -- an edited-but-unsaved Input wins; a blank (untouched)
-        Input falls back to the resolved effective value it's currently
-        showing as its own placeholder (see `effective_placeholder`),
-        never a blank string `probe_backend` could mistake for
-        "explicitly cleared"."""
-        cfg = get_image_generation_config(reload=True)
+        """Gather the CURRENT raw non-secret Input values for `backend_id`'s
+        Test probe -- an edited-but-unsaved Input wins; a blank (untouched)
+        Input stays blank HERE and is resolved against the effective config
+        inside the probe worker (task-32904: that resolution reads the OS
+        keyring on Linux and must stay off the UI thread), never a blank
+        string `probe_backend` could mistake for "explicitly cleared"."""
         form_values: dict[str, str] = {}
         for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
             if spec.kind == "secret":
@@ -7007,17 +7104,16 @@ class SettingsScreen(BaseAppScreen):
                 ).value.strip()
             except QueryError:
                 current = ""
-            form_values[spec.toml_key] = current or image_gen_effective_placeholder(
-                cfg, backend_id, spec.toml_key
-            )
+            form_values[spec.toml_key] = current
         return form_values
 
     def _image_gen_test_secret(
         self, panel: ImageGenSettingsPanel, backend_id: str
     ) -> str | None:
-        """The secret to probe with: this session's pasted-but-unsaved
-        value if present, else the effective resolved secret (env/config/
-        keyring) -- see `probe_backend`'s `secret` parameter docstring."""
+        """This session's pasted-but-unsaved secret, or None to resolve the
+        effective secret (env/config/keyring) inside the probe worker --
+        see `probe_backend`'s `secret` parameter docstring and
+        `_image_gen_test_form_values`' keyring note (task-32904)."""
         secret_spec = next(
             (
                 spec
@@ -7034,10 +7130,7 @@ class SettingsScreen(BaseAppScreen):
             ).value.strip()
         except QueryError:
             pasted = ""
-        if pasted:
-            return pasted
-        cfg = get_image_generation_config(reload=True)
-        return image_gen_effective_secret_value(cfg, backend_id)
+        return pasted or None
 
     def _image_gen_set_test_buttons_disabled(self, disabled: bool) -> None:
         for backend_id in IMAGE_GEN_BACKEND_IDS:
@@ -7072,6 +7165,19 @@ class SettingsScreen(BaseAppScreen):
         session: int,
     ) -> None:
         try:
+            # task-32904: resolve the effective-value fallbacks HERE, in the
+            # worker thread -- config/keyring resolution must never run on
+            # the UI event loop.
+            cfg = get_image_generation_config(reload=True)
+            for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
+                if spec.kind == "secret":
+                    continue
+                if not form_values.get(spec.toml_key):
+                    form_values[spec.toml_key] = image_gen_effective_placeholder(
+                        cfg, backend_id, spec.toml_key
+                    )
+            if secret is None:
+                secret = image_gen_effective_secret_value(cfg, backend_id)
             badge = image_gen_probe_backend(backend_id, form_values, secret).badge
         except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
             # Qodo PR #901 fix 2: this probe builds Authorization headers
@@ -7163,6 +7269,9 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            # task-32904: the save changed the on-disk truth; refresh the
+            # snapshot off-loop so the recomposed panel's cheap read sees it.
+            await self._refresh_generation_config_snapshots_off_loop()
             self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", message)
@@ -7190,6 +7299,9 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            # task-32904: mirror the save path -- refresh off-loop before the
+            # recomposed panel's cheap snapshot read.
+            await self._refresh_generation_config_snapshots_off_loop()
             self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", "")
@@ -7431,8 +7543,9 @@ class SettingsScreen(BaseAppScreen):
         widened from its single Select to a per-Select mapping.
         """
         queues = self._video_gen_select_suppress_queues()
+        # task-32904: cached snapshot only; callers refresh it off-loop first.
         expected = video_gen_expected_select_mount_values(
-            get_video_generation_config(reload=True), overlay
+            get_video_generation_config(reload=False), overlay
         )
         for select_id, value in expected.items():
             queues.setdefault(select_id, []).append(value)
@@ -7752,6 +7865,8 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            # task-32904: refresh off-loop before the recompose's cheap read.
+            await self._refresh_generation_config_snapshots_off_loop()
             self._queue_video_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-videogen-save-result", message)
@@ -7767,6 +7882,8 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            # task-32904: mirror the save path -- refresh off-loop first.
+            await self._refresh_generation_config_snapshots_off_loop()
             self._queue_video_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-videogen-save-result", "")
@@ -10896,6 +11013,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         if not readiness.ready:
             return f"Not ready: {readiness.reason}"
@@ -11919,6 +12037,7 @@ class SettingsScreen(BaseAppScreen):
                 True
                 if fenced
                 else bool(self._vllm_default_recovery_card_disabled)
+                or self._vllm_default_recovery() is not None
             )
         except QueryError:
             pass
@@ -11941,7 +12060,10 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return None
-        return store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+        return (
+            store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+            or store.release_recovery(HandoffChannel.LLAMACPP_DEFAULT)
+        )
 
     def _sync_vllm_default_recovery_widgets(self) -> None:
         """Expose surviving cleanup authority without leaking the handoff value."""
@@ -11961,10 +12083,10 @@ class SettingsScreen(BaseAppScreen):
         if recovery is None:
             return
         status.update(
-            "Verified vLLM handoff cleanup needs attention. Retry cleanup to "
+            "Verified provider handoff cleanup needs attention. Retry cleanup to "
             "unlock provider actions."
             if recovery.automatic_retry_exhausted
-            else "Verified vLLM handoff cleanup is retrying; provider actions "
+            else "Verified provider handoff cleanup is retrying; provider actions "
             "remain locked."
         )
         button.disabled = False
@@ -12058,14 +12180,30 @@ class SettingsScreen(BaseAppScreen):
         if self._vllm_default_claim is None and self._vllm_default_recovery() is None:
             return False
         self.app.notify(
-            "Finishing verified vLLM handoff. Settings actions are temporarily "
+            "Finishing verified provider handoff. Settings actions are temporarily "
             "unavailable.",
             severity="warning",
         )
         return True
 
     def _consume_pending_vllm_default_intent(self) -> bool:
-        """Stage one current verified target in Providers without saving it."""
+        """Stage one current verified vLLM target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent, "vllm",
+            "_vllm_connection_owner", owner_has_current_intent,
+        )
+
+    def _consume_pending_llamacpp_default_intent(self) -> bool:
+        """Stage one current verified llama.cpp target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.LLAMACPP_DEFAULT, LlamaCppDefaultIntent, "llama_cpp",
+            "_llamacpp_connection_owner", llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_default_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the staged draft and exact-claim compensation transaction."""
 
         if self._vllm_default_claim is not None:
             return False
@@ -12073,9 +12211,12 @@ class SettingsScreen(BaseAppScreen):
         if type(store) is not PendingHandoffStore:
             return False
         store = cast(PendingHandoffStore, store)
-        if store.release_recovery(HandoffChannel.VLLM_DEFAULT) is not None:
+        recovery = self._vllm_default_recovery()
+        if recovery is not None and recovery.channel is not channel:
+            return False
+        if store.release_recovery(channel) is not None:
             recovery_result = store.retry_release_recovery(
-                HandoffChannel.VLLM_DEFAULT,
+                channel,
                 automatic=True,
             )
             self._sync_vllm_default_recovery_widgets()
@@ -12083,16 +12224,16 @@ class SettingsScreen(BaseAppScreen):
                 if recovery_result == "pending":
                     self._schedule_vllm_default_cleanup_retry()
                 return False
-        claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+        claim = store.claim(channel)
         if claim is None:
             return False
         try:
             intent = claim.value
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if type(intent) is not VllmDefaultIntent:
-                raise TypeError("vLLM Settings handoff was not exact")
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Settings handoff is stale")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if type(intent) is not intent_type:
+                raise TypeError("verified provider Settings handoff was not exact")
+            if not current_intent(owner, intent):
+                raise ValueError("verified provider Settings handoff is stale")
             if (
                 not self.is_mounted
                 or self._active_category_id()
@@ -12103,14 +12244,14 @@ class SettingsScreen(BaseAppScreen):
                 self._snapshot_vllm_default_presentation()
             )
             self._vllm_default_claim = cast(
-                HandoffClaim[VllmDefaultIntent], claim
+                HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent], claim
             )
             self._vllm_default_release_retry_scheduled = False
             self._set_vllm_default_compensation_fence(True)
-            self._stage_provider_value("provider", "vllm")
+            self._stage_provider_value("provider", provider)
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
-            self._sync_provider_manual_widget("vllm")
+            self._sync_provider_manual_widget(provider)
             model_input = self.query_one("#settings-model-value", Input)
             endpoint_input = self.query_one(
                 "#settings-provider-endpoint-value", Input
@@ -12119,17 +12260,17 @@ class SettingsScreen(BaseAppScreen):
                 model_input.value = intent.model_id
             with endpoint_input.prevent(Input.Changed):
                 endpoint_input.value = intent.api_url
-            endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
-            self._sync_provider_credential_widget("vllm")
-            self._sync_provider_model_profile_widgets("vllm", intent.model_id)
-            provider_settings = self._provider_config("vllm")
+            endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+            self._sync_provider_credential_widget(provider)
+            self._sync_provider_model_profile_widgets(provider, intent.model_id)
+            provider_settings = self._provider_config(provider)
             if generic_endpoint_differs(intent.api_url, provider_settings):
                 self._provider_save_result = unsaved_endpoint_copy(
                     intent.api_url, provider_settings
                 )
             else:
                 self._provider_save_result = (
-                    "Verified vLLM target staged. Review it, then choose Save "
+                    "Verified provider target staged. Review it, then choose Save "
                     "to make it the default for new chats."
                 )
             self._set_static_text(
@@ -12144,7 +12285,7 @@ class SettingsScreen(BaseAppScreen):
                 intent,
             )
             if scheduled is False:
-                raise RuntimeError("vLLM Settings acknowledgment was not scheduled")
+                raise RuntimeError("verified provider Settings acknowledgment was not scheduled")
             return True
         except BaseException as error:
             self._rollback_vllm_default_intent(claim=claim)
@@ -12154,7 +12295,7 @@ class SettingsScreen(BaseAppScreen):
             ):
                 raise
             logger.warning(
-                "vLLM Settings handoff will retry "
+                "verified provider Settings handoff will retry "
                 "(channel=%s, revision=%s, exception_category=%s)",
                 claim.channel.value,
                 claim.revision,
@@ -12164,31 +12305,40 @@ class SettingsScreen(BaseAppScreen):
 
     def _acknowledge_vllm_default_intent(
         self,
-        claim: HandoffClaim[VllmDefaultIntent],
-        intent: VllmDefaultIntent,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent],
+        intent: VllmDefaultIntent | LlamaCppDefaultIntent,
     ) -> None:
         """Acknowledge only after the staged draft and widgets reached a paint."""
 
         store = getattr(self.app_instance, "pending_handoffs", None)
-        draft = self._provider_draft()
         try:
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            llama = type(intent) is LlamaCppDefaultIntent
+            provider = "llama_cpp" if llama else "vllm"
+            owner = getattr(
+                self.app_instance,
+                "_llamacpp_connection_owner" if llama else "_vllm_connection_owner",
+                None,
+            )
+            current_intent = (
+                llama_owner_has_current_intent if llama else owner_has_current_intent
+            )
+            values = self._provider_setting_values_mapping()
             if (
                 type(store) is not PendingHandoffStore
                 or self._vllm_default_claim is not claim
                 or not self.is_mounted
-                or not owner_has_current_intent(owner, intent)
-                or draft is None
-                or draft.values.get("provider") != "vllm"
-                or draft.values.get("model") != intent.model_id
-                or draft.values.get("endpoint") != intent.api_url
+                or not current_intent(owner, intent)
+                or values.get("provider") != provider
+                or values.get("model") != intent.model_id
+                or values.get("endpoint") != intent.api_url
+                or self._provider_widget_value() != provider
                 or self.query_one("#settings-model-value", Input).value
                 != intent.model_id
                 or self.query_one("#settings-provider-endpoint-value", Input).value
                 != intent.api_url
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Settings handoff changed before render")
+                raise RuntimeError("verified provider Settings handoff changed before render")
         except BaseException:
             self._rollback_vllm_default_intent(claim=claim)
             return
@@ -12209,7 +12359,7 @@ class SettingsScreen(BaseAppScreen):
     def _rollback_vllm_default_intent(
         self,
         *,
-        claim: HandoffClaim[VllmDefaultIntent] | None = None,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None,
     ) -> None:
         """Restore the prefill draft and release only this exact claim."""
 
@@ -12237,7 +12387,7 @@ class SettingsScreen(BaseAppScreen):
             except BaseException as release_error:
                 release_failure = "exception"
                 logger.warning(
-                    "vLLM Settings handoff release failed "
+                    "verified provider Settings handoff release failed "
                     "(revision=%s, exception_category=%s)",
                     current_claim.revision,
                     type(release_error).__name__,
@@ -12264,7 +12414,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             except BaseException as retention_error:
                 logger.warning(
-                    "vLLM Settings handoff cleanup ownership could not transfer "
+                    "verified provider Settings handoff cleanup ownership could not transfer "
                     "(revision=%s, exception_category=%s)",
                     current_claim.revision,
                     type(retention_error).__name__,
@@ -12302,7 +12452,7 @@ class SettingsScreen(BaseAppScreen):
         except BaseException as schedule_error:
             self._vllm_default_release_retry_scheduled = False
             logger.warning(
-                "vLLM Settings handoff release retry could not be scheduled "
+                "verified provider Settings handoff release retry could not be scheduled "
                 "(revision=%s, exception_category=%s)",
                 recovery.revision,
                 type(schedule_error).__name__,
@@ -12315,10 +12465,10 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=True,
-        )
+        recovery = self._vllm_default_recovery()
+        if recovery is None:
+            return
+        result = store.retry_release_recovery(recovery.channel, automatic=True)
         self._sync_vllm_default_recovery_widgets()
         if result == "pending":
             self._schedule_vllm_default_cleanup_retry()
@@ -12333,10 +12483,10 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=False,
-        )
+        recovery = self._vllm_default_recovery()
+        if recovery is None:
+            return False
+        result = store.retry_release_recovery(recovery.channel, automatic=False)
         self._sync_vllm_default_recovery_widgets()
         if result != "released":
             return False
@@ -12424,6 +12574,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_test_staged_config(provider),
+            background_credentials=True,
         )
         source = readiness.api_key_source or ""
         if source.startswith("env:"):
@@ -12560,6 +12711,7 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
         return bool(
             readiness.api_key_source and readiness.api_key_source.startswith("config:")
@@ -12572,7 +12724,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude subscription selected; API key is not used"
         if not readiness.requires_api_key:
             return "No credential required"
         if self._provider_saved_api_key_present(provider):
@@ -12583,7 +12738,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if self._provider_saved_api_key_present(provider):
@@ -12605,12 +12763,25 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return "Claude Code owns the subscription credential"
         if not readiness.requires_api_key:
             return "No credential required"
         if readiness.env_var:
             return readiness.env_var
         return f"{provider_key.upper()}_API_KEY"
+
+    @staticmethod
+    def _subscription_credential_copy(status: str) -> str:
+        """Return fixed credential copy without implying API-key recovery."""
+        return {
+            "pending": "Checking Claude subscription credential…",
+            "ready": "Credential source: Claude subscription (not verified)",
+            "expired": "Claude subscription credential expired; log in with Claude Code",
+            "missing": "Claude subscription credential missing; log in with Claude Code",
+        }[status]
 
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
         return supported_console_provider_catalog(
@@ -13426,7 +13597,10 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
+            background_credentials=True,
         )
+        if readiness.subscription_status is not None:
+            return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
         if readiness.api_key_source:
@@ -14039,7 +14213,14 @@ class SettingsScreen(BaseAppScreen):
             draft.dirty_keys if draft is not None else set()
         )  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider, self._provider_test_staged_config(provider)
+            provider,
+            self._provider_test_staged_config(provider),
+            background_credentials=True,
+        )
+        self._provider_subscription_test = (
+            (provider, getattr(self, "_provider_draft_generation", 0))
+            if readiness.subscription_status is not None
+            else None
         )
         detail, summary, passed = self._build_provider_readiness_findings(
             provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
@@ -14415,6 +14596,7 @@ class SettingsScreen(BaseAppScreen):
         prompt. A no-op when nothing has run yet or it is already marked stale, so
         it never clobbers the not-run sentinel or thrashes on every keystroke.
         """
+        self._provider_subscription_test = None
         if self._provider_test_result in (
             self._PROVIDER_TEST_NOT_RUN_COPY,
             self._PROVIDER_TEST_STALE_COPY,
@@ -20757,7 +20939,7 @@ class SettingsScreen(BaseAppScreen):
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
                 recovery_status = Static(
-                    "Verified vLLM handoff cleanup needs attention. Retry cleanup "
+                    "Verified provider handoff cleanup needs attention. Retry cleanup "
                     "to unlock provider actions.",
                     id="settings-vllm-handoff-recovery-status",
                     classes="settings-status-row",
@@ -20765,7 +20947,7 @@ class SettingsScreen(BaseAppScreen):
                 recovery_status.display = recovery is not None
                 yield recovery_status
                 recovery_button = Button(
-                    "Retry vLLM handoff cleanup",
+                    "Retry provider handoff cleanup",
                     id="settings-vllm-handoff-recovery",
                     variant="warning",
                     tooltip=(
@@ -26973,13 +27155,13 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         if self.recover_vllm_default_handoff():
             self.app.notify(
-                "Verified vLLM handoff cleanup completed. Provider actions are "
+                "Verified provider handoff cleanup completed. Provider actions are "
                 "available again.",
                 severity="information",
             )
         else:
             self.app.notify(
-                "Verified vLLM handoff cleanup is still blocked. Retry again or "
+                "Verified provider handoff cleanup is still blocked. Retry again or "
                 "reopen Settings.",
                 severity="warning",
             )

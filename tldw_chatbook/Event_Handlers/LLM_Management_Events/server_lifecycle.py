@@ -52,6 +52,10 @@ class ServerLaunchClaim:
     _resource: Any | None = field(default=None, repr=False)
     _spawning: bool = field(default=False, repr=False)
     _snapshot_context: SnapshotLaunchContext | None = field(default=None, repr=False)
+    _diagnostics: Any | None = field(default=None, repr=False)
+    _launch_preview: str | None = field(default=None, repr=False)
+    _connection_url: str | None = field(default=None, repr=False)
+    _connection_exposed: bool = field(default=False, repr=False)
 
 
 def _validate_provider(provider: str) -> str:
@@ -512,6 +516,7 @@ def run_server_subprocess(
     nonzero_status: str | None = None,
     env: Mapping[str, str] | None = None,
     private_umask: int | None = None,
+    diagnostics: Any | None = None,
 ) -> str:
     """Run one claimed server while discarding potentially sensitive output."""
 
@@ -552,6 +557,7 @@ def run_server_subprocess(
     retained = False
     published = False
     final_status = None
+    diagnostic_pump = None
     try:
         spawn_started = _begin_server_process_spawn(app, provider, claim)
         if not spawn_started:
@@ -561,6 +567,10 @@ def run_server_subprocess(
             "stderr": subprocess.DEVNULL,
             "text": True,
         }
+        if diagnostics is not None:
+            kwargs.update(
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False, bufsize=0
+            )
         if cwd is not None:
             kwargs["cwd"] = cwd
         if env is not None:
@@ -568,6 +578,10 @@ def run_server_subprocess(
         if private_umask is not None and os.name == "posix":
             kwargs["umask"] = private_umask
         process = subprocess_module.Popen(command, **kwargs)
+        if diagnostics is not None:
+            from tldw_chatbook.LLM_Management.llamacpp_diagnostics import DiagnosticPump
+
+            diagnostic_pump = DiagnosticPump(process, diagnostics)
         published = bool(
             app.call_from_thread(
                 publish_server_process,
@@ -591,7 +605,9 @@ def run_server_subprocess(
                 )
                 notify_state_change()
             return f"{provider} launch cancelled"
-        return_code = process.wait()
+        return_code = (
+            diagnostic_pump.wait() if diagnostic_pump is not None else process.wait()
+        )
         if return_code and not claim.cancel_event.is_set():
             final_status = nonzero_status or (
                 f"{provider} server exited (code={return_code})"
@@ -604,6 +620,8 @@ def run_server_subprocess(
             final_status = result
         return result
     finally:
+        if diagnostic_pump is not None:
+            diagnostic_pump.close()
         if process is not None and not published and process_is_running(process):
             if terminate_process_bounded(process):
                 retained = False

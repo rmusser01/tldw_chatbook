@@ -2629,6 +2629,45 @@ class ConsoleTraceService:
                 suffix += 1
             incoming_changed = len(descriptors) - prefix - suffix
             active_changed = len(active) - prefix - suffix
+
+            def record_refusal(kind: str) -> None:
+                from .console_send_diagnostics import record_send_stage
+
+                changed = active[prefix : len(active) - suffix]
+                sequences = [sequence for _ordinal, sequence, _key in changed]
+                record_send_stage(
+                    "trace_reservation",
+                    "failed",
+                    error=ValueError("unsupported_surface_change"),
+                    surface_refusal_kind=kind,
+                    surface_prefix=prefix,
+                    surface_suffix=suffix,
+                    surface_incoming_changed=incoming_changed,
+                    surface_active_changed=active_changed,
+                    surface_replacement_span=(
+                        max(sequences) - min(sequences) + 1 if sequences else 0
+                    ),
+                    surface_domains=tuple(
+                        sorted(
+                            {
+                                *domains[prefix : prefix + incoming_changed],
+                                *(
+                                    _surface_reference_domain(key)
+                                    for _, _, key in changed
+                                ),
+                            }
+                        )
+                    ),
+                    **(
+                        {
+                            "surface_start_sequence": min(sequences),
+                            "surface_end_sequence": max(sequences),
+                        }
+                        if kind == "sequence_gap" and sequences
+                        else {}
+                    ),
+                )
+
             compound = (
                 completed_tool_turn is not None
                 and active_changed > 0
@@ -2650,6 +2689,7 @@ class ConsoleTraceService:
             elif (
                 incoming_changed != 1 and not compound
             ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                record_refusal("count_or_span")
                 raise ValueError("unsupported_surface_change")
             else:
                 changed_entries = active[prefix : len(active) - suffix]
@@ -2663,6 +2703,7 @@ class ConsoleTraceService:
                     and sequence not in changed_sequences
                     for sequence, _key in physical_active
                 ):
+                    record_refusal("sequence_gap")
                     raise ValueError("unsupported_surface_change")
                 anchors = self.repository.read_lineage_surface_nodes(
                     cursor,

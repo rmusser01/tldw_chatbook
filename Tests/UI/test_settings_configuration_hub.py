@@ -440,7 +440,15 @@ async def _reveal_settings_category_button(screen, pilot, selector: str) -> None
 
 
 async def _open_settings_category(pilot, selector: str) -> None:
-    """Click a Settings category rail button with the mount storm settled."""
+    """Click a Settings category rail button with the mount storm settled.
+
+    task-32904: category swaps can include an off-loop config refresh
+    (Image/Video Gen resolve secrets through the OS keyring off the UI
+    loop), so a single ``pause()`` can observe the click before the new
+    panes mount -- wait for the swap worker to settle instead.
+    """
+    import time as _time
+
     await _settle_settings_mount_storm(pilot)
     await _reveal_settings_category_button(pilot.app.screen, pilot, selector)
     try:
@@ -452,6 +460,14 @@ async def _open_settings_category(pilot, selector: str) -> None:
         pass
     await pilot.click(selector)
     await pilot.pause()
+    deadline = _time.monotonic() + 10.0
+    while _time.monotonic() < deadline:
+        screen = pilot.app.screen
+        if not getattr(screen, "_category_pane_swap_pending", False):
+            break
+        await pilot.pause(0.05)
+    else:
+        raise AssertionError("settings category pane swap never settled")
 
 
 def test_settings_category_ids_include_theme_and_splash():

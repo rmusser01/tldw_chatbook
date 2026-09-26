@@ -286,6 +286,70 @@ def test_console_settings_revision_tracks_only_settings_owned_changes():
     assert store.payload_revision(session.id) == payload_revision + 1
 
 
+def test_messages_for_session_defers_pending_row_persistence_off_thread():
+    """task-32904: the tick's read path folds inline but persists off-thread.
+
+    ``messages_for_session`` runs on the UI event loop from the 0.2s Console
+    tick; its fold used to run the pending-row INSERT inline, which could
+    block the whole loop for sqlite's busy timeout under writer contention.
+    """
+    caller_thread = get_ident()
+
+    class ThreadRecordingPersistence(FakePersistence):
+        # The module's autouse fixture can attach thinking envelopes, so the
+        # persist call may carry kwargs beyond FakePersistence's signature.
+        _ACCEPTED_CREATE_KWARGS = frozenset(
+            {
+                "conversation_id",
+                "sender",
+                "content",
+                "image_data",
+                "image_mime_type",
+                "message_id",
+                "parent_message_id",
+                "feedback",
+                "metadata_json",
+            }
+        )
+
+        def __init__(self):
+            super().__init__()
+            self.create_threads: list[int] = []
+
+        def create_message(self, **kwargs):
+            self.create_threads.append(get_ident())
+            return super().create_message(
+                **{
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in self._ACCEPTED_CREATE_KWARGS
+                }
+            )
+
+    persistence = ThreadRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Deferred persist")
+    # Cold-send optimistic echo: appended with persist=False, then armed as a
+    # pending-persistence row once the send is confirmed (the production
+    # route into _pending_persistence_message_ids for streamed replies).
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.persist_message_if_needed(message.id)
+    store.append_stream_chunk(message.id, "partial answer")
+
+    snapshots = store.messages_for_session(session.id)
+
+    # The fold is observable immediately ...
+    assert snapshots[-1].content == "partial answer"
+    # ... and the pending-row write ran, but never on the calling thread.
+    store.flush_deferred_stream_persistence()
+    assert persistence.created_messages
+    assert persistence.create_threads
+    assert caller_thread not in persistence.create_threads
+    assert persistence.created_messages[-1]["content"] == "partial answer"
+
+
 def test_message_completed_subscription_emits_first_live_completion_once():
     store = ConsoleChatStore()
     session = store.create_session()

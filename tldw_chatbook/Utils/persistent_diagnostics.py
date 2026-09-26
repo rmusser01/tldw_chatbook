@@ -41,6 +41,7 @@ _TOKEN_FIELDS = frozenset(
         "result_type",
         "exception_type",
         "error_category",
+        "surface_refusal_kind",
         "server_key",
         "initiator",
         "decision",
@@ -78,6 +79,13 @@ _INTEGER_FIELDS = frozenset(
         "mounts",
         "removes",
         "sqlite_code",
+        "surface_prefix",
+        "surface_suffix",
+        "surface_incoming_changed",
+        "surface_active_changed",
+        "surface_replacement_span",
+        "surface_start_sequence",
+        "surface_end_sequence",
         "native_callback_count",
         "native_fatal_status_bits",
         "native_capture_overflows",
@@ -91,6 +99,7 @@ _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_ena
 _LIST_FIELDS = frozenset(
     {
         "argument_names",
+        "surface_domains",
         # TASK-18908: active timer/worker diagnostic names at stall time.
         # Values are the same code-side token names record_timer_created /
         # record_worker_started already hold, so the existing token list

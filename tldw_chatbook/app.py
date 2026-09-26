@@ -8691,6 +8691,24 @@ class TldwCli(
             self._local_skill_trust_service = self._build_local_skill_trust_service()
         return self._local_skill_trust_service
 
+    async def ensure_local_skill_trust_service(self) -> Any:
+        """First-use trust service build, OFF the UI event loop (task-32904).
+
+        The build performs OS keyring backend discovery (SecretService/D-Bus
+        on Linux -- the "11.3 ms on macOS" figure in the deferred-wiring
+        notes never measured that platform). The sync property keeps its
+        contract for callers already on worker threads; UI-loop callers must
+        come here so the discovery never blocks the loop.
+        """
+        if self._local_skill_trust_service is not None:
+            return self._local_skill_trust_service
+        async with self._local_skill_trust_service_build_lock:
+            if self._local_skill_trust_service is None:
+                self._local_skill_trust_service = await asyncio.to_thread(
+                    self._build_local_skill_trust_service
+                )
+            return self._local_skill_trust_service
+
     @local_skill_trust_service.setter
     def local_skill_trust_service(self, service: Any) -> None:
         self._local_skill_trust_service = service
@@ -10964,6 +10982,8 @@ class TldwCli(
         # Every consumer reads these through `getattr(app_instance, ...)` at
         # UI time, so a property is a drop-in.
         self._local_skill_trust_service: Any | None = None
+        # task-32904: serializes the off-loop first build below.
+        self._local_skill_trust_service_build_lock = asyncio.Lock()
         self._local_skills_service: Any | None = None
         self._skills_scope_service: Any | None = None
         # Captured NOW, at the timing the eager build had: `_build_local_
@@ -13012,11 +13032,13 @@ class TldwCli(
             )
             if existing is not None and existing["state"] == "complete":
                 await coordinator.resume()
-                self._load_personal_context_sync_runtime(
+                # task-32904: this restore reads the link storage key from
+                # the OS keyring (D-Bus SecretService on Linux) -- run it
+                # off the UI event loop.
+                await asyncio.to_thread(
+                    self._load_personal_context_sync_runtime,
                     server_profile_id=str(server_profile_id),
-                    authenticated_principal_id=scope.get(
-                        "authenticated_principal_id"
-                    ),
+                    authenticated_principal_id=scope.get("authenticated_principal_id"),
                 )
                 self.notify("Profile is already linked. Sync is ready.")
                 self._reload_personal_context_settings_panel()

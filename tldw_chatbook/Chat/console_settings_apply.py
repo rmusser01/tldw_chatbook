@@ -199,12 +199,33 @@ def validate_console_settings_origin(
     return live_persisted_conversation_id == origin.persisted_conversation_id
 
 
+def console_settings_provider_key(provider: str) -> str:
+    """Canonicalize a draft target without rewriting registry entry slugs.
+
+    Args:
+        provider: Built-in provider alias or custom endpoint registry ID.
+
+    Returns:
+        Canonical built-in key or registry ID with its literal slug preserved.
+    """
+
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        split_custom_endpoint_id,
+    )
+
+    slug = split_custom_endpoint_id(provider)
+    if slug is not None:
+        return f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
+    return provider_config_key(provider)
+
+
 def remember_model_draft(
     state: ConsoleSettingsDraftState,
 ) -> ConsoleSettingsDraftState:
     """Return ``state`` with its current exact provider/model draft remembered."""
 
-    provider = provider_config_key(state.settings.provider)
+    provider = console_settings_provider_key(state.settings.provider)
     model = normalize_console_model_value(state.settings.model)
     remembered = ConsoleModelDraft(
         provider=provider,
