@@ -15123,8 +15123,16 @@ class SettingsScreen(BaseAppScreen):
                 # The app stopped; admitted writes still drain without UI access.
                 pass
 
-    def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
+    def _provider_readiness_test_report(
+        self, *, probes_when_passing: bool = False
+    ) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
+
+        Args:
+            probes_when_passing: The caller probes the endpoint when this
+                report passes. A passing report then leaves out the stored
+                evidence: the probe renders fresh evidence for the same facts,
+                and a stored copy would repeat them (TASK-33001.3).
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -15164,7 +15172,7 @@ class SettingsScreen(BaseAppScreen):
             if identity is not None
             else None
         )
-        if evidence is not None:
+        if evidence is not None and not (probes_when_passing and passed):
             detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
         return detail, summary, passed
 
@@ -31131,8 +31139,11 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            detail, summary, passed = self._provider_readiness_test_report()
-            probe_base_url = self._provider_live_probe_base_url() if passed else ""
+            live_probe_url = self._provider_live_probe_base_url()
+            detail, summary, passed = self._provider_readiness_test_report(
+                probes_when_passing=bool(live_probe_url)
+            )
+            probe_base_url = live_probe_url if passed else ""
             if probe_base_url:
                 # task-191: readiness passed for a URL-based provider; run a
                 # short live probe in a worker and fold it into the toast.

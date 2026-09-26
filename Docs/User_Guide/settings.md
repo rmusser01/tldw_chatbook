@@ -236,6 +236,8 @@ Changing these controls does not record startup consent.
 providers also get a short endpoint or model-listing probe. The result separates
 configuration readiness, endpoint/model-listing evidence, and whether generation
 was tested. A successful model listing does not prove that generation works.
+Running it again replaces the previous probe result: while the new probe runs
+the result says "model listing checking", and each fact appears once.
 If the tested values change, run **Test Provider** again.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
@@ -1455,3 +1457,14 @@ tests, not driven live): "/" for a hidden field lands in Providers & Models
 with "'Seed' is hidden for this provider and model: its requests do not carry
 it."; Moonshot and Z.ai reasoning defaults now save. The rest of this page's
 content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 465f1a5a88 + TASK-33001.3
+— 2026-09-26: a second **Test Provider** run on an unchanged llama.cpp draft
+shows only the new probe. Driven live at 211x50 on a scratch profile: with the
+endpoint down the result read "model listing failed (connection refused) |
+model unconfirmed | generation not tested"; with a stub `/v1/models` up, the
+next run read "model listing reached | selected model confirmed | generation
+not tested", with no failure beside it and "generation not tested" once in the
+result and once in the toast. The in-flight "checking" line is pinned by a
+mounted test, not seen live. The rest of this page's content unchanged from
+the prior stamp.*

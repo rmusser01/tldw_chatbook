@@ -4730,6 +4730,95 @@ async def test_settings_provider_test_does_not_treat_missing_models_route_as_cha
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
+    request, monkeypatch
+):
+    """TASK-33001.3: a second Test on one draft shows only the new probe.
+
+    The first probe fails; the second is held in flight, then reaches the
+    endpoint. The real ProviderTestEvidenceStore keeps the first result between
+    the runs, so a stored copy must never reach the second run's result line.
+    """
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderTestEvidenceStore
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    outcomes = [
+        SettingsEndpointProbeOutcome(
+            reachable=False,
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        ),
+        SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("llama3",),
+        ),
+    ]
+    second_started = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def fake_probe(base_url, **kwargs):
+        outcome = outcomes.pop(0)
+        if not outcomes:
+            second_started.set()
+            await release_second.wait()
+        return outcome
+
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
+    host = DestinationHarness(app, "settings")
+
+    def assert_each_fact_once(result: str) -> None:
+        facts = result.split(" | ")
+        assert len(facts) == len(set(facts)), result
+        assert result.count("generation not tested") == 1, result
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        assert type(screen._provider_evidence_store()) is ProviderTestEvidenceStore
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        first = screen._provider_test_result
+        assert "model listing failed (connection refused)" in first
+        assert_each_fact_once(first)
+
+        screen.action_settings_test_category()
+        await asyncio.wait_for(second_started.wait(), timeout=2)
+        in_flight = screen._provider_test_result
+        assert "model listing checking" in in_flight
+        assert "model listing failed" not in in_flight
+        assert_each_fact_once(in_flight)
+
+        release_second.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        second = screen._provider_test_result
+        assert "model listing reached" in second
+        assert "model listing failed" not in second
+        assert "model listing checking" not in second
+        assert "selected model confirmed" in second
+        assert_each_fact_once(second)
+        rendered = screen.query_one("#settings-provider-test-result", Static)
+        assert str(rendered.renderable) == second
+
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "information"
+        assert "failed" not in message
+        assert message.count("generation not tested") == 1, message
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatch):
     """task-191: key-based cloud providers keep the local-only Test toast."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
