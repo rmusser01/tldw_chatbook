@@ -475,17 +475,33 @@ def resolve_web_font_size(query_value: str | None) -> int:
 
 
 def patch_textual_serve_viewport_js(source: str) -> str:
-    """Patch textual-serve's browser resize hook to repaint after viewport changes."""
+    """Patch textual-serve's browser resize hook to repaint after viewport changes.
+
+    task-32905: the repaint machinery must not feed back into the app. An
+    earlier revision ran the full resize handler on EVERY output frame (the
+    first-byte hook replacement) with an unconditional ``sendSize()`` inside
+    every repaint; because the app answers each resize with fresh output,
+    that became a self-sustaining loop measured at ~54 resize
+    round-trips/second at idle, with the browser tab and the app child both
+    pegged (60-100% CPU) and an all-rows xterm refresh per frame. The
+    invariants this patch now preserves:
+
+    - ``sendSize()`` fires only when ``fit()`` actually changed the grid
+      (textual-serve's own ``terminal.onResize -> sendSize`` wiring remains
+      the primary size-sync path);
+    - the first-byte trigger repaints once per connection, not per message;
+    - the after-write repaint is a 250ms trailing debounce -- a self-healing
+      repaint after traffic pauses, never a per-frame full refresh;
+    - upstream's WebGL/Canvas renderers are left in place (nulling them
+      forced the slow DOM renderer, making every forced refresh a full DOM
+      rebuild); the resize repaint still calls ``clearTextureAtlas`` plus a
+      full ``refresh``, which is the remedy for the GPU-renderer staleness
+      this patch family was built for.
+    """
     if _CHATBOOK_VIEWPORT_PATCH_MARKER in source:
         return source
     if any(hook not in source for hook in _TEXTUAL_SERVE_REQUIRED_VIEWPORT_HOOKS):
         return source
-
-    patched = source.replace(
-        _TEXTUAL_SERVE_CANVAS_RENDERERS,
-        "this.webglAddon=null,this.canvasAddon=null,",
-        1,
-    )
 
     resize_replacement = (
         "this._chatbookTerminalRepaint=()=>{"
@@ -493,16 +509,22 @@ def patch_textual_serve_viewport_js(source: str) -> str:
         "try{this.terminal.refresh(0,this.terminal.rows-1)}catch(e){}"
         "};"
         "this._chatbookViewportRepaint=()=>{"
+        "const t=this.terminal.cols,r=this.terminal.rows;"
         "this.fit();"
+        "if(this.terminal.cols!==t||this.terminal.rows!==r){"
         "try{this.sendSize&&this.sendSize()}catch(e){}"
+        "}"
         "this._chatbookTerminalRepaint();"
         "};"
         "this._chatbookViewportAfterWrite=()=>{"
         "clearTimeout(this._chatbookViewportAfterWriteTimer);"
-        "this._chatbookViewportAfterWriteTimer=setTimeout(this._chatbookTerminalRepaint,50);"
-        "cancelAnimationFrame(this._chatbookViewportAfterWriteRaf);"
-        "this._chatbookViewportAfterWriteRaf=requestAnimationFrame("
-        "this._chatbookTerminalRepaint);"
+        "this._chatbookViewportAfterWriteTimer=setTimeout("
+        "this._chatbookTerminalRepaint,250)"
+        "};"
+        "this._chatbookViewportFirstByte=()=>{"
+        "if(this._chatbookViewportFirstByteDone)return;"
+        "this._chatbookViewportFirstByteDone=!0;"
+        "this._chatbookViewportResize();"
         "};"
         "this._chatbookViewportResize=()=>{"
         "this._chatbookViewportRepaint();"
@@ -513,7 +535,7 @@ def patch_textual_serve_viewport_js(source: str) -> str:
         'window.addEventListener("resize",this._chatbookViewportResize);'
         "try{new ResizeObserver(this._chatbookViewportResize).observe(this.element)}catch(e){}"
     )
-    patched = patched.replace(_TEXTUAL_SERVE_RESIZE_HOOK, resize_replacement, 1)
+    patched = source.replace(_TEXTUAL_SERVE_RESIZE_HOOK, resize_replacement, 1)
     patched = patched.replace(
         _TEXTUAL_SERVE_WRITE_CALLBACK_HOOK,
         (
@@ -530,8 +552,8 @@ def patch_textual_serve_viewport_js(source: str) -> str:
     return patched.replace(
         _TEXTUAL_SERVE_FIRST_BYTE_HOOK,
         (
-            f"t.length>10&&({_TEXTUAL_SERVE_LOADED_HOOK.replace('-loaded', '-first-byte')},"
-            "this._chatbookViewportResize())"
+            f't.length>10&&({_TEXTUAL_SERVE_LOADED_HOOK.replace("-loaded", "-first-byte")},'
+            "this._chatbookViewportFirstByte())"
         ),
         1,
     )
@@ -1280,12 +1302,19 @@ class ChatbookWebServerMixin:
         return patched
 
     async def handle_textual_js(self, request):
-        """Serve textual-serve JS with a full repaint after browser viewport resize."""
+        """Serve textual-serve JS with a full repaint after browser viewport resize.
+
+        The ~514KB bundle is deterministic for a given installed
+        textual-serve version, so it gets the same one-hour public cache
+        policy as the immutable shell assets instead of re-downloading on
+        every page load.
+        """
         from aiohttp import web
 
         return web.Response(
             text=self._patched_textual_js(),
             content_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=3600"},
         )
 
 

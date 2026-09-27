@@ -3384,3 +3384,28 @@ makes. The app log orders these writes for you: grep `tldw_cli_app.log` for
 "caches invalidated", "Navigating to screen" and "Screen <name> mounted". Local
 servers the flow probes can be a stdlib `ThreadingHTTPServer` answering
 `/v1/models`; the wizard only offers "Start chatting" after a probe succeeds.
+
+## Measure both ends of the served websocket before trusting a "laggy UI" report (TASK-32905, 2026-09-23)
+
+**Incident.** The textual-serve webui was reported "super laggy and
+unresponsive". Static reading found suspects (patched browser JS, disabled GPU
+renderers), but the root cause only fell out of measurement: wrapping
+`WebSocket.prototype.send` in the live page counted **370 resize messages in
+6.9s at pure idle** (~54/s, all one constant size), while `ps` showed the
+served app child at 60-100% CPU at idle and an unattached WebDriver child at
+0.4%. The loop: the viewport patch ran its full resize handler on *every* app
+output frame (`first-byte` hook fires per message, not once), with an
+unconditional `sendSize()` inside every repaint -- and the app answers every
+resize with output. A `sample` of the child showed the expected compositor/GC
+burn but no Python symbols; stack traces captured from the *browser* side
+named the exact patched handler in one step. faulthandler SIGUSR2 (registered
+by `Logging_Config`) then confirmed the app's own loop state.
+
+**Practice.** For served-UI performance reports, measure both ends before
+changing anything: count outgoing websocket traffic from the page
+(`WebSocket.prototype.send` wrapper) and CPU of both the aiohttp server and
+the spawned app child, each compared against an unattached spawn of the same
+command. A feedback loop is invisible to single-sided profiling -- each end
+looks "busy rendering" on its own. When patching minified bundle hooks,
+check whether the hook site is once-per-connection or per-message; appending
+a resize/sendSize call to a per-message hook is how this loop was born.
