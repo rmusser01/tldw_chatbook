@@ -7,10 +7,12 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 import tldw_chatbook.app as app_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
@@ -121,6 +123,127 @@ async def test_personas_f6_cycles_between_workbench_panes_from_text_input():
 
         await pilot.press("shift+f6")
         await _wait_for_focused_id(app, pilot, "personas-conversations-list")
+
+
+_SETTINGS_PANES = (
+    "settings-category-pane",
+    "settings-detail-pane",
+    "settings-impact-pane",
+)
+
+
+def _settings_pane_holding_focus(app) -> str | None:
+    focused = app.focused
+    if focused is None:
+        return None
+    for ancestor in focused.ancestors_with_self:
+        if getattr(ancestor, "id", None) in _SETTINGS_PANES:
+            return ancestor.id
+    return None
+
+
+async def _press_and_wait_for_pane(app, pilot, key: str, pane_id: str) -> None:
+    await pilot.press(key)
+    for _ in range(40):
+        if _settings_pane_holding_focus(app) == pane_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"{key}: expected focus in {pane_id!r}, found "
+        f"{getattr(app.focused, 'id', None)!r} in "
+        f"{_settings_pane_holding_focus(app)!r}"
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_f6_and_shift_f6_cycle_rail_detail_and_inspector(request):
+    """TASK-33001.4: F6/Shift+F6 cycle the three Settings panes.
+
+    Real key presses through the production app, so F6 travels the shipped
+    route (the app-global binding delegating to the screen) and the app's
+    "No workbench pane focus target" fallback would be seen if it fired.
+    """
+    app = _build_test_app(configured_default="settings")
+    notices: list[str] = []
+    real_notify = app.notify
+
+    def record_notify(message, *args, **kwargs):
+        notices.append(str(message))
+        return real_notify(message, *args, **kwargs)
+
+    app.notify = record_notify
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                break
+            await pilot.pause(0.01)
+        settings = app.screen
+        assert isinstance(settings, SettingsScreen)
+        await _wait_for_selector(settings, pilot, "#settings-impact-pane-body")
+        first_category = settings.active_category
+
+        # F6 from outside every pane enters the rail on the ACTIVE row.
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+        assert app.focused.id == f"settings-category-{first_category}"
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-detail-pane")
+        # A control, not the pane's scroll body.
+        assert app.focused.id != "settings-detail-pane-body"
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-impact-pane")
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+        assert app.focused.id == f"settings-category-{first_category}"
+
+        # Shift+F6 walks the same ring backwards, wrapping from the rail.
+        await _press_and_wait_for_pane(app, pilot, "shift+f6", "settings-impact-pane")
+        await _press_and_wait_for_pane(app, pilot, "shift+f6", "settings-detail-pane")
+        await _press_and_wait_for_pane(app, pilot, "shift+f6", "settings-category-pane")
+
+        # Switch category with the rail keys, then leave the rail: F6 back
+        # into it must land on the NEW active row, not the old one.
+        for _ in range(40):
+            if app.focused.id == "settings-category-appearance":
+                break
+            await pilot.press("down")
+            await pilot.pause()
+        assert app.focused.id == "settings-category-appearance"
+        await pilot.press("enter")
+        await _wait_for_selector(settings, pilot, "#settings-appearance-font-size")
+        for _ in range(40):
+            if (
+                settings.active_category == "appearance"
+                and app.focused.id == "settings-category-appearance"
+                and not settings._category_pane_swap_pending
+            ):
+                break
+            await pilot.pause(0.05)
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-detail-pane")
+
+        # F6 from a focused text field moves on and leaves its value alone.
+        field = settings.query_one("#settings-appearance-font-size", Input)
+        field.focus()
+        await pilot.pause()
+        before = field.value
+        assert before
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-impact-pane")
+        assert field.value == before
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+        assert app.focused.id == "settings-category-appearance"
+
+        # A filter that hides the active row: the rail stop is the filter.
+        await pilot.press("slash", *"privacy")
+        for _ in range(40):
+            if not settings.query_one("#settings-category-appearance").display:
+                break
+            await pilot.pause(0.05)
+        assert not settings.query_one("#settings-category-appearance").display
+        assert settings.active_category == "appearance"
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-detail-pane")
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-impact-pane")
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+        assert app.focused.id == "settings-category-search"
+
+    assert "No workbench pane focus target is available." not in notices
 
 
 def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():

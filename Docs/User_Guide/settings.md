@@ -1153,13 +1153,14 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |
 | ↑ / ↓ | Move up and down the rail (while a category row has focus) |
 | j / k | Move up and down the rail — while the rail has focus, or with nothing focused. Inert in the detail and inspector panes, so they never pull focus out of an editor (task-32944) |
-| F6 / Shift+F6 | Cycle focus rail → detail pane → Scope Inspector → rail (reverse with Shift+F6). The rail lands on the active category; a pane with nothing focusable is skipped |
 | Enter | Open the focused category; in the filter, jump to the top match; on an action button, press it |
 | a / c / b | RAG only — set active, clone, backfill. See [RAG defaults](settings/rag.md) |
+| F6 | Move to the next pane: category rail, then detail pane, then inspector, then back to the rail. Works from inside a text field and leaves its text alone. Entering the rail lands on the active category's row (on the filter when a search hides that row); the detail pane and inspector land on their first control (an inspector with no control takes focus itself, so the arrow keys scroll it) |
+| Shift+F6 | The same ring, backwards |
 
-**F1** opens
-the active category's help: a "How this category works" section (its save
-contract, scope, runtime owner, whether writes are allowed, boundary, and
+**F1** opens the active category's help: a "How this category works"
+section (its save contract, scope, runtime owner, whether writes are allowed,
+boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
 only while on RAG. Every category has a non-empty help body; one without
@@ -1468,3 +1469,14 @@ not tested", with no failure beside it and "generation not tested" once in the
 result and once in the toast. The in-flight "checking" line is pinned by a
 mounted test, not seen live. The rest of this page's content unchanged from
 the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 8e8a2f309f + TASK-33001.4
+— 2026-09-26: F6 and Shift+F6 cycle the three panes. Driven live at 211x44 on
+a scratch profile: from the nav bar, F6 went to the Overview rail row, then
+Backup & Restore in the detail pane, then Open Theme editor in the inspector,
+then back to Overview; Shift+F6 walked the same ring backwards. After Down
+and Enter opened Appearance, F6 from the Palette limit field moved to the
+inspector with the field still reading 1, and the next F6 landed on the
+Appearance row. The focus line under the panes and the focus tint named each
+stop, and "No workbench pane focus target is available." never appeared. The
+rest of this page's content unchanged from the prior stamp.*

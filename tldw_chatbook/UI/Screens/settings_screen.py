@@ -153,6 +153,10 @@ from ...Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -2750,6 +2754,17 @@ class SettingsScreen(BaseAppScreen):
     audio_cpp_result_cleanup_fenced = reactive(False)
 
     BINDINGS = [
+        # TASK-33001.4 (also task-32943): F6 is app-global (ADR-031 rule 1)
+        # and app.py hands it to action_focus_next_workbench_pane below;
+        # Shift+F6 has no app binding, so the screen owns it (Personas
+        # precedent).
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
         ("t", "settings_test_category", "Test Settings category"),
@@ -2766,15 +2781,6 @@ class SettingsScreen(BaseAppScreen):
         ("e", "settings_personal_context_edit", "Edit profile record"),
         ("d", "settings_personal_context_delete", "Delete profile record"),
         ("x", "settings_personal_context_export", "Export profile"),
-        # task-32943: F6 itself is the app-global binding that delegates to
-        # action_focus_next_workbench_pane; the reverse needs its own.
-        Binding(
-            "shift+f6",
-            "focus_previous_workbench_pane",
-            "Previous pane",
-            show=False,
-            priority=True,
-        ),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -22666,55 +22672,53 @@ class SettingsScreen(BaseAppScreen):
         self._focus_category(category_values[next_index])
 
     def action_focus_next_workbench_pane(self) -> None:
-        """F6: rail -> detail -> inspector -> rail (task-32943)."""
-        self._focus_relative_settings_pane(1)
+        """F6: move focus to the next Settings pane (TASK-33001.4)."""
+        focus_relative_workbench_pane(
+            self, self._workbench_focus_targets(), direction=1
+        )
 
     def action_focus_previous_workbench_pane(self) -> None:
-        """Shift+F6: the F6 cycle in reverse (task-32943)."""
-        self._focus_relative_settings_pane(-1)
+        """Shift+F6: move focus to the previous Settings pane."""
+        focus_relative_workbench_pane(
+            self, self._workbench_focus_targets(), direction=-1
+        )
 
-    def _focus_relative_settings_pane(self, direction: int) -> None:
-        """Focus the first focusable widget of the next non-empty pane.
+    def _workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
+        """F6 pane targets, rebuilt on every press.
 
-        The rail lands on the active category button rather than its filter
-        box; a pane with nothing focusable (an inspector of plain text) is
-        skipped.
+        The rail lands on the ACTIVE category row (the filter when a search
+        hides that row); each category pane lands on its first focusable
+        control. Both change with the category, so a static tuple would aim
+        at the previous category. A pane's scroll body sorts after its
+        controls: it is the target only for a pane with no control (a
+        read-only inspector), where focus still lets the keys scroll it.
+
+        Returns:
+            The rail, detail and inspector targets, in F6 order.
         """
+        targets = [
+            WorkbenchPaneTarget(
+                "settings-category-pane",
+                (
+                    f"settings-category-{self.active_category}",
+                    "settings-category-search",
+                ),
+            )
+        ]
         chain = self.focus_chain
-        targets = []
-        for pane_id in (
-            "settings-category-pane",
-            "settings-detail-pane",
-            "settings-impact-pane",
-        ):
+        for pane_id in ("settings-detail-pane", "settings-impact-pane"):
             try:
                 pane = self.query_one(f"#{pane_id}")
             except QueryError:
                 continue
-            members = [w for w in chain if pane in w.ancestors_with_self]
-            if not members:
-                continue
-            target = members[0]
-            if pane_id == "settings-category-pane":
-                active_id = f"settings-category-{self.active_category}"
-                target = next((w for w in members if w.id == active_id), target)
-            targets.append((pane, target))
-        if not targets:
-            return
-        focused = self._focused_widget()
-        current = next(
-            (
-                index
-                for index, (pane, _target) in enumerate(targets)
-                if pane in getattr(focused, "ancestors_with_self", ())
-            ),
-            None,
-        )
-        if current is None:
-            index = 0 if direction > 0 else len(targets) - 1
-        else:
-            index = (current + direction) % len(targets)
-        targets[index][1].focus()
+            focusable = [
+                widget for widget in chain if widget.id and pane in widget.ancestors
+            ]
+            focusable.sort(key=lambda widget: type(widget) is VerticalScroll)
+            targets.append(
+                WorkbenchPaneTarget(pane_id, tuple(widget.id for widget in focusable))
+            )
+        return tuple(targets)
 
     def _jk_category_navigation_blocked(self) -> bool:
         """Guard the j/k category bindings (task-1373, narrowed by task-32944).
