@@ -37,11 +37,11 @@
       },
       "cleanup": "passed",
       "durations_seconds": {
-        "acquisition": 50.96749551,
-        "long_form_vad": 0.564366751999998,
-        "total": 60.012201932,
-        "v2_int8_cpu": 2.828385818000001,
-        "v3_int8_cpu": 2.6293048510000006
+        "acquisition": 37.092369271,
+        "long_form_vad": 0.5895116199999961,
+        "total": 46.977015474000005,
+        "v2_int8_cpu": 3.074333721000002,
+        "v3_int8_cpu": 2.8830799930000097
       },
       "evidence_label": "task602_native_parakeet",
       "evidence_name": "linux-aarch64",
@@ -50,20 +50,20 @@
       "failure_stage": null,
       "host": {
         "architecture": "aarch64",
-        "python": "3.12.13",
+        "python": "3.12.14",
         "system": "Linux"
       },
       "packages": {
-        "ctranslate2": "4.8.1",
+        "ctranslate2": "4.8.2",
         "faster-whisper": "1.2.1",
         "onnx-asr": "0.12.0",
-        "onnxruntime": "1.28.0"
+        "onnxruntime": "1.30.0"
       },
       "run": {
-        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
         "workflow_run_attempt": "1",
-        "workflow_run_id": "31618353807",
-        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+        "workflow_run_id": "36349931617",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
       },
       "schema_version": 1,
       "status": "passed"
@@ -104,11 +104,11 @@
       },
       "cleanup": "passed",
       "durations_seconds": {
-        "acquisition": 22.357514219999985,
-        "long_form_vad": 1.1736567589999822,
-        "total": 34.23696878999999,
-        "v2_int8_cpu": 3.728967979999993,
-        "v3_int8_cpu": 3.4088478110001006
+        "acquisition": 24.789255102000027,
+        "long_form_vad": 0.6433875750000198,
+        "total": 31.969486348000032,
+        "v2_int8_cpu": 2.1641053140000395,
+        "v3_int8_cpu": 2.0439300119999757
       },
       "evidence_label": "task602_native_parakeet",
       "evidence_name": "linux-x86_64",
@@ -117,20 +117,20 @@
       "failure_stage": null,
       "host": {
         "architecture": "x86_64",
-        "python": "3.12.13",
+        "python": "3.12.14",
         "system": "Linux"
       },
       "packages": {
-        "ctranslate2": "4.8.1",
+        "ctranslate2": "4.8.2",
         "faster-whisper": "1.2.1",
         "onnx-asr": "0.12.0",
-        "onnxruntime": "1.28.0"
+        "onnxruntime": "1.30.0"
       },
       "run": {
-        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
         "workflow_run_attempt": "1",
-        "workflow_run_id": "31618353807",
-        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+        "workflow_run_id": "36349931617",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
       },
       "schema_version": 1,
       "status": "passed"
@@ -171,11 +171,11 @@
       },
       "cleanup": "passed",
       "durations_seconds": {
-        "acquisition": 30.383085125000008,
-        "long_form_vad": 0.6037286670000128,
-        "total": 39.34402750000001,
-        "v2_int8_cpu": 4.0980479589999845,
-        "v3_int8_cpu": 2.0388968329999955
+        "acquisition": 40.00159954100002,
+        "long_form_vad": 0.5835617500000012,
+        "total": 49.028107291,
+        "v2_int8_cpu": 3.894703457999981,
+        "v3_int8_cpu": 2.207799666999989
       },
       "evidence_label": "task602_native_parakeet",
       "evidence_name": "macos-arm64",
@@ -188,16 +188,16 @@
         "system": "Darwin"
       },
       "packages": {
-        "ctranslate2": "4.8.1",
+        "ctranslate2": "4.8.2",
         "faster-whisper": "1.2.1",
         "onnx-asr": "0.12.0",
-        "onnxruntime": "1.28.0"
+        "onnxruntime": "1.30.0"
       },
       "run": {
-        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
         "workflow_run_attempt": "1",
-        "workflow_run_id": "31618353807",
-        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+        "workflow_run_id": "36349931617",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
       },
       "schema_version": 1,
       "status": "passed"
@@ -238,11 +238,11 @@
       },
       "cleanup": "passed",
       "durations_seconds": {
-        "acquisition": 58.3456138319998,
-        "long_form_vad": 1.4119450739999593,
-        "total": 87.54755848899981,
-        "v2_int8_cpu": 10.551260514999967,
-        "v3_int8_cpu": 9.270355913000003
+        "acquisition": 50.29288979900002,
+        "long_form_vad": 1.8085042499999417,
+        "total": 74.94150266199995,
+        "v2_int8_cpu": 8.749643547999995,
+        "v3_int8_cpu": 6.1070371499999965
       },
       "evidence_label": "task602_native_parakeet",
       "evidence_name": "macos-x86_64",
@@ -255,16 +255,16 @@
         "system": "Darwin"
       },
       "packages": {
-        "ctranslate2": "4.8.1",
+        "ctranslate2": "4.8.2",
         "faster-whisper": "1.2.1",
         "onnx-asr": "0.12.0",
         "onnxruntime": "1.23.2"
       },
       "run": {
-        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
         "workflow_run_attempt": "1",
-        "workflow_run_id": "31618353807",
-        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+        "workflow_run_id": "36349931617",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
       },
       "schema_version": 1,
       "status": "passed"
@@ -305,11 +305,11 @@
       },
       "cleanup": "passed",
       "durations_seconds": {
-        "acquisition": 64.54600000000005,
-        "long_form_vad": 0.9210000000000491,
-        "total": 80.70299999999997,
-        "v2_int8_cpu": 5.25,
-        "v3_int8_cpu": 4.8120000000001255
+        "acquisition": 35.735000000000014,
+        "long_form_vad": 0.9540000000000077,
+        "total": 54.625,
+        "v2_int8_cpu": 5.8279999999999745,
+        "v3_int8_cpu": 5.546999999999969
       },
       "evidence_label": "task602_native_parakeet",
       "evidence_name": "windows-x86_64",
@@ -322,16 +322,16 @@
         "system": "Windows"
       },
       "packages": {
-        "ctranslate2": "4.8.1",
+        "ctranslate2": "4.8.2",
         "faster-whisper": "1.2.1",
         "onnx-asr": "0.12.0",
-        "onnxruntime": "1.28.0"
+        "onnxruntime": "1.30.0"
       },
       "run": {
-        "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+        "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
         "workflow_run_attempt": "1",
-        "workflow_run_id": "31618353807",
-        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+        "workflow_run_id": "36349931617",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
       },
       "schema_version": 1,
       "status": "passed"
@@ -339,8 +339,8 @@
   },
   "schema_version": 1,
   "status": "passed",
-  "tested_commit": "60d8b73b9c9223cef696e9bc3577d186af7e26be",
+  "tested_commit": "1b29c393e60487e73d5935ddad79be8fd5ced9f0",
   "workflow_run_attempt": "1",
-  "workflow_run_id": "31618353807",
-  "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807"
+  "workflow_run_id": "36349931617",
+  "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617"
 }

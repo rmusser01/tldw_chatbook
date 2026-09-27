@@ -99,6 +99,17 @@ Representative evidence: exact node and error status are preserved, but its trac
 
 Already represented: TASK-602 design/evidence documents this smoke, but no matching open failure task was found by text search.
 
+Resolution (TASK-19642.4, 2026-09-27): a focused rerun showed the test patched
+`smoke.time.monotonic`, which mutated Python's shared `time` module. One extra
+process-wide clock read exhausted its three-value iterator, causing
+`StopIteration` in `run_smoke()`. The test now rebinds only the smoke module's
+`time` name to a private clock and asserts the global clock identity is stable.
+The exact node passed in the [eight-lane Ubuntu/macOS Python 3.11-3.14 run](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349152184).
+TASK-602's [five native Python 3.12 lanes](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617)
+also passed on one reviewed executable commit; the validated aggregate is in
+`Docs/STT_Evaluation/task-602/platform-evidence.json`. The original inventory
+count remains historical evidence of the interrupted run.
+
 ### 4. Console/Chat controller and harness failures (94 failures)
 
 Count: **94 failures**. Confidence: **medium** that several fixture/API drift clusters exist; **low** that all 94 share one cause.

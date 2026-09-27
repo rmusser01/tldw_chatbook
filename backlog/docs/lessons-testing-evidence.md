@@ -16743,3 +16743,19 @@ so test both. Drive the explicit case through the Hub's own write path
 (`service.set_tool_state(..., tool=row)`), then through the Console provider's
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
+
+### A module attribute patch can silently replace a process-wide clock (TASK-19642.4)
+
+**What happened.** The TASK-602 smoke node passed alone but errored during an
+interrupted broad run. The test patched `smoke.time.monotonic` with a
+three-value iterator; `smoke.time` was the shared standard-library `time`
+module. A focused extra clock read reproduced `StopIteration` at the third
+`run_smoke()` read. The repair rebound only the loaded smoke module's `time`
+name to a private clock and asserted the process-wide function identity had
+not changed. The exact node then passed in eight Ubuntu/macOS lanes across
+Python 3.11-3.14, and TASK-602's five native evidence lanes passed on the
+reviewed executable commit.
+
+**What to do.** When faking time for a module, replace that module's binding
+with a private clock object. Assert that the shared `time.monotonic` identity
+survives the test, then rerun the exact node in the affected platform matrix.
