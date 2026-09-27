@@ -91,8 +91,8 @@ def test_ci_jobs_that_install_or_parse_chatbook_use_python_312() -> None:
     assert 'python-version: "3.12"' in _job_block(comprehensive, "textual-minimum")
     assert 'python-version: "3.11"' in _job_block(comprehensive, "artifact-lease-shape")
 
-    css_guard = _text(".github/workflows/css-bundle-guard.yml")
-    assert "python-version: '3.12'" in _job_block(css_guard, "css-bundle-reproducible")
+    derived = _text(".github/workflows/derived-artifacts.yml")
+    assert "python-version: '3.12'" in _job_block(derived, "pr-fast-lane")
 
 
 def test_nightly_matrix_starts_at_python_312_without_duplicate_floor_row() -> None:
