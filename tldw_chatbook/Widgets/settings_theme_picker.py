@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -604,6 +605,13 @@ class ThemePicker(Vertical):
             self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
+        if change.previous_active.startswith("custom_"):
+            # Review I-1/P6: an editor Try's custom_* registration is never a
+            # row; Revert targets the listed theme behind it, else the launch
+            # default -- never a theme the picker cannot show.
+            base = change.previous_active[len("custom_") :]
+            listed = base if base in self.app.available_themes else change.previous_launch_default
+            change = replace(change, previous_active=listed)
         self._revert = change if self._revert is None else self._revert.merge(change)
         self._sync_revert_chip()
         if not persist:
@@ -666,6 +674,7 @@ class ThemePane(ContentSwitcher):
         return set(files), unreadable
 
     def show_picker(self) -> None:
+        self._editor().discard_try()  # review I-1: every Back undoes an unsaved Try
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
         picker.refresh_catalog()

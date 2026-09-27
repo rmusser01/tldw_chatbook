@@ -771,9 +771,13 @@ Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard*
 Settings category while the editor is open, or leave Settings altogether
 (the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
-Changing only the **Name** box counts as an unsaved edit. **Discard** also
-undoes the editor's **Try**: the app goes back to the theme it was running
-when you opened the editor. After **Save**, the saved theme stays applied.
+Changing only the **Name** box counts as an unsaved edit. The editor's
+**Try** lasts only while you're in the editor: leaving it any way but
+**Save** — **Back** with nothing unsaved, **Discard**, a category switch or
+leaving Settings — puts back the theme that was running when you opened
+the editor (unless you switched themes elsewhere since, e.g. from the
+command palette; that choice stays). After **Save** or **Save as…**, the
+saved theme is the one applied, under its saved name.
 While the editor has unsaved edits, the rail shows **Theme \***, and the Scope
 Inspector's header and its "Unsaved theme changes" row both say so.
 

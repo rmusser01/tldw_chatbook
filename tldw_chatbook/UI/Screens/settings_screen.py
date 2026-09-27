@@ -24364,7 +24364,9 @@ class SettingsScreen(BaseAppScreen):
         if choice == "save":
             editor.on_save_theme()
             return not editor.is_modified
-        editor.discard_try()  # TASK-33060
+        # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
+        # a clean leave relies on the editor's unmount (review I-1).
+        editor.discard_try()
         return True
 
     async def confirm_quit(self) -> bool:
@@ -24415,7 +24417,7 @@ class SettingsScreen(BaseAppScreen):
             if editor.is_modified:
                 return  # refused name or pending overwrite confirmation: stay
         else:
-            editor.discard_try()  # TASK-33060
+            # show_picker below undoes the Try (TASK-33060, review I-1).
             editor.is_modified = False
             self.theme_editor_modified = False
             self._refresh_theme_modified_widgets()
@@ -24444,8 +24446,7 @@ class SettingsScreen(BaseAppScreen):
                     # Save refused (bad name) or is waiting on its overwrite
                     # confirmation: stay so the edit is not lost.
                     return
-            elif editor is not None:
-                editor.discard_try()  # TASK-33060
+            # Discard: the editor's unmount undoes its Try (review I-1).
             self._theme_leave_bypass = True
             self._select_category(category_value, restore_focus=restore_focus)
         finally:

@@ -1629,6 +1629,226 @@ async def test_try_then_save_keeps_the_saved_theme(request):
         assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
 
 
+# -- Fix round (review I-1): a Try never outlives the editor session ---------
+# Try is not an edit, so the prompt-free exits (nothing unsaved) used to
+# leave the tried custom_* palette running with no picker row active.
+
+
+def _no_leave_prompt(host):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    return not isinstance(host.screen, ThemeLeaveModal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["c", "n"])
+@private_profile_test
+async def test_try_then_clean_back_restores_the_pre_editor_theme(request, key):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press(key)  # Clone / New, no edit
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")  # Try
+        await pilot.pause(0.2)
+        assert host.theme.startswith("custom_")
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        assert _no_leave_prompt(host)
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_reset_then_back_restores_the_pre_editor_theme(request):
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        original = host.theme
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot, "#FF0000")
+        await pilot.click("#settings-theme-apply")  # Try
+        await pilot.pause(0.2)
+        assert host.theme == "custom_mine"
+        await pilot.click("#settings-theme-reset")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Discard changes"
+        await pilot.pause(0.2)
+        settings = host.screen
+        assert settings.query_one("#settings-theme-editor").is_modified is False
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        assert _no_leave_prompt(host)
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_clean_category_switch_restores_the_pre_editor_theme(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert _no_leave_prompt(host)
+        assert settings.active_category == SettingsCategoryId.APPEARANCE.value
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_clean_navigation_restores_when_the_editor_goes(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        assert await settings.confirm_navigation() is True  # nothing unsaved: no prompt
+        # Leaving Settings removes the (non-reusable) screen, editor and all.
+        await settings.query_one("#settings-theme-pane").remove()
+        await pilot.pause(0.1)
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_after_try_back_and_picker_try_targets_the_listed_theme(request):
+    from textual.widgets import Button
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        await _highlight(host, pilot, "nord")
+        await pilot.press("t")
+        await pilot.pause(0.2)
+        revert = settings.query_one("#settings-theme-revert", Button)
+        assert "Custom" not in revert.label.plain
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_picker_revert_never_targets_an_unlisted_custom_theme(request):
+    """Defence in depth: a custom_* registration is never a picker row, so a
+    Try from one records the listed theme behind it (or the launch default)."""
+    from textual.theme import Theme
+    from textual.widgets import Button
+
+    host = _host()
+    _saved_theme(host)
+    host.register_theme(Theme(name="custom_mine", primary="#FF0000", dark=True))
+    host.register_theme(Theme(name="custom_ghost", primary="#00FF00", dark=True))
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        revert = settings.query_one("#settings-theme-revert", Button)
+        for running, expected in (("custom_mine", "mine"), ("custom_ghost", "textual-dark")):
+            host.theme_revert_change = None
+            host.theme = running
+            await _highlight(host, pilot, "nord")
+            await pilot.press("t")
+            await pilot.pause(0.2)
+            assert host.theme_revert_change.previous_active == expected
+            assert "Custom" not in revert.label.plain
+
+
+# -- Fix round (review I-2): Save / Save as after a Try keeps the SAVED theme --
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["save_as", "rename_then_save"])
+@private_profile_test
+async def test_try_then_save_under_a_new_name_applies_the_saved_theme(request, how):
+    from textual.color import Color
+    from textual.widgets import Input
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        editor = settings.query_one("#settings-theme-editor")
+        if how == "save_as":
+            editor.save_as("brandnew")
+        else:
+            editor.query_one("#settings-theme-name", Input).value = "brandnew"
+            await pilot.pause(0.1)
+            await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        assert host.theme == "brandnew"
+        assert _active_ids(settings) == ["brandnew"]
+        assert Color.parse(host.get_theme("brandnew").primary).hex == "#FF0000"
+
+
+# -- Fix round (review M-1): Discard keeps a theme chosen between two Tries ---
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_discard_keeps_a_theme_chosen_elsewhere_between_tries(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        host.theme = "nord"  # e.g. the command palette, mid-edit
+        await pilot.pause(0.1)
+        await _edit_primary(host, pilot, "#00FF00")
+        await pilot.click("#settings-theme-apply")  # Try again
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-back")
+        await _discard_prompt(host, pilot)
+        assert host.theme == "nord"
+
+
+# -- Fix round (review M-3): the Discard failure toast strips control chars ---
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_discard_failure_toast_prints_the_theme_name_safely(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        toasts = _record_toasts(host)
+        editor = settings.query_one("#settings-theme-editor")
+        editor._try_undo = ("gone\x1b]52;c;x\x07", host.theme)  # unregistered
+        editor.discard_try()
+        await pilot.pause(0.1)
+        assert any("Could not restore" in t for t in toasts)
+        assert not any("\x1b" in t or "\x07" in t for t in toasts)
+
+
 # -- TASK-33063: the Scope Inspector agrees with the editor's unsaved state --
 
 

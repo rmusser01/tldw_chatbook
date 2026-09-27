@@ -352,6 +352,11 @@ class SettingsThemeEditor(Vertical):
         """Initialize after composed descendants are mounted."""
         self.call_after_refresh(self._initialize_editor)
 
+    def on_unmount(self) -> None:
+        # Review I-1: a category switch or leaving Settings tears the editor
+        # down; an unsaved Try goes with it.
+        self.discard_try()
+
     def _initialize_editor(self) -> None:
         """Bind composed controls and load the active theme."""
         try:
@@ -828,7 +833,10 @@ class SettingsThemeEditor(Vertical):
                     theme_dict=self._theme_dict(),
                 )
             self.app.register_theme(theme)
-            before = self._try_undo[0] if self._try_undo else str(self.app.theme)
+            # Review M-1: once the app left the last Try (a palette switch
+            # mid-edit), that choice is what Discard must put back.
+            undo = self._try_undo
+            before = undo[0] if undo and str(self.app.theme) == undo[1] else str(self.app.theme)
             self.app.theme = theme.name
             self._try_undo = (before, theme.name)
             self.app.notify(
@@ -951,13 +959,16 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Theme '{escape_markup(theme_name)}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
-            self._try_undo = None  # the saved theme stays applied
+            # Review I-2: a running Try becomes the saved theme -- even under
+            # a new name (Save as / renamed), where the tried custom_<old>
+            # would otherwise keep running. Nothing is left for Discard.
+            undo, self._try_undo = self._try_undo, None
             if self.current_theme_name != theme_name:
                 # Save as: the editor now edits the new file. Name first, so
                 # the Name box's Changed echo is a no-op.
                 self.current_theme_name = theme_name
                 self.query_one("#settings-theme-name", Input).value = theme_name
-            self._reapply_if_active(theme_name)
+            self._reapply_if_active(theme_name, tried=undo[1] if undo else None)
             self.post_message(self.ThemesChanged())
             self.post_message(self.Saved(theme_name))
         except Exception as e:
@@ -982,8 +993,11 @@ class SettingsThemeEditor(Vertical):
             finally:
                 raw._remove_temporary(operation, temporary)
 
-    def _reapply_if_active(self, name: str) -> None:
+    def _reapply_if_active(self, name: str, *, tried: str | None = None) -> None:
         """Spec §6: saving the theme the app is showing re-applies it.
+
+        ``tried`` is the running Try's registration, which the save replaces
+        whatever it was named.
 
         Done here, not in the pane, so the category-leave Save (which tears
         the pane down before its messages run) re-applies too.
@@ -991,7 +1005,7 @@ class SettingsThemeEditor(Vertical):
         from ..css.Themes.theme_catalog import use_theme
 
         active = str(self.app.theme)
-        if active not in (name, f"custom_{name}"):
+        if active not in (name, f"custom_{name}", tried):
             return
         use_theme(self.app, name, persist=False)
         if active == name:
@@ -1000,11 +1014,15 @@ class SettingsThemeEditor(Vertical):
             self.app.refresh_css(animate=False)
 
     def discard_try(self) -> None:
-        """Discard: put back the theme that ran before this session's Try.
+        """Undo this session's Try: put back the theme that ran before it.
 
-        TASK-33060: Try applies the working palette app-wide, so every leave
-        prompt's Discard calls this. A no-op without a Try, or once the app
-        has moved off the tried theme (the user chose another since).
+        TASK-33060 + review I-1: a Try never outlives its editor session
+        unless saved. Called from the two places every non-Save exit passes
+        through -- ``ThemePane.show_picker`` (Back, with or without the
+        prompt) and ``on_unmount`` (category switch, leaving Settings) --
+        plus the navigation prompt's Discard (a quit does not unmount).
+        A no-op without a Try, or once the app has moved off the tried
+        theme (the user chose another since).
         """
         undo, self._try_undo = self._try_undo, None
         if undo is None or str(self.app.theme) != undo[1]:
@@ -1014,7 +1032,8 @@ class SettingsThemeEditor(Vertical):
         except Exception as exc:  # noqa: BLE001 - e.g. the old theme was deleted
             logger.warning(f"Could not restore the theme after Discard: {exc}")
             self.app.notify(
-                f"Could not restore {escape_markup(display_name(undo[0]))}: {escape_markup(exc)}",
+                f"Could not restore {escape_markup(printable(display_name(undo[0])))}: "
+                f"{escape_markup(printable(exc))}",
                 severity="error",
             )
 
