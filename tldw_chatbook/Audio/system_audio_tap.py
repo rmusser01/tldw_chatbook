@@ -26,6 +26,12 @@ from loguru import logger
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 FRAME_BYTES = 640
+#: Ceiling on the one-file swiftc compile of the audiotap helper. It runs
+#: inside meetings_screen's `@work(exclusive=True, group="meetings-prepare")`,
+#: so a swiftc that stalls (a code-signing or licence prompt is the realistic
+#: macOS trigger) would otherwise hold that group for the process lifetime and
+#: leave the Meetings screen permanently "preparing".
+SWIFTC_COMPILE_TIMEOUT_SECONDS = 120
 SINK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MACOS_MIN = (14, 2)
 HELPER_NAME = "tldw-audiotap"
@@ -196,6 +202,22 @@ def dev_helper_path(data_dir: Path) -> Path:
     return Path(data_dir) / "bin" / f"{HELPER_NAME}-{digest}"
 
 
+def _discard_partial_helper(target) -> None:
+    """Remove a compile output that was never proven complete.
+
+    ``ensure_helper`` short-circuits on ``target.exists()``, so an output
+    ``swiftc`` had already begun writing when the compile timed out (or
+    failed after producing something) would be accepted by every later
+    call -- Meetings would relaunch the same truncated helper forever
+    instead of recompiling it. Best effort: a target we cannot remove is
+    no worse than before.
+    """
+    try:
+        target.unlink()
+    except OSError:
+        pass
+
+
 def ensure_helper(
     data_dir: Path,
     *,
@@ -237,19 +259,20 @@ def ensure_helper(
             [swiftc, "-O", "-o", str(target), str(helper_source_path()),
              "-framework", "CoreAudio", "-framework", "AVFoundation"],
             capture_output=True, text=True,
-            # This docstring promises never to raise for a failed build, and
-            # a wedged swiftc is a failed build -- `probe` below already
-            # bounds its own pactl call the same way.
-            timeout=120,
+            timeout=SWIFTC_COMPILE_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        logger.warning("audiotap helper compile timed out")
+        logger.warning(
+            "audiotap helper compile timed out after {}s", SWIFTC_COMPILE_TIMEOUT_SECONDS
+        )
+        _discard_partial_helper(target)
         return None
     if getattr(result, "returncode", 1) != 0 or not target.exists():
         logger.warning(
             "audiotap helper compile failed: {}",
             redact_user_paths(str(getattr(result, "stderr", ""))),
         )
+        _discard_partial_helper(target)
         return None
     return target
 
