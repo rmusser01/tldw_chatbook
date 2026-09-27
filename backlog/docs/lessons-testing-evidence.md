@@ -16622,3 +16622,27 @@ export BASE and HEAD to scratch trees, wrap every module-level test in
 `Tests/ProductionApp/` out of that pytest invocation: its conftest binds
 config at startup and every Tests/UI module then fails collection with
 `RecoveryRequired`.
+
+### "CI's unwrapped run is the final word" is false for Tests/ProductionApp (TASK-33001.6 fix round 1)
+
+**What happened.** TASK-33001.6 rewrote two tests in
+`Tests/ProductionApp/test_provider_selection_ownership.py`. Run on its own, the
+file does not collect. Its conftest rewrites `TLDW_CONFIG_PATH` at import, so
+the module-scope `import tldw_chatbook.app` raises `RecoveryRequired`. So the
+tests were run only as wrapped scratch copies, and the review deferred to "CI's
+unwrapped shard". Reproducing CI's order locally showed that shard proves
+nothing. Pass `Tests` as the root argument, with every directory but `App` and
+`ProductionApp` ignored and `-k` selecting the file, so the app is imported
+before this conftest loads. The file then collects, and all 3 tests fail in
+`_production_app` setup (`save_values` returns False, log `Configuration
+mutation failed (phase=lock, ..., error_type=RecoveryRequired)`). That result is
+identical at BASE and HEAD. Adding the `bootstrap_profile` marker in scratch made
+all 3 pass (rider TASK-33001.11).
+
+**What to do.** Before deferring a test to CI, run it in CI's collection order,
+not as a lone file: explicit file arguments load every named directory's conftest
+at startup, which changes what fails. If CI fails it in setup at BASE too, CI is
+not evidence. Then the wrapped copy is the only evidence, so prove it runs the
+real assertions: diff the copy against the original (only the wrapper lines may
+differ), then make one production mutant per test and watch each copy fail on
+its own assertion.
