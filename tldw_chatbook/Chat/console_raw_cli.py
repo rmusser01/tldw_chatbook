@@ -107,13 +107,31 @@ def format_raw_cli_content(
     )
     if clipped:
         compact_output += "\n… output preview clipped; use Full output"
-    exit_code = (
-        "Pending" if presentation.exit_code is None else str(presentation.exit_code)
+    content = f"{format_raw_cli_metadata(presentation)}\n\n{compact_output}"
+    return content, full_output
+
+
+def format_raw_cli_metadata(presentation: RawCliPresentation) -> str:
+    """Render literal execution facts shared by raw markers and tool details.
+
+    Args:
+        presentation: Bounded execution facts from the raw command owner.
+
+    Returns:
+        Command, environment, timing, and settlement facts without output.
+    """
+    unknown = (
+        "Pending"
+        if presentation.lifecycle_state in {"starting", "running", "stopping"}
+        else "Unknown"
     )
-    cleanup = {None: "Pending", True: "Proven", False: "Unproven"}[
+    exit_code = (
+        unknown if presentation.exit_code is None else str(presentation.exit_code)
+    )
+    cleanup = {None: unknown, True: "Proven", False: "Unproven"}[
         presentation.cleanup_proven
     ]
-    content = (
+    return (
         f"Command:\n{_literal_terminal_text(presentation.command)}\n\n"
         f"Caller: {presentation.caller.title()}\n"
         f"Shell: {_literal_terminal_text(presentation.shell)}\n"
@@ -121,10 +139,8 @@ def format_raw_cli_content(
         f"Elapsed: {presentation.elapsed_seconds:.1f}s\n"
         f"Exit code: {exit_code}\n"
         f"Truncated: {'Yes' if presentation.truncated else 'No'}\n"
-        f"Cleanup: {cleanup}\n\n"
-        f"{compact_output}"
+        f"Cleanup: {cleanup}"
     )
-    return content, full_output
 
 
 def raw_cli_terminal_lifecycle(result: RawCliResult) -> RawCliLifecycleState:

@@ -73,6 +73,8 @@ make intent visible:
 - `$ds-control-height: 3` — standard action control (buttons, selects,
   single-line inputs)
 - `$ds-control-height-compact: 1` — tab bars, status lines, chip rows
+- `$ds-tool-preview-max-height: 3` — collapsed tool-result rows, including
+  their omission hint; clips resize frames until text is rewrapped
 - `$ds-textarea-min-height: 5` — multi-line text inputs
 
 ### 2.4 Motion
