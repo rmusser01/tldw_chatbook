@@ -492,9 +492,12 @@ def test_skill_trust_header_line_maps_postures():
     # reads "needs review" beside an unapproved one and the list looks
     # wrong rather than unverifiable.
     assert skill_trust_header_line("needs_setup", 0)[0] == (
-        'Skill trust isn\'t set up, so every skill reads "needs review" — '
-        "set it up to review and use skills."
+        'Skill trust isn\'t set up, so every skill you added reads "needs review" '
+        "— built-in skills don't need it. Set it up to review and use yours."
     )
+    # TASK-32954: built-in rows show ✓ (they skip the trust store), so the
+    # banner must not claim they need review too.
+    assert "built-in skills don't need it" in skill_trust_header_line("needs_setup", 0)[0]
     assert skill_trust_header_line("needs_resetup", 0)[1] == "resetup"
     assert "again after an update" in skill_trust_header_line("needs_resetup", 0)[0]
     assert skill_trust_header_line("unavailable", 0)[1] == "retry"

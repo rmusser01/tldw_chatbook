@@ -757,6 +757,9 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             below whichever Reset button is showing, in either the
             list-view header (posture ``needs_resetup``/``locked``) or the
             editor's ``quarantined_manifest_error`` trust panel.
+        builtin_preview: ``mode == "preview"`` only (TASK-32954): the
+            built-in skill shown read-only -- ``name``, ``content`` and
+            ``enabled``. Rendered by ``LibrarySkillWorkPane``.
     """
 
     def __init__(
@@ -798,9 +801,11 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         show_editor_files: bool = True,
         detail_notice: str = "",
         detail_retryable: bool = False,
+        builtin_preview: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self.builtin_preview = builtin_preview
         self.state = state
         self.sort_mode = sort_mode
         self.sort_choices_visible = sort_choices_visible
@@ -905,6 +910,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         script_access_granted: bool = False,
         detail_notice: str = "",
         detail_retryable: bool = False,
+        builtin_preview: Mapping[str, Any] | None = None,
     ) -> None:
         """Apply a complete skills snapshot within the mounted canvas.
 
@@ -980,6 +986,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.script_access_granted = script_access_granted
         self.detail_notice = detail_notice
         self.detail_retryable = detail_retryable
+        self.builtin_preview = builtin_preview
         if header_only:
             rows = state.rows if state is not None else ()
             title_count = (
@@ -1318,6 +1325,13 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     # it against. Wording comes from the list-state builder
                     # (``SkillListRow.trust_label``), never restated here.
                     trust = f" · {row.trust_label}" if row.trust_label else ""
+                    # TASK-32954: built-in (read-only) and override badges.
+                    if row.is_builtin:
+                        trust = f"{trust} · Built-in"
+                        if row.builtin_disabled:
+                            trust = f"{trust} · Disabled"
+                    elif row.overridden:
+                        trust = f"{trust} · overrides built-in"
                     button = library_row_button(
                         f"{'› ' if row.selected else ''}{row.trust_glyph} {name}{trust}",
                         id=f"library-skill-row-{row.name}",
@@ -1326,6 +1340,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                         disabled=state.actions_disabled,
                     )
                     button.skill_name = row.name
+                    button.skill_builtin = row.is_builtin
                     yield button
                     if row.secondary:
                         # The flags/description line is user-controlled (the

@@ -521,7 +521,10 @@ _BUDGETS: dict[str, int] = {
     # 1897 -> 1898.
     "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
-    "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+    # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
+    # Library-only `include_disabled_builtins` flag through the browse read so
+    # a disabled built-in stays listed and re-enableable. 413 -> 416.
+    "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 416,
     # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 86 moved methods (byte-for-byte) + a
@@ -593,6 +596,15 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # PR #2754 reviews: initial pin includes finite workers, reader reveal, typed builders and normalized exports.
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 806
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
+
+# 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in
+# skills cluster (read-only preview, Customize, Enabled switch, review-link
+# route), split out so `library_skills_controller.py` stays within its budget.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py"] = 253
+# 2026-09-26, TASK-32954 Qodo review #2 (PR #2842, pre-merge): +3 so Customize
+# says a tampered built-in failed its integrity check instead of blaming an
+# existing folder.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_skills_builtin_controller.py"] = 256
 
 
 @lru_cache(maxsize=None)

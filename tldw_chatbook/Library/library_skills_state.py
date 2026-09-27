@@ -607,6 +607,11 @@ class SkillListRow:
         blocked: Whether the skill is currently trust-blocked
             (``trust_blocked``) -- unusable until reviewed/re-trusted.
         selected: Whether this row owns the retained Work pane.
+        is_builtin: A read-only built-in skill (TASK-32954): badged, and
+            opens a preview instead of the editor.
+        overridden: A user skill that overrides a built-in of the same name.
+        builtin_disabled: A built-in the user turned off (Library-only row,
+            so it can be turned back on; the model never sees it).
     """
 
     name: str
@@ -615,6 +620,9 @@ class SkillListRow:
     blocked: bool
     selected: bool = False
     trust_label: str = ""
+    is_builtin: bool = False
+    overridden: bool = False
+    builtin_disabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -863,10 +871,13 @@ def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str]
         # task-32363 (critique #10, B D5): with no trust store every skill
         # reads "needs review", including ones approved earlier -- the list
         # looked wrong rather than unverifiable. The banner now states the
-        # precedence instead of leaving the reader to infer it.
+        # precedence instead of leaving the reader to infer it. TASK-32954:
+        # built-in skills skip the trust store (their rows show ✓), so the
+        # banner scopes the claim to the user's own skills.
         return (
-            "Skill trust isn't set up, so every skill reads \"needs review\" — "
-            "set it up to review and use skills.",
+            "Skill trust isn't set up, so every skill you added reads "
+            "\"needs review\" — built-in skills don't need it. Set it up to "
+            "review and use yours.",
             "setup",
         )
     if posture == "needs_resetup":
@@ -952,6 +963,9 @@ def _row(
         trust_label=trust_label,
         blocked=blocked,
         selected=name == selected_name,
+        is_builtin=record.get("source") == "builtin",
+        overridden=bool(record.get("overrides_builtin")),
+        builtin_disabled=bool(record.get("builtin_disabled")),
     )
 
 

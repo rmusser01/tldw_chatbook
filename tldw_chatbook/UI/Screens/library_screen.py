@@ -54,6 +54,7 @@ from textual.widgets import (
     OptionList,
     SelectionList,
     Static,
+    Switch,
     TextArea,
 )
 
@@ -25027,6 +25028,9 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         skill_name = getattr(event.button, "skill_name", None)
+        if getattr(event.button, "skill_builtin", False) and isinstance(skill_name, str):
+            # TASK-32954: built-ins open a read-only preview, never the editor.
+            return self._skills_controller.builtin._open_library_skill_builtin_preview(skill_name)
         self._reset_library_skill_editor_state()
         if isinstance(skill_name, str):
             self._skills_state.selected_skill_name = skill_name
@@ -25088,6 +25092,15 @@ class LibraryScreen(BaseAppScreen):
         self._skills_state.trust_confirming_reset = False
         self._skills_state.scroll_pending = False
         self._skills_state.editor_armed = False
+        self._skills_state.builtin_preview = None
+
+    @on(Button.Pressed, "#library-skill-builtin-customize")
+    def handle_library_skill_builtin_customize(self, event: Button.Pressed) -> None:
+        return self._skills_controller.builtin.handle_library_skill_builtin_customize(event)
+
+    @on(Switch.Changed, "#library-skill-builtin-enabled")
+    def handle_library_skill_builtin_enabled(self, event: Switch.Changed) -> None:
+        return self._skills_controller.builtin.handle_library_skill_builtin_enabled(event)
 
     def _consume_library_skill_scroll_pending(self) -> bool:
         return self._skills_controller._consume_library_skill_scroll_pending()
