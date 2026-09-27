@@ -1229,7 +1229,7 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert effective is not None
         assert effective.base_url == target.api_url
         assert session_store.ensure_session().has_user_work is True
-        assert console.current_console_provider_for_command() == "vllm"
+        assert console._session._active_console_session_settings().provider == "vllm"
         turn = console._session._build_console_turn_execution_context(session_id)
         assert turn.provider_selection.base_url == target.api_url
         controller = console._ensure_console_chat_controller()

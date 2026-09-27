@@ -33,7 +33,6 @@ EXPECTED_RESUME_HANDOFF_CONSUMERS = {
     "self._consume_pending_conversation_resume",
     "self._consume_pending_chat_handoff",
     "self._consume_pending_console_prompt_insert",
-    "self.consume_pending_console_provider_intent",
     "self._consume_pending_conversation_settings_return",
     "self.consume_pending_vllm_console_intent",
     "self._fleet.consume_pending_console_fleet_completion",

@@ -416,7 +416,6 @@ from .config import (
     get_cli_config_path,
     load_settings,
     get_cli_providers_and_models,
-    API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
     load_cli_config_and_ensure_existence,
     persist_cli_config_for_shutdown,
@@ -543,7 +542,6 @@ from tldw_chatbook.config import (
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
-    ConsoleProviderIntent,
     HandoffChannel,
     HandoffValueError,
     PendingHandoffStore,
@@ -1085,14 +1083,6 @@ _TTS_GLOBAL_OVERRIDE_PROMPT_COPY: dict[str | None, str] = {
 #
 #######################################################################################################################
 #
-# Statics
-
-
-AVAILABLE_PROVIDERS = list({**API_MODELS_BY_PROVIDER, **LOCAL_PROVIDERS}.keys())  # provider order for sidebar defaults
-#
-#
-#####################################################################################################################
-#
 # Functions:
 
 
@@ -1497,119 +1487,6 @@ class TabNavigationProvider(Provider):
             self.app.notify(f"Switched to {label}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
-
-
-class LLMProviderProvider(Provider):
-    """Provider for LLM provider management commands."""
-
-    def __init__(self, screen, *args, **kwargs):
-        """Initialize the LLMProviderProvider with required screen parameter."""
-        super().__init__(screen, *args, **kwargs)
-
-    async def search(self, query: str) -> Hits:
-        matcher = self.matcher(query)
-
-        # Get available providers from the app
-        available_providers = (
-            AVAILABLE_PROVIDERS if "AVAILABLE_PROVIDERS" in globals() else []
-        )
-
-        provider_commands = [
-            (
-                "LLM Provider Management: Show Current Provider",
-                None,
-                "Display currently selected LLM provider",
-            ),
-        ]
-
-        # Add provider switching commands
-        for provider in available_providers:
-            provider_name = provider.replace("_", " ").title()
-            command_text = f"LLM Provider Management: Switch to {provider_name}"
-            provider_commands.append(
-                (command_text, provider, f"Switch to {provider_name} provider")
-            )
-
-        for command_text, provider_id, help_text in provider_commands:
-            score = matcher.match(command_text)
-            if score > 0:
-                yield Hit(
-                    score,
-                    matcher.highlight(command_text),
-                    partial(self.handle_llm_command, provider_id, command_text),
-                    help=help_text,
-                )
-
-    async def discover(self) -> Hits:
-        popular_providers = ["OpenAI", "Anthropic", "Cohere", "Groq", "Ollama"]
-
-        yield Hit(
-            1.0,
-            "LLM Provider Management: Show Current Provider",
-            partial(self.handle_llm_command, None, "show_current"),
-            help="Display currently selected LLM provider",
-        )
-
-        for provider in popular_providers:
-            yield Hit(
-                0.9,
-                f"LLM Provider Management: Switch to {provider}",
-                partial(self.handle_llm_command, provider, f"switch_{provider}"),
-                help=f"Switch to {provider} provider",
-            )
-
-    def handle_llm_command(self, provider_id: str | None, command: str) -> None:
-        """Handle LLM provider commands."""
-        try:
-            if provider_id is None or "show_current" in command:
-                current = self._current_provider()
-                self.app.notify(
-                    f"Current LLM provider: {current}", severity="information"
-                )
-            else:
-                self.app.pending_handoffs.stage(
-                    HandoffChannel.CONSOLE_PROVIDER,
-                    ConsoleProviderIntent(provider=provider_id),
-                )
-                chat_screen = self._mounted_chat_screen()
-                if chat_screen is not None:
-                    chat_screen.consume_pending_console_provider_intent()
-                else:
-                    self.app.notify(
-                        "Provider selection queued for the next Console entry.",
-                        severity="information",
-                    )
-        except Exception as e:
-            self.app.notify(
-                f"Failed to execute LLM command ({type(e).__name__}).",
-                severity="error",
-            )
-
-    def _mounted_chat_screen(self):
-        """Return the active production Console screen beneath any modal."""
-        if getattr(self.app, "current_tab", None) != TAB_CHAT:
-            return None
-        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-        for screen in reversed(tuple(getattr(self.app, "screen_stack", ()))):
-            if isinstance(screen, ChatScreen):
-                return screen
-        return None
-
-    def _current_provider(self) -> str:
-        """Resolve current provider from its lifetime owner."""
-        chat_screen = self._mounted_chat_screen()
-        if chat_screen is not None:
-            provider = chat_screen.current_console_provider_for_command()
-            if provider:
-                return provider
-        config = getattr(self.app, "app_config", {})
-        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
-        if isinstance(defaults, dict):
-            provider = str(defaults.get("provider") or "").strip()
-            if provider:
-                return provider
-        return "Unknown"
 
 
 #: task-18812 / ADR-071: the command-palette entry for the Console focus
@@ -7785,7 +7662,6 @@ class TldwCli(
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
         TabNavigationProvider,
-        LLMProviderProvider,
         QuickActionsProvider,
         SettingsProvider,
         CharacterProvider,

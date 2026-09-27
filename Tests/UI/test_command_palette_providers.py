@@ -35,7 +35,6 @@ try:
     from tldw_chatbook.app import (
         ThemeProvider,
         TabNavigationProvider,
-        LLMProviderProvider,
         QuickActionsProvider,
         SettingsProvider,
         CharacterProvider,
@@ -79,7 +78,6 @@ except ImportError as e:
 
     ThemeProvider = DummyProvider
     TabNavigationProvider = DummyProvider
-    LLMProviderProvider = DummyProvider
     QuickActionsProvider = DummyProvider
     SettingsProvider = DummyProvider
     CharacterProvider = DummyProvider
@@ -1112,6 +1110,24 @@ class TestCommandPaletteIntegration:
                 assert isinstance(hit, Hit), "All items should be Hit objects"
                 assert hasattr(hit, "text"), "Hit should have text attribute"
                 assert hasattr(hit, "help"), "Hit should have help attribute"
+
+    @pytest.mark.asyncio
+    async def test_palette_offers_no_llm_provider_management_entries(self, mock_app):
+        """TASK-33001.6: providers are switched in the model picker, not here."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        texts = []
+        for provider_class in ALL_PROVIDERS:
+            provider = provider_class(screen=mock_screen)
+            matcher = MagicMock()
+            matcher.match = MagicMock(return_value=1.0)
+            matcher.highlight = MagicMock(side_effect=lambda x: x)
+            provider.matcher = MagicMock(return_value=matcher)
+            texts += [str(hit.text) async for hit in provider.discover() if isinstance(hit, Hit)]
+            for query in ("llm provider", "switch to", "current provider"):
+                texts += [str(hit.text) async for hit in provider.search(query)]
+
+        assert [text for text in texts if "LLM Provider Management" in text] == []
 
     @pytest.mark.asyncio
     async def test_search_consistency_across_providers(self, mock_app):
