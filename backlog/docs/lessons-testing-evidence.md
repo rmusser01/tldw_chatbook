@@ -16646,3 +16646,28 @@ not evidence. Then the wrapped copy is the only evidence, so prove it runs the
 real assertions: diff the copy against the original (only the wrapper lines may
 differ), then make one production mutant per test and watch each copy fail on
 its own assertion.
+
+### A config section read right after a save is not the durable state (TASK-33001.7 fix round 1)
+
+**What happened.** TASK-33001.7 made a keyless llama.cpp save drop the shipped
+template's `api_key_env_var = "LLAMA_CPP_API_KEY"`. The real-writer test read
+the TOML back right after the save, and the live run copied the section in
+the same second as the save toast: both showed the name gone. Re-inspecting
+the scratch profile in the review round found `config.toml` rewritten 12 s
+later, at quit, with the name back. The runtime config is the shipped template deep-merged
+under the file (`config.py`, `deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, ...)`),
+and `persist_cli_config_for_shutdown` writes that merge back to disk. So a
+deleted template key reappears in memory at the next reload and on disk at the
+next quit, and Settings showed "Env var: LLAMA_CPP_API_KEY" again after a
+restart. Only the explicit `credential_source = "none"` kept the name inert
+for `resolve_provider_credential`. With that line stripped after the save, the
+name came back, the variable was exported, and the key resolved:
+`('sk-exported-later', 'env:LLAMA_CPP_API_KEY')`.
+
+**What to do.** When a fix deletes a config key, check the key against the
+template (`config.py` `CONFIG_TOML_CONTENT`). If the template ships it, the
+deletion cannot stick. The fix has to be an explicit value that outranks it.
+Pin that value after `persist_cli_config_for_shutdown()` and a
+`load_cli_config_and_ensure_existence(force_reload=True)`, not only after the
+save, and read the live profile's config after the app quits, not only after
+the toast.

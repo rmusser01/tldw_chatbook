@@ -10519,6 +10519,23 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
     else:
         assert after[0] == env_key
 
+    # The runtime reads the template merged under the file, and the app's quit
+    # (persist_cli_config_for_shutdown) writes that merge back: the live run's
+    # config regained the template name 12s after this save. Only the explicit
+    # decision keeps the name inert, even once the variable is exported.
+    exported = env_key or "sk-exported-later"
+    monkeypatch.setenv("LLAMA_CPP_API_KEY", exported)
+    assert config_module.persist_cli_config_for_shutdown()
+    expected = None if (env_key, persisted_source) == (None, None) else exported
+    for config in (
+        config_module.load_cli_config_and_ensure_existence(force_reload=True),
+        tomllib.loads(config_path.read_text(encoding="utf-8")),
+    ):
+        section = config["api_settings"]["llama_cpp"]
+        assert resolve_provider_credential(
+            "llama_cpp", section, environ=os.environ
+        )[0] == expected
+
 
 @pytest.mark.asyncio
 async def test_settings_provider_switch_updates_inspector_readiness():
