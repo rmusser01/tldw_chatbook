@@ -89,8 +89,19 @@
    type, see _lists.tcss precedent) -- `ThemeOptionList > .option-list--
    option-highlighted` (the subclass name) measured un-bolded: component
    styles resolve against the declaring base type, not every subclass name
-   used as a CSS type-selector. */
+   used as a CSS type-selector.
+   TASK-33065: the fill was the shared `$surface` (_lists.tcss), 1.0-1.1:1
+   against the list, so bold carried the row alone among bold headers and
+   markers. The row now inverts like a focused chip on the card below
+   (`$text-primary` fill, `$ds-surface-panel` text; `$text-primary` is the
+   AA-pinned hue, ensure_readable_text_hues). `$block-cursor-background`
+   was measured first: 2.84:1 on solarized_light. The fill clears 3:1
+   against the list on every theme the contrast test runs
+   (Tests/UI/test_settings_theme_card_contrast.py), focused or not: the
+   list shows one highlight either way. */
 #settings-theme-list > .option-list--option-highlighted {
+    background: $text-primary;
+    color: $ds-surface-panel;
     text-style: bold;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-list {
