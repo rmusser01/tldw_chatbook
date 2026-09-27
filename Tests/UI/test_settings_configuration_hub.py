@@ -9650,23 +9650,28 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
 
 _STORED_KEY_CANARY = "sk-settings-stored-canary-33001"
 _ENV_KEY_CANARY = "sk-settings-env-canary-33001"
+# Resolves (resolve_provider_credential only strips and screens placeholders)
+# but is over the setup builder's 8192-char limit for a newly entered key.
+_OVER_LIMIT_STORED_KEY = "sk-settings-over-limit-33001-" + "x" * 8200
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider", "stored", "persisted_source", "env_key", "action"),
+    ("provider", "stored_key", "persisted_source", "env_key", "action"),
     [
-        ("openai", True, None, None, "model"),
-        ("openai", True, None, _ENV_KEY_CANARY, "model"),
-        ("openai", True, "stored", None, "model"),
-        ("openai", True, None, _ENV_KEY_CANARY, "choose-env"),
-        ("openai", True, None, _ENV_KEY_CANARY, "clear-key"),
-        ("openai", True, None, None, "type-key"),
-        ("llama_cpp", False, None, None, "model"),
+        ("openai", _STORED_KEY_CANARY, None, None, "model"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "model"),
+        ("openai", _OVER_LIMIT_STORED_KEY, None, None, "model"),
+        ("openai", _STORED_KEY_CANARY, "stored", None, "model"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "choose-env"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "clear-key"),
+        ("openai", _STORED_KEY_CANARY, None, None, "type-key"),
+        ("llama_cpp", None, None, None, "model"),
     ],
     ids=[
         "legacy-keyed-env-unset",
         "legacy-keyed-env-set",
+        "legacy-keyed-over-limit",
         "explicit-stored-template-name",
         "explicit-env-choice",
         "explicit-key-clear",
@@ -9676,7 +9681,7 @@ _ENV_KEY_CANARY = "sk-settings-env-canary-33001"
 )
 @private_profile_test
 async def test_settings_model_save_keeps_the_stored_key_that_resolves(
-    request, monkeypatch, provider, stored, persisted_source, env_key, action
+    request, monkeypatch, provider, stored_key, persisted_source, env_key, action
 ):
     """TASK-33001.13: a save that touches no credential field keeps the key.
 
@@ -9686,7 +9691,26 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
     (2026-09-19) ranks the stored key above that env var. The real writer runs
     on this private profile's TLDW_CONFIG_PATH; the spy only records. The
     explicit rows (choose env var, clear, type) keep their dev behaviour, and
-    so does the keyless row.
+    so does the keyless row. The over-limit row (Qodo on PR #2847) holds a key
+    the resolver accepts but the builder would reject as a new entry: the
+    untouched key is kept verbatim, not revalidated, so the save succeeds.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this test in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        monkeypatch: Sets or clears the provider's env vars and installs the
+            delegating writer spy.
+        provider: Provider table to seed and save: ``"openai"`` (keyed rows)
+            or ``"llama_cpp"`` (the keyless row).
+        stored_key: The ``api_key`` seeded into the provider table, or None
+            for no stored key.
+        persisted_source: An explicit ``credential_source`` to seed, or None
+            for a legacy section with no recorded decision.
+        env_key: Value exported as the template's env var (and as
+            ``CHATBOOK_OPENAI_API_KEY``), or None to leave both unset.
+        action: The one edit before Save: ``"model"`` (model only),
+            ``"choose-env"`` (type an env-var name), ``"clear-key"`` (press
+            Clear saved key) or ``"type-key"`` (type a new key).
     """
     import os
 
@@ -9708,8 +9732,8 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         monkeypatch.setenv("CHATBOOK_OPENAI_API_KEY", env_key)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     seed: dict[str, object] = {}
-    if stored:
-        seed["api_key"] = _STORED_KEY_CANARY
+    if stored_key is not None:
+        seed["api_key"] = stored_key
     if persisted_source is not None:
         seed["credential_source"] = persisted_source
     if seed:
@@ -9721,7 +9745,7 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         provider
     ]
     assert section["api_key_env_var"] == template_env
-    assert ("api_key" in section) is stored
+    assert section.get("api_key") == stored_key
     before = resolve_provider_credential(provider, section, environ=os.environ)
     readiness_before = get_provider_readiness(provider, runtime).api_key_source
 
@@ -9783,13 +9807,15 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
     runtime = config_module.load_cli_config_and_ensure_existence(force_reload=True)
     readiness_after = get_provider_readiness(provider, runtime).api_key_source
 
-    if action == "model" and stored:
+    if action == "model" and stored_key is not None:
         assert saved["model"] == new_model
         assert "api_key" not in provider_deletes
-        assert saved["api_key"] == _STORED_KEY_CANARY
+        # Kept in place, not re-set: the untouched key is never revalidated.
+        assert "api_key" not in writes[0][0][f"api_settings.{provider}"]
+        assert saved["api_key"] == stored_key
         assert saved["credential_source"] == "stored"
         stored_source = f"config:api_settings.{provider}.api_key"
-        assert before[:2] == after[:2] == (_STORED_KEY_CANARY, stored_source)
+        assert before[:2] == after[:2] == (stored_key, stored_source)
         assert readiness_before == readiness_after == before[1]
         # The quit rewrite (persist_cli_config_for_shutdown) merges the template
         # back, restoring its env-var name; the stored decision still wins,

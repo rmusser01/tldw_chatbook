@@ -30399,6 +30399,8 @@ class SettingsScreen(BaseAppScreen):
                             ),
                         ),
                         self._app_config_mapping(),
+                        # Settings' "stored" is always the key already saved.
+                        keep_stored_credential=True,
                     )
                 except ValueError:
                     self._provider_save_result = (
