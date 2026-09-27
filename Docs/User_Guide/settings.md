@@ -257,7 +257,14 @@ return to Settings. Use **Tab** to move between fields. While typing, press
 **Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
 retains the draft; **Discard changes** restores the saved values. Saving writes
 the provider settings locally and clears the unsaved marker; it does not test
-the endpoint. Reopening this page shows the saved model and endpoint.
+the endpoint. Reopening this page shows the saved model and endpoint. The save
+result and its toast say what the save reaches: "new chats and open chats
+nobody has used yet take them; chats with work keep their own settings (change
+them in Console with Alt+M)". The State line says the same in one row:
+"Applies to new and unused open chats · used chats keep theirs (Console:
+Alt+M)". Focusing the **Provider** search or list shows its Purpose in the
+inspector: "Sets the provider new chats start with; open chats nobody has used
+yet follow it."
 
 A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
@@ -311,6 +318,20 @@ the Endpoint field" and "Key not checked until the provider is ready", and
 typing the workspace host into Endpoint turned it configured; llama.cpp with
 nothing listening, launched at 235x52, kept every row on one line. The
 Claude-subscription rows are covered by tests; not driven live.*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.3 —
+2026-09-27: driven live at 211x44 (and once at 235x52) on a scratch OpenAI
+profile. The clean State line read "State: Draft — save with s | Applies to
+new and unused open chats · used chats keep theirs (Console: Alt+M)" in one
+row (the banner is 120 cells wide at 211x44, so the line still fits once it
+gains an unsaved count). Editing the model and pressing **Esc**, **s** showed
+"Provider settings saved: new chats and open chats nobody has used yet take
+them; chats with work keep their own settings (change them in Console with
+Alt+M)." under Test Provider, and the toast opened with "Provider and model
+settings saved:" followed by the same words. Tabbing onto the Provider search
+box showed "Focused setting: Provider" and the new Purpose in the inspector.
+The partial-failure copy (file written but not reloaded, or not written) is
+unchanged; covered by tests, not driven live.*
 
 #### QwenCloud
 

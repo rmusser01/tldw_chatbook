@@ -35,6 +35,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _static_text,
     _visible_text,
     _wait_for_selector,
 )
@@ -9975,6 +9976,13 @@ _ENV_KEY_CANARY = "sk-settings-env-canary-33001"
 # but is over the setup builder's 8192-char limit for a newly entered key.
 _OVER_LIMIT_STORED_KEY = "sk-settings-over-limit-33001-" + "x" * 8200
 
+# TASK-33002.3 (ADR-095 D1): rewritten on purpose from "Provider settings saved."
+_PROVIDER_SAVED_WITH_SCOPE = (
+    "Provider settings saved: new chats and open chats nobody has used yet "
+    "take them; chats with work keep their own settings (change them in "
+    "Console with Alt+M)."
+)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -10118,7 +10126,8 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         await pilot.pause()
         await pilot.click("#settings-save-category")
         await pilot.pause()
-        assert screen._provider_save_result == "Provider settings saved."
+        # TASK-33002.3: the save result names its scope (ADR-095 D1).
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
 
     assert len(writes) == 1
     provider_deletes = writes[0][1].get(f"api_settings.{provider}", ())
@@ -10548,15 +10557,29 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {"llama_cpp": deepcopy(template)}
     host = DestinationHarness(app, "settings")
+    toasts: list[str] = []
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        host.notify = lambda message, **kwargs: toasts.append(str(message))
         model = screen.query_one("#settings-model-value", Input)
         model.value = "qwen3-coder"
         screen.handle_model_value_changed(Input.Changed(model, model.value))
         await pilot.click("#settings-save-category")
         await pilot.pause()
-        assert screen._provider_save_result == "Provider settings saved."
+        # TASK-33002.3: the result line and the toast name the save's scope:
+        # new chats and unused open chats; chats with work keep theirs.
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
+        assert _static_text(
+            screen.query_one("#settings-provider-save-result", Static)
+        ) == _PROVIDER_SAVED_WITH_SCOPE
+        assert toasts == [
+            (
+                "Provider and model settings saved: new chats and open chats "
+                "nobody has used yet take them; chats with work keep their own "
+                "settings (change them in Console with Alt+M)."
+            )
+        ]
 
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
         "llama_cpp"

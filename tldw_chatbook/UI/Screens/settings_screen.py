@@ -1066,6 +1066,12 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+#: TASK-33002.3: what a Providers & Models save reaches (ADR-095 D1). Shared
+#: by the save result and its toast; the State line says it in one row.
+PROVIDER_SAVE_SCOPE_COPY = (
+    "new chats and open chats nobody has used yet take them; chats with work "
+    "keep their own settings (change them in Console with Alt+M)."
+)
 #: Value of the Scope Inspector's "Focused setting" row while focus sits on
 #: a container, an action button, or anything else that is not a setting.
 #: TASK-23192: the three categories that render the row each named their own
@@ -9622,7 +9628,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            return "Shared with Console"
+            return (
+                "Applies to new and unused open chats · used chats keep theirs "
+                "(Console: Alt+M)"
+            )
         if category is SettingsCategoryId.SPEECH_TTS:
             return "Application-wide defaults; Studio preferences remain separate."
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -15895,12 +15904,20 @@ class SettingsScreen(BaseAppScreen):
                     "On or Off" if enabled else "whole number from 1 to 1000",
                 ),
             )
-        if field_id == "settings-provider-value":
+        # TASK-33002.3: the Select is hidden; users focus the search and list.
+        if field_id in {
+            "settings-provider-value",
+            "settings-provider-search",
+            "settings-provider-picker",
+        }:
             return (
                 ("Focused setting", "Provider"),
                 (
                     "Purpose",
-                    "Selects the provider used for Console generation defaults.",
+                    (
+                        "Sets the provider new chats start with; open chats "
+                        "nobody has used yet follow it."
+                    ),
                 ),
                 ("Saved as", "chat_defaults.provider"),
                 (
@@ -31138,7 +31155,9 @@ class SettingsScreen(BaseAppScreen):
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
                 self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
-                self._provider_save_result = "Provider settings saved."
+                self._provider_save_result = (
+                    f"Provider settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
+                )
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
@@ -31167,7 +31186,8 @@ class SettingsScreen(BaseAppScreen):
                 if self._provider_return_outcome is not None:
                     self.call_after_refresh(self._focus_provider_return_continuation)
                 self.app.notify(
-                    "Provider and model settings saved.", severity="information"
+                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}",
+                    severity="information",
                 )
             else:
                 if mutation_result.file_replaced:
