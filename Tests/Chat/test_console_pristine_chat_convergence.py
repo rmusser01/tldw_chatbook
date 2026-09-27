@@ -329,7 +329,10 @@ def test_convergence_check_adds_no_disk_keyring_or_network_access(monkeypatch):
     """AC#11: the check is pure over the already-resolved config mapping."""
     import keyring
 
-    from tldw_chatbook import config as config_module
+    # chat_screen imports load_settings by name, so the sentinel must replace
+    # that binding; patching tldw_chatbook.config.load_settings intercepts
+    # nothing (final-review M2).
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 
     app, console, store = _console(_config("llama_cpp", "new-model"))
     _pristine(store, ConsoleSessionSettings(provider="llama_cpp", model="old-model"))
@@ -354,7 +357,7 @@ def test_convergence_check_adds_no_disk_keyring_or_network_access(monkeypatch):
         (socket, "create_connection"),
         (keyring, "get_password"),
         (keyring, "get_credential"),
-        (config_module, "load_settings"),
+        (chat_screen_module, "load_settings"),
     ):
         monkeypatch.setattr(target, name, forbid(f"{target.__name__}.{name}"))
 
