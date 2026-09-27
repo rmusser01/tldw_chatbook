@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 1 unsaved · revert with r | Changes affect global Console fallbacks after save.              │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │                                                                                                                   │ │  │  │  │                                         │
+│  category search             │  │  │ │ │ Global keeps one arrangement everywhere. Per workspace restores and keeps each workspace's saved arrangement.     │ │  │  │  │ Selected category: Console Behavior     │
+│                              │  │  │ │ │ ▐X▌ Stack collapsed rail labels                                                                                   │ │  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │ │ Saved style: Horizontal                                                                                           │ │  │  │  │  Guided edits: Save or Revert changes.  │
+│     Overview (view)          │  │  │ │ │ Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.                         │ │  │  │  │     Save (s)                            │
+│     Providers & Models       │  │  │ │ │                                                                                                                   │ │  │  │  │    Revert (r)                           │
+│     Web Search               │  │  │ │ │  Status row placement                                                                                             │ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ │ Where the Console status chips sit relative to the composer.                                                      │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │  Above composer                                                                                                   │ │  │  │  │  Purpose: Smallest pasted chunk, in     │
+│     Appearance               │  │  │ │ │ Above keeps the chips directly under the conversation; below closes the shell as a bottom status row.             │ │  │  │  │  characters, that the composer          │
+│     Theme                    │  │  │ │ │                                                                                                                   │ │  │  │  │  collapses into a compact expandable    │
+│     Splash Screen            │  │  │ │ │  Composer paste handling                                                                                          │ │▁ │  │  │  block.                                 │
+│   > Console Behavior *       │  │  │ │ │ Collapse large pasted chunks only when they exceed the threshold.                                                 │ │  │  │  │                                         │
+│  Data & Privacy              │  │  │ │ │ ▐X▌ Collapse large pastes                                                                                         │ │  │  │  │  Consequences: Pastes below the         │
+│     Storage                  │  │  │ │ │ Threshold (chars)       █ 500                                                                                     │ │  │  │  │  threshold stay inline exactly as       │
+│     Workspaces               │  │  │ │ │ Normal typing stays literal. The canonical message payload is preserved.                                          │ │  │  │  │  typed; larger ones collapse with an    │
+│     Tool Profiles            │  │  │ │ │                                                                                                                   │ │  │  │  │  expand control. The canonical          │
+│     Privacy & Security       │  │  │ │ │  Chat images                                                                                                      │ │  │  │  │  message payload always keeps the       │
+│     Network                  │  │  │ │ │ Render images linked in assistant replies (remote fetch).                                                         │ │  │  │  │  full text either way.                  │
+│     My Profile               │  │  │ │ │     Disabled                                                                                                      │ │  │  │  │                                       ▆ │
+│  Troubleshooting             │  │  │ │ │ Off by default: fetching a model-suggested link reveals your IP address to that host.                             │ │  │  │  │  Saved as: console.                     │
+│     Diagnostics (view)       │  │  │ │ │                                                                                                                   │ │  │  │  │    paste_collapse_threshold             │
+│     About (view)             │  │  │ │ │  Parallel agent runs                                                                                              │ │  │  │  │                                         │
+│     Agents                   │  │  │ │ │ Max parallel agent runs │ 3                                                                                       │ │  │  │  │  Applies: Next paste immediately on     │
+│  Expert                      │  │  │ │ │                                                                                                                   │ │  │  │  │  save; already rendered pastes keep     │
+│     Internal Prompts         │  │  │ │ │  Agent run budget                                                                                                 │ │  │  │  │  their current display.                 │
+│     Advanced Config          │  │  │ │ │  Limits on ONE agent run (one message you send). Raise them for long, expensive sessions. The token budget is     │ │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  what normally stops a long run - the turn and step limits are backstops. Sub-agents inherit these, so a run      │ │  │  │  │ Override rules                          │
+│                              │  │  │ │ │  that spawns helpers can spend several times the token budget.                                                    │ │  │  │  │  Priority: active Console session,    ▆ │
+│                              │  │  │ │ │ Token budget (per run)  │ 25000000                                                                                │ │  │  │  │  then provider+model profile, then      │
+│                              │  │  │ │ │  The limit that actually stops a long run. Counts prompt + completion for ONE run (one message), not the whole    │ │  │  │  │  these global fallbacks                 │
+│                              │  │  │ │ │  conversation - and the whole conversation is re-sent every turn, so spend grows quadratically: 25M is typically  │ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

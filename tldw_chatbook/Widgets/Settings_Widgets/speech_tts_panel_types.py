@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
     build_global_speech_tts_save_proposal,
+    count_global_speech_tts_unsaved_fields,
 )
 
 
@@ -416,6 +417,16 @@ class SpeechTTSPanelDraftSnapshot:
             "pipeline_voice_original",
             _validated_pipeline_voice_draft_copy(self.pipeline_voice_original),
         )
+
+    def unsaved_field_count(self) -> int:
+        """Count this draft's fields that differ from saved (TASK-33002.4)."""
+        siblings = zip(
+            self.realtime_draft.snapshot() + self.pipeline_voice_draft.snapshot(),
+            self.realtime_original.snapshot() + self.pipeline_voice_original.snapshot(),
+        )
+        return count_global_speech_tts_unsaved_fields(
+            self.original_state, self.state
+        ) + sum(draft != saved for draft, saved in siblings)
 
     def __repr__(self) -> str:
         """Expose only bounded navigation metadata, never draft values."""

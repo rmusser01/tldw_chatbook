@@ -54,9 +54,11 @@ wall is collapsed. The editing card holds the ⚠ legend and five folds —
 
 The pinned **State banner** above them reads `State: Draft — save with s |
 Defaults affect future Library/RAG retrieval and display.`, switching to
-`State: Unsaved changes | …` once you edit a field. **Save (s)** and **Revert
-(r)** live in the **Scope Inspector** on the right, which also names the save
-targets: the active profile, and the profile pointer in your config file.
+`State: Draft — save with s · 1 unsaved · revert with r | …` once you edit a
+field; the count follows how many fields differ from their saved values.
+**Save (s)** and **Revert (r)** live in the **Scope Inspector** on the right,
+which also names the save targets: the active profile, and the profile pointer
+in your config file.
 
 ## Features & controls
 
@@ -484,3 +486,9 @@ next step, and the partial-failure toast reports counts and points at Logs (F3)
 instead of embedding the last raw error string. Pinned by
 `Tests/UI/test_settings_rag_profile_region.py`'s backfill toast tests; no other
 behavior of this pane changed.)*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.4 —
+2026-09-27: the State banner copy above (badge kept, unsaved count added) is
+pinned by `Tests/UI/test_settings_state_line_unsaved_count.py`, and the dirty
+line renders in one row at 211x44 for Library & RAG; RAG itself was not driven
+live.*

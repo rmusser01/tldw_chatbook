@@ -246,7 +246,7 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
         assert not screen._category_has_unsaved_changes(
             SettingsCategoryId.VIDEO_GENERATION
         ), f"fresh profile staged: {_dirty_keys()}"
-        assert "Unsaved changes" not in _banner(), _banner()
+        assert " unsaved | " not in _banner(), _banner()
 
         # AC2: a real edit -- through the widget, not the staging helper --
         # still turns it dirty...
@@ -256,7 +256,9 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
         assert screen._category_has_unsaved_changes(
             SettingsCategoryId.VIDEO_GENERATION
         ), "a genuine retention edit must stage"
-        assert "Unsaved changes" in _banner(), _banner()
+        # TASK-33002.4: the dirty line keeps the badge and counts fields.
+        assert _banner().startswith("State: Draft — save/revert below · "), _banner()
+        assert " unsaved | " in _banner(), _banner()
 
         # ...and Revert clears it without the recomposed Selects re-dirtying.
         await screen._handle_video_gen_revert()
@@ -265,4 +267,4 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
         assert not screen._category_has_unsaved_changes(
             SettingsCategoryId.VIDEO_GENERATION
         ), f"revert left staged: {_dirty_keys()}"
-        assert "Unsaved changes" not in _banner(), _banner()
+        assert " unsaved | " not in _banner(), _banner()

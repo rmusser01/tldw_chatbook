@@ -8221,17 +8221,39 @@ class SettingsScreen(BaseAppScreen):
             and self._snapshot_preferences_dirty()
         )
 
+    def _category_unsaved_count(self, category: SettingsCategoryId) -> int:
+        """Count the fields in ``category`` that differ from their saved values.
+
+        TASK-33002.4: fields, not draft keys -- the context window and its
+        reset flag are one field, and Advanced Config's raw TOML draft counts
+        as one. Only read while the category is dirty, so never below 1.
+        """
+        snapshot = self._speech_tts_draft_snapshot
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            count = len(self._provider_return_dirty_field_names())
+            count += self._snapshot_preferences_dirty_count()
+        elif category is SettingsCategoryId.SPEECH_TTS and snapshot is not None:
+            count = snapshot.unsaved_field_count()
+        else:
+            draft = self._settings_drafts.get(category)
+            count = len(draft.dirty_keys) if draft is not None else 0
+        return max(count, 1)
+
     _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
         "Snapshot preferences unavailable. In Advanced Config, correct "
         "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Revert."
     )
 
     def _snapshot_preferences_dirty(self) -> bool:
+        return self._snapshot_preferences_dirty_count() > 0
+
+    def _snapshot_preferences_dirty_count(self) -> int:
+        """How many of the two snapshot fields (enabled, keep count) are unsaved."""
         loaded = getattr(self, "_snapshot_preferences_loaded", None)
-        return loaded is not None and self._snapshot_preferences_raw != (
-            loaded.enabled,
-            str(loaded.keep_count),
-        )
+        if loaded is None:
+            return 0
+        saved = (loaded.enabled, str(loaded.keep_count))
+        return sum(raw != value for raw, value in zip(self._snapshot_preferences_raw, saved))
 
     @on(Input.Changed, "#settings-snapshot-keep")
     @on(Checkbox.Changed, "#settings-snapshot-enabled")
@@ -9537,11 +9559,6 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (
-            category is SettingsCategoryId.ADVANCED_CONFIG
-            and self._category_has_unsaved_changes(category)
-        ):
-            return "State: Unsaved raw TOML | Draft kept when you leave; use raw editor controls."
-        if (
             category is SettingsCategoryId.APPEARANCE
             and self._category_has_unsaved_changes(category)
         ):
@@ -9563,15 +9580,30 @@ class SettingsScreen(BaseAppScreen):
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
+            # TASK-33002.4: the badge stays (ADR-033) and the line counts the
+            # unsaved fields. "revert with r" rides along where r is the
+            # category's key and the 120-cell row at 211x44 has room: not on
+            # Providers & Models (its scope fills the row) or Speech & TTS
+            # (its leave wording does), nor Image/Video Gen (the badge names
+            # their own Save/Revert).
+            unsaved = (
+                f"{self._persistence_badge(category)} · "
+                f"{self._category_unsaved_count(category)} unsaved"
+            )
+            if category is SettingsCategoryId.ADVANCED_CONFIG:
+                return f"State: {unsaved} | Draft kept when you leave; use raw editor controls."
             if category is SettingsCategoryId.SPEECH_TTS:
-                # task-2708: the generic contract below is false here -- this
-                # category resolves its draft through the leave modal instead
-                # of carrying it across a category switch.
+                # task-2708: this category resolves its draft through the
+                # leave modal instead of carrying it across a category switch.
                 return (
-                    "State: Unsaved changes | Save (s) or Revert (r) — leaving "
-                    "Speech & TTS resolves this draft: save or discard first."
+                    f"State: {unsaved} | Leaving Speech & TTS resolves this "
+                    "draft: save or discard first."
                 )
-            return "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
+            if category in GUIDED_SETTINGS_MUTATION_CATEGORIES and (
+                category is not SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                unsaved += " · revert with r"
+            return f"State: {unsaved} | {self._category_state_scope_text(category)}"
         # task-1717: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
         # but nothing NAMED the model, so users trained on Save/Revert got

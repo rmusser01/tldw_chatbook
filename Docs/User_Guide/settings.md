@@ -74,10 +74,13 @@ Appearance.
 
 ![A draft category with unsaved changes](images/settings/console-draft.svg)
 
-The State banner reads "State: \<badge\> | \<what saving affects\>". Above,
-Console Behavior has an edited field, so it reads "State: Unsaved changes |
-Save (s) or Revert (r) — switching categories keeps this draft." and the
-Scope Inspector's buttons lose their "— no changes" suffix.
+The State banner reads "State: \<badge\> | \<what saving affects\>". Unsaved
+edits keep the badge and add a count. Above, Console Behavior has one edited
+field, so it reads "State: Draft — save with s · 1 unsaved · revert with r |
+Changes affect global Console fallbacks after save." and the Scope
+Inspector's buttons lose their "— no changes" suffix. The count is the number
+of fields that differ from their saved values: it goes up as you edit and down
+when you set a field back by hand.
 
 | Badge | What it means | Categories |
 |---|---|---|
@@ -89,11 +92,15 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
 | **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
 
-On the seven **Draft — save with s** categories the banner switches to "State:
-Unsaved changes | Save (s) or Revert (r) — switching categories keeps this
-draft." **That promise is literal:** no dialog warns you when you leave a
-category or the screen with unsaved edits, because the draft is kept — the
-**\*** in the rail is how you find it again. (Two exceptions: switching the
+On the **Draft — save with s** categories an edit turns the banner into
+"State: Draft — save with s · 2 unsaved · revert with r | \<what saving
+affects\>". Providers & Models leaves out "revert with r", because its scope
+fills the row; Speech & TTS shows its leave rule in place of the scope;
+Image Gen and Video Gen keep "Draft — save/revert below"; Advanced Config
+reads "State: Validate, then Save · 1 unsaved | Draft kept when you leave; use
+raw editor controls.". Switching categories keeps the draft: no dialog warns
+you when you leave a category or the screen with unsaved edits — the **\*** in
+the rail is how you find it again. (Two exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md) — and leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping
 the draft; see that section and Quirks.) A draft that fails
@@ -102,6 +109,22 @@ blocked; with nothing pending, the buttons read **Save (s) — no changes** and
 **Revert (r) — no changes**. Saving is always local: nothing leaves your machine
 unless you explicitly run a network action, such as Manual sync from Overview
 or **Test saved settings** in Web Search.
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.4 —
+2026-09-27: driven live at 211x44 (and once at 235x52) on a scratch llama.cpp
+profile. On Console Behavior, editing Threshold (chars) read "State: Draft —
+save with s · 1 unsaved · revert with r | Changes affect global Console
+fallbacks after save."; editing Max parallel agent runs as well made it "2
+unsaved"; setting each field back by hand took it to "1 unsaved" and then to
+the clean line. Providers & Models read "State: Draft — save with s · 2
+unsaved | Applies to new and unused open chats · used chats keep theirs
+(Console: Alt+M)" in one row after editing Model and Env var; Speech & TTS
+read "State: Draft — save with s · 2 unsaved | Leaving Speech & TTS resolves
+this draft: save or discard first." and dropped to 1 when Organization ID was
+cleared; Advanced Config read "State: Validate, then Save · 1 unsaved | Draft
+kept when you leave; use raw editor controls.". The capture above was
+re-taken the same day. A draft that fails validation still shows "State:
+Needs correction | …"; covered by tests, not driven live.*
 
 ### Web Search: first setup and additional backends
 
@@ -1228,7 +1251,7 @@ preview, and the shipped default, with **Save**, **Reset to default**, and
 
 Advanced Config keeps a raw TOML draft while you switch categories or leave
 Settings. Invalid and empty drafts are retained too. The **\*** marker and
-**Unsaved raw TOML** banner show that the draft has not been saved. Drafts live
+**· 1 unsaved** State banner show that the draft has not been saved. Drafts live
 only in this running app session; closing the app does not save them.
 
 Expand **Raw editing guide** for shortcuts to Providers & Models, Console

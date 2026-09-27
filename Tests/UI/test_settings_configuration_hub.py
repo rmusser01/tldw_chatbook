@@ -12799,9 +12799,12 @@ def test_state_banner_text_has_exactly_one_state_segment():
         assert text.count("State:") == 1, (category, text)
 
 
-def test_state_banner_dirty_branch_keeps_priority():
-    """Unsaved changes outrank the badge -- the dirty banner is the model
-    talking, and its copy must stay the strongest signal."""
+@pytest.mark.asyncio
+@private_profile_test
+async def test_state_banner_dirty_branch_keeps_priority(request):
+    """The dirty line keeps the save-model badge and adds the unsaved count
+    (TASK-33002.4, rewritten on purpose): it used to replace the badge with
+    "Unsaved changes", hiding ADR-033's label exactly when it mattered."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -12809,23 +12812,31 @@ def test_state_banner_dirty_branch_keeps_priority():
     screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
     text = screen._category_state_banner_text(SettingsCategoryId.CONSOLE_BEHAVIOR)
     assert text == (
-        "State: Unsaved changes | Save (s) or Revert (r) — switching "
-        "categories keeps this draft."
+        "State: Draft — save with s · 1 unsaved · revert with r | "
+        "Changes affect global Console fallbacks after save."
     )
 
 
-def test_speech_tts_dirty_banner_names_leave_resolution():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_speech_tts_dirty_banner_names_leave_resolution(request):
     """Speech & TTS resolves its draft through the leave modal (task-2708),
     so its dirty banner must not promise the generic 'switching categories
-    keeps this draft' contract that the other draft categories honor."""
+    keeps this draft' contract. TASK-33002.4 (rewritten on purpose): the
+    leave wording now sits beside the badge and the panel's field count."""
+    from Tests.UI.test_settings_state_line_unsaved_count import _speech_snapshot
+
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen._category_has_unsaved_changes = lambda category: (
         category is SettingsCategoryId.SPEECH_TTS
     )
+    screen._speech_tts_draft_snapshot = _speech_snapshot(
+        speed=1.5, providers={"kokoro": {"max_tokens": 600}}
+    )
     text = screen._category_state_banner_text(SettingsCategoryId.SPEECH_TTS)
     assert text == (
-        "State: Unsaved changes | Save (s) or Revert (r) — leaving "
+        "State: Draft — save with s · 2 unsaved | Leaving "
         "Speech & TTS resolves this draft: save or discard first."
     )
     assert "switching categories keeps this draft" not in text

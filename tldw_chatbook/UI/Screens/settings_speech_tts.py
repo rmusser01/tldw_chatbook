@@ -14,7 +14,7 @@ import stat
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import StrEnum
 from ipaddress import ip_address
@@ -2244,6 +2244,36 @@ def required_openai_plaintext_confirmation_fingerprint(
     ):
         return None
     return openai_destination_fingerprint("openai", endpoint)
+
+
+def count_global_speech_tts_unsaved_fields(
+    original: GlobalSpeechTTSState,
+    draft: GlobalSpeechTTSState,
+) -> int:
+    """Count the defaults and provider fields that differ from saved.
+
+    The field-level twin of the panel's ``has_unsaved_changes``
+    (TASK-33002.4): values compare validated where they validate and raw
+    where they do not, so Input text that parses to the saved value is clean.
+    """
+
+    def differing(left: Mapping[str, object], right: Mapping[str, object]) -> int:
+        return sum(left.get(key) != right.get(key) for key in left.keys() | right.keys())
+
+    try:
+        count = differing(
+            asdict(draft.defaults.snapshot()), asdict(original.defaults.snapshot())
+        ) + (draft.defaults.default_profile_id != original.defaults.default_profile_id)
+    except GlobalSpeechTTSValidationError:
+        count = differing(asdict(draft.defaults), asdict(original.defaults))
+    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+        pair = (draft.providers[provider_id], original.providers[provider_id])
+        try:
+            pair = tuple(_validated_provider_values(provider_id, v) for v in pair)
+        except GlobalSpeechTTSValidationError:
+            pass
+        count += differing(*pair)
+    return count
 
 
 def build_global_speech_tts_save_proposal(
