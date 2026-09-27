@@ -124,7 +124,20 @@ are now multi-paragraph change logs.
 | `Tests/Architecture/test_derived_artifact_checkers.py:77` | edits `rebuilt["summary"]` |
 | `Tests/Architecture/test_diagnostic_path_privacy.py:1004` | builds a `summary` fixture |
 | `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py` | `normalized["summary"]` and `_assert_task_492_summary` (`:1067-1101`, `:2291-2293`); two mutant tests edit `summary` (`:2388-2415`) |
-| `Tests/fixtures/summarization_diagnostic_review.json:4-5` | pins SHAs of the normalized inventory; regenerate |
+| `Tests/fixtures/summarization_diagnostic_review.json:4-5` | pins SHAs of the normalized inventory. **Do not regenerate** (see below) |
+
+**The review fixture is left alone, deliberately.** Its pinned SHAs certify that the inventory
+changed only in the two summarization rows. They are already stale on `origin/dev`: 3 tests in
+`test_summarization_diagnostic_privacy.py` fail there today. Regenerating them would certify the
+whole current inventory as reviewed, which is the trap in lesson TASK-14651. So A preserves the
+exact baseline red set of that file:
+
+- it removes the `summary` masking from the projection;
+- it drops the now-structural `_assert_task_492_summary` and the forged-summary mutant;
+- it re-points the generated-drift mutant at an owner row.
+
+Finding, filed as a follow-up and not fixed here: those mutant tests are **inert negative
+controls**. They pass only because their base test is already red.
 
 None of these files run in preflight or the fast lane, so A's verification runs all of them
 explicitly.
@@ -226,12 +239,30 @@ The fast-lane contract deliberately forbids selection-suppressing flags:
 The four failing tests also share one error with the tests TASK-32049 already records, so
 deselecting them would most likely move the flake, not remove it. So D does not quarantine.
 
-- **Scope:** find and fix the TextArea `text-area--gutter` `COMPONENT_CLASSES` race, whether it
-  lives in the MCP workbench's preview code (a latent production bug) or in the tests' timing.
-  Extend TASK-32049 to cover every test showing this error. Time-box it to one working session.
-- **Evidence:** run `Tests/UI/test_mcp_workbench.py` 20 times on the minimal dependency set,
-  before and after the fix. The failure count goes from N > 0 to 0, and the before-run shows the
-  flake actually reproduces.
+**Mechanism (verified 2026-09-27 against Textual 8.2.8).** It is a latent production bug, not
+test timing:
+
+- `Widget._message_loop_exit` calls `self._detach()` and then `self._component_styles.clear()`.
+- A screen repaint that was already queued then reaches `TextArea.render_lines`. Its first step,
+  `theme.apply_css(self)`, looks up `text-area--gutter` and raises `KeyError`.
+- `_detach()` runs first, so `is_attached` is already `False` whenever the styles are gone.
+
+A deterministic reproduction exists: remove a stock `TextArea` from the DOM, then call
+`render_lines`, and it raises exactly the CI error.
+
+- **Fix:** add a shared `DetachSafeTextArea(TextArea)`
+  (`tldw_chatbook/Widgets/detach_safe_text_area.py`) whose `render_lines` returns blank strips
+  when `not self.is_attached` and otherwise renders exactly like the stock widget. A detached
+  widget is never visible, so blank is correct.
+  - Use it for all five MCP-module TextAreas: `mcp_schema_form.py:244`, `mcp_inspector.py:1614`,
+    and `mcp_profile_form.py:107`, `:132`, `:432`.
+  - Extend TASK-32049 to cover every test showing this error.
+- **Evidence:**
+  - the deterministic test fails with stock `TextArea` (negative control) and passes with the
+    subclass;
+  - an attached-render equality test proves there is no visual change;
+  - `Tests/UI/test_mcp_workbench.py` run 10 times on the minimal dependency set before and after,
+    as supporting evidence only, since the timing-dependent loop may not reproduce.
 - **Fallback if the time box runs out:** bring the owner options, for example moving the file
   into a separate non-required job. That changes the fast-lane target list, so it needs an
   ADR-103 amendment. Don't pick one without the owner.
@@ -281,7 +312,9 @@ Each step is its own PR, and each merges before the next is started:
 ## Verification
 
 - **A:**
-  - the five consumer files above pass;
+  - the consumer test files keep `origin/dev`'s exact baseline red set, compared by node-id
+    set: 3 failures in the summarization privacy file and 2 in
+    `test_persistent_diagnostic_inventory.py`, all present before A, and no new ones;
   - `--write` then check round-trips;
   - a row edit fails with total deltas shown;
   - a schema-3 file is reported (negative control);
