@@ -625,6 +625,7 @@ When the highlighted theme is one of **yours**, three more keys work: **e** —
 **Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
 and **Delete** — remove it. These three, plus **Export**, have no effect on a
 shipped or Textual theme (Clone or New it first to make your own copy).
+While the list has focus the footer lists these keys; **F1** lists them too.
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
 match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
@@ -756,7 +757,11 @@ Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard*
 Settings category while the editor is open, or leave Settings altogether
 (the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
-Changing only the **Name** box counts as an unsaved edit.
+Changing only the **Name** box counts as an unsaved edit. **Discard** also
+undoes the editor's **Try**: the app goes back to the theme it was running
+when you opened the editor. After **Save**, the saved theme stays applied.
+While the editor has unsaved edits, the rail shows **Theme \***, and the Scope
+Inspector's header and its "Unsaved theme changes" row both say so.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
@@ -1166,7 +1171,8 @@ section (its save contract, scope, runtime owner, whether writes are allowed,
 boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
-only while on RAG. Every category has a non-empty help body; one without
+only while on RAG and Theme's list keys (Enter, t, c, n, i, e, r, Del) listed
+for Theme. Every category has a non-empty help body; one without
 category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:

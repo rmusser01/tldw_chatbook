@@ -1512,3 +1512,195 @@ async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, 
         await nav.wait()
         assert switched == []
         assert host.screen is settings and editor.is_modified
+
+
+# -- TASK-33060: Discard undoes the editor's Try on every leave path ---------
+
+
+async def _try_edited_clone(host, pilot):
+    """Clone, edit Primary, press the editor's Try; return (settings, original)."""
+    await _category(host, pilot, "Theme")
+    settings = host.screen
+    original = host.theme
+    settings.query_one("#settings-theme-list").focus()
+    await pilot.press("c")
+    await pilot.pause(0.2)
+    await _edit_primary(host, pilot, "#FF0000")
+    await pilot.click("#settings-theme-apply")  # Try
+    await pilot.pause(0.2)
+    assert host.theme.startswith("custom_") and host.theme != original
+    return settings, original
+
+
+def _active_ids(settings):
+    return [e.id for e in settings.query_one("#settings-theme-picker").entries if e.is_active]
+
+
+async def _discard_prompt(host, pilot):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    await pilot.pause(0.2)
+    assert isinstance(host.screen, ThemeLeaveModal)
+    await pilot.click("#settings-theme-leave-discard")
+    await host.workers.wait_for_complete()
+    await pilot.pause(0.2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["back", "escape"])
+@private_profile_test
+async def test_try_then_discard_on_back_restores_the_pre_editor_theme(request, how):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        if how == "back":
+            await pilot.click("#settings-theme-back")
+        else:
+            settings.set_focus(None)
+            await pilot.press("escape")
+        await _discard_prompt(host, pilot)
+        assert host.theme == original
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_category_switch_restores_the_pre_editor_theme(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await _discard_prompt(host, pilot)
+        assert settings.active_category == SettingsCategoryId.APPEARANCE.value
+        assert host.theme == original
+        await _category(host, pilot, "Theme")
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_navigation_restores_the_pre_editor_theme(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-discard") is True
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_quit_restores_the_pre_editor_theme(request, monkeypatch):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False  # stop the real quit flow right after the screen's answer
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await _discard_prompt(host, pilot)
+        await quit_flow.wait()
+        assert past_screen_check == [True]
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_save_keeps_the_saved_theme(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        editor = settings.query_one("#settings-theme-editor")
+        name = editor.current_theme_name
+        await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        assert host.theme == name
+        assert _active_ids(settings) == [name]
+        # A later clean Back has nothing to undo.
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+
+
+# -- TASK-33063: the Scope Inspector agrees with the editor's unsaved state --
+
+
+def _theme_dirty_surfaces(settings):
+    from textual.widgets import Button, Static
+
+    header = str(settings.query_one("#settings-selected-category-draft-status", Static).render())
+    row = str(settings.query_one("#settings-theme-unsaved-note", Static).render())
+    rail = str(settings.query_one("#settings-category-theme", Button).label)
+    return header, row, rail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolve", ["settings-theme-leave-discard", "settings-theme-leave-save"])
+@private_profile_test
+async def test_inspector_agrees_with_theme_editor_unsaved_state(request, resolve):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.pause(0.2)
+        assert _theme_dirty_surfaces(settings) == (
+            "Unsaved changes", "Unsaved theme changes: Yes", "> Theme *",
+        )
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        await pilot.click(f"#{resolve}")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.3)
+        assert _theme_dirty_surfaces(settings) == (
+            "No unsaved changes", "Unsaved theme changes: No", "> Theme",
+        )
+
+
+# -- TASK-33062: the picker's keys are discoverable; no stale "Apply" copy ---
+
+
+_THEME_KEYS = ("Enter", "t", "c", "n", "i", "e", "r", "Del")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_footer_lists_the_picker_keys_while_the_list_has_focus(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.pause(0.1)
+        keys = [key for key, _ in settings._footer_shortcut_entries()]
+        assert all(key in keys for key in _THEME_KEYS)
+        settings.query_one("#settings-theme-filter").focus()  # c/t/... type here
+        await pilot.pause(0.1)
+        keys = [key for key, _ in settings._footer_shortcut_entries()]
+        assert not any(key in keys for key in _THEME_KEYS)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_f1_help_lists_the_picker_keys_and_no_apply_button(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        state = host.screen._workbench_help_state(SettingsCategoryId.THEME)
+        assert [key for key, _ in state.shortcuts] == list(_THEME_KEYS)
+        notes = " ".join(state.notes)
+        assert "No shortcut keys" not in notes
+        assert "theme list has focus" in notes
+        assert "Apply" not in notes
+        assert "Use/Try switch themes; the editor's Save stores a theme file" in notes

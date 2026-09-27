@@ -217,6 +217,10 @@ class SettingsThemeEditor(Vertical):
         self._loaded_catalog_theme: str | None = None
         # What the header says the editor was opened from (ThemePane sets it).
         self._editing_context: tuple[str, str] | None = None
+        # TASK-33060: (theme before this session's first Try, theme Try
+        # applied last); Discard restores the first while the app still
+        # runs the second.
+        self._try_undo: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -366,8 +370,13 @@ class SettingsThemeEditor(Vertical):
             return
 
     def set_editing_context(self, source: str, mode: Literal["clone", "new", "edit"]) -> None:
-        """Say in the header what the editor was opened from (TASK-32948)."""
+        """Say in the header what the editor was opened from (TASK-32948).
+
+        The pane calls this once per open, so it also starts a new editing
+        session: an earlier session's Try is no longer Discard's to undo.
+        """
         self._editing_context = (source, mode)
+        self._try_undo = None
         self._render_header()
 
     def watch_current_theme_name(self) -> None:
@@ -803,7 +812,9 @@ class SettingsThemeEditor(Vertical):
                     theme_dict=self._theme_dict(),
                 )
             self.app.register_theme(theme)
+            before = self._try_undo[0] if self._try_undo else str(self.app.theme)
             self.app.theme = theme.name
+            self._try_undo = (before, theme.name)
             self.app.notify(
                 f"Theme '{escape_markup(self.current_theme_name)}' applied", severity="information"
             )
@@ -924,6 +935,7 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Theme '{escape_markup(theme_name)}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
+            self._try_undo = None  # the saved theme stays applied
             if self.current_theme_name != theme_name:
                 # Save as: the editor now edits the new file. Name first, so
                 # the Name box's Changed echo is a no-op.
@@ -970,6 +982,25 @@ class SettingsThemeEditor(Vertical):
             # Same name: Textual's theme watcher does not re-fire, so the
             # re-registered palette needs an explicit CSS refresh.
             self.app.refresh_css(animate=False)
+
+    def discard_try(self) -> None:
+        """Discard: put back the theme that ran before this session's Try.
+
+        TASK-33060: Try applies the working palette app-wide, so every leave
+        prompt's Discard calls this. A no-op without a Try, or once the app
+        has moved off the tried theme (the user chose another since).
+        """
+        undo, self._try_undo = self._try_undo, None
+        if undo is None or str(self.app.theme) != undo[1]:
+            return
+        try:
+            self.app.theme = undo[0]
+        except Exception as exc:  # noqa: BLE001 - e.g. the old theme was deleted
+            logger.warning(f"Could not restore the theme after Discard: {exc}")
+            self.app.notify(
+                f"Could not restore {escape_markup(display_name(undo[0]))}: {escape_markup(exc)}",
+                severity="error",
+            )
 
     def _snapshot_variables_palette(self) -> None:
         self._variables_palette = (dict(self.current_theme_data), bool(self.is_dark_theme))
