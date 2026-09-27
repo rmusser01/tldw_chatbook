@@ -195,6 +195,68 @@ def test_pristine_chat_created_before_make_default_is_skipped():
     assert _ensure(console) == before
 
 
+def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_from():
+    """AC#7 in the Make-default write-then-publish window.
+
+    ``apply_console_default_intent`` rewrites the file and reloads the config
+    cache on a worker; ``console_new_chat_default_generation`` is bumped later,
+    on the UI thread, when ChatScreen accepts the publication. A render in
+    between reads the new default with the old generation. The chat that
+    Make default was pressed on is outside that window by construction: both
+    surfaces live-commit their draft first (``commit_console_settings_live``
+    stamps ``source="user"``), so it is no longer pristine. An inactive chat is
+    never re-derived; only a switch to it inside the window could be.
+    """
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import (
+        QUICK_MODEL_DEFAULT_FIELDS,
+        ConsoleSettingsAction,
+        ConsoleSettingsDraftState,
+        ConsoleSettingsSubmission,
+        ConsoleSettingsSurface,
+    )
+
+    config = _config("llama_cpp", "old-default")
+    app, console, store = _console(config)
+    background = _pristine(store, blank_console_session_settings(config))
+    origin = _pristine(store, blank_console_session_settings(config))
+    assert store.active_session_id == origin.id
+    committed = store.commit_console_settings_live(
+        ConsoleSettingsSubmission(
+            submission_id="make-default-1",
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
+            origin=store.capture_console_settings_origin(origin.id),
+            draft=ConsoleSettingsDraftState(
+                settings=replace(origin.settings, model="made-default"),
+                context_policy_overrides=ConsoleContextPolicyOverrides(),
+                field_drafts=(),
+                model_drafts=(),
+                endpoint_draft=None,
+            ),
+            user_display_name_override=None,
+            default_field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+        )
+    ).settings
+    assert origin.has_user_work is True
+    # The worker has written and reloaded the config; the UI thread has not
+    # accepted the publication, so the generation is still the old one.
+    app.app_config = _config("llama_cpp", "made-default", temperature=0.4)
+    assert app.console_new_chat_default_generation == 0
+
+    assert _ensure(console) == committed
+    assert store.session_settings(origin.id) == committed
+    assert store.session_settings(background.id) == blank_console_session_settings(
+        config
+    ), "an inactive chat is not re-derived"
+
+    app.console_new_chat_default_generation = 1  # the publication lands
+    store.switch_session(background.id)
+    assert _ensure(console).model == "old-default"
+
+
 def test_persona_chat_keeps_its_persona_when_it_converges():
     """AC#8: provider defaults change; Persona identity and prompt do not."""
     config = _config("llama_cpp", "new-model")

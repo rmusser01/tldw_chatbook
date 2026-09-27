@@ -966,6 +966,63 @@ async def test_saving_setup_exit_moves_an_untouched_console_chat_to_setup_choice
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_handoff(
+    monkeypatch, request
+):
+    """AC#3 in the order the live app runs on a fresh profile.
+
+    Start chatting stages the first-chat handoff at the config generation its
+    commit published. Console's first mount then writes the missing rail
+    scope to the config file (``_ensure_console_rail_scope_seed``) before
+    ``on_mount`` consumes the handoff, so the generation fence releases it
+    and the handoff's own target is never created (tmux capture, 2026-09-26,
+    on BASE and HEAD alike). The untouched chat must still show setup's pair.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.config import save_setting_to_cli_config
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app_instance, console = _console_on_template_defaults(monkeypatch)
+    container = SetupWizardContainer(app_instance)
+    container._dismiss_screen = MagicMock()
+    assert container.stage_provider_setup(
+        _typed_provider_draft(
+            provider="llama_cpp",
+            endpoint="http://127.0.0.1:8080",
+            source="none",
+            value="",
+        )
+    )
+    assert await container.commit_staged_provider_setup("setup-model.gguf")
+    await container._finalize(TAB_CHAT)
+    claim = app_instance.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    intent = claim.value
+    assert app_instance.pending_handoffs.release(claim)
+
+    assert save_setting_to_cli_config(
+        "console.rail_state",
+        "console_rail_state:global:shared-layout-v1",
+        {"left_open": True},
+    )
+
+    assert not console._session.consume_pending_console_first_chat_intent(
+        defer_presentation=True
+    )
+    store = console._session._ensure_console_chat_store()
+    assert all(session.id != intent.session_id for session in store.sessions())
+    shown = console._session._ensure_active_console_session_settings()
+    assert (provider_config_key(shown.provider), shown.model) == (
+        "llama_cpp",
+        "setup-model.gguf",
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_skip_leaves_an_untouched_console_chat_on_the_saved_defaults(
     monkeypatch, request
 ):
