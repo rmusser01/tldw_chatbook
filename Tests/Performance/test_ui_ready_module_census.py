@@ -147,7 +147,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Snapshot refreshed via ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
 # TASK-32856: Media_Generation core adds 2 ui-ready residents (measured
 # 1030); limit = measured + the documented +/-1 warm-boot wobble.
-MAX_TLDW_MODULES_AT_UI_READY = 1031
+# ADR-179 (PR #2828): tldw_chatbook.provider_registry is resident at boot
+# (config.py needs CLOUD_PROVIDER_CONFIG_KEYS at import; stdlib-only leaf).
+# hosted_provider_engine was deferred off this path in the same PR; dev
+# measured 1031, this branch 1032. Owner-approved ADR-097 exception.
+MAX_TLDW_MODULES_AT_UI_READY = 1032
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
