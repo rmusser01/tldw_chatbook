@@ -20,7 +20,7 @@ from tldw_chatbook.app import TldwCli  # noqa: I001 -- the fence must import fir
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 from textual.css.query import QueryError
@@ -894,6 +894,15 @@ async def _remove_promoted_screen_caller(app, caller: Any) -> None:
     await caller.remove()
 
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Personal_Context.interview_launch import (
+        ProfileInterviewLaunchRequest,
+    )
+    from tldw_chatbook.UI.Screens.profile_interview_screen import (
+        ProfileInterviewScreen,
+    )
+
+
 # --- Personal Context interview and first-link launchers (cluster K3) ---
 
 
@@ -906,8 +915,29 @@ def prepare_personal_context_interview_request(
     local_workspace_id: str | None = None,
     workspace_label: str = "",
     source: str | None = None,
-):
-    """Resolve one canonical scope without touching workspace ownership."""
+) -> "ProfileInterviewLaunchRequest":
+    """Resolve one canonical scope without touching workspace ownership.
+
+    Args:
+        app: The running TldwCli.
+        kind: ``"personal"`` (the global scope) or ``"workspace"``.
+        mode: ``"fixed"`` or ``"adaptive"`` interview.
+        scope_id: An existing scope to interview; it must match ``kind``.
+        local_workspace_id: The workspace to bind (``kind="workspace"``
+            without ``scope_id``); its scope is created if missing.
+        workspace_label: Label for a newly created workspace scope.
+        source: Where the launch came from: ``None``, ``"setup"``,
+            ``"workspace"`` or ``"settings"``.
+
+    Returns:
+        The launch request naming the resolved scope.
+
+    Raises:
+        ValueError: For an unknown kind, mode or source; when Personal
+            Context is locked or removed; when ``scope_id`` does not match
+            ``kind``; when the global scope is missing; or when a workspace
+            interview has no local workspace.
+    """
 
     from tldw_profile_core import ScopeKind
 
@@ -966,8 +996,18 @@ def prepare_personal_context_interview_request(
     )
 
 
-def build_personal_context_interview_screen(app, request):
-    """Build a fresh profile interview screen for one resolved request."""
+def build_personal_context_interview_screen(
+    app: TldwCli, request: "ProfileInterviewLaunchRequest"
+) -> "ProfileInterviewScreen":
+    """Build a fresh profile interview screen for one resolved request.
+
+    Args:
+        app: The running TldwCli.
+        request: A request from ``prepare_personal_context_interview_request``.
+
+    Returns:
+        The new, not yet pushed, interview screen.
+    """
 
     from .Personal_Context.interview_launch import build_profile_interview_screen
 
