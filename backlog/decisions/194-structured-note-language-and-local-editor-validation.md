@@ -1,7 +1,7 @@
 # ADR-194: Portable note language and local structured editing
 
 Date: 2026-09-27
-Status: Proposed; awaiting written-spec approval
+Status: Accepted by the user with written-spec approval on 2026-09-27
 Task: [TASK-33096](../tasks/task-33096%20-%20Design-structured-document-validation-and-formatting-across-Chatbook-and-server-Notes.md)
 Spec: [Structured document editing](../../Docs/superpowers/specs/2026-09-27-structured-document-editing-design.md)
 Extends: ADR-027, ADR-029, ADR-073 without changing their save-authority boundaries
@@ -65,5 +65,5 @@ gates; dependency selection follows those experiments. This ADR does not approve
 new editing surfaces, external commands, or a wholesale editor replacement.
 
 The complete language rules, bounds, compatibility behavior, and acceptance matrix
-are in the linked spec. This proposed record must receive written-spec approval
-before implementation planning; no accepted ADR is superseded by this draft.
+are in the linked spec. Written-spec approval was received on 2026-09-27;
+implementation planning may proceed. No existing accepted ADR is superseded.
