@@ -23,7 +23,7 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Tuple
+from typing import Any, NamedTuple
 
 from loguru import logger
 from textual.worker import NoActiveWorker, get_current_worker
@@ -61,7 +61,7 @@ def _character_backup_json_default(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-def serialize_character_cards_for_backup(characters: List[Dict[str, Any]]) -> str:
+def serialize_character_cards_for_backup(characters: list[dict[str, Any]]) -> str:
     """Serialize character-card rows into the JSON backup dump (task-15769).
 
     The raw `image` BLOB (``bytes``) is replaced by a plain-base64
@@ -71,7 +71,7 @@ def serialize_character_cards_for_backup(characters: List[Dict[str, Any]]) -> st
     chain (`parse_v1_card` -> `import_and_save_character_from_file*`)
     b64decodes the raw string, so a prefixed value would not round-trip.
     """
-    serializable: List[Dict[str, Any]] = []
+    serializable: list[dict[str, Any]] = []
     for card in characters:
         card = dict(card)
         image = card.pop("image", None)
@@ -142,7 +142,7 @@ def build_backup_manifest_publication(
 
 def write_backup_manifest(
     timestamp: str,
-    backed_up: Tuple[Tuple[str, Path], ...],
+    backed_up: tuple[tuple[str, Path], ...],
     publication: BackupManifestPublication,
 ) -> BackupManifestPublication:
     """Serialize and sync a staged manifest without publishing it."""
