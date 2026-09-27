@@ -1103,7 +1103,9 @@ def test_adapter_save_sections_batches_sections(monkeypatch):
     ]
 
 
-def test_settings_console_default_max_tokens_rejects_raw_zero():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_console_default_max_tokens_rejects_raw_zero(request):
     screen = SettingsScreen(_build_test_app())
 
     # TASK-33002.1: the error names the field by its table label.
@@ -5079,7 +5081,8 @@ async def test_settings_category_selection_updates_detail_and_inspector():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_inspector_explains_visible_controls():
+@private_profile_test
+async def test_settings_console_behavior_inspector_explains_visible_controls(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -7255,7 +7258,9 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         ),
     ),
 )
+@private_profile_test
 async def test_settings_console_behavior_rejects_invalid_global_defaults(
+    request,
     monkeypatch,
     field_id,
     handler_name,
@@ -10664,7 +10669,10 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_state():
+@private_profile_test
+async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_state(
+    request,
+):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}

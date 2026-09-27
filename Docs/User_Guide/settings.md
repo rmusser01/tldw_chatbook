@@ -270,9 +270,11 @@ budget showed "Purpose: Tokens reserved for thinking when Thinking is on." and
 "Validation: whole number, 1,024 or more; blank inherits the default" in the
 inspector; the Reasoning effort list for llama.cpp offered none, low, medium,
 high and xhigh (no "minimal", which llama.cpp's request drops); **/**
-"Thinking budget" found the field in both categories. The old names (Think
-budget, Response max tokens) stay in the search index as aliases; not driven
-live.*
+"Thinking budget" reported 2 matches, "Providers & Models › Thinking budget"
+and "Next: Console Behavior › Thinking budget", and Enter landed on the
+Providers & Models field (Enter opens only the first match). The old names
+(Think budget, Response max tokens) stay in the search index as aliases; not
+driven live.*
 
 #### QwenCloud
 
