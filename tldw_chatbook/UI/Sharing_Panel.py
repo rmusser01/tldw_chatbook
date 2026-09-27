@@ -305,9 +305,15 @@ class SharingPanel(ScrollableContainer):
         self, title: str, payload: Mapping[str, Any] | list[Any]
     ) -> None:
         formatted_payload = json.dumps(payload, indent=2, sort_keys=True, default=str)
-        self.query_one("#sharing-status", Static).update(
-            f"{title}\n{formatted_payload}"
-        )
+        self._update_status_if_mounted(f"{title}\n{formatted_payload}")
+
+    def _update_status_if_mounted(self, message: str) -> None:
+        """Ignore a late result when the panel or its status widget is gone."""
+        if not self.is_mounted:
+            return
+        for status in self.query("#sharing-status").results(Static):
+            status.update(message)
+            break
 
     async def _run_operation(
         self, title: str, operation_name: str, **kwargs: Any
@@ -324,7 +330,7 @@ class SharingPanel(ScrollableContainer):
             logger.opt(exception=True).error(
                 f"Server Sharing operation failed: {operation_name}: {exc}"
             )
-            self.query_one("#sharing-status", Static).update(f"Error: {exc}")
+            self._update_status_if_mounted(f"Error: {exc}")
             self.notify(f"Server Sharing operation failed: {exc}", severity="error")
 
     def notify(self, message: str, *, severity: str = "information") -> None:
@@ -546,10 +552,12 @@ class SharingPanel(ScrollableContainer):
         try:
             identity = await self._clone_identity()
         except (ValueError, ServerContextError) as exc:
-            self.query_one("#sharing-status", Static).update(str(exc))
+            self._update_status_if_mounted(str(exc))
+            return
+        if not self.is_mounted:
             return
         self._clone_request_keys.pop(identity, None)
-        self.query_one("#sharing-status", Static).update(
+        self._update_status_if_mounted(
             "The next clone will create another copy. Earlier requests remain on the server."
         )
 
@@ -563,11 +571,13 @@ class SharingPanel(ScrollableContainer):
         try:
             identity = await self._clone_identity()
         except (ValueError, ServerContextError) as exc:
-            self.query_one("#sharing-status", Static).update(str(exc))
+            self._update_status_if_mounted(str(exc))
+            return
+        if not self.is_mounted:
             return
         if identity not in self._clone_request_keys:
             if len(self._clone_request_keys) >= MAX_RETAINED_CLONE_REQUESTS:
-                self.query_one("#sharing-status", Static).update(
+                self._update_status_if_mounted(
                     "Clone request limit reached. Existing copies can still be retried. "
                     "Select an earlier request and use Start another clone to replace it."
                 )

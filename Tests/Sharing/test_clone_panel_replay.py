@@ -1,5 +1,6 @@
 """Keep the real Sharing panel's clone admission identity across uncertain replies."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,50 @@ from Tests.tldw_api.test_sharing_release_contracts import http_client, operation
 from tldw_chatbook.Sharing_Interop.server_sharing_service import ServerSharingService
 from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
+
+
+@pytest.mark.asyncio
+async def test_late_clone_authority_result_does_not_update_removed_panel(monkeypatch):
+    owner = SimpleNamespace(current_runtime_backend="server")
+    panel = SharingPanel(owner)
+
+    async def rejected_identity():
+        await asyncio.sleep(0)
+        raise ValueError("No active account")
+
+    monkeypatch.setattr(panel, "_clone_identity", rejected_identity)
+    await panel.clone_shared_workspace()
+    await panel.start_another_clone(SimpleNamespace(stop=lambda: None))
+
+    identity = ("server-a", "https://server-a", "alice", 7, "Copy")
+    panel._clone_request_keys[identity] = "existing-key"
+
+    async def resolved_identity():
+        await asyncio.sleep(0)
+        return identity
+
+    monkeypatch.setattr(panel, "_clone_identity", resolved_identity)
+    await panel.start_another_clone(SimpleNamespace(stop=lambda: None))
+    await panel.clone_shared_workspace()
+    assert panel._clone_request_keys == {identity: "existing-key"}
+
+
+@pytest.mark.asyncio
+async def test_late_sharing_result_does_not_update_removed_panel():
+    calls = []
+
+    async def list_shares(*, mode):
+        await asyncio.sleep(0)
+        calls.append(mode)
+        return {"shares": []}
+
+    owner = SimpleNamespace(
+        current_runtime_backend="server",
+        sharing_scope_service=SimpleNamespace(list_workspace_shares=list_shares),
+    )
+    panel = SharingPanel(owner)
+    await panel._run_operation("Workspace shares", "list_workspace_shares")
+    assert calls == ["server"]
 
 
 @pytest.mark.asyncio
