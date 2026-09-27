@@ -124,6 +124,17 @@ def test_list_directory_shows_dirs_first_then_files(tmp_path):
     assert lines[1] == "zeta.txt"
 
 
+def test_list_directory_skips_a_symlink_loop_entry(tmp_path):
+    """Python <= 3.12 raises RuntimeError (not OSError) resolving a symlink
+    loop; one such entry must be skipped, not fail the whole listing."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "ok.txt").write_text("hi")
+    (ws / "loop-a").symlink_to(ws / "loop-b")
+    (ws / "loop-b").symlink_to(ws / "loop-a")
+    assert list_directory(".", workspace_root=ws).splitlines() == ["ok.txt"]
+
+
 def test_list_directory_caps_entries(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
