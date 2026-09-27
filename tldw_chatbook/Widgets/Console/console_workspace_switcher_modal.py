@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Mapping
 
 from rich.text import Text
 from textual import on
@@ -68,6 +68,9 @@ class ConsoleWorkspaceSwitcherModal(
         workspaces: Workspace records available for selection in the modal.
         active_workspace_id: Workspace id that should render as the current
             non-actionable row, or ``None`` when no workspace is active.
+        ssh_status_chips: Optional ``{workspace_id: chip}`` display suffixes
+            (Task 20) — the worst cached status over each workspace's
+            ssh-filesystem bindings; workspaces without one stay clean.
     """
 
     DEFAULT_CSS = """
@@ -154,11 +157,17 @@ class ConsoleWorkspaceSwitcherModal(
         workspaces: tuple[WorkspaceRecord, ...],
         active_workspace_id: str | None,
         show_archived: bool = False,
+        ssh_status_chips: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__()
         self._workspaces = workspaces
         self._active_workspace_id = active_workspace_id
         self._show_archived = show_archived
+        # Task 20 (SSH bindings): optional {workspace_id: chip} pairs —
+        # the worst cached status of the workspace's ssh bindings ("ssh:
+        # unreachable (...)"), appended to the row's display name like
+        # the assistant-default suffix. Listing/labeling only.
+        self._ssh_status_chips = dict(ssh_status_chips or {})
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-workspace-switcher-modal"):
@@ -193,6 +202,13 @@ class ConsoleWorkspaceSwitcherModal(
                         display_name += workspace_persona_label_suffix(
                             self.app, workspace
                         )
+                        # Task 20: a degraded ssh binding warns on the row
+                        # (worst cached state); healthy rows stay clean.
+                        ssh_chip = self._ssh_status_chips.get(
+                            str(workspace.workspace_id)
+                        )
+                        if ssh_chip:
+                            display_name += f" · {ssh_chip}"
                         if workspace.archived:
                             yield Static(
                                 f"(archived) {display_name}",
