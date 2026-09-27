@@ -81,6 +81,12 @@ async def _picker_app(size=(160, 45), list_user_names=None):
     return app, picker
 
 
+async def _landed(app, pilot):
+    """Let the picker's folder scan (a thread worker, TASK-32957) land."""
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 def _option_ids(picker):
     lst = picker.query_one("#settings-theme-list", OptionList)
     return [lst.get_option_at_index(i).id for i in range(lst.option_count)]
@@ -91,7 +97,7 @@ def _option_ids(picker):
 async def test_rows_show_markers_as_words(request, config_writes):
     app, picker = await _picker_app()
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         lst = picker.query_one("#settings-theme-list", OptionList)
         active = next(lst.get_option_at_index(i) for i in range(lst.option_count) if lst.get_option_at_index(i).id == app.theme)
         assert "active" in str(active.prompt) and "launch" in str(active.prompt)
@@ -102,7 +108,7 @@ async def test_rows_show_markers_as_words(request, config_writes):
 async def test_filter_narrows_and_enter_uses(request, config_writes):
     app, picker = await _picker_app()
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         picker.query_one("#settings-theme-filter").focus()
         await pilot.press(*"apricot")
         await pilot.pause()
@@ -408,7 +414,7 @@ async def test_yours_actions_only_show_for_your_themes(request, config_writes):
     app, picker = await _picker_app(list_user_names=lambda: {"mine"})
     app.register_theme(Theme(name="mine", primary="#336699"))
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.highlighted = lst.get_option_index("mine")
         await pilot.pause()
@@ -477,7 +483,7 @@ async def test_pause_row_disables_file_actions(request, config_writes):
 
     app, picker = await _picker_app(list_user_names=raiser)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         assert picker.files_available is False
         lst = picker.query_one("#settings-theme-list", OptionList)
         labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
@@ -501,7 +507,7 @@ async def test_empty_your_themes_says_none_yet(request, config_writes):
     "(none yet)" row (the retired editor tree used to own this)."""
     app, picker = await _picker_app(list_user_names=set)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         lst = picker.query_one("#settings-theme-list", OptionList)
         prompts = [str(lst.get_option_at_index(i).prompt) for i in range(3)]
         assert prompts[:2] == ["YOUR THEMES", "(none yet)"]
@@ -528,10 +534,10 @@ async def test_pause_keeps_last_known_your_themes(request, config_writes):
     app, picker = await _picker_app(list_user_names=lister)
     app.register_theme(Theme(name="mine", primary="#336699"))
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         state["paused"] = True
         picker.refresh_catalog()
-        await pilot.pause()
+        await _landed(app, pilot)
         assert picker.files_available is False
         origin = {e.id: e.origin for e in picker.entries}["mine"]
         assert origin == "yours"
@@ -548,7 +554,7 @@ async def test_lister_oserror_reads_as_no_user_themes(request, config_writes):
 
     app, picker = await _picker_app(list_user_names=broken)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         assert picker.files_available is True
         assert not [e for e in picker.entries if e.origin == "yours"]
         assert picker.entries  # the catalog still lists
@@ -583,7 +589,7 @@ async def test_unreadable_file_is_listed_and_only_delete_works(request, config_w
     for theme in ALL_THEMES:
         app.register_theme(theme)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         before = app.theme
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.focus()
@@ -637,7 +643,7 @@ async def test_unreadable_error_with_markup_renders_its_tooltip_literally(reques
     for theme in ALL_THEMES:
         app.register_theme(theme)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         lst = picker.query_one("#settings-theme-list", OptionList)
         lst.highlighted = lst.get_option_index("unreadable:a")
         await pilot.pause()
@@ -667,7 +673,7 @@ async def test_import_button_and_i_key_post_import_requested(request, config_wri
     picker = ThemePicker(id="settings-theme-picker")
     app = _capture_app(picker)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         button = picker.query_one("#settings-theme-picker-import", Button)
         assert str(button.label) == "Import…"
         assert button.parent is picker.query_one("#settings-theme-picker-new").parent
@@ -687,7 +693,7 @@ async def test_import_is_disabled_while_paused(request, config_writes):
     picker = ThemePicker(id="settings-theme-picker", list_themes=_names(raiser))
     app = _capture_app(picker)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         button = picker.query_one("#settings-theme-picker-import", Button)
         assert button.disabled
         assert button.tooltip == THEMES_UNAVAILABLE_LABEL
@@ -737,9 +743,10 @@ async def test_one_listing_call_per_refresh(request, config_writes):
     for theme in ALL_THEMES:
         app.register_theme(theme)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         calls.clear()
         picker.refresh_catalog()
+        await app.workers.wait_for_complete()  # TASK-32957: the scan is a worker
         assert len(calls) == 1
         assert "unreadable:broken" in _option_ids(picker)
 
@@ -800,7 +807,7 @@ async def test_launch_missing_notice_strips_control_characters(request, monkeypa
     monkeypatch.setattr(tc, "current_launch_default", lambda: hostile)
     app, picker = await _picker_app()
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         notice = picker.query_one("#settings-theme-launch-missing")
         assert notice.display
         text = str(notice.render())
@@ -865,7 +872,7 @@ async def test_theme_switches_reuse_the_last_listing(request, config_writes):
     for theme in ALL_THEMES:
         app.register_theme(theme)
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause()
+        await _landed(app, pilot)
         calls.clear()
         app.theme = "nord"  # e.g. the palette
         await pilot.pause()
@@ -877,6 +884,7 @@ async def test_theme_switches_reuse_the_last_listing(request, config_writes):
         await pilot.pause()
         assert calls == []
         picker.refresh_catalog()  # an explicit refresh (after a file action) still scans
+        await app.workers.wait_for_complete()
         assert calls == [1]
 
 
@@ -900,3 +908,282 @@ async def test_revert_label_strips_control_characters_from_the_launch_default(
         label = str(picker.query_one("#settings-theme-revert", Button).label)
         assert "(launch: Gone?]52;C;Ea==?)" in label, label
         assert label.isprintable(), repr(label)
+
+
+# -- TASK-32957: the folder scan runs off the UI thread ----------------------
+
+
+def _gated_lister(results):
+    """A lister whose calls return ``results`` in order; a result that is a
+    ``threading.Event`` blocks that call until the test sets it, then returns
+    the next result (or raises it, for an exception)."""
+    import threading
+
+    queue = list(results)
+    lock = threading.Lock()
+    returned = []
+
+    def lister():
+        with lock:
+            item = queue.pop(0)
+            if isinstance(item, threading.Event):
+                gate, item = item, queue.pop(0)
+            else:
+                gate = None
+        if gate is not None:
+            assert gate.wait(5), "test never released the gated scan"
+        returned.append(item)
+        if isinstance(item, Exception):
+            raise item
+        return item, {}
+
+    lister.returned = returned
+    return lister
+
+
+def _yours(picker):
+    return {e.id for e in picker.entries if e.origin == "yours"}
+
+
+async def _until(pilot, predicate):
+    for _ in range(100):
+        if predicate():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError("condition never held")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_first_open_shows_loading_row_and_stays_responsive(request, config_writes):
+    """AC#2: with the first scan in flight, the registered themes are listed,
+    YOUR THEMES says it's loading, and keys still move the highlight."""
+    import threading
+
+    from tldw_chatbook.Widgets.settings_theme_picker import THEMES_LOADING_LABEL
+
+    gate = threading.Event()
+    lister = _gated_lister([gate, {"mine"}])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_LOADING_LABEL in labels
+        assert "nord" in _option_ids(picker) and not _yours(picker)
+        lst.focus()
+        before = picker.highlighted_id
+        await pilot.press("down")
+        await pilot.pause()
+        assert picker.highlighted_id != before  # the UI thread is free
+        gate.set()
+        await _landed(app, pilot)
+        await _until(pilot, lambda: _yours(picker) == {"mine"})
+        labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_LOADING_LABEL not in labels
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_stale_scan_never_overwrites_a_newer_listing(request, config_writes):
+    """AC#3: a slow scan that lands after a newer one (e.g. the rescan after
+    a file action) is dropped, and the newer scan's highlight wins."""
+    import threading
+
+    gate = threading.Event()
+    lister = _gated_lister([{"mine"}, gate, {"old"}, {"new"}])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    for name in ("mine", "old", "new"):
+        app.register_theme(Theme(name=name, primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        assert _yours(picker) == {"mine"}
+        picker.refresh_catalog(highlight="old")  # blocks in the worker
+        await pilot.pause()
+        # The last good listing stays up while the scan is in flight.
+        assert _yours(picker) == {"mine"}
+        picker.refresh_catalog(highlight="new")  # a newer scan lands first
+        await _until(pilot, lambda: _yours(picker) == {"new"})
+        assert picker.highlighted_id == "new"
+        gate.set()  # now the stale scan finishes
+        await _until(pilot, lambda: len(lister.returned) == 3)
+        for _ in range(10):
+            await pilot.pause(0.02)
+        assert _yours(picker) == {"new"}
+        assert picker.highlighted_id == "new"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_pause_during_background_scan_shows_unavailable(request, config_writes):
+    """AC#4: RecoveryRequired raised inside the worker still yields the
+    "Theme files unavailable" row, keeps your themes' origin from the last
+    good listing, and blocks file actions."""
+    import threading
+
+    gate = threading.Event()
+    lister = _gated_lister([{"mine"}, gate, RecoveryRequired("x")])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        picker.refresh_catalog(highlight="mine")
+        await pilot.pause()
+        assert picker.files_available is True  # in flight: last good state
+        gate.set()
+        await _landed(app, pilot)
+        await _until(pilot, lambda: picker.files_available is False)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        assert THEMES_UNAVAILABLE_LABEL in labels
+        assert {e.id: e.origin for e in picker.entries}["mine"] == "yours"
+        assert picker.highlighted_id == "mine"
+        for button_id in _FILE_ACTION_BUTTON_IDS:
+            assert picker.query_one(button_id, Button).disabled, button_id
+        assert picker.query_one("#settings-theme-picker-import", Button).disabled
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_move_during_the_first_scan_is_kept_when_it_lands(request, config_writes):
+    """Qodo 4116061873: the open's highlight (the active theme) must not pull
+    the cursor back once the user has moved it while the scan was in flight."""
+    import threading
+
+    gate = threading.Event()
+    lister = _gated_lister([gate, {"mine"}])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="mine", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        start = picker.highlighted_id
+        await pilot.press("down")
+        await pilot.pause()
+        moved = picker.highlighted_id
+        assert moved != start
+        gate.set()
+        await _landed(app, pilot)
+        await _until(pilot, lambda: _yours(picker) == {"mine"})
+        await pilot.pause()
+        assert picker.highlighted_id == moved
+        assert lst.get_option_at_index(lst.highlighted).id == moved
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_request_still_lands_when_the_user_did_not_move(request, config_writes):
+    """The other half of 4116061873: a caller's highlight for a theme the
+    in-flight scan will list (e.g. after Import) is applied when it lands."""
+    import threading
+
+    gate = threading.Event()
+    lister = _gated_lister([set(), gate, {"fresh"}])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    app.register_theme(Theme(name="fresh", primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        picker.refresh_catalog(highlight="fresh")
+        await pilot.pause()
+        gate.set()
+        await _landed(app, pilot)
+        await _until(pilot, lambda: _yours(picker) == {"fresh"})
+        assert picker.highlighted_id == "fresh"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unexpected_scan_failure_keeps_the_last_listing(request, config_writes):
+    """Qodo 4116061876 + 4116061867: a non-OSError failure keeps the last good
+    listing (it is not "no user themes"), and its log names the scan and the
+    frames but never the exception's text (R16: it may carry a path)."""
+    from loguru import logger
+
+    records = []
+    sink = logger.add(lambda message: records.append(str(message)), level="ERROR")
+    try:
+        lister = _gated_lister([{"mine"}, ValueError("/secret/themes/mine.toml")])
+        picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+        app = _app(picker)
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.register_theme(Theme(name="mine", primary="#336699"))
+        async with app.run_test(size=(160, 45)) as pilot:
+            await _landed(app, pilot)
+            picker.refresh_catalog()
+            await _landed(app, pilot)
+            await _until(pilot, lambda: len(lister.returned) == 2)
+            await pilot.pause()
+            assert _yours(picker) == {"mine"}
+            assert picker.files_available is True
+    finally:
+        logger.remove(sink)
+    failures = [r for r in records if "Saved-theme listing failed" in r]
+    assert failures, records
+    assert "ValueError" in failures[0] and "scan 2" in failures[0]
+    assert "lister" in failures[0]  # the frame that raised
+    assert "/secret/" not in "".join(records)
+
+
+# -- Qodo 4116061864: the scan-landing decisions, driven directly -------------
+
+
+async def _mounted_picker(pilot_body):
+    lister = _gated_lister([{"mine"}])
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lister)
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    for name in ("mine", "other"):
+        app.register_theme(Theme(name=name, primary="#336699"))
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        assert _yours(picker) == {"mine"}
+        await pilot_body(picker)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_apply_scan_drops_a_stale_generation(request, config_writes):
+    async def body(picker):
+        current = picker._scan_generation
+        picker._apply_scan(current - 1, ("ok", {"other"}, {}))
+        assert _yours(picker) == {"mine"}
+        picker._apply_scan(current, ("ok", {"other"}, {}))
+        assert _yours(picker) == {"other"}
+
+    await _mounted_picker(body)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_apply_scan_outcomes_set_availability_and_listing(request, config_writes):
+    async def body(picker):
+        gen = picker._scan_generation
+        picker._apply_scan(gen, ("paused", set(), {}))
+        assert picker.files_available is False and _yours(picker) == {"mine"}
+        picker._apply_scan(gen, ("failed", set(), {}))
+        assert _yours(picker) == {"mine"}
+        picker._apply_scan(gen, ("oserror", set(), {}))  # R27 (6)
+        assert picker.files_available is True and _yours(picker) == set()
+        picker._apply_scan(gen, ("ok", {"other"}, {}))
+        assert picker.files_available is True and _yours(picker) == {"other"}
+
+    await _mounted_picker(body)
