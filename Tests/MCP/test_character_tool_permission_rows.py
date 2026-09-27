@@ -254,3 +254,101 @@ def test_tool_pack_export_carries_a_stored_character_rule(hub):
     assert ("local:__local__", "character_get") not in review.omitted_allow_ask
     assert rules[("local:__local__", "character_get")] == "allow"
     assert rules[("local:__local__", "character_save")] == "ask"
+
+
+# -- Reachability: can a second character_save run on another call's answer? --
+
+
+def _native_save(call_id, name):
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "character_save", "arguments": json.dumps({"name": name})},
+    }
+
+
+class _ScriptedChat:
+    def __init__(self, replies):
+        self.replies = list(replies)
+
+    def __call__(self, **_kwargs):
+        item = self.replies.pop(0)
+        message = item if isinstance(item, dict) else {"content": item}
+        return {"choices": [{"message": message}]}
+
+
+def _run_saves(monkeypatch, hub, tmp_path, answers):
+    """One real AgentService turn over the Console's provider + review hook.
+
+    The model saves twice in ONE batch (native calls a, b), then once more
+    in a LATER step of the same run (call c). ``answers`` maps call_id to
+    what the card returns for that row -- the real card keys every row by
+    its call_id, and the runtime gives every reviewed call one.
+    """
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    provider, approvals, _card_id = _console(monkeypatch, hub)
+    rounds: list[list[str]] = []
+    controller_request = provider._approval_callback  # the bound card bridge
+
+    def card(pending):
+        rounds.append([row.call_id for row in pending])
+        controller_request(pending)  # keeps the approvals record honest
+        return {row.call_id: answers.get(row.call_id, "deny") for row in pending}
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(provider)
+    chat = _ScriptedChat(
+        [
+            {"content": None, "tool_calls": [_native_save("a", "Ada"), _native_save("b", "Bea")]},
+            {"content": None, "tool_calls": [_native_save("c", "Cy")]},
+            "done",
+        ]
+    )
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=build_local_review_hook(provider, card),
+        review_state_scope=provider.stamp_scope,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "save three characters"}],
+        config=AgentConfig(
+            model="test-model",
+            system_prompt="You are helpful.",
+            allowed_tools=("character_save",),
+        ),
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
+    results = [s.result for s in outcome.steps if s.kind == "tool_result"]
+    return rounds, results, approvals
+
+
+def test_every_runtime_save_call_is_answered_by_its_own_card_row(monkeypatch, hub, tmp_path):
+    rounds, results, approvals = _run_saves(
+        monkeypatch, hub, tmp_path, {"a": "approve_once", "b": "approve_once", "c": "approve_once"}
+    )
+    # One card per step; one row per call; no fallback card was needed.
+    assert rounds == [["a", "b"], ["c"]]
+    assert len(approvals) == 3
+    assert [json.loads(r)["status"] for r in results] == ["saved", "saved", "saved"]
+
+
+def test_a_denied_row_is_not_carried_by_its_approved_sibling(monkeypatch, hub, tmp_path):
+    rounds, results, _approvals = _run_saves(
+        monkeypatch, hub, tmp_path, {"a": "approve_once", "b": "deny", "c": "deny"}
+    )
+    assert rounds == [["a", "b"], ["c"]]
+    assert json.loads(results[0])["status"] == "saved"
+    assert "saved" not in results[1] and "saved" not in results[2]
