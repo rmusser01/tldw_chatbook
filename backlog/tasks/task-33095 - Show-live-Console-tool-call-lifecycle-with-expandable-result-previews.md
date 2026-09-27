@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-27 19:52'
-updated_date: '2026-09-27 21:09'
+updated_date: '2026-09-27 21:41'
 labels: []
 dependencies: []
 documentation:
@@ -39,6 +39,8 @@ Make tool work observable while a Console reply is still running, with compact r
 ADR required: yes
 ADR path: backlog/decisions/195-console-live-tool-call-presentation.md
 Reason: Record the optional runtime-to-Console display observer and session-only lifecycle projection; existing ADR-078, ADR-080, and ADR-029 remain authoritative for outcomes, capture, and privacy.
+
+PR review follow-up: reproduce and repair adopted shell interruption settlement and missing execution metadata; consolidate argument display bounds and document new public helpers. Evaluate display diagnostics against existing privacy rules. Run focused regressions, retain normal shell ownership and terminal behavior, and update the QA record. ADR required: no new ADR; ADR-195 governs these bug fixes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,4 +55,12 @@ Verification: main targeted run 630 passed with two independently reproduced bas
 A disposable real-Console tmux walkthrough with isolated pytest config/data and scripted tool results verified mixed approval, running timing, terminal previews, mouse expansion, Enter collapse and 100-column wrapping; the final assistant response arrived and the run returned done. No external provider was exercised. Evidence and probe limitations: Docs/superpowers/qa/2026-09-27-console-tool-lifecycle.md. Review findings were addressed with regressions; unrelated worktree changes were preserved.
 
 PR integration: transplanted the feature onto current dev a7b6d5864bde6072b01eeb7a54a89e9bc977e1cb in a managed worktree, preserving the original dirty checkout. Renumbered the occupied ADR to backlog/decisions/195-console-live-tool-call-presentation.md. Used current Console panel styles and sizing tokens; retained dev service arguments and tests. Changed config-reading tests use the established bootstrap_profile marker. Final feature run: 185 passed. Production mouse/Enter behavior, CSS reproduction, task-ID guard and changed-line lint are covered in the QA document. Broader existing dev failures were independently reproduced or traced to byte-identical base files; see the QA document for exact limitations. A fresh native probe returned done and exited cleanly after approval, timing, expansion/collapse and narrow preview checks, with unrelated sidebar DB reads isolated. Integration review found no new actionable issue.
+
+PR #2861 follow-up: fixed adopted shell rows stranded by missing result callbacks and by a display failure before cleanup registration. Teardown detaches ownership first, preserves any received executor result, retains partial output, freezes elapsed time, and leaves cleanup unknown when no result exists. Expanded details now retain the canonical shell execution metadata without duplicating output or replacing the focused disclosure. Shared the argument display cap, documented preview helpers, and kept diagnostics limited to fixed operation text plus exception class (no raw exception/traceback payloads).
+
+Evidence: 197 feature-focused tests passed, then 15 shell/teardown regressions passed after the final ordering fix; three import-boundary tests passed (counts overlap). Reproduced both review bugs and the additional adoption-failure ordering bug before repairing them. Changed-line Ruff lint/range formatting and diff checks pass; the new projection module/tests pass full-file lint/format. Read-only follow-up review found no remaining issue. Guide and QA updated; existing dev limitations remain documented. ADR-195 applies, no new ADR.
+
+Reviewed the failed diagnostic-inventory CI guard at statement level: exactly three intended warning calls (bridge +2, controller +1), each interpolating only exception type; no new sink topology. Regenerated Docs/security/production-diagnostic-inventory.json with only these two owner rows changed. No full suite was run.
+
+Final diagnostic-inventory --diff check passes with no drift (605 owners, 14 sink files); the task-ID guard also passes. Follow-up fixes are ready for the existing PR against dev.
 <!-- SECTION:NOTES:END -->

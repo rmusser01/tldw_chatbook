@@ -100,3 +100,32 @@ def test_terminal_status_uses_execution_outcome_and_keeps_marker_id(outcome, sta
     activity.finish(False)
     row = store.messages_for_session(session.id)[-1]
     assert row.id == marker_id and row.activity_presentation.status == status
+
+
+@pytest.mark.parametrize("extra_chars", [-1, 0, 100])
+def test_argument_preview_is_bounded_without_truncating_at_or_below_limit(extra_chars):
+    import json
+
+    from tldw_chatbook.Chat.console_chat_models import MAX_CONSOLE_TOOL_ARGUMENT_CHARS
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    overhead = len(json.dumps({"text": ""}, indent=2))
+    args = {"text": "é" * (MAX_CONSOLE_TOOL_ARGUMENT_CHARS - overhead + extra_chars)}
+    activity.observe(
+        AgentStep(
+            index=1, kind="tool_proposed", tool_name="read", call_id="call", args=args
+        ),
+        1,
+    )
+    arguments = store.messages_for_session(session.id)[
+        -1
+    ].activity_presentation.arguments
+    original = json.dumps(args, ensure_ascii=False, indent=2)
+    if extra_chars <= 0:
+        assert arguments == original
+    else:
+        assert len(arguments) == MAX_CONSOLE_TOOL_ARGUMENT_CHARS
+        assert arguments.endswith("\n… arguments truncated")
+        assert original.startswith(arguments.removesuffix("\n… arguments truncated"))

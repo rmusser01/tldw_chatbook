@@ -14947,8 +14947,11 @@ class ConsoleChatController:
             if callable(project_wait):
                 try:
                     project_wait(owning_session_id, owning_run_id, unique_keys, pending)
-                except Exception:  # noqa: BLE001 — display cannot interrupt approval
-                    logger.warning("Console tool approval display could not be updated")
+                except Exception as exc:  # noqa: BLE001 — display cannot interrupt approval
+                    logger.warning(
+                        "Console tool approval display could not be updated ({})",
+                        type(exc).__name__,
+                    )
 
         project_tool_wait(True)
         try:

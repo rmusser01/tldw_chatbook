@@ -120,7 +120,10 @@ name keep separate rows.
 Arguments and timing are live-session details; reopened runs show the facts
 already retained by the existing capture policy. Output chunks from ordinary
 tools are not streamed in this version. Raw shell commands keep their existing
-process status and live output details.
+process status and live output details. Expanded shell calls also show the resolved
+shell, working directory, elapsed time, exit code, truncation, and cleanup status.
+If a run ends before a shell result arrives, its row stops updating and explains
+that process cleanup is unknown; any received executor result remains visible.
 
 Other activity rows include:
 

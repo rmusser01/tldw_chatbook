@@ -12123,12 +12123,88 @@ def test_live_tool_display_cleanup_failure_does_not_fail_run_or_leak_ownership(
     from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
 
     def broken_finish(self, cancelled):
-        raise RuntimeError("display unavailable")
+        raise RuntimeError("secret output must never enter diagnostics")
 
     monkeypatch.setattr(ConsoleToolActivity, "finish", broken_finish)
     bridge, _db, store, session, aid = _bridge(
         tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["Finished."]]
     )
-    assert _run(bridge, store, session, aid).status == "done"
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        assert _run(bridge, store, session, aid).status == "done"
+    finally:
+        logger.remove(sink)
+    assert not bridge._tool_activity_runs
+    assert not bridge._fleet_services
+    assert any(
+        "display could not be settled (RuntimeError)" in text for text in messages
+    )
+    assert all("secret output" not in text for text in messages)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("fail_adoption", [False, True])
+def test_run_teardown_settles_shell_when_tool_result_callback_never_arrives(
+    tmp_path, monkeypatch, cancelled, fail_adoption
+):
+    from Tests.Chat.test_console_raw_shell_progress import _call_step
+    from tldw_chatbook.Tools.raw_cli_executor import RawCliStreamEvent
+
+    bridge, db, store, session, aid = _bridge(tmp_path, [])
+    marker_ids = []
+    update = bridge._update_raw_shell_marker
+    failed = False
+
+    def fail_first_update(state):
+        nonlocal failed
+        if fail_adoption and not failed:
+            failed = True
+            raise RuntimeError("adoption display unavailable")
+        update(state)
+
+    monkeypatch.setattr(bridge, "_update_raw_shell_marker", fail_first_update)
+
+    def interrupted_turn(service, *, conversation_id, **_kwargs):
+        run_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
+        step = _call_step(tmp_path, "interrupted-shell", "printf alpha")
+        service._on_tool_activity(
+            replace(step, kind="tool_proposed"), "primary", run_id
+        )
+        marker_ids.append(_tool_messages(store, session.id)[-1].id)
+        # The runtime contains observer errors; execution can still outlive display.
+        if fail_adoption:
+            with pytest.raises(RuntimeError, match="adoption display"):
+                service._on_step(step, "primary", run_id)
+        else:
+            service._on_step(step, "primary", run_id)
+        bridge.raw_shell_progress_sink(
+            run_id,
+            step.call_id,
+            RawCliStreamEvent(
+                stream="stdout", text="partial alpha", total_bytes=13, truncated=False
+            ),
+        )
+        if cancelled:
+            db.set_status(run_id, "cancelled")
+            return run_id, RunOutcome("cancelled", [step])
+        raise RuntimeError("service interrupted before the result callback")
+
+    monkeypatch.setattr(AgentService, "run_turn", interrupted_turn)
+    if cancelled:
+        assert _run(bridge, store, session, aid).status == "cancelled"
+    else:
+        with pytest.raises(RuntimeError, match="service interrupted"):
+            _run(bridge, store, session, aid)
+    rows = [m for m in _tool_messages(store, session.id) if m.raw_cli_presentation]
+    assert [row.id for row in rows] == marker_ids
+    assert rows[0].raw_cli_presentation.lifecycle_state == (
+        "cancelled" if cancelled else "failed"
+    )
+    assert rows[0].raw_cli_presentation.cleanup_proven is None
+    assert "partial alpha" in rows[0].tool_output_full
+    assert "before a result" in rows[0].tool_output_full
+    assert not bridge._raw_shell_markers
     assert not bridge._tool_activity_runs
     assert not bridge._fleet_services

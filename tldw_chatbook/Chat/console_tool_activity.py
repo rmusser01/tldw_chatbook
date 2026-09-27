@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from tldw_chatbook.Agents.agent_models import AgentStep
 from tldw_chatbook.Chat.console_chat_models import (
+    MAX_CONSOLE_TOOL_ARGUMENT_CHARS,
     ConsoleActivityPresentation,
     ConsoleActivityStatus,
     ConsoleMessageRole,
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 
 _PENDING = frozenset({"queued", "awaiting_approval", "running"})
+_ARGUMENT_TRUNCATION_SUFFIX = "\n… arguments truncated"
 
 
 class ConsoleToolActivity:
@@ -44,8 +46,11 @@ class ConsoleToolActivity:
                 prior is None or prior[1].status not in _PENDING
             ):
                 arguments = json.dumps(step.args or {}, ensure_ascii=False, indent=2)
-                if len(arguments) > 16000:
-                    arguments = arguments[:15960] + "\n… arguments truncated"
+                if len(arguments) > MAX_CONSOLE_TOOL_ARGUMENT_CHARS:
+                    cutoff = MAX_CONSOLE_TOOL_ARGUMENT_CHARS - len(
+                        _ARGUMENT_TRUNCATION_SUFFIX
+                    )
+                    arguments = arguments[:cutoff] + _ARGUMENT_TRUNCATION_SUFFIX
                 label = " ".join(step.tool_name.split())[:200] or "Tool"
                 presentation = ConsoleActivityPresentation(
                     "tool",

@@ -734,9 +734,14 @@ async def test_live_tool_preview_and_expanded_body_update_without_remount(
 async def test_model_shell_takeover_keeps_disclosure_and_live_details(tmp_path):
     from dataclasses import replace
 
-    from Tests.Chat.test_console_raw_shell_progress import _bridge, _call_step
+    from Tests.Chat.test_console_raw_shell_progress import (
+        _bridge,
+        _call_step,
+        _raw_result,
+    )
     from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
     from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+    from tldw_chatbook.Tools.raw_cli_executor import RawCliStreamEvent
 
     bridge, store, session_id = _bridge(tmp_path)
     store.append_message(
@@ -762,8 +767,35 @@ async def test_model_shell_takeover_keeps_disclosure_and_live_details(tmp_path):
         assert bridge._project_raw_shell_step(
             session_id, "run", step, AGENT_KIND_PRIMARY
         )
-        store.update_tool_marker(
-            session_id, marker_id, tool_output_full="shell /bin/bash\nstdout: alpha"
+        bridge.raw_shell_progress_sink(
+            "run",
+            "call",
+            RawCliStreamEvent(
+                stream="stdout", text="partial-alpha", total_bytes=13, truncated=False
+            ),
+        )
+        transcript.set_messages(
+            store.messages_for_session(session_id), session_id=session_id
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert disclosure.query_one(f"#console-tool-detail-{marker_id}") is body
+        assert "partial-alpha" in body.content.plain
+        assert "Cleanup: Pending" in body.content.plain
+        assert app.focused is disclosure.header
+        result = replace(
+            _raw_result(tmp_path, "call", "stdout: alpha"),
+            truncated=True,
+            cleanup_proven=False,
+        )
+        bridge.raw_shell_progress_sink("run", "call", result)
+        bridge._project_raw_shell_step(
+            session_id,
+            "run",
+            replace(
+                step, kind="tool_result", result="stdout: alpha", tool_outcome="success"
+            ),
+            AGENT_KIND_PRIMARY,
         )
         transcript.set_messages(
             store.messages_for_session(session_id), session_id=session_id
@@ -775,7 +807,12 @@ async def test_model_shell_takeover_keeps_disclosure_and_live_details(tmp_path):
             is disclosure
         )
         assert disclosure.query_one(f"#console-tool-detail-{marker_id}") is body
-        assert "stdout: alpha" in body.content.plain
+        assert body.content.plain.count("stdout: alpha") == 1
+        assert "Shell: /bin/bash" in body.content.plain
+        assert f"CWD: {tmp_path}" in body.content.plain
+        assert "Truncated: Yes" in body.content.plain
+        assert "Cleanup: Unproven" in body.content.plain
+        assert "Exit code: 0" in body.content.plain
         assert app.focused is disclosure.header
 
 

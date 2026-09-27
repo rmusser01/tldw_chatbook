@@ -6753,14 +6753,16 @@ class ConsoleAgentBridge:
                 ),
             )
             if agent_kind == AGENT_KIND_PRIMARY:
+                # Adoption may succeed before its display update raises. Register
+                # cleanup first so an interrupted run still detaches that marker.
+                if step.tool_name == "shell_exec" and run_id:
+                    raw_shell_progress_run_ids.add(run_id)
                 raw_shell_projected = self._project_raw_shell_step(
                     session_id,
                     run_id,
                     step,
                     agent_kind,
                 )
-                if raw_shell_projected and run_id:
-                    raw_shell_progress_run_ids.add(run_id)
                 if planning_marker is not None:
                     self._append_marker(
                         session_id,
@@ -7398,13 +7400,17 @@ class ConsoleAgentBridge:
             )
             if callable(unbind_promotion_context):
                 unbind_promotion_context()
-            self._clear_raw_shell_progress(raw_shell_progress_run_ids)
+            run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
+            self._clear_raw_shell_progress(
+                raw_shell_progress_run_ids, cancelled=run_cancelled
+            )
             try:
-                tool_activity.finish(
-                    "outcome" in locals() and outcome.status == RUN_CANCELLED
+                tool_activity.finish(run_cancelled)
+            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
+                logger.warning(
+                    "Console tool activity display could not be settled ({})",
+                    type(exc).__name__,
                 )
-            except Exception:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning("Console tool activity display could not be settled")
             for activity_run_id in tool_activity_run_ids:
                 self._tool_activity_runs.pop(activity_run_id, None)
             if self._buddy_sink is not None:
@@ -10393,6 +10399,19 @@ class ConsoleAgentBridge:
             state = self._raw_shell_markers.pop(key, None)
         if state is None:
             return False
+        self._settle_raw_shell_marker(
+            state, outcome=str(step.tool_outcome), message=step.result
+        )
+        return True
+
+    def _settle_raw_shell_marker(
+        self,
+        state: _RawShellMarkerState,
+        *,
+        outcome: str,
+        message: str | None,
+    ) -> None:
+        """Retain executor facts when available, otherwise settle only the display."""
         result = state.result
         if result is not None:
             state.stdout = result.stdout_preview
@@ -10416,8 +10435,8 @@ class ConsoleAgentBridge:
                 "success": "exited",
                 "timeout": "timed_out",
                 "cancelled": "cancelled",
-            }.get(str(step.tool_outcome), "failed")
-            state.stderr = step.result or state.stderr
+            }.get(outcome, "failed")
+            state.stderr = message or state.stderr
             started_at = state.presentation.started_at_monotonic
             state.presentation = dataclass_replace(
                 state.presentation,
@@ -10429,7 +10448,6 @@ class ConsoleAgentBridge:
                 cleanup_proven=None,
             )
         self._update_raw_shell_marker(state)
-        return True
 
     def raw_shell_progress_sink(
         self,
@@ -10469,14 +10487,31 @@ class ConsoleAgentBridge:
             )
             self._update_raw_shell_marker(state)
 
-    def _clear_raw_shell_progress(self, run_ids: AbstractSet[str]) -> None:
-        """Forget terminal-run correlations so late worker events are ignored."""
+    def _clear_raw_shell_progress(
+        self, run_ids: AbstractSet[str], *, cancelled: bool = False
+    ) -> None:
+        """Detach ended runs before settling rows so late worker events are ignored."""
         if not run_ids:
             return
         with self._raw_shell_marker_lock:
-            for key in tuple(self._raw_shell_markers):
-                if key[0] in run_ids:
-                    self._raw_shell_markers.pop(key, None)
+            states = [
+                self._raw_shell_markers.pop(key)
+                for key in tuple(self._raw_shell_markers)
+                if key[0] in run_ids
+            ]
+        for state in states:
+            try:
+                self._settle_raw_shell_marker(
+                    state,
+                    outcome="cancelled" if cancelled else "failure",
+                    message=(f"{state.stderr}\n\n" if state.stderr else "")
+                    + "Run ended before a result was received. Process cleanup is unknown.",
+                )
+            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
+                logger.warning(
+                    "Console shell activity display could not be settled ({})",
+                    type(exc).__name__,
+                )
 
     def set_tool_approval_pending(
         self,

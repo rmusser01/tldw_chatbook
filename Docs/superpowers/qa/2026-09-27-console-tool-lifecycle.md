@@ -58,6 +58,49 @@ Earlier dev-native attempts hit config selection or sidebar recovery admission
 and are not counted as successful walkthroughs. The temporary probe was removed
 from the worktree after retaining its source and captures under `/tmp`.
 
+## PR review follow-up
+
+Reproduced the shell findings before fixing them: four interrupted-takeover cases
+and the mounted missing-metadata case failed (`/tmp/console-2861-review-red.txt`).
+Run teardown now settles adopted shell rows, freezes elapsed time, preserves
+partial output, and reports unknown exit/cleanup facts when no result exists.
+An already received executor result wins over the enclosing run's cancellation.
+All matching correlations are detached before best-effort display updates, so
+late events and a failed update cannot strand another row's ownership.
+
+The review exposed an additional ordering issue: an adoption display error could
+skip registering the run for teardown. A real `run_reply` regression reproduced
+both error and cancellation variants (two failures, two controls passed), then
+passed after registration moved before projection. The final read-only review
+also reran the original no-stream-event reproduction and found no remaining issue.
+
+Expanded shell details share the canonical execution-metadata formatter and show
+one output body. The mounted regression retains the same detail widget and focused
+header through live output and terminal metadata updates. Argument truncation and
+model validation now share one limit; public preview helpers document their inputs.
+Warnings include a fixed operation description and exception class. Raw exception
+text and tracebacks are intentionally excluded under ADR-029; sentinel regressions
+verify tool arguments/output cannot leak through these diagnostics.
+
+Verification: **197 feature-focused tests passed** in
+`/tmp/console-2861-final.xml`; the final ordering fix then passed **15 targeted
+shell/teardown tests** in `/tmp/console-2861-adoption-green.xml`. The three raw CLI
+import-boundary tests passed in `/tmp/console-2861-extra.xml`. Counts overlap.
+Edited Python ranges pass Ruff lint/format and `git diff --check`; unrelated
+whole-file lint debt remains. This follow-up uses mounted UI and run integration
+tests; the native walkthrough above qualifies the original feature behavior.
+No full suite was run. ADR-195 applies; no new ADR is required.
+
+CI's derived-artifact job identified the omitted diagnostic-inventory refresh.
+The statement-level audit against the PR base found exactly three added warning
+calls: two in the bridge and one in the approval controller. Each logs only a
+fixed operation description plus `type(exc).__name__`; no user content, paths,
+URLs, exception bodies, or new sink destinations are introduced. Regenerated
+`Docs/security/production-diagnostic-inventory.json`; only those two owner rows
+changed. The subsequent `--diff` check reports no drift (605 owners and 14 sink
+files), recorded in `/tmp/console-2861-diagnostic-verified.txt`. The PR/UI Fast Lane
+and the other initial-head CI checks passed; the new commit requires a fresh CI run.
+
 ## Original-checkout automated evidence
 
 - Main targeted run: **630 passed**, two established baseline failures excluded.

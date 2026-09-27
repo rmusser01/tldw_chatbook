@@ -7466,8 +7466,17 @@ class ConsoleTranscript(VerticalScroll):
         action_signature: list[tuple] = []
         detail_signature: list[tuple] = []
         if presentation.call_id:
+            metadata = ""
+            if activity.raw_cli_presentation is not None:
+                from tldw_chatbook.Chat.console_raw_cli import format_raw_cli_metadata
+
+                metadata = (
+                    format_raw_cli_metadata(activity.raw_cli_presentation) + "\n\n"
+                )
             detail = (
-                f"Arguments\n{presentation.arguments or 'Not retained'}\n\nResult\n"
+                f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
+                + metadata
+                + "Result\n"
                 + (
                     activity.tool_output_full
                     or (

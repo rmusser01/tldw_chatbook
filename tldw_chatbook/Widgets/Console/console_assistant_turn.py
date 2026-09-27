@@ -69,7 +69,14 @@ def raw_cli_status_copy(
 
 
 def tool_activity_status_copy(presentation: ConsoleActivityPresentation) -> str:
-    """Describe actual lifecycle state with execution-only elapsed time."""
+    """Describe actual lifecycle state with execution-only elapsed time.
+
+    Args:
+        presentation: Current tool state and execution timing, when available.
+
+    Returns:
+        Status text with an elapsed duration only after execution starts.
+    """
     label = {"success": "Succeeded", "stopped": "Stopped"}.get(
         presentation.status,
         console_activity_status_word(presentation.status).capitalize(),
@@ -96,11 +103,20 @@ class ConsoleToolPreview(Static):
         )
 
     def set_output(self, output: str) -> None:
-        """Rewrap retained output on lifecycle changes without replacing the widget."""
+        """Rewrap retained output on lifecycle changes without replacing the widget.
+
+        Args:
+            output: Literal result text retained for width-dependent wrapping.
+        """
         self._output = output
         self._rewrap()
 
     def on_resize(self, event: events.Resize) -> None:
+        """Rewrap the preview using the widget's current content width.
+
+        Args:
+            event: Textual's notification that the widget dimensions changed.
+        """
         self._rewrap()
 
     def _rewrap(self) -> None:

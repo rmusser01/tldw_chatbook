@@ -5326,13 +5326,15 @@ def test_sibling_payload_remounts_after_round_ends(kind, ending, monkeypatch):
 def test_tool_display_observer_failure_cannot_break_real_approval(raise_when_pending):
     from types import SimpleNamespace
 
+    from loguru import logger
+
     controller, _store = _build_controller()
     controller.app = _FakeApp()
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     def project_wait(_session_id, _run_id, _call_ids, pending):
         if pending == raise_when_pending:
-            raise RuntimeError("display unavailable")
+            raise RuntimeError("secret arguments must never enter diagnostics")
 
     def decide(payload):
         if payload:
@@ -5342,7 +5344,16 @@ def test_tool_display_observer_failure_cannot_break_real_approval(raise_when_pen
 
     controller._agent_bridge = SimpleNamespace(set_tool_approval_pending=project_wait)
     controller.set_pending_approval = decide
-    assert controller.request_mcp_approvals([_pending(call_id="call")]) == {
-        "call": "approve_once"
-    }
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        assert controller.request_mcp_approvals([_pending(call_id="call")]) == {
+            "call": "approve_once"
+        }
+    finally:
+        logger.remove(sink)
     assert not controller._pending_approval_rounds
+    assert any(
+        "display could not be updated (RuntimeError)" in text for text in messages
+    )
+    assert all("secret arguments" not in text for text in messages)

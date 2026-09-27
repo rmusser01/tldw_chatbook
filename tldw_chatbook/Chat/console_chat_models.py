@@ -313,6 +313,7 @@ RawCliLifecycleState = Literal[
     "failed",
 ]
 MAX_RAW_CLI_DISPLAY_FIELD_BYTES = 4096
+MAX_CONSOLE_TOOL_ARGUMENT_CHARS = 16000
 
 _CONSOLE_ACTIVITY_KINDS = frozenset(
     {
@@ -737,7 +738,10 @@ class ConsoleActivityPresentation:
             )
         if self.status not in CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
-        if len(self.call_id) > 512 or len(self.arguments) > 16000:
+        if (
+            len(self.call_id) > 512
+            or len(self.arguments) > MAX_CONSOLE_TOOL_ARGUMENT_CHARS
+        ):
             raise ValueError("tool activity fields exceed display bounds")
 
 
