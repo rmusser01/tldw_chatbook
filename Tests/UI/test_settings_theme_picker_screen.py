@@ -991,6 +991,7 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
         real_scan = editor._scan_theme_files
         editor._scan_theme_files = lambda: scans.append(1) or real_scan()
         picker.refresh_catalog()
+        await host.workers.wait_for_complete()  # TASK-32957: the scan is a worker
         assert len(scans) == 1
         await pilot.press("delete")
         await pilot.pause(0.2)
@@ -1037,6 +1038,8 @@ async def test_import_from_picker_prompts_imports_and_highlights(request, tmp_pa
         host.screen.query_one("#settings-rag-profile-name-input", Input).value = f"'{source}'"
         await pilot.click("#settings-rag-profile-name-confirm")
         await pilot.pause(0.3)
+        await host.workers.wait_for_complete()  # TASK-32957: the rescan is a worker
+        await pilot.pause()
         themes = config._get_effective_config_path().parent / "themes"
         assert (themes / "dropped.toml").exists()
         assert "dropped" in host.available_themes
@@ -1362,6 +1365,7 @@ async def test_edit_of_a_vanished_file_stays_on_the_picker(request):
         await _category(host, pilot, "Theme")
         picker = host.screen.query_one("#settings-theme-picker")
         picker.refresh_catalog(highlight="mine")
+        await host.workers.wait_for_complete()  # TASK-32957: lands with the scan
         await pilot.pause()
         assert picker.highlighted_id == "mine"
         path.unlink()
@@ -2040,3 +2044,51 @@ async def test_picker_and_editor_stack_together_at_one_threshold(request, width,
         await pilot.resize_terminal(width, 44)
         await pilot.pause(0.3)
         assert settings.query_one("#settings-theme-editor").has_class("-stacked") is stacked
+
+
+# -- TASK-32957: the folder scan is off the UI thread ------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fifty_theme_files_are_scanned_off_the_ui_thread(request, monkeypatch):
+    """AC#1: with 50 saved themes, opening the picker, Back from the editor
+    and the rescan after a file action run the backup-scoped scan (~250 ms
+    at 50 files, measured) on a worker thread; the UI-thread call returns at
+    once and the listing lands afterwards."""
+    import threading
+    import time
+
+    from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
+
+    scans = []
+    real_scan = SettingsThemeEditor._scan_theme_files
+
+    def recorded_scan(self):
+        scans.append(threading.current_thread())
+        return real_scan(self)
+
+    monkeypatch.setattr(SettingsThemeEditor, "_scan_theme_files", recorded_scan)
+    host = _host()
+    for i in range(50):
+        _saved_theme(host, f"mine{i:02d}")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")  # open: the mount scan
+        pane = host.screen.query_one("#settings-theme-pane")
+        picker = host.screen.query_one("#settings-theme-picker")
+        assert picker.files_available is True
+        assert len([e for e in picker.entries if e.origin == "yours"]) == 50
+        for label, action in (
+            ("back", pane.show_picker),
+            ("file action", lambda: picker.refresh_catalog(highlight="mine07")),
+        ):
+            start = time.perf_counter()
+            action()
+            sync_ms = (time.perf_counter() - start) * 1000
+            assert sync_ms < 100, (label, sync_ms)
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert len([e for e in picker.entries if e.origin == "yours"]) == 50
+        assert picker.highlighted_id == "mine07"
+        assert len(scans) >= 3
+        assert all(thread is not threading.main_thread() for thread in scans), scans
