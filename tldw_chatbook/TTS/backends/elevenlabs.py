@@ -11,7 +11,11 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.base_backends import APITTSBackend
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import (
+    get_api_key,
+    get_cli_setting,
+    resolve_provider_api_key,
+)
 
 #######################################################################################################################
 #
@@ -24,14 +28,22 @@ class ElevenLabsTTSBackend(APITTSBackend):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
-        # Try to get API key from config
-        self.api_key = self.config.get("ELEVENLABS_API_KEY")
+        # TASK-32894: route the credential through the shared accessor
+        # rather than hand-rolling the lookup. The old chain never consulted
+        # `api_settings.elevenlabs.api_key` at all -- a key saved through
+        # Settings was invisible to this backend -- and screened nothing, so
+        # a placeholder or a padded value went out as a credential.
+        # `config.get_api_key` implements ADR-012's 2026-09-19 precedence
+        # (stored key > env var > legacy `[API]`) and runs every source
+        # through `resolve_provider_api_key`.
+        self.api_key = resolve_provider_api_key(
+            self.config.get("ELEVENLABS_API_KEY")
+        ) or get_api_key("elevenlabs")
         if not self.api_key:
-            # Try from CLI config
-            self.api_key = get_cli_setting("API", "elevenlabs_api_key")
-        if not self.api_key:
-            # Try from app_tts config
-            self.api_key = get_cli_setting("app_tts", "ELEVENLABS_API_KEY_fallback")
+            # TTS-only fallback, below every provider-credential source.
+            self.api_key = resolve_provider_api_key(
+                get_cli_setting("app_tts", "ELEVENLABS_API_KEY_fallback")
+            )
 
         # Get voice settings from config
         self.default_voice = self.config.get(

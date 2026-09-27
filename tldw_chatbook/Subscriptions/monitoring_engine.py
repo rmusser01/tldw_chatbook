@@ -1765,7 +1765,19 @@ class URLMonitor:
                     url,
                     client=client,
                     max_bytes=MAX_FETCH_BYTES_PAGE,
-                    trusted_origins=origin_set(url),
+                    # TASK-32894: `source` is the URL the CALLER wants
+                    # fetched, which for a `sitemap` source is a `<loc>` read
+                    # out of the fetched document -- seeding trust from it let
+                    # a discovered private/loopback address authorize itself,
+                    # the exact "never auto-trust your own input URL" rule
+                    # `Utils/egress.py` states. `trusted_source` is the
+                    # provenance the caller threads down when `source` is
+                    # content-derived; absent it, `source` IS the configured
+                    # value (the single-`url` and `url_list` arms) and
+                    # trusting it is correct.
+                    trusted_origins=origin_set(
+                        subscription.get("trusted_source") or url
+                    ),
                     headers=headers,
                 )
             except EgressBlockedError as exc:
