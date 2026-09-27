@@ -126,6 +126,12 @@ def theme_stack_width(widget: Widget) -> int:
     the content taller and can add that scrollbar, so measuring the widget
     itself let the class stick a column or two past the threshold (review
     M-2). Falls back to the widget's own width outside a scroller.
+
+    Args:
+        widget: The picker pane or editor making the stack decision.
+
+    Returns:
+        The width, in cells, to compare against ``THEME_STACK_BELOW``.
     """
     for ancestor in widget.ancestors:
         if isinstance(ancestor, ScrollableContainer):
@@ -364,6 +370,11 @@ class SettingsThemeEditor(Vertical):
         yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
 
     def on_resize(self, event: Resize) -> None:
+        """Stack the preview under the palette when the detail body is narrow.
+
+        Args:
+            event: The resize event (the width is re-measured on the body).
+        """
         self.set_class(theme_stack_width(self) < THEME_STACK_BELOW, "-stacked")
 
     def on_mount(self) -> None:
@@ -419,6 +430,7 @@ class SettingsThemeEditor(Vertical):
         self._render_header()
 
     def watch_current_theme_name(self) -> None:
+        """Re-render the header when the edited theme's name changes."""
         self._render_header()
 
     def _render_header(self) -> None:
@@ -1048,7 +1060,7 @@ class SettingsThemeEditor(Vertical):
         try:
             self.app.theme = undo[0]
         except Exception as exc:  # noqa: BLE001 - e.g. the old theme was deleted
-            logger.warning(f"Could not restore the theme after Discard: {exc}")
+            logger.warning(f"Could not restore the theme after Discard: {printable(exc)}")
             self.app.notify(
                 f"Could not restore {escape_markup(printable(display_name(undo[0])))}: "
                 f"{escape_markup(printable(exc))}",

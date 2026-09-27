@@ -354,8 +354,17 @@ def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
 
 
 def launch_default_restorable(app: Any, change: ThemeChange) -> bool:
-    """Whether a Revert of ``change`` may write its previous launch default
-    (it must still be a registered theme, TASK-33061)."""
+    """Whether a Revert of ``change`` may write its previous launch default.
+
+    It must still be a registered theme (TASK-33061).
+
+    Args:
+        app: The running app, for its registered themes.
+        change: The switch a Revert would undo.
+
+    Returns:
+        True when ``change.previous_launch_default`` is a registered theme.
+    """
     return change.previous_launch_default in app.available_themes
 
 

@@ -4069,7 +4069,7 @@
     },
     {
       "call_count": 15,
-      "diagnostic_digest": "30a4e385089b4288f596",
+      "diagnostic_digest": "420165746014283861f8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/settings_theme_editor.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -709,6 +709,11 @@ class ThemePane(ContentSwitcher):
     _NARROW_CARD_BELOW = 48
 
     def on_resize(self, event: events.Resize) -> None:
+        """Stack the card under the list, and narrow its chips, by body width.
+
+        Args:
+            event: The resize event (the width is re-measured on the body).
+        """
         width = theme_stack_width(self)
         stacked = width < THEME_STACK_BELOW
         self.set_class(stacked, "-stacked")
@@ -716,6 +721,12 @@ class ThemePane(ContentSwitcher):
         self.set_class(card_width < self._NARROW_CARD_BELOW, "-narrow-card")
 
     def watch_current(self, old: str | None, new: str | None) -> None:
+        """Size the pane for the view being switched to.
+
+        Args:
+            old: The id of the view being left.
+            new: The id of the view being shown.
+        """
         super().watch_current(old, new)
         # TASK-33064: the picker fills the detail pane (CSS `-picker`); the
         # taller editor keeps the auto height so the pane body scrolls it.

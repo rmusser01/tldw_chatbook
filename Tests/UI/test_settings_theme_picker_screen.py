@@ -1845,12 +1845,23 @@ async def test_discard_failure_toast_prints_the_theme_name_safely(request):
     async with host.run_test(size=(190, 55)) as pilot:
         settings, _original = await _try_edited_clone(host, pilot)
         toasts = _record_toasts(host)
+        from loguru import logger as _logger
+
+        logged: list[str] = []
+        sink = _logger.add(lambda m: logged.append(str(m)), level="WARNING")
         editor = settings.query_one("#settings-theme-editor")
         editor._try_undo = ("gone\x1b]52;c;x\x07", host.theme)  # unregistered
-        editor.discard_try()
+        try:
+            editor.discard_try()
+        finally:
+            _logger.remove(sink)
         await pilot.pause(0.1)
         assert any("Could not restore" in t for t in toasts)
         assert not any("\x1b" in t or "\x07" in t for t in toasts)
+        # Qodo 4116640363: the log line is printable too.
+        restore_logs = [m for m in logged if "Could not restore the theme" in m]
+        assert restore_logs
+        assert not any("\x1b" in m or "\x07" in m for m in restore_logs)
 
 
 # -- TASK-33063: the Scope Inspector agrees with the editor's unsaved state --
