@@ -4194,10 +4194,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 401,
-      "diagnostic_digest": "c6d3d8f6a789b7971bf0",
+      "call_count": 352,
+      "diagnostic_digest": "594dbd7639e730290362",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 49,
+      "diagnostic_digest": "3ee90cdaafc682f9f563",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_entry.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10491,15 +10498,6 @@
     {
       "candidates": [
         {
-          "call_digest": "e02cc5afcde7adfd",
-          "method": "error",
-          "path_expressions": [
-            "result.stderr"
-          ],
-          "scope": "<module>",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "3aef1d3ee8d4bed1",
           "method": "warning",
           "path_expressions": [
@@ -10615,6 +10613,20 @@
           ],
           "scope": "TldwCli._init_prompts_service",
           "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "e02cc5afcde7adfd",
+          "method": "error",
+          "path_expressions": [
+            "result.stderr"
+          ],
+          "scope": "_run_module_main",
+          "status": "legacy_unreviewed"
         },
         {
           "call_digest": "e02cc5afcde7adfd",
@@ -10626,7 +10638,7 @@
           "status": "legacy_unreviewed"
         }
       ],
-      "path": "tldw_chatbook/app.py"
+      "path": "tldw_chatbook/app_entry.py"
     },
     {
       "candidates": [
