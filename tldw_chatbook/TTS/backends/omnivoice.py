@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.omnivoice_sampler import (
     OmniVoiceSamplingCancelled,
     run_diffusion_sampling,
 )
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import OMNIVOICE_SEED_LIMIT
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.optional_deps import check_dependency, require_dependency
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -48,6 +49,7 @@ _FRAME_RATE = 75  # one codec frame = 320 samples at 24 kHz
 _HOP_LENGTH = _SAMPLE_RATE // _FRAME_RATE  # samples per codec frame
 _RTF_HEADROOM = 8.0  # observed worst case ~7; timeout budget multiplier
 _MIN_TIMEOUT_S = 30.0  # floor so short lines never race fixed per-step overhead
+_SEED_LIMIT = OMNIVOICE_SEED_LIMIT  # per-request seeds are non-negative 31-bit ints
 
 # Post-processing shape (upstream generate() conventions, seconds/samples at 24 kHz)
 _EDGE_TRIM_MARGIN_S = 0.1  # silence retained around the first/last voiced sample
@@ -203,12 +205,15 @@ def _validate_layout(root: Path) -> None:
         )
 
 
-def _managed_root() -> Path | None:
+def managed_model_root() -> Path | None:
     """Return the active managed OmniVoice artifact root, if installed.
 
     Mirrors the parakeet managed-first lookup: only the synchronous,
     credential-free ``list_installed()`` surface; every failure (including a
     missing store) means "nothing managed yet", not a hard error.
+
+    Returns:
+        The installed artifact directory, or None when nothing is managed.
     """
     try:
         from tldw_chatbook.Model_Artifacts.service import ArtifactError
@@ -229,6 +234,9 @@ def _managed_root() -> Path | None:
     except (ArtifactError, TypeError, ValueError, OSError):
         return None
     return None
+
+
+_managed_root = managed_model_root  # existing callers/tests
 
 
 def _resolve_language(value: Any) -> str | None:
@@ -791,6 +799,11 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
             and extra["max_reference_duration"] > 0
         ):
             max_reference_duration = float(extra["max_reference_duration"])
+        seed_override = extra.get("seed")
+        if not (
+            type(seed_override) is int and 0 <= seed_override < _SEED_LIMIT
+        ):
+            seed_override = None
         cancel_event = threading.Event()
 
         def cancel_requested() -> bool:
@@ -842,6 +855,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                     cancel_requested,
                     progress,
                     language,
+                    seed_override,
                 )
             except OmniVoiceSamplingCancelled:
                 # Only close() gets here (a cancelled awaiting task re-raises
@@ -1157,6 +1171,7 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
         cancel_check: Callable[[], bool] = lambda: False,
         progress: Callable[[int, int], None] | None = None,
         language: str | None = None,
+        seed_override: int | None = None,
     ) -> np.ndarray:
         """Run prompt -> sampler -> decoder -> postprocess; return the waveform.
 
@@ -1224,7 +1239,11 @@ class OmniVoiceOnnxTTSBackend(LocalTTSBackend):
                 self.config.get("OMNIVOICE_POSITION_TEMPERATURE", 5.0)
             ),
             class_temperature=float(self.config.get("OMNIVOICE_CLASS_TEMPERATURE", 0.0)),
-            seed=self._optional_int("OMNIVOICE_SEED"),
+            seed=(
+                seed_override
+                if seed_override is not None
+                else self._optional_int("OMNIVOICE_SEED")
+            ),
             class_top_ratio=float(self.config.get("OMNIVOICE_CLASS_TOP_RATIO", 0.1)),
         )
         try:
