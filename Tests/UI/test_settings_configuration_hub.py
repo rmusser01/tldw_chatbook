@@ -4282,6 +4282,65 @@ async def test_settings_provider_picker_persistence_alias_saves_canonical_provid
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_settings_picker_legacy_alias_row_selects_saves_and_reloads(request):
+    """TASK-33002.5 AC#6: a "(legacy alias)" row stays selectable end to end.
+
+    The real writer runs on this private profile's TLDW_CONFIG_PATH (no mocked
+    config writer). Picking the labelled row saves the legacy key itself, not
+    the key it aliases, and Settings reopened on the reloaded config lands on
+    the same labelled row.
+    """
+    import os
+
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-provider-search", Input).value = "legacy"
+        await pilot.pause()
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        index = _provider_picker_option_index(picker, provider_id="local_llamacpp")
+        assert str(picker.get_option_at_index(index).prompt) == (
+            "llama.cpp (legacy alias)"
+        )
+        picker.highlighted = index
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == "local_llamacpp"
+        )
+        screen.query_one("#settings-model-value", Input).value = "legacy-model"
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert host._exception is None
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["chat_defaults"]["provider"] == "local_llamacpp"
+    runtime = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert runtime["chat_defaults"]["provider"] == "local_llamacpp"
+
+    reopened = _build_test_app()
+    reopened.app_config["chat_defaults"] = dict(runtime["chat_defaults"])
+    host = DestinationHarness(reopened, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        option = picker.get_option_at_index(picker.highlighted)
+        assert getattr(option, "provider_id", None) == "local_llamacpp"
+        assert str(option.prompt) == "llama.cpp (legacy alias)"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
 async def test_settings_provider_picker_current_alias_preserves_connection_drafts(
     alias,
