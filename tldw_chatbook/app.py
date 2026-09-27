@@ -97,6 +97,7 @@ import asyncio
 from loguru import logger as loguru_logger, logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on, work
+from textual.content import Content
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.events import AppFocus, Resize
 from textual.keys import KEY_DISPLAY_ALIASES
@@ -1188,11 +1189,20 @@ class ThemeProvider(Provider):
                 command_text = f"Theme: Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
                 score = matcher.match(command_text)
                 if score > 0:
+                    # Both the display and the help parse markup; a saved
+                    # theme's name is untrusted file text (R28). ponytail: a
+                    # name with "[" shows unhighlighted -- highlight offsets
+                    # would not line up with an escaped candidate.
+                    display = (
+                        Content(command_text)
+                        if "[" in command_text
+                        else matcher.highlight(command_text)
+                    )
                     yield Hit(
                         score * 0.9,  # Slightly lower priority than main command
-                        matcher.highlight(command_text),
+                        display,
                         partial(self.switch_theme, theme_name),
-                        help=f"Change theme to {theme_name}",
+                        help=f"Change theme to {escape_markup(theme_name)}",
                     )
 
     async def discover(self) -> Hits:
@@ -1218,7 +1228,7 @@ class ThemeProvider(Provider):
         try:
             change = use_theme(self.app, theme_name, persist=True)
         except Exception as e:  # noqa: BLE001 - palette commands must not raise
-            self.app.notify(f"Failed to apply theme: {e}", severity="error")
+            self.app.notify(f"Failed to apply theme: {escape_markup(e)}", severity="error")
             return
         message, severity = use_theme_toast(theme_name, change)
         self.app.notify(message, severity=severity)
