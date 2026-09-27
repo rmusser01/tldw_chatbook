@@ -463,7 +463,11 @@ the first key you type replaces the value and filters the list, and
 The line under the model field counts the list — "1 model available. Type
 to filter." or "12 models available. Type to filter." — and when more models
 match than the 20 rows the list shows, it says so: "Showing 20 of 57
-matching models. Type to narrow the list."
+matching models. Type to narrow the list." A catalog warning takes that
+line first: "Current model is not in the latest catalog. Choose another or
+keep it.", "Catalog unavailable. Use a configured model or Custom ID." and
+"Live catalog unavailable. Showing N configured models." are never replaced
+by the count, however long the list.
 
 #### QwenCloud in Console
 
@@ -867,3 +871,13 @@ clicked into the Model field (reading `qwen-t7`) and typed `q`: the field
 read `q`, a fresh search, not an edit of the value. Before this fix
 both fields blanked to their "Choose or search …" placeholders on focus. The
 20-row cap line is pinned by mounted picker tests, not seen live.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
+final fix wave, merged with dev 88b61879b9). The model field's status line
+keeps a catalog warning over the 20-row count on focus: before the fix,
+focusing the Model field on a catalog of more than 20 models replaced "Current
+model is not in the latest catalog…", "Catalog unavailable…" and "Live
+catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
+widget test with 25 models for each warning
+(`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
+this page's content unchanged from the prior stamp.)*

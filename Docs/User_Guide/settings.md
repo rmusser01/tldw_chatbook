@@ -1515,3 +1515,15 @@ source: not required for this provider". The Endpoint row carried the
 zero-width autolink break (`http<U+200B>://127.0.0.1:18777`), and hovering
 it raised no link. The Conversation settings modal's plain Base URL field
 (`http://127.0.0.1:18777`, no break) did underline as a link on hover.*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
+final fix wave, merged with dev 88b61879b9). Dev's task-32943 had landed a
+second F6 handler for this screen; the merge keeps one (TASK-33001.4's), so
+the keys table has one F6 row and one Shift+F6 row. A category whose
+inspector holds no control (Theme) takes F6 on the inspector itself rather
+than skipping it; pinned by a mounted key-press test, which also checks that
+Settings binds Shift+F6 once and leaves F6 to the app. Generation defaults
+for a named endpoint (`custom-ep:<slug>`) now hide the rows that endpoint's
+family request drops, as Console does (an ollama-family endpoint hides Min
+P); pinned by a real-rebase comparison test. Not driven live. The rest of
+this page's content unchanged from the prior stamp.*
