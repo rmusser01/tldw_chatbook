@@ -524,7 +524,10 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
     tools_dir = Path(tools_pkg.__file__).parent
     modules = []
     for source in sorted(tools_dir.glob("*.py")):
-        if source.name == "__init__.py":
+        if source.name in {"__init__.py", "remote_worker_bundle.py"}:
+            # The remote worker bundle is a GENERATED copy of modules this
+            # scan already covers at their source (its drift guard proves it
+            # rebuilds from them); scanning the copy double-counts them.
             continue
         text = source.read_text()
         if "workspace_root" not in text:
