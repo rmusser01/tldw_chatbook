@@ -50,8 +50,12 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 
 
 # Initialize logging at the earliest possible point
-def initialize_early_logging():
-    """Initialize logging as early as possible to capture all logs from startup."""
+def initialize_early_logging() -> object:
+    """Initialize logging as early as possible to capture all logs from startup.
+
+    Returns:
+        The minimal app-like object logging was configured against.
+    """
 
     # Create a temporary app-like object with just enough attributes for configure_application_logging
     class EarlyLoggingApp:
@@ -624,10 +628,11 @@ def _run_module_main() -> None:
 
 
 # Entry point for the tldw-chatbook command
-def get_app():
+def get_app() -> TldwCli:
     """Entry point for textual serve.
 
-    Returns the TldwCli app instance without running it.
+    Returns:
+        The TldwCli app instance, not yet running.
     """
     # Configure logging to suppress verbose debug messages early
 
@@ -661,11 +666,15 @@ def get_app():
     return TldwCli()
 
 
-def main_cli_runner():
+def main_cli_runner() -> object:
     """Entry point for the tldw-chatbook command.
 
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
+
+    Returns:
+        The app's pending recovery-restart request, or None when there is none
+        (``cli.main_cli_runner`` passes it on).
     """
     # Record the launch directory at the earliest point in the process, before
     # anything can chdir. The workspace-context note appended to agent prompts
