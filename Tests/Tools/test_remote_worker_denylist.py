@@ -17,6 +17,7 @@ bundle, exercised through the loopback harness):
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -271,6 +272,58 @@ def test_denylist_root_inside_a_denylisted_entry_refuses_outright(
 
     assert read["outcome"] == "failure"
     assert stat["outcome"] == "failure"
+
+
+def test_denylist_root_at_the_real_target_of_a_symlinked_entry_refuses(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``~/.ssh`` is often a symlink into other storage. A binding pinned at
+    that REAL location (not under the home) is still the denylisted
+    subtree: every operation refuses, exactly as a root at ``~/.ssh``."""
+    home = _home_standin(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    real = tmp_path / "vault" / "ssh-keys"
+    real.mkdir(parents=True)
+    (real / "id_ed25519").write_text("PRIVATE KEY\n", encoding="utf-8")
+    shutil.rmtree(home / ".ssh")
+    (home / ".ssh").symlink_to(real)
+    chain = _ping_chain(real)
+
+    read = _loopback(
+        real, chain, "fs_read", {"path": "id_ed25519", "sensitive_exclusions": []}
+    )
+    listing = _loopback(real, chain, "fs_list", {"path": ".", "sensitive_exclusions": []})
+
+    assert read["outcome"] == "failure"
+    assert "PRIVATE KEY" not in (read.get("result") or "")
+    assert listing["outcome"] == "failure" or "id_ed25519" not in (
+        listing.get("result") or ""
+    )
+
+
+def test_denylist_root_above_the_real_target_of_a_symlinked_entry_omits_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A root that CONTAINS the symlinked entry's real location hides that
+    subtree under its real name too."""
+    home = _home_standin(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    vault = tmp_path / "vault"
+    real = vault / "ssh-keys"
+    real.mkdir(parents=True)
+    (real / "id_ed25519").write_text("PRIVATE KEY\n", encoding="utf-8")
+    (vault / "notes.txt").write_text("fine\n", encoding="utf-8")
+    shutil.rmtree(home / ".ssh")
+    (home / ".ssh").symlink_to(real)
+    chain = _ping_chain(vault)
+
+    read = _loopback(
+        vault, chain, "fs_read", {"path": "ssh-keys/id_ed25519", "sensitive_exclusions": []}
+    )
+    ok = _loopback(vault, chain, "fs_read", {"path": "notes.txt", "sensitive_exclusions": []})
+
+    assert read["outcome"] == "failure"
+    assert ok["outcome"] == "success"
 
 
 def test_denylist_root_inside_home_but_outside_entries_is_unaffected(
