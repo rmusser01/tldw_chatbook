@@ -316,8 +316,36 @@ async def test_settings_f6_pressed_mid_category_swap_lands_in_the_new_panes(requ
         await _wait_for_pane(app, pilot, "settings-impact-pane", "shift+f6 mid-swap")
         assert settings.active_category == "theme"
         assert app.focused.is_attached and app.focused not in outgoing
+        # Theme's inspector holds no control, so the stop is the inspector's
+        # own scroll body (the keys then scroll it); dropping scroll bodies
+        # from the ring instead of sorting them last would skip the pane.
+        inspector = settings.query_one("#settings-impact-pane")
+        assert [
+            widget.id
+            for widget in settings.focus_chain
+            if inspector in widget.ancestors
+        ] == ["settings-impact-pane-body"]
+        assert app.focused.id == "settings-impact-pane-body"
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+        await _press_and_wait_for_pane(app, pilot, "shift+f6", "settings-impact-pane")
+        assert app.focused.id == "settings-impact-pane-body"
 
     assert "No workbench pane focus target is available." not in notices
+
+
+def test_settings_binds_only_shift_f6_and_leaves_f6_to_the_app():
+    """TASK-33001.4 + task-32943: F6 is app-global (ADR-031 rule 1) and
+    reaches Settings through ``action_focus_next_workbench_pane``; a screen
+    ``f6`` binding would shadow it. Exactly one ``shift+f6`` -- the merge of
+    both F6 implementations once auto-merged two identical entries."""
+    keys = [
+        binding[0] if isinstance(binding, tuple) else binding.key
+        for binding in SettingsScreen.BINDINGS
+    ]
+    assert keys.count("shift+f6") == 1
+    assert "f6" not in keys
+    assert "ctrl+left" not in keys
+    assert "ctrl+right" not in keys
 
 
 def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
