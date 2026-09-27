@@ -86,3 +86,12 @@ reproduces with 603 owners, 1395 TASK-492 calls, 56 TASK-31551 calls,
 7545 TASK-494 calls and 14 sink files. Ruff lint/format, changed-module
 compileall, diff checks and touched-source Bandit pass (zero findings).
 Fresh remote CI and Qodo must qualify the new head before merge.
+
+2026-09-27 CI repair: run 36333168869 passed 1167 PR Fast Lane cases but hit
+a real concurrent Servers-mode callout replacement crash in the stale Settings
+tool-profile deep-link test. The required artifact check correctly blocked
+merge; auto-merge was disabled. TASK-32917.1 and
+`2026-09-27-mcp-overview-refresh-race-ci.md` track the bounded repair. Held-removal
+tests reproduce duplicate Enable/recovery IDs; a per-widget async lock fixes
+the overlap and releases on active/queued cancellation. The audio contract and
+production diagnostic inventory are unchanged. Fresh CI and review are required.
