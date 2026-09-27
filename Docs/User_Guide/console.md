@@ -456,6 +456,15 @@ models" placeholder, **Apply to this chat** answers "Choose a model.", and
 **Defaults…** says "Unavailable: choose a model first." It never borrows
 another provider's model.
 
+Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
+its current value on screen, selected, and opens the full list below it;
+the first key you type replaces the value and filters the list, and
+**Escape** puts the value back.
+The line under the model field counts the list — "1 model available. Type
+to filter." or "12 models available. Type to filter." — and when more models
+match than the 20 rows the list shows, it says so: "Showing 20 of 57
+matching models. Type to narrow the list."
+
 #### QwenCloud in Console
 
 QwenCloud behaves like the other hosted providers: select it once, use the
@@ -846,3 +855,15 @@ the chat stayed on OpenAI / `gpt-5.6-terra`; **Defaults…** read "Defaults
 target: llama_cpp/No model" and "Unavailable: choose a model first." A
 mounted popover test (`Tests/Chat/test_console_session_settings.py`) pins
 the same states. The full modal was not driven live.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001.7,
+picker focus and counts). Driven live at 211x44 on a scratch profile
+(llama.cpp / `qwen`, users_name `verify_mc33001_t7`): the Conversation
+settings modal opened with **Provider** focused and still reading
+"llama.cpp", selected, over the open provider list; Tab to **Model** kept
+"qwen" painted and selected, with "1 model available. Type to filter."
+below; typing `q` replaced it and Escape restored "qwen". A second run
+clicked into the Model field (reading `qwen-t7`) and typed `q`: the field
+read `q`, a fresh search, not an edit of the value. Before this fix
+both fields blanked to their "Choose or search …" placeholders on focus. The
+20-row cap line is pinned by mounted picker tests, not seen live.)*

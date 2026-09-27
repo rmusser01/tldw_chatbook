@@ -42,7 +42,38 @@ _PROVENANCE_GROUP_LABELS = {
 }
 
 
-class ModelPickerInput(Input):
+def _count(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+class PickerSearchInput(Input):
+    """Combobox input whose focusing click selects its value, as Tab does.
+
+    ``select_on_focus`` selects the committed value, but ``Input._on_mouse_down``
+    then moves the caret to the click point, so click-then-type edited the
+    value instead of replacing it (TASK-33001.7). Same mechanism as the Library
+    rail's ``SelectAllOnFocusingClickInput``, which is off the UI-ready path.
+    """
+
+    _select_on_focusing_click = False
+
+    def _on_focus(self, event: events.Focus) -> None:
+        # Screen focuses a widget before forwarding the click that focused it,
+        # so that MouseDown is the next message; the refresh disarms a Tab focus.
+        self._select_on_focusing_click = True
+        self.call_after_refresh(self._disarm_focusing_click)
+
+    def _disarm_focusing_click(self) -> None:
+        self._select_on_focusing_click = False
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        if self._select_on_focusing_click:
+            self._select_on_focusing_click = False
+            self.select_all()
+            event.prevent_default()  # skip Input._on_mouse_down's caret move
+
+
+class ModelPickerInput(PickerSearchInput):
     """Input that lets the compound picker own Escape semantics."""
 
     class EscapePressed(Message):
@@ -588,10 +619,12 @@ class ModelSearchPicker(Widget):
             and sources <= {"saved"}
         ):
             self._set_status(
-                f"Live catalog unavailable. Showing {len(model_ids)} configured models."
+                f"Live catalog unavailable. Showing {_count(len(model_ids), 'configured model')}."
             )
             return
-        self._set_status(f"{len(model_ids)} models available. Type to filter.")
+        self._set_status(
+            f"{_count(len(model_ids), 'model')} available. Type to filter."
+        )
 
     def _set_status(self, copy: str) -> None:
         set_status_line(self, "#model-search-picker-status", copy)
@@ -643,14 +676,22 @@ class ModelSearchPicker(Widget):
         for model_id in self._matches:
             results.add_option(Option(escape_markup(model_id)))
         results.display = bool(self._matches)
-        cache_key = provider_config_key(self._provider)
+        self._render_match_status(normalized_query, len(model_ids))
+
+    def _render_match_status(self, normalized_query: str, matched: int) -> None:
+        """Name an empty filter, or a list the MAX_RESULTS cap cut short."""
         if (
             normalized_query
-            and catalog_model_ids
-            and not self._matches
-            and not self._load_errors.get(cache_key, False)
+            and not matched
+            and self._catalog_model_ids()
+            and not self._load_errors.get(provider_config_key(self._provider), False)
         ):
             self._set_status("No matching models. Clear the filter or use Custom ID.")
+        elif matched > len(self._matches):
+            self._set_status(
+                f"Showing {len(self._matches)} of {matched} matching models. "
+                "Type to narrow the list."
+            )
         else:
             self._render_catalog_status()
 
@@ -707,16 +748,7 @@ class ModelSearchPicker(Widget):
                     )
                 )
         results.display = bool(self._matches)
-        cache_key = provider_config_key(self._provider)
-        if (
-            normalized_query
-            and self._catalog_model_ids()
-            and not self._matches
-            and not self._load_errors.get(cache_key, False)
-        ):
-            self._set_status("No matching models. Clear the filter or use Custom ID.")
-        else:
-            self._render_catalog_status()
+        self._render_match_status(normalized_query, len(ordered_options))
 
     def _commit_catalog_model(self, model_id: str) -> None:
         normalized = self._normalize_model(model_id)
@@ -750,7 +782,8 @@ class ModelSearchPicker(Widget):
             return
         if self._custom_mode:
             return
-        self._set_input_value("")
+        # TASK-33001.7: keep the committed model painted. Input's own
+        # select_on_focus selects it, so the first keystroke replaces it.
         self._render_matches("", show_empty_query=True)
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:

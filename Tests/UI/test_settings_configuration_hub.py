@@ -8821,6 +8821,8 @@ async def test_settings_provider_openai_endpoint_placeholder_uses_provider_conte
 
 
 def test_settings_endpoint_display_breaks_browser_autolinks_without_mutating_value():
+    # TASK-33001.7: this is the textual-web display only; a native terminal
+    # paints the raw URL (Tests/UI/test_settings_url_input.py covers both).
     endpoint = "http://localhost:8000/v1/chat/completions"
 
     display_value = settings_screen_module._textual_web_safe_url_display(endpoint)
@@ -9954,10 +9956,11 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
     "environment"`` and delete a stored ``api_key`` that was resolving. ADR-012
     (2026-09-19) ranks the stored key above that env var. The real writer runs
     on this private profile's TLDW_CONFIG_PATH; the spy only records. The
-    explicit rows (choose env var, clear, type) keep their dev behaviour, and
-    so does the keyless row. The over-limit row (Qodo on PR #2847) holds a key
-    the resolver accepts but the builder would reject as a new entry: the
-    untouched key is kept verbatim, not revalidated, so the save succeeds.
+    explicit rows (choose env var, clear, type) keep their dev behaviour; the
+    keyless row records "none" per TASK-33001.7. The over-limit row (Qodo on
+    PR #2847) holds a key the resolver accepts but the builder would reject as
+    a new entry: the untouched key is kept verbatim, not revalidated, so the
+    save succeeds.
 
     Args:
         request: Pytest request; ``private_profile_test`` runs this test in a
@@ -10096,11 +10099,13 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
             )
             assert resolved[:2] == before[:2]
     elif action == "model":
-        # Keyless legacy section, no stored key: this fix leaves dev's behaviour
-        # alone. TASK-33001.7 changes this row to credential_source "none".
+        # Keyless legacy section, no stored key. TASK-33001.7 changed this row
+        # on purpose: the untyped template env-var name is not a credential
+        # choice, so the save records "none" and drops the name (it used to
+        # pin dev's "environment").
         assert saved["model"] == new_model
-        assert saved["credential_source"] == "environment"
-        assert saved["api_key_env_var"] == template_env
+        assert saved["credential_source"] == "none"
+        assert "api_key_env_var" not in saved
         assert before[:2] == after[:2] == (None, None)
         assert readiness_before == readiness_after
     elif action == "choose-env":
@@ -10436,6 +10441,83 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         "model": "",
         "credential_source": "none",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("env_key", "persisted_source"),
+    [
+        (None, None),
+        ("sk-llama-server-canary", None),
+        (None, "environment"),
+    ],
+    ids=["legacy-env-unset", "legacy-env-set", "explicit-environment"],
+)
+@private_profile_test
+async def test_settings_keyless_provider_save_keeps_template_env_name_out(
+    request, monkeypatch, env_key, persisted_source
+):
+    """TASK-33001.7 AC#4: a keyless save writes no unused credential routing.
+
+    The shipped template names ``LLAMA_CPP_API_KEY`` for llama.cpp ("if you
+    set one on the server"), and Settings prefills that name, so saving the
+    model used to write ``api_key_env_var`` plus ``credential_source =
+    "environment"`` for a server that has no key. The real writer runs on
+    this private profile's TLDW_CONFIG_PATH (no mocked config writer). With
+    the variable unset the save records the explicit "none" decision and
+    drops the name; with it set, a key IS configured and still resolves. An
+    explicit persisted "environment" decision is the user's and is kept.
+    Every case resolves the credential exactly as it did before the save.
+    """
+    import os
+
+    from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
+
+    if env_key is None:
+        monkeypatch.delenv("LLAMA_CPP_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LLAMA_CPP_API_KEY", env_key)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+    template = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        "llama_cpp"
+    ]
+    assert template["api_key_env_var"] == "LLAMA_CPP_API_KEY"
+    assert not {"api_key", "credential_source"} & set(template)
+    if persisted_source is not None:
+        template["credential_source"] = persisted_source
+    before = resolve_provider_credential("llama_cpp", template, environ=os.environ)
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
+    app.app_config["api_settings"] = {"llama_cpp": deepcopy(template)}
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "qwen3-coder"
+        screen.handle_model_value_changed(Input.Changed(model, model.value))
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert screen._provider_save_result == "Provider settings saved."
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        "llama_cpp"
+    ]
+    assert saved["model"] == "qwen3-coder"
+    after = resolve_provider_credential("llama_cpp", saved, environ=os.environ)
+    assert after[:2] == before[:2]
+    if persisted_source is not None:
+        assert saved["credential_source"] == persisted_source
+        assert saved["api_key_env_var"] == "LLAMA_CPP_API_KEY"
+    elif env_key is None:
+        assert "api_key_env_var" not in saved
+        assert saved["credential_source"] == "none"
+        assert after[0] is None
+    else:
+        assert after[0] == env_key
 
 
 @pytest.mark.asyncio

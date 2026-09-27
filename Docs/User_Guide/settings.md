@@ -195,7 +195,7 @@ The biggest page, and where to start.
 | Group | What's in it |
 |---|---|
 | **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
-| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
+| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, Ollama, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential" and drops the unused name, while a variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, Summary, Verbosity."). Global fallbacks live under Console Behavior. |
@@ -1493,3 +1493,14 @@ qwen-next-d1". After a draft was typed into Chat 1 and Ctrl+T opened Chat 2, a
 second save (the field read "qwenqwen-thir" after a key race in the drive)
 moved Chat 2 to that model, while Chat 1 kept "qwen-next-d1". The rest of this
 page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes + TASK-33001.7 — 2026-09-27:
+endpoint URLs paint exactly as stored, and a keyless save writes no unused
+credential routing. Driven live at 211x44 on a scratch profile (llama.cpp,
+legacy section carrying the shipped `api_key_env_var = "LLAMA_CPP_API_KEY"`,
+variable unset): the Endpoint row's capture holds no zero-width character
+(TASK-33001.5's capture of the same row read `http<U+200B>://…`; only
+textual-web still gets that invisible autolink break). Saving Model
+`qwen-t7` wrote the model, removed `api_key_env_var` and recorded
+`credential_source = "none"`; the Env var field then read "No credential
+required". The rest of this page's content unchanged from the prior stamp.*

@@ -2363,9 +2363,11 @@ class SettingsURLInput(Input):
     """Render endpoint URLs without browser autolinking.
 
     SettingsURLInput preserves the raw ``value`` used for validation, saving,
-    selection, and event handling. Only the rendered display text is adjusted by
-    inserting a zero-width break after URL schemes so textual-web/browser
-    terminals do not treat provider endpoint values as clickable links.
+    selection, and event handling. Only under textual-web (``App.is_web``) is
+    the rendered display text adjusted, by inserting a zero-width break after
+    URL schemes so browser terminals do not treat provider endpoint values as
+    clickable links. A native terminal paints the raw URL (TASK-33001.7), so a
+    URL copied off the screen carries no invisible character.
 
     Args:
         *args: Positional arguments forwarded to ``textual.widgets.Input``.
@@ -2373,8 +2375,12 @@ class SettingsURLInput(Input):
     """
 
     @property
+    def _breaks_autolinks(self) -> bool:
+        return not self.password and self.app.is_web
+
+    @property
     def _value(self) -> Text:
-        if self.password:
+        if not self._breaks_autolinks:
             return super()._value
         text = Text(
             _textual_web_safe_url_display(self.value),
@@ -2393,7 +2399,7 @@ class SettingsURLInput(Input):
         return self._value.cell_len + 1
 
     def _display_index(self, index: int) -> int:
-        if self.password:
+        if not self._breaks_autolinks:
             return index
         return _textual_web_safe_url_display_index(self.value, index)
 
@@ -13361,6 +13367,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_current_credential_source(self, provider: str) -> str:
         from tldw_chatbook.Chat.provider_readiness import (
+            KEYLESS_PROVIDER_KEYS,
             configured_provider_credential_source,
             resolve_provider_credential,
         )
@@ -13371,9 +13378,10 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
+        provider_config = self._provider_config(provider)
+        configured_source = configured_provider_credential_source(provider_config)
         if not credential_fields_dirty:
-            provider_config = self._provider_config(provider)
-            if configured_provider_credential_source(provider_config) == "none":
+            if configured_source == "none":
                 return "none"
             # TASK-33001.13 / ADR-012 (2026-09-19): an untouched credential
             # keeps whichever one resolves now. A stored key outranks the env
@@ -13401,9 +13409,15 @@ class SettingsScreen(BaseAppScreen):
             ).strip()
         if api_key_dirty:
             return "environment" if env_var else "none"
-        if "credential_env_var" in dirty and env_var:
-            return "environment"
-        if env_var:
+        # TASK-33001.7: the shipped template names an env var for keyless
+        # local servers too ("if you set one on the server"). On a legacy
+        # keyless section that untyped name is not a credential choice; the
+        # readiness fallback below counts it only when the variable holds a key.
+        if env_var and (
+            "credential_env_var" in dirty
+            or configured_source is not None
+            or provider_config_key(provider) not in KEYLESS_PROVIDER_KEYS
+        ):
             return "environment"
         if self._provider_api_key_value(provider):
             return "stored"
