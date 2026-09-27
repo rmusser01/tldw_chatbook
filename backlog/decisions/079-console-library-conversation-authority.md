@@ -7,6 +7,8 @@ Amends: ADR-003's Settings ownership for future-session defaults, ADR-030's
 Console provider availability, and ADR-063's initial-dispatch-to-continuation
 ownership handoff; preserves ADR-030's Direct-versus-RAG selector
 
+Partially superseded by: [ADR-166](166-agent-assisted-archive-recovery.md) for a narrowly authenticated, interactive Console recovery capability available in either retrieval mode under the same captured Assistant Library authority. Recovery searches local archives across workspace/item scopes; other policies and general retrieval remain governed here.
+
 ## Decision
 
 Console will treat manual Library search, application-initiated pre-send

@@ -2,13 +2,15 @@
 
 Date: 2026-09-17
 
-Status: Written design awaiting user review. Product choices and review corrections approved in conversation; implementation has not started.
+Status: Approved by the user, including the 2026-09-19 review corrections. Implementation planning resumed on 2026-09-27; implementation has not started.
 
 Reviewed again: 2026-09-19. Corrected event-date matching, workspace lifecycle concurrency, capability registration, continuation behavior and receipt/result ownership before implementation planning.
 
 Task: [TASK-32772](../../../backlog/tasks/task-32772%20-%20Design-agent-assisted-archived-conversation-recovery.md)
 
 Decision: [ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md)
+
+Implementation plan: [Agent archive recovery](../plans/2026-09-27-agent-archive-recovery.md)
 
 ## 1. Purpose and approved experience
 
@@ -191,4 +193,4 @@ ADR path: `backlog/decisions/166-agent-assisted-archive-recovery.md`
 
 Reason: new Console agent contracts, a narrow amendment to Library authority/retrieval selection, archive chronology in two stores, and confirmation/operation ownership across UI and runtime.
 
-This document is a design, not an implementation plan. After user review of the written spec, invoke writing-plans to define atomic implementation tasks and targeted checks. No application code or schema migration is implemented by this design task.
+The user approved this written design before planning. The linked implementation plan defines atomic delivery tasks and targeted checks. No application code or schema migration is implemented by this design task.
