@@ -13353,6 +13353,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_current_credential_source(self, provider: str) -> str:
         from tldw_chatbook.Chat.provider_readiness import (
             configured_provider_credential_source,
+            resolve_provider_credential,
         )
 
         draft = self._provider_draft()
@@ -13361,12 +13362,19 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
-        if (
-            not credential_fields_dirty
-            and configured_provider_credential_source(self._provider_config(provider))
-            == "none"
-        ):
-            return "none"
+        if not credential_fields_dirty:
+            provider_config = self._provider_config(provider)
+            if configured_provider_credential_source(provider_config) == "none":
+                return "none"
+            # TASK-33001.13 / ADR-012 (2026-09-19): an untouched credential
+            # keeps whichever one resolves now. A stored key outranks the env
+            # var the template prefills, so it must not be saved as
+            # "environment" (which deletes the key).
+            _key, source, _env_var = resolve_provider_credential(
+                provider_config_key(provider), provider_config, environ=os.environ
+            )
+            if source is not None and source.startswith("config:"):
+                return "stored"
         if api_key_dirty:
             try:
                 if self.query_one("#settings-provider-api-key", Input).value.strip():
@@ -30391,6 +30399,8 @@ class SettingsScreen(BaseAppScreen):
                             ),
                         ),
                         self._app_config_mapping(),
+                        # Settings' "stored" is always the key already saved.
+                        keep_stored_credential=True,
                     )
                 except ValueError:
                     self._provider_save_result = (

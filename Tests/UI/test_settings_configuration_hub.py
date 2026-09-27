@@ -9648,6 +9648,214 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
     }
 
 
+_STORED_KEY_CANARY = "sk-settings-stored-canary-33001"
+_ENV_KEY_CANARY = "sk-settings-env-canary-33001"
+# Resolves (resolve_provider_credential only strips and screens placeholders)
+# but is over the setup builder's 8192-char limit for a newly entered key.
+_OVER_LIMIT_STORED_KEY = "sk-settings-over-limit-33001-" + "x" * 8200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "stored_key", "persisted_source", "env_key", "action"),
+    [
+        ("openai", _STORED_KEY_CANARY, None, None, "model"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "model"),
+        ("openai", _OVER_LIMIT_STORED_KEY, None, None, "model"),
+        ("openai", _STORED_KEY_CANARY, "stored", None, "model"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "choose-env"),
+        ("openai", _STORED_KEY_CANARY, None, _ENV_KEY_CANARY, "clear-key"),
+        ("openai", _STORED_KEY_CANARY, None, None, "type-key"),
+        ("llama_cpp", None, None, None, "model"),
+    ],
+    ids=[
+        "legacy-keyed-env-unset",
+        "legacy-keyed-env-set",
+        "legacy-keyed-over-limit",
+        "explicit-stored-template-name",
+        "explicit-env-choice",
+        "explicit-key-clear",
+        "explicit-key-typed",
+        "keyless-legacy",
+    ],
+)
+@private_profile_test
+async def test_settings_model_save_keeps_the_stored_key_that_resolves(
+    request, monkeypatch, provider, stored_key, persisted_source, env_key, action
+):
+    """TASK-33001.13: a save that touches no credential field keeps the key.
+
+    The shipped template names an env var for every provider and Settings
+    prefills it, so a model-only save used to write ``credential_source =
+    "environment"`` and delete a stored ``api_key`` that was resolving. ADR-012
+    (2026-09-19) ranks the stored key above that env var. The real writer runs
+    on this private profile's TLDW_CONFIG_PATH; the spy only records. The
+    explicit rows (choose env var, clear, type) keep their dev behaviour, and
+    so does the keyless row. The over-limit row (Qodo on PR #2847) holds a key
+    the resolver accepts but the builder would reject as a new entry: the
+    untouched key is kept verbatim, not revalidated, so the save succeeds.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this test in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        monkeypatch: Sets or clears the provider's env vars and installs the
+            delegating writer spy.
+        provider: Provider table to seed and save: ``"openai"`` (keyed rows)
+            or ``"llama_cpp"`` (the keyless row).
+        stored_key: The ``api_key`` seeded into the provider table, or None
+            for no stored key.
+        persisted_source: An explicit ``credential_source`` to seed, or None
+            for a legacy section with no recorded decision.
+        env_key: Value exported as the template's env var (and as
+            ``CHATBOOK_OPENAI_API_KEY``), or None to leave both unset.
+        action: The one edit before Save: ``"model"`` (model only),
+            ``"choose-env"`` (type an env-var name), ``"clear-key"`` (press
+            Clear saved key) or ``"type-key"`` (type a new key).
+    """
+    import os
+
+    from tldw_chatbook.Chat.provider_readiness import (
+        get_provider_readiness,
+        resolve_provider_credential,
+    )
+
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+    template_env = {"openai": "OPENAI_API_KEY", "llama_cpp": "LLAMA_CPP_API_KEY"}[
+        provider
+    ]
+    monkeypatch.delenv("CHATBOOK_OPENAI_API_KEY", raising=False)
+    if env_key is None:
+        monkeypatch.delenv(template_env, raising=False)
+    else:
+        monkeypatch.setenv(template_env, env_key)
+        monkeypatch.setenv("CHATBOOK_OPENAI_API_KEY", env_key)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    seed: dict[str, object] = {}
+    if stored_key is not None:
+        seed["api_key"] = stored_key
+    if persisted_source is not None:
+        seed["credential_source"] = persisted_source
+    if seed:
+        assert config_module.apply_settings_mutation_to_cli_config(
+            {f"api_settings.{provider}": seed}
+        ).file_replaced
+    runtime = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    section = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        provider
+    ]
+    assert section["api_key_env_var"] == template_env
+    assert section.get("api_key") == stored_key
+    before = resolve_provider_credential(provider, section, environ=os.environ)
+    readiness_before = get_provider_readiness(provider, runtime).api_key_source
+
+    real_apply = provider_persistence_module.apply_settings_mutation_to_cli_config
+    writes: list[tuple[dict, dict]] = []
+
+    def spy(section_values, **kwargs):
+        writes.append(
+            (deepcopy(dict(section_values)), dict(kwargs.get("delete_keys") or {}))
+        )
+        return real_apply(section_values, **kwargs)
+
+    monkeypatch.setattr(
+        provider_persistence_module, "apply_settings_mutation_to_cli_config", spy
+    )
+    new_model = {"openai": "gpt-4.1-mini", "llama_cpp": "qwen3-coder"}[provider]
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": provider,
+        "model": str(section.get("model") or ""),
+    }
+    app.app_config["api_settings"] = {provider: deepcopy(section)}
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        env_input = screen.query_one("#settings-provider-credential-env-var", Input)
+        assert env_input.value == template_env
+        if action == "model":
+            model = screen.query_one("#settings-model-value", Input)
+            model.value = new_model
+            screen.handle_model_value_changed(Input.Changed(model, new_model))
+        elif action == "choose-env":
+            env_input.value = "CHATBOOK_OPENAI_API_KEY"
+            screen.handle_provider_credential_env_var_changed(
+                Input.Changed(env_input, env_input.value)
+            )
+        elif action == "clear-key":
+            clear = screen.query_one("#settings-provider-api-key-clear", Button)
+            assert clear.disabled is False
+            screen.handle_provider_api_key_clear_pressed(Button.Pressed(clear))
+        else:
+            api_key = screen.query_one("#settings-provider-api-key", Input)
+            api_key.value = "sk-settings-typed-canary-33001"
+            screen.handle_provider_api_key_changed(
+                Input.Changed(api_key, api_key.value)
+            )
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert screen._provider_save_result == "Provider settings saved."
+
+    assert len(writes) == 1
+    provider_deletes = writes[0][1].get(f"api_settings.{provider}", ())
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        provider
+    ]
+    after = resolve_provider_credential(provider, saved, environ=os.environ)
+    runtime = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    readiness_after = get_provider_readiness(provider, runtime).api_key_source
+
+    if action == "model" and stored_key is not None:
+        assert saved["model"] == new_model
+        assert "api_key" not in provider_deletes
+        # Kept in place, not re-set: the untouched key is never revalidated.
+        assert "api_key" not in writes[0][0][f"api_settings.{provider}"]
+        assert saved["api_key"] == stored_key
+        assert saved["credential_source"] == "stored"
+        stored_source = f"config:api_settings.{provider}.api_key"
+        assert before[:2] == after[:2] == (stored_key, stored_source)
+        assert readiness_before == readiness_after == before[1]
+        # The quit rewrite (persist_cli_config_for_shutdown) merges the template
+        # back, restoring its env-var name; the stored decision still wins,
+        # even once that variable is exported.
+        monkeypatch.setenv(template_env, env_key or "sk-exported-later-33001")
+        assert config_module.persist_cli_config_for_shutdown()
+        for config in (
+            config_module.load_cli_config_and_ensure_existence(force_reload=True),
+            tomllib.loads(config_path.read_text(encoding="utf-8")),
+        ):
+            reloaded = config["api_settings"][provider]
+            resolved = resolve_provider_credential(
+                provider, reloaded, environ=os.environ
+            )
+            assert resolved[:2] == before[:2]
+    elif action == "model":
+        # Keyless legacy section, no stored key: this fix leaves dev's behaviour
+        # alone. TASK-33001.7 changes this row to credential_source "none".
+        assert saved["model"] == new_model
+        assert saved["credential_source"] == "environment"
+        assert saved["api_key_env_var"] == template_env
+        assert before[:2] == after[:2] == (None, None)
+        assert readiness_before == readiness_after
+    elif action == "choose-env":
+        assert "api_key" in provider_deletes
+        assert "api_key" not in saved
+        assert saved["credential_source"] == "environment"
+        assert after[:2] == (env_key, "env:CHATBOOK_OPENAI_API_KEY")
+    elif action == "clear-key":
+        assert "api_key" in provider_deletes
+        assert "api_key" not in saved
+        assert saved["credential_source"] == "environment"
+        assert after[:2] == (env_key, f"env:{template_env}")
+    else:
+        assert saved["api_key"] == "sk-settings-typed-canary-33001"
+        assert saved["credential_source"] == "stored"
+        assert "api_key_env_var" not in saved
+        assert after[1] == f"config:api_settings.{provider}.api_key"
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch):
     app = _build_test_app()
