@@ -24,7 +24,7 @@ import re
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal, Mapping
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple, Union
 
 #
 # 3rd-party Libraries
@@ -78,6 +78,14 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_mlx_lm,
 )
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
+from tldw_chatbook.provider_registry import (  # noqa: E402
+    AUDITED_ENDPOINT_KEYS,
+    CEREBRAS,
+    CUSTOM_HOSTED,
+    DATABRICKS,
+    FIREWORKS,
+    TOGETHER,
+)
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
@@ -117,6 +125,41 @@ class ResponseFormat(BaseModel):
 
 
 # 1. Dispatch table for handler functions
+class _LazyHostedChatHandler:
+    """Engine-driven dispatch entry that imports the engine on first use.
+
+    ``hosted_provider_engine`` stays off this module's import scope so it is
+    not resident at UI-ready (ADR-097 ``MAX_TLDW_MODULES_AT_UI_READY``
+    ratchet). Calls, ``inspect.signature`` and attribute reads (e.g.
+    ``__name__`` in the dispatch debug log) all resolve the real handler.
+    """
+
+    __slots__ = ("_record", "_handler")
+
+    def __init__(self, record: Any) -> None:
+        self._record = record
+        self._handler: Callable[..., Any] | None = None
+
+    def _resolve(self) -> Callable[..., Any]:
+        if self._handler is None:
+            from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+                build_hosted_chat_handler,
+            )
+
+            self._handler = build_hosted_chat_handler(self._record)
+        return self._handler
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._resolve()(*args, **kwargs)
+
+    @property
+    def __signature__(self) -> inspect.Signature:
+        return inspect.signature(self._resolve())
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+
 API_CALL_HANDLERS = {
     "openai": chat_with_openai,
     "anthropic": chat_with_anthropic,
@@ -131,6 +174,15 @@ API_CALL_HANDLERS = {
     "moonshot": chat_with_moonshot,
     "zai": chat_with_zai,
     "qwencloud": chat_with_qwencloud,
+    "databricks": _LazyHostedChatHandler(DATABRICKS),
+    "together": _LazyHostedChatHandler(TOGETHER),
+    "fireworks": _LazyHostedChatHandler(FIREWORKS),
+    "cerebras": _LazyHostedChatHandler(CEREBRAS),
+    # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
+    # gateway identity site swaps ``openai_compatible`` custom-ep entries to
+    # this key when ``[console] custom_endpoints_use_engine`` is on. The
+    # named legacy slots above stay untouched (kill-switch fallback).
+    "custom-hosted": _LazyHostedChatHandler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
@@ -183,49 +235,42 @@ def _project_instruction_messages_for_handler(
     ]
 
 
-# Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
-# The parity test then forces every newly registered chat handler through the
+# Kept explicit via the provider registry (ADR-179): the set is registry-
+# derived (every canonical dispatch key plus its legacy aliases), and the
+# parity test still forces every newly registered chat handler through the
 # sensitive auxiliary-request audit before it can silently join the dispatch
 # surface.
-SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(
-    {
-        "openai",
-        "anthropic",
-        "cohere",
-        "groq",
-        "openrouter",
-        "deepseek",
-        "mistral",
-        "mistralai",
-        "google",
-        "huggingface",
-        "moonshot",
-        "zai",
-        "qwencloud",
-        "llama_cpp",
-        "koboldcpp",
-        "oobabooga",
-        "tabbyapi",
-        "vllm",
-        "local-llm",
-        "ollama",
-        "aphrodite",
-        "custom-openai-api",
-        "custom-openai-api-2",
-        "mlx_lm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "local_mlx_lm",
-    }
-)
+SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(AUDITED_ENDPOINT_KEYS)
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
 corresponding handler functions (e.g., `chat_with_openai`). This is used by
 `chat_api_call` to route requests to the appropriate LLM provider.
 FIXME: The mappings and handlers should be validated for correctness.
 """
+
+# Shared parameter map for engine-driven providers (ADR-179): the zai-parity
+# key set, verified against the ``build_hosted_chat_handler`` closure signature
+# (provider-invented kwargs such as ``do_sample``/``request_id`` are not mapped).
+ENGINE_PROVIDER_PARAM_MAP = {
+    "api_key": "api_key",
+    "messages_payload": "input_data",
+    "temp": "temp",
+    "system_message": "system_message",
+    "streaming": "streaming",
+    "maxp": "maxp",  # maps to top_p
+    "model": "model",
+    "max_tokens": "max_tokens",
+    "tools": "tools",
+    "tool_choice": "tool_choice",
+    "stop": "stop",
+    "response_format": "response_format",
+    "user_identifier": "user",
+    "reasoning_effort": "reasoning_effort",
+    "provider_continuations": "provider_continuations",
+    "request_timeout": "request_timeout",
+    "request_retries": "request_retries",
+    "request_retry_delay": "request_retry_delay",
+}
 
 # 2. Parameter mapping for each provider
 # Maps generic chat_api_call param name to provider-specific param name
@@ -819,28 +864,48 @@ PROVIDER_PARAM_MAP = {
         "request_retries": "request_retries",
         "request_retry_delay": "request_retry_delay",
     },
-    "zai": {
-        "api_key": "api_key",
-        "messages_payload": "input_data",
-        "temp": "temp",
-        "system_message": "system_message",
-        "streaming": "streaming",
-        "maxp": "maxp",  # maps to top_p
-        "model": "model",
-        "max_tokens": "max_tokens",
-        "tools": "tools",
-        "tool_choice": "tool_choice",
-        "stop": "stop",
-        "response_format": "response_format",
-        "user_identifier": "user",
-        "reasoning_effort": "reasoning_effort",
-        "provider_continuations": "provider_continuations",
-        "request_timeout": "request_timeout",
-        "request_retries": "request_retries",
-        "request_retry_delay": "request_retry_delay",
-    },
+    "zai": ENGINE_PROVIDER_PARAM_MAP,
+    "databricks": ENGINE_PROVIDER_PARAM_MAP,
+    "together": ENGINE_PROVIDER_PARAM_MAP,
+    "fireworks": ENGINE_PROVIDER_PARAM_MAP,
+    "cerebras": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
+
+# Custom-endpoint engine surface (ADR-179 Phase 2 Task 6): the legacy
+# "custom-openai-api" map, copied verbatim so the swapped "custom-hosted"
+# execution key accepts exactly the generic kwargs the legacy handler did
+# (set/value parity is pinned by Tests/Chat/test_custom_endpoint_engine_swap.py;
+# the engine closure accepts every mapped provider-side name, including
+# ``user_identifier`` and the gateway's ``api_key_resolved`` decision flag).
+CUSTOM_PROVIDER_PARAM_MAP = {
+    "api_key": "api_key",
+    "api_key_resolved": "api_key_resolved",
+    "messages_payload": "input_data",
+    "temp": "temp",
+    "system_message": "system_message",
+    "streaming": "streaming",
+    "maxp": "maxp",
+    "minp": "minp",
+    "topk": "topk",
+    "model": "model",
+    "max_tokens": "max_tokens",
+    "seed": "seed",
+    "stop": "stop",
+    "response_format": "response_format",
+    "n": "n",
+    "user_identifier": "user_identifier",
+    "tools": "tools",
+    "tool_choice": "tool_choice",
+    "logit_bias": "logit_bias",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "logprobs": "logprobs",
+    "top_logprobs": "top_logprobs",
+    "reasoning_effort": "reasoning_effort",
+    "thinking_budget_tokens": "thinking_budget_tokens",
+}
+PROVIDER_PARAM_MAP["custom-hosted"] = CUSTOM_PROVIDER_PARAM_MAP
 """
 Maps generic parameter names used in `chat_api_call` to provider-specific
 parameter names for each LLM API. This allows `chat_api_call` to use a

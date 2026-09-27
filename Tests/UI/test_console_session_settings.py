@@ -5298,6 +5298,87 @@ async def test_console_settings_delayed_initial_focus_is_safe_after_unmount() ->
         modal._focus_highest_priority_connection()
 
 
+def _unmounted_settings_modal(
+    app_config: dict,
+    *,
+    provider: str = "llama_cpp",
+) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider=provider, model="model-a"),
+        app_config=app_config,
+        providers_models={provider: ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+
+_ENGINE_CLOUD_PROVIDER_TABLES = {
+    "databricks": {"api_key_env_var": "DATABRICKS_TOKEN"},
+    "together": {
+        "api_key_env_var": "TOGETHER_API_KEY",
+        "api_base_url": "https://api.together.xyz/v1",
+    },
+    "fireworks": {
+        "api_key_env_var": "FIREWORKS_API_KEY",
+        "api_base_url": "https://api.fireworks.ai/inference/v1",
+    },
+    "cerebras": {
+        "api_key_env_var": "CEREBRAS_API_KEY",
+        "api_base_url": "https://api.cerebras.ai/v1",
+    },
+}
+
+
+def test_console_modal_offers_engine_cloud_providers_with_display_labels() -> None:
+    """TASK-32919: the four ADR-179 engine presets render as first-class
+    picker options labeled with the shared catalog display names, not raw
+    config keys or "(WIP)" markers."""
+    modal = _unmounted_settings_modal({"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)})
+
+    options = {value: label for label, value in modal._provider_select_options()}
+
+    assert options["databricks"] == "Databricks"
+    assert options["together"] == "Together"
+    assert options["fireworks"] == "Fireworks"
+    assert options["cerebras"] == "Cerebras"
+
+
+def test_console_modal_collects_databricks_workspace_url() -> None:
+    """Databricks has no shipped base URL (per-account workspace host), so
+    the modal must show the Base URL input even with nothing configured --
+    readiness blocks with workspace-URL copy until one is saved -- and must
+    not prefill a placeholder value."""
+    modal = _unmounted_settings_modal({"api_settings": {}})
+
+    assert modal._provider_uses_base_url("databricks") is True
+    assert modal._default_base_url_for_provider("databricks") is None
+
+
+@pytest.mark.parametrize(
+    "provider_key,expected_default_base",
+    [
+        ("together", "https://api.together.xyz/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+        ("cerebras", "https://api.cerebras.ai/v1"),
+    ],
+)
+def test_console_modal_shows_inference_cloud_default_base_urls(
+    provider_key: str, expected_default_base: str
+) -> None:
+    """The inference clouds ship api_base_url in [api_settings], so their
+    Base URL input is visible and prefilled with the shipped default."""
+    assert (
+        DEFAULT_CONFIG_FROM_TOML["api_settings"][provider_key]["api_base_url"]
+        == expected_default_base
+    )
+    modal = _unmounted_settings_modal(
+        {"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)}
+    )
+
+    assert modal._provider_uses_base_url(provider_key) is True
+    assert modal._default_base_url_for_provider(provider_key) == expected_default_base
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_escape_dismisses_none() -> None:
     app = ModalHarness()

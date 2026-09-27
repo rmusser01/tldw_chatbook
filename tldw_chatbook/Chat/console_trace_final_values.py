@@ -11,6 +11,9 @@ from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
+from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
+)
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
@@ -761,15 +764,13 @@ def reconstruct_provider_gateway_kwargs(
             ]
     elif execution_key in {
         "anthropic",
-        "custom-openai-api",
-        "custom-openai-api-2",
         "local_vllm",
         "mistral",
         "mistralai",
         "vllm",
-    }:
+    } | CUSTOM_OPENAI_EXECUTION_KEYS:
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
-        if execution_key in {"custom-openai-api", "custom-openai-api-2"}:
+        if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_key_resolved"] = True
     elif execution_key == "openai" and getattr(request, "response_format") is not None:
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None

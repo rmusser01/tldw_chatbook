@@ -24,6 +24,12 @@ from tldw_chatbook.Chat import provider_endpoint_contract as contract
         ("Custom OpenAI API-2", "custom_2"),
         ("custom-openai-api-2", "custom_2"),
         ("custom_openai_api_2", "custom_2"),
+        # ADR-179 custom-hosted swap: the engine's hyphenated execution key
+        # (the spelling continuation checkpoints pin) resolves like the
+        # legacy custom spellings.
+        ("custom-hosted", "custom_hosted"),
+        ("Custom Hosted", "custom_hosted"),
+        ("custom_hosted", "custom_hosted"),
         ("llama.cpp", "llama_cpp"),
         ("local llama.cpp", "local_llamacpp"),
         ("vllm", "vllm"),
