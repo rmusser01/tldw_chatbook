@@ -42,6 +42,12 @@ cost is accepted: administrators wait for the same gate as other contributors,
 and a base update may require a fresh result before merge. Force-push policy is
 unchanged by this amendment.
 
+**Note (2026-09-27):** the owner relaxed strict to `false` on 2026-09-12, recorded
+in `backlog/docs/branch-protection-baseline.md` but not here. The owner restored
+strict to `true` on 2026-09-27 after stale-base merges caused breakage, so this
+amendment's rule is in force again. See the baseline doc for the reasons and
+the runner-starvation root cause found the same day.
+
 ## Context
 
 The account-wide CI investigation in TASK-22250 found that `tldw_chatbook`
