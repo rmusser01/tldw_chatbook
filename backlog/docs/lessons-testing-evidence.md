@@ -1768,6 +1768,21 @@ shredding test obtained by changing journal mode is not sufficient evidence.
 
 ---
 
+## An empty WAL reader can invalidate a content-free negative cache forever
+
+**TASK-31504, 2026-09-05.** Personal Context's first absent-status cache compared
+all DB/WAL/SHM metadata. A real WAL-mode regression closed the last SQLite reader
+between sends: opening recreated an empty WAL and SHM, and closing retired them.
+Every send therefore invalidated the cache even though no profile had been set up.
+Normalizing empty WAL/journal artifacts and excluding SHM coordination metadata
+from the change token fixed the regression while retaining sidecar owner/privacy
+checks. A second test pinned a reader while another service created the profile;
+the main DB mtime stayed unchanged and the WAL change correctly invalidated absence.
+
+**What to do.** Test negative caches with both last-reader cleanup and committed
+WAL-only writes. Coordination-file churn is not a committed-data change, but
+database-only metadata misses real committed state.
+
 ## An outer SQLite rollback cannot undo a write committed by another database
 
 **TASK-19900.1 fix review, 2026-08-22.** Console temporary promotion wrapped
@@ -16708,3 +16723,23 @@ Pin that value after `persist_cli_config_for_shutdown()` and a
 `load_cli_config_and_ensure_existence(force_reload=True)`, not only after the
 save, and read the live profile's config after the app quits, not only after
 the toast.
+
+### "Still asks under Allow" was never true for an explicit Allow (TASK-32956, 2026-09-27)
+
+**What happened.** The TASK-32954 spec listed "`mutates` save still asks under
+Allow" as a provider test, and TASK-32956's AC#3 called it "mutates floor
+unchanged". No test covered it. `permission_store.resolve_effective_state`
+floors only an INHERITED allow ("Explicit tool-level allow is never floored"),
+and ADR-183 keeps explicit grants authoritative. The gap stayed hidden because
+the character tools had no Hub row, so nobody could set an explicit Allow on
+them. TASK-32956 added the rows, and the new end-to-end test showed an
+explicit Allow on `character_save` returning `pending_gate_for(...) is None`,
+so the save ran with no card. `ALWAYS_ASK_TOOLS` in `permission_store.py` now
+floors that one tool.
+
+**What to do.** A claim that a floor holds "under Allow" has two cases,
+inherited Allow and explicit tool-level Allow. They take different branches,
+so test both. Drive the explicit case through the Hub's own write path
+(`service.set_tool_state(..., tool=row)`), then through the Console provider's
+own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
+built-ins and inherited defaults, not an explicit override.

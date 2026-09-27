@@ -5155,6 +5155,7 @@ class _RawShellMarkerState:
     stderr: str = ""
     truncated: bool = False
     result: RawCliResult | None = None
+    tool_presentation: ConsoleActivityPresentation | None = None
 
 
 class ConsoleAgentBridge:
@@ -5212,6 +5213,7 @@ class ConsoleAgentBridge:
         self._live_usage_owners: dict[str, tuple[str, str, str]] = {}
         self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
+        self._tool_activity_runs = {}
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
@@ -6579,6 +6581,32 @@ class ConsoleAgentBridge:
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
         planning_deriver = _PendingPrimaryPlanningDeriver()
+        from .console_tool_activity import ConsoleToolActivity
+
+        tool_activity = ConsoleToolActivity(self._store, session_id)
+        tool_activity_run_ids: set[str] = set()
+
+        def on_tool_activity(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            if agent_kind != AGENT_KIND_PRIMARY or not run_id:
+                return
+            self._tool_activity_runs[run_id] = tool_activity
+            tool_activity_run_ids.add(run_id)
+            if step.kind == "tool_proposed":
+                planning = planning_deriver.observe(
+                    dataclass_replace(step, kind=STEP_TOOL_CALL),
+                    agent_kind,
+                    actual_thinking_round_ordinals=_thinking_round_ordinals(
+                        thinking_capture.snapshot().envelope
+                    ),
+                )
+                if planning is not None:
+                    self._append_marker(
+                        session_id,
+                        planning.content,
+                        activity_presentation=planning.activity_presentation,
+                        activity_round_ordinal=planning.activity_round_ordinal,
+                    )
+            tool_activity.observe(step, planning_deriver.active_round_ordinal)
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
@@ -6725,14 +6753,16 @@ class ConsoleAgentBridge:
                 ),
             )
             if agent_kind == AGENT_KIND_PRIMARY:
+                # Adoption may succeed before its display update raises. Register
+                # cleanup first so an interrupted run still detaches that marker.
+                if step.tool_name == "shell_exec" and run_id:
+                    raw_shell_progress_run_ids.add(run_id)
                 raw_shell_projected = self._project_raw_shell_step(
                     session_id,
                     run_id,
                     step,
                     agent_kind,
                 )
-                if raw_shell_projected and run_id:
-                    raw_shell_progress_run_ids.add(run_id)
                 if planning_marker is not None:
                     self._append_marker(
                         session_id,
@@ -6773,6 +6803,23 @@ class ConsoleAgentBridge:
                         summary=step.summary,
                     )
                 )
+                if step.kind == STEP_TOOL_RESULT and not raw_shell_projected:
+                    lifecycle_content = (
+                        marker_text or f"⚙ {step.tool_name} → {step.result}"
+                    )
+                    if tool_activity.complete(
+                        step,
+                        build_step_activity_presentation(
+                            step.kind,
+                            tool_name=step.tool_name,
+                            result=step.result,
+                            tool_outcome=step.tool_outcome,
+                        ),
+                        lifecycle_content,
+                        tool_diff,
+                        record_trajectory=marker_text is not None,
+                    ):
+                        marker_text = None
                 if marker_text is not None:
                     self._append_marker(
                         session_id,
@@ -7154,6 +7201,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             app_config=self._app_config,
             on_step=on_step,
+            on_tool_activity=on_tool_activity,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
             # run_turn, so the caller cannot key by one.
@@ -7352,7 +7400,19 @@ class ConsoleAgentBridge:
             )
             if callable(unbind_promotion_context):
                 unbind_promotion_context()
-            self._clear_raw_shell_progress(raw_shell_progress_run_ids)
+            run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
+            self._clear_raw_shell_progress(
+                raw_shell_progress_run_ids, cancelled=run_cancelled
+            )
+            try:
+                tool_activity.finish(run_cancelled)
+            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
+                logger.warning(
+                    "Console tool activity display could not be settled ({})",
+                    type(exc).__name__,
+                )
+            for activity_run_id in tool_activity_run_ids:
+                self._tool_activity_runs.pop(activity_run_id, None)
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:
                     self._buddy_sink.release_run(buddy_run_id)
@@ -10238,16 +10298,31 @@ class ConsoleAgentBridge:
             state.stdout,
             state.stderr,
         )
+        activity = raw_cli_activity_presentation(
+            state.presentation.lifecycle_state,
+            state.presentation.exit_code,
+        )
+        if state.tool_presentation is not None:
+            activity = dataclass_replace(
+                state.tool_presentation,
+                status=activity.status,
+                result_preview=(
+                    _truncate_step_text(
+                        state.stdout + state.stderr,
+                        limit=_console_tool_result_display_cap(),
+                    )
+                    if state.presentation.lifecycle_state
+                    not in {"starting", "running", "stopping"}
+                    else None
+                ),
+            )
         try:
             self._store.update_tool_marker(
                 state.session_id,
                 state.marker_id,
                 content=content,
                 tool_output_full=full_output,
-                activity_presentation=raw_cli_activity_presentation(
-                    state.presentation.lifecycle_state,
-                    state.presentation.exit_code,
-                ),
+                activity_presentation=activity,
                 raw_cli_presentation=state.presentation,
             )
         except KeyError:
@@ -10292,15 +10367,21 @@ class ConsoleAgentBridge:
             with self._raw_shell_marker_lock:
                 if key in self._raw_shell_markers:
                     return True
-                marker_id = self._append_marker(
-                    session_id,
-                    content,
-                    full_output=full_output,
-                    activity_presentation=raw_cli_activity_presentation(
-                        "starting", None
-                    ),
-                    raw_cli_presentation=presentation,
-                    record_trajectory=False,
+                owner = self._tool_activity_runs.get(run_id)
+                adopted = owner.take(step.call_id) if owner is not None else None
+                marker_id = (
+                    adopted[0]
+                    if adopted is not None
+                    else self._append_marker(
+                        session_id,
+                        content,
+                        full_output=full_output,
+                        activity_presentation=raw_cli_activity_presentation(
+                            "starting", None
+                        ),
+                        raw_cli_presentation=presentation,
+                        record_trajectory=False,
+                    )
                 )
                 if marker_id is None:
                     return True
@@ -10308,13 +10389,29 @@ class ConsoleAgentBridge:
                     session_id=session_id,
                     marker_id=marker_id,
                     presentation=presentation,
+                    tool_presentation=adopted[1] if adopted is not None else None,
                 )
+                if adopted is not None:
+                    self._update_raw_shell_marker(self._raw_shell_markers[key])
             return True
 
         with self._raw_shell_marker_lock:
             state = self._raw_shell_markers.pop(key, None)
         if state is None:
             return False
+        self._settle_raw_shell_marker(
+            state, outcome=str(step.tool_outcome), message=step.result
+        )
+        return True
+
+    def _settle_raw_shell_marker(
+        self,
+        state: _RawShellMarkerState,
+        *,
+        outcome: str,
+        message: str | None,
+    ) -> None:
+        """Retain executor facts when available, otherwise settle only the display."""
         result = state.result
         if result is not None:
             state.stdout = result.stdout_preview
@@ -10338,8 +10435,8 @@ class ConsoleAgentBridge:
                 "success": "exited",
                 "timeout": "timed_out",
                 "cancelled": "cancelled",
-            }.get(str(step.tool_outcome), "failed")
-            state.stderr = step.result or state.stderr
+            }.get(outcome, "failed")
+            state.stderr = message or state.stderr
             started_at = state.presentation.started_at_monotonic
             state.presentation = dataclass_replace(
                 state.presentation,
@@ -10351,7 +10448,6 @@ class ConsoleAgentBridge:
                 cleanup_proven=None,
             )
         self._update_raw_shell_marker(state)
-        return True
 
     def raw_shell_progress_sink(
         self,
@@ -10391,14 +10487,43 @@ class ConsoleAgentBridge:
             )
             self._update_raw_shell_marker(state)
 
-    def _clear_raw_shell_progress(self, run_ids: AbstractSet[str]) -> None:
-        """Forget terminal-run correlations so late worker events are ignored."""
+    def _clear_raw_shell_progress(
+        self, run_ids: AbstractSet[str], *, cancelled: bool = False
+    ) -> None:
+        """Detach ended runs before settling rows so late worker events are ignored."""
         if not run_ids:
             return
         with self._raw_shell_marker_lock:
-            for key in tuple(self._raw_shell_markers):
-                if key[0] in run_ids:
-                    self._raw_shell_markers.pop(key, None)
+            states = [
+                self._raw_shell_markers.pop(key)
+                for key in tuple(self._raw_shell_markers)
+                if key[0] in run_ids
+            ]
+        for state in states:
+            try:
+                self._settle_raw_shell_marker(
+                    state,
+                    outcome="cancelled" if cancelled else "failure",
+                    message=(f"{state.stderr}\n\n" if state.stderr else "")
+                    + "Run ended before a result was received. Process cleanup is unknown.",
+                )
+            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
+                logger.warning(
+                    "Console shell activity display could not be settled ({})",
+                    type(exc).__name__,
+                )
+
+    def set_tool_approval_pending(
+        self,
+        session_id: str,
+        run_id: str,
+        call_ids: list[str],
+        pending: bool,
+    ) -> None:
+        """Project real approval waits only onto their run's own tool rows."""
+        activity = self._tool_activity_runs.get(run_id)
+        if activity is not None and activity.session_id == session_id:
+            activity.approval(call_ids, pending)
 
     def _append_marker(
         self,

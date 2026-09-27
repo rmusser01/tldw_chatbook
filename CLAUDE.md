@@ -143,6 +143,23 @@ def _heavy_task(self):
 **UI changes:** PRs that change a screen's UI should update the matching
 `Docs/User_Guide/` page (or at least its "Verified against" stamp).
 
+**Merging into `dev`** (protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
+
+- the required check is green;
+- the branch is up to date with `dev` (strict);
+- every review thread is resolved.
+
+These apply to admins too.
+
+- Re-sync a PR that is behind with `gh pr update-branch <n>` (or a local rebase plus push).
+  Then merge the moment the required check is green, because each merge to `dev` makes the
+  other ready PRs behind again.
+- `gh pr merge <n> --auto --merge` is allowed **only** when both hold:
+  - Qodo has posted its review on the *current* head;
+  - every thread on that head is addressed and resolved.
+- Auto-merge stays armed across later pushes, so run `gh pr merge <n> --disable-auto` before
+  pushing any further work to that PR.
+
 ### Security Requirements
 
 - Validate all inputs via `input_validation.py`
