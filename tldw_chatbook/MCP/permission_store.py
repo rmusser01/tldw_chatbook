@@ -108,6 +108,13 @@ HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 #: reasons. The built-in set is a vocabulary WE control and can reason
 #: about; the shared set is partly server-supplied and should stay narrow.
 BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
+#: ``(server_key, tool_name)`` pairs floored to ``ask`` even under an
+#: EXPLICIT tool-level ``allow`` -- every call raises an approval card.
+#: TASK-32956: the Console's ``character_save`` rewrites a user's character
+#: card, and the Character Creator promise is "every save asks" (TASK-32954
+#: spec). Its Hub row exists so the two reads can be set to Allow; an Allow
+#: on the save shows as floored Ask instead of silently skipping the card.
+ALWAYS_ASK_TOOLS = frozenset({("local:__local__", "character_save")})
 
 _DEFAULT_PROFILE_ID = "default"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -2166,7 +2173,9 @@ def resolve_effective_state(
        or ``global_default``) is downgraded to ``ask``
        (``risk_floored=True``) when the tool's tags intersect
        ``HIGH_RISK_TAGS``. Explicit tool-level ``allow`` is never floored --
-       the operator opted in with full knowledge of the specific tool.
+       the operator opted in with full knowledge of the specific tool --
+       except for the code-owned ``ALWAYS_ASK_TOOLS`` pairs, which floor
+       every ``allow`` (TASK-32956).
 
     Both downgrades run after the profile walk, regardless of which
     profile supplied the verdict.
@@ -2246,10 +2255,9 @@ def resolve_effective_state(
         state = DEFAULT_GLOBAL
 
     risk_floored = False
-    if (
-        origin != "tool_override"
-        and state == "allow"
-        and set(tool.tags) & HIGH_RISK_TAGS
+    if state == "allow" and (
+        (origin != "tool_override" and set(tool.tags) & HIGH_RISK_TAGS)
+        or (tool.server_key, tool.name) in ALWAYS_ASK_TOOLS
     ):
         state = "ask"
         risk_floored = True
