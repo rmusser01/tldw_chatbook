@@ -297,7 +297,7 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
             from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
             from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, build_gateable_tool, gateable_builtin_tools
             from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
-            from tldw_chatbook.MCP.local_server_tools import _hub_character_service
+            from tldw_chatbook.MCP.local_server_tools import hub_character_service
 
             builtin_tools: dict[str, HubTool] = {}
             provider = BuiltinToolProvider()
@@ -321,7 +321,7 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
             if not isinstance(builtin_raw, Mapping):
                 raise ToolPackError("export", "inventory_incomplete")
             builtin_mcp = _strict_raw_tools(builtin_raw.get("tools"), namespace="builtin:tldw_chatbook", label="tldw_chatbook")
-            local = tuple(LocalToolProvider(workspace_root=self._fallback_root, admitted_roots=None, todo_store=SessionTodoStore(), character_service=_hub_character_service()).hub_tools()) + (RawShellToolProvider.hub_tool(),)
+            local = tuple(LocalToolProvider(workspace_root=self._fallback_root, admitted_roots=None, todo_store=SessionTodoStore(), character_service=hub_character_service()).hub_tools()) + (RawShellToolProvider.hub_tool(),)
             virtual = tuple(VirtualCliProvider(workspace_root=self._fallback_root, admitted_roots=None).hub_tools())
             catalog = get_external_servers()
             if type(catalog) is not list:

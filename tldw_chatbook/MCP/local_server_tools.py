@@ -169,7 +169,7 @@ class HubLocalProviderHandle:
         self.resolver.close()
 
 
-def _hub_character_service() -> Any:
+def hub_character_service() -> Any:
     """A never-callable character service, so the Hub lists the character rows.
 
     TASK-32956: the ``character_*`` specs register only when a service is
@@ -229,7 +229,7 @@ def _build_hub_local_provider_handle(
             authority.canonical_root,
             workspace_executor=workspace_executor,
             watchlists_service=watchlists_service,
-            character_service=_hub_character_service(),
+            character_service=hub_character_service(),
         )
         if dispatch_guard is not None:
             guarded_specs = []
