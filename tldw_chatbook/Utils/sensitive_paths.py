@@ -216,9 +216,16 @@ def _debug(message: str) -> None:
     site is a rare resolution-failure path, so the import cost lands only
     when a diagnostic is actually emitted — the same laziness rule the
     ``config``/Skills/RAG imports throughout this module already follow.
-    """
-    from loguru import logger
 
+    Inside the remote worker bundle loguru does not exist (the import is a
+    stub that raises ImportError), so the diagnostic is dropped there --
+    raising would turn one unresolvable directory entry into a failed
+    ``fs_list`` instead of a skipped entry.
+    """
+    try:
+        from loguru import logger
+    except ImportError:
+        return
     logger.debug(message)
 
 #: Directory prefixes that are refused along with everything beneath them.

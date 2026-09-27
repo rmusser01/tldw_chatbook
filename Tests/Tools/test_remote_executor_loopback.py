@@ -172,6 +172,24 @@ def test_fs_list_roundtrip_returns_entries(tmp_path: Path) -> None:
     assert "beta.bin" in listing
 
 
+def test_fs_list_skips_a_symlink_loop_on_the_remote_side(tmp_path: Path) -> None:
+    """A looping entry in a remote directory is skipped by the worker; it
+    used to surface as worker_failure for the whole listing."""
+    root = _workspace(tmp_path)
+    (root / "loop-a").symlink_to(root / "loop-b")
+    (root / "loop-b").symlink_to(root / "loop-a")
+    chain = _ping_chain(root)
+
+    result = run_bundle_loopback(
+        root, _request(root, "fs_list", {"path": ".", "sensitive_exclusions": []}, chain=chain)
+    )
+
+    assert result["outcome"] == "success"
+    listing = result["result"] or ""
+    assert "alpha.txt" in listing
+    assert "loop-a" not in listing
+
+
 def test_fs_read_returns_content_sha256_and_size(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     chain = _ping_chain(root)
