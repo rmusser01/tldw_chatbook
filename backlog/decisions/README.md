@@ -120,6 +120,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 
+| [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Proposed | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.
