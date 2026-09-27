@@ -1800,6 +1800,8 @@ def _voice_service_name(base_url: object) -> str:
     # Host and port only: a URL's userinfo must never reach the screen.
     parts = urlsplit(speech_url)
     host = parts.hostname or ""
+    if ":" in host:  # IPv6: keep the brackets so the port stays readable
+        host = f"[{host}]"
     if parts.port:
         host = f"{host}:{parts.port}"
     return f"Custom endpoint {host}".rstrip()

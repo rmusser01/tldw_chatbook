@@ -2027,12 +2027,14 @@ class TestVoiceSummaryRow:
         return rows["Voice"]
 
     def test_skipped_voice_step_is_not_set_up(self):
+        """No [app_tts] at all reads as an optional area left alone."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
 
         row = self._voice({})
         assert (row.state, row.detail) == (ROW_DEFAULT, "not set up (optional)")
 
     def test_voice_row_follows_speech_transcription(self):
+        """Voice sits right after Speech transcription in the matrix."""
         labels = [r.label for r in build_summary_rows({}, {}, rag_deps_installed=False)]
         assert labels.index("Voice") == labels.index("Speech transcription") + 1
 
@@ -2063,15 +2065,24 @@ class TestVoiceSummaryRow:
                 "Custom endpoint tts.lan:9000 (default voice)",
             ),
             ({"default_provider": "kokoro"}, "kokoro (default voice)"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "https://[2001:db8::1]:8765/v1/audio/speech",
+                },
+                "Custom endpoint [2001:db8::1]:8765 (default voice)",
+            ),
         ],
     )
     def test_saved_default_names_the_service(self, app_tts, detail):
+        """A saved default provider names the service the Voice step shows."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
 
         row = self._voice({"app_tts": app_tts})
         assert (row.state, row.detail) == (ROW_CONFIGURED, detail)
 
     def test_saved_endpoint_without_default_says_so(self):
+        """An endpoint saved without Use as default is named, not claimed as default."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
 
         row = self._voice(
