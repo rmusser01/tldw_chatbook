@@ -151,7 +151,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # (config.py needs CLOUD_PROVIDER_CONFIG_KEYS at import; stdlib-only leaf).
 # hosted_provider_engine was deferred off this path in the same PR; dev
 # measured 1031, this branch 1032. Owner-approved ADR-097 exception.
-#: 1032 -> 1033 (2026-09-27, PR #2838, TASK-32929): owner-approved ADR-097
+#: 1032 -> 1033 (2026-09-27, PR #2838, TASK-33009): owner-approved ADR-097
 #: exception for Tools.remote_root_types, the SSH bindings' LocalRoot |
 #: RemoteRoot descriptors (pure dataclasses; stdlib-only imports). Four
 #: already-resident modules (console_chat_controller, tool_catalog,

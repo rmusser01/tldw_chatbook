@@ -2,7 +2,7 @@
 
 Status: Proposed
 Date: 2026-09-24
-Related Task: [TASK-32929](../tasks/task-32929%20-%20SSH-remote-workspace-bindings.md)
+Related Task: [TASK-33009](../tasks/task-33009%20-%20SSH-remote-workspace-bindings.md)
 Design: [SSH Remote Workspace Bindings — Design](../../Docs/superpowers/specs/2026-09-24-ssh-remote-workspace-bindings-design.md)
 
 ## Decision

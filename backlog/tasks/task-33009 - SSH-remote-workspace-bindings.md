@@ -1,5 +1,5 @@
 ---
-id: TASK-32929
+id: TASK-33009
 title: SSH remote workspace bindings
 status: Done
 assignee:
@@ -71,3 +71,9 @@ owner rule: an earlier-arriving `task-32926` (Keyring reads on a cache miss,
 created 2026-09-23 19:58) exists on `dev`; this task (created 2026-09-24
 22:35) is the younger arrival and renumbers. No dependencies referenced the
 old id; doc/code references updated in ADR-181 and the user guide.
+
+Renumbered again from TASK-32929 to TASK-33009 (2026-09-27), same rule: dev
+gained an earlier-arriving `task-32929` (Bridge reroute drops custom-ep
+identity, landed on dev 2026-09-25 21:55) before this task merged. No
+dependencies referenced the old id; references updated in ADR-181, the user
+guide, and the boot-census ratchet comment.
