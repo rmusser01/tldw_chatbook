@@ -121,6 +121,7 @@ class _SubscriptionReadinessCache:
         self._completed_at: float | None = None
         self._present = False
         self._expires_at_ms = 0
+        self._observed_once = False
         self.revision = 0
 
     def status(self) -> SubscriptionStatus:
@@ -162,12 +163,24 @@ class _SubscriptionReadinessCache:
             # A failed background read gets the same bounded TTL as a miss.
             present = False
         with self._lock:
+            # task-33081: value-gate the revision. A TTL refresh that
+            # observed the exact same state must not wake the 4Hz UI
+            # pollers into full summary rebuilds every few seconds while
+            # chatting; only a real state change (or the first completed
+            # observation) publishes a new revision.
+            changed = (
+                not self._observed_once
+                or self._present != present
+                or self._expires_at_ms != expires_at_ms
+            )
             self._path = path
             self._present = present
             self._expires_at_ms = expires_at_ms
             self._completed_at = time.monotonic()
             self._refreshing = False
-            self.revision += 1
+            self._observed_once = True
+            if changed:
+                self.revision += 1
 
 
 _SUBSCRIPTION_READINESS_CACHE = _SubscriptionReadinessCache()
