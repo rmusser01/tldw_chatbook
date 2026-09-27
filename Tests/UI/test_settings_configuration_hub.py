@@ -3622,8 +3622,24 @@ async def test_settings_overview_renders_ownership_contract_boundaries(request):
         assert "until source contracts exist" not in text
 
 
+def test_settings_copy_names_the_rail_category_and_the_real_control():
+    """TASK-33002.6: no Settings copy names a category or control that is not there."""
+    source = Path(settings_screen_module.__file__).read_text(encoding="utf-8")
+    rail = dict(settings_screen_module.ADVANCED_CONFIG_GUIDED_PATHS)[
+        SettingsCategoryId.CONSOLE_BEHAVIOR
+    ]
+    guidance = dict(
+        settings_screen_module._INSPECTOR_GUIDANCE[SettingsCategoryId.PROVIDERS_MODELS]
+    )
+
+    assert "console defaults" not in source.lower()
+    assert "Override current Console model" not in source
+    assert guidance["Boundary"].endswith(f"routed to {rail}")
+
+
 @pytest.mark.asyncio
-async def test_settings_provider_inspector_excludes_console_sampling_ownership():
+@private_profile_test
+async def test_settings_provider_inspector_excludes_console_sampling_ownership(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3636,7 +3652,9 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
             "Affected config: provider, model, endpoint, and credential source defaults"
             in text
         )
-        assert "Sampling and transport defaults are routed to Console Defaults" in text
+        # TASK-33002.6: the route names the rail's category, on purpose.
+        assert "Sampling and transport defaults are routed to Console Behavior" in text
+        assert "Console Defaults" not in text
         assert "streaming, and temperature" not in text
 
 
@@ -9069,7 +9087,10 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_selected_model_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_selected_model_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -9097,7 +9118,8 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
         screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
         screen.query_one("#settings-model-profile-streaming", Select).value = "false"
-        assert "Global fallbacks live under Console Defaults" in _visible_text(screen)
+        # TASK-33002.6: the fallbacks live in the rail's Console Behavior.
+        assert "Global fallbacks live under Console Behavior" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
 

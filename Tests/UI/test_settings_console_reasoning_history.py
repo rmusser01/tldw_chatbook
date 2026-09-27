@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Checkbox, Select
+from textual.widgets import Checkbox, Collapsible, Select
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from Tests.private_profile import private_profile_test
@@ -146,6 +146,10 @@ async def test_reasoning_history_remembers_normalized_target_and_clears_override
         screen = _active_destination_screen(host)
         override = screen.query_one("#settings-console-reasoning-override", Select)
         native = screen.query_one("#settings-console-reasoning-native-tools", Checkbox)
+        # TASK-33002.6: the control is named for what it holds, not a model override.
+        collapsible = override.query_ancestor(Collapsible)
+        assert collapsible.title == "Reasoning replay override"
+        assert native.query_ancestor(Collapsible) is collapsible
 
         assert override.value == "inherit"
         assert next((str(label), value) for label, value in override._options) == (

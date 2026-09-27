@@ -372,8 +372,8 @@ conversation's **Auto** replay policy. **Automatic** is the default: reviewed
 server templates select either the current exchange (including its tool calls)
 or all available compatible thinking. An unrecognized or unavailable template
 uses the server default. You can choose **Current exchange**, **All available**,
-or **Off**, globally or for the active endpoint and model. A target override can
-be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
+or **Off**, globally or for the active endpoint and model (under **Reasoning
+replay override**). A target override can be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
 fields in the request; the server template can still omit older reasoning. For
 example, Gemma 4 can preserve older tool-call thinking while omitting older final
 answer thinking.
@@ -637,3 +637,10 @@ landing in the Library editor with the captured note's Info showing its
 `console` / `conversation:<id>` / `message:<id>` keywords; **Save as…** ▸
 Note still titles after the conversation; Alt+C and Alt+I open the rails at
 235x52.)*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.6 —
+2026-09-27: the per-model reasoning control in **Settings > Console Behavior**
+is now titled **Reasoning replay override** (it was "Override current Console
+model"); its target line, **Use default** list and **Native tool support**
+checkbox are unchanged. Driven live at 211x44 and 235x52 on a scratch
+llama.cpp profile.*

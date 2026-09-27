@@ -1971,11 +1971,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "test provider readiness before saving provider-backed Console defaults",
+            "test provider readiness before saving provider-backed defaults",
         ),
         (
             "Boundary",
-            "Sampling and transport defaults are routed to Console Defaults",
+            "Sampling and transport defaults are routed to Console Behavior",
         ),
     ),
     SettingsCategoryId.SPEECH_TTS: (
@@ -5632,7 +5632,7 @@ class SettingsScreen(BaseAppScreen):
                     "provider+model profile defaults are shared with Console."
                 ),
                 recovery_copy=(
-                    "Test provider readiness, then use Console Defaults for sampling and transport settings."
+                    "Test provider readiness, then use Console Behavior for sampling and transport settings."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -16092,7 +16092,7 @@ class SettingsScreen(BaseAppScreen):
                 "Configure the default provider, model, endpoint, and credential source.",
             ),
             ("Saved as", "chat_defaults plus provider-specific api_settings"),
-            ("Validation", "test provider readiness before saving Console defaults"),
+            ("Validation", "test provider readiness before saving these defaults"),
         )
 
     def _refresh_provider_field_guidance(self) -> None:
@@ -17383,7 +17383,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="destination-section",
                 )
                 yield Static(
-                    "Global fallbacks live under Console Defaults; these values apply only "
+                    "Global fallbacks live under Console Behavior; these values apply only "
                     "to the provider+model above.",
                     classes="settings-detail-row",
                 )
@@ -17646,7 +17646,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static(
-                "Sampling and transport defaults are routed to Console Defaults.",
+                "Sampling and transport defaults are routed to Console Behavior.",
                 id="settings-provider-sampling-route",
                 classes="settings-status-row",
             )
@@ -18257,7 +18257,7 @@ class SettingsScreen(BaseAppScreen):
             )
             self._reasoning_override_target = self._current_reasoning_target()
             target = self._reasoning_override_target
-            with Collapsible(title="Override current Console model", collapsed=True):
+            with Collapsible(title="Reasoning replay override", collapsed=True):
                 yield Static(
                     f"{target[0]} / {target[2]} — {safe_endpoint_display(target[1])}"
                     if target
