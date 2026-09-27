@@ -2014,6 +2014,94 @@ class TestSpeechSummaryRow:
         assert "runtime" in row.detail.lower()
 
 
+class TestVoiceSummaryRow:
+    """TASK-32959: the Summary reads back what the Voice step SAVED. Only raw
+    [app_tts] keys count -- the loaded config back-fills default_provider =
+    "openai" when nothing was saved, and that must not read as a choice."""
+
+    @staticmethod
+    def _voice(cfg):
+        rows = {
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
+        return rows["Voice"]
+
+    def test_skipped_voice_step_is_not_set_up(self):
+        """No [app_tts] at all reads as an optional area left alone."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        row = self._voice({})
+        assert (row.state, row.detail) == (ROW_DEFAULT, "not set up (optional)")
+
+    def test_voice_row_follows_speech_transcription(self):
+        """Voice sits right after Speech transcription in the matrix."""
+        labels = [r.label for r in build_summary_rows({}, {}, rag_deps_installed=False)]
+        assert labels.index("Voice") == labels.index("Speech transcription") + 1
+
+    @pytest.mark.parametrize(
+        ("app_tts", "detail"),
+        [
+            ({"default_provider": "omnivoice"}, "OmniVoice (default voice)"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+                },
+                "PocketTTS (default voice)",
+            ),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
+                },
+                "OpenAI (default voice)",
+            ),
+            ({"default_provider": "openai"}, "OpenAI (default voice)"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "http://tts.lan:9000/v1/audio/speech",
+                },
+                "Custom endpoint tts.lan:9000 (default voice)",
+            ),
+            ({"default_provider": "kokoro"}, "kokoro (default voice)"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "https://[2001:db8::1]:8765/v1/audio/speech",
+                },
+                "Custom endpoint [2001:db8::1]:8765 (default voice)",
+            ),
+        ],
+    )
+    def test_saved_default_names_the_service(self, app_tts, detail):
+        """A saved default provider names the service the Voice step shows."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
+
+        row = self._voice({"app_tts": app_tts})
+        assert (row.state, row.detail) == (ROW_CONFIGURED, detail)
+
+    def test_saved_endpoint_without_default_says_so(self):
+        """An endpoint saved without Use as default is named, not claimed as default."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
+
+        row = self._voice(
+            {"app_tts": {"OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"}}
+        )
+        assert (row.state, row.detail) == (
+            ROW_CONFIGURED,
+            "PocketTTS (saved, not the default voice)",
+        )
+
+    def test_loaded_config_backfill_is_not_a_choice(self):
+        """load_settings() fills APP_TTS_CONFIG.default_provider="openai";
+        only the raw [app_tts] table is evidence of a saved choice."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        row = self._voice({"APP_TTS_CONFIG": {"default_provider": "openai"}})
+        assert row.state == ROW_DEFAULT
+
+
 class TestProviderSummaryConfigured:
     """Unit coverage for the pure helper directly, isolated from the rest of
     build_summary_rows' row-building."""
