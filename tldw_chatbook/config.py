@@ -14,6 +14,7 @@ import copy
 import difflib
 import importlib.util
 import json
+import re
 import shutil
 import sys
 from contextlib import ExitStack, closing, contextmanager
@@ -458,9 +459,12 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
     raw_persist = get_cli_setting(
         "console_ssh", "control_persist", DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
     )
+    # ssh_config(5) ControlPersist grammar: yes/no, or a TIME FORMAT --
+    # bare seconds or number+unit groups such as "10m" or "1h30m".
     control_persist = (
         raw_persist
-        if isinstance(raw_persist, str) and raw_persist.strip()
+        if isinstance(raw_persist, str)
+        and re.fullmatch(r"yes|no|\d+|(?:\d+[sSmMhHdDwW])+", raw_persist)
         else DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
     )
     # Strict bool (TOML delivers real booleans): a hand-edited non-boolean

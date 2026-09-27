@@ -204,6 +204,9 @@ def get_remote_binding_status_cache() -> RemoteBindingStatusCache:
     Lazily constructed with the shipped defaults on first use; stable
     thereafter. Pure in-memory, no I/O, no clocks at construction --
     safe to call from any hot path (composition, note building).
+
+    Returns:
+        The shared cache instance.
     """
     global _APP_STATUS_CACHE
     if _APP_STATUS_CACHE is not None:
@@ -247,6 +250,13 @@ def cached_status_display(
 
     Never raises and never probes: an unreadable cache degrades to the
     optimistic ``"ready"``.
+
+    Args:
+        binding_id: The registry binding's identifier.
+        cache: The cache to read; ``None`` uses the process-wide one.
+
+    Returns:
+        The display word (see the vocabulary above).
     """
     try:
         active = cache if cache is not None else get_remote_binding_status_cache()
@@ -293,6 +303,13 @@ class RemoteBindingStatusCache:
 
         An unseen binding returns the optimistic READY snapshot — no
         reason, no identity, no timestamp.
+
+        Args:
+            binding_id: The registry binding's identifier.
+
+        Returns:
+            A snapshot of the binding's state, reason, identity chain and
+            update time (deep-copied; safe to mutate).
         """
         with self._lock:
             record = self._records.get(binding_id)
@@ -306,7 +323,15 @@ class RemoteBindingStatusCache:
             )
 
     def identity_for(self, binding_id: str) -> list[list[object]] | None:
-        """The last ping-captured identity chain, or ``None`` if never."""
+        """The last ping-captured identity chain, or ``None`` if never.
+
+        Args:
+            binding_id: The registry binding's identifier.
+
+        Returns:
+            A deep copy of the chain (``[path, dev, ino, mode]`` entries,
+            root first), or ``None`` when no ping has captured one.
+        """
         with self._lock:
             record = self._records.get(binding_id)
             if record is None or record.identity_chain is None:
@@ -318,6 +343,12 @@ class RemoteBindingStatusCache:
 
         Transient failures (OP_TIMEOUT, REMOTE_OP_FAILED, MUX_ERROR) do
         not change the cached state; this counter is the only trace.
+
+        Args:
+            binding_id: The registry binding's identifier.
+
+        Returns:
+            The count for this binding (0 when unseen).
         """
         with self._lock:
             record = self._records.get(binding_id)
@@ -372,6 +403,10 @@ class RemoteBindingStatusCache:
         STALE_IDENTITY, not BLOCKED: the host was reachable — the old
         identity chain is kept for diagnosis, and the recovery probe's
         ping re-captures it (spec: "Identity freshness").
+
+        Args:
+            binding_id: The binding whose pinned root was refused.
+            now: Injectable ``time.monotonic`` for the update stamp.
         """
         with self._lock:
             record = self._records.setdefault(binding_id, _BindingRecord())
@@ -392,6 +427,11 @@ class RemoteBindingStatusCache:
         ``identity_chain`` is provided (a ping result), it replaces the
         stored chain (the recreated-root parity case); ``None`` keeps
         the previously captured chain.
+
+        Args:
+            binding_id: The binding the successful call ran against.
+            identity_chain: A freshly pinged identity chain, or ``None``.
+            now: Injectable ``time.monotonic`` for the update stamp.
         """
         with self._lock:
             record = self._records.setdefault(binding_id, _BindingRecord())
@@ -404,7 +444,13 @@ class RemoteBindingStatusCache:
     def record_missing(
         self, binding_id: str, reason: str, *, now: float | None = None
     ) -> None:
-        """Mark the binding MISSING: the probe connected, the root is absent."""
+        """Mark the binding MISSING: the probe connected, the root is absent.
+
+        Args:
+            binding_id: The binding whose root is absent on the host.
+            reason: Bounded human-readable reason.
+            now: Injectable ``time.monotonic`` for the update stamp.
+        """
         with self._lock:
             record = self._records.setdefault(binding_id, _BindingRecord())
             record.state = BindingState.MISSING
@@ -425,6 +471,9 @@ class RemoteBindingStatusCache:
             host_key: The resolved host identity (caller-rendered key;
                 per-host independence is by string).
             now: Injectable ``time.monotonic`` timestamp.
+
+        Returns:
+            ``True`` if this caller claimed the window and should probe.
         """
         with self._lock:
             moment = _moment(now)
@@ -441,6 +490,10 @@ class RemoteBindingStatusCache:
         the window itself): re-anchors the debounce window for callers
         that dispatch on their own schedule — e.g. a retry after a
         failed dispatch attempt.
+
+        Args:
+            host_key: The resolved host identity key.
+            now: Injectable ``time.monotonic`` timestamp.
         """
         with self._lock:
             self._probe_dispatched[host_key] = _moment(now)

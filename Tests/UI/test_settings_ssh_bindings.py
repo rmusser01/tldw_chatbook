@@ -156,7 +156,14 @@ async def _add_ssh_via_pane(
             pilot, screen, "#settings-workspace-ssh-add", expect_type=Button
         )
         add_button.press()
-        await pilot.pause()  # let the add handler run before returning
+        # The add runs on a thread worker (ssh -G can take seconds); keep the
+        # spy installed until it lands, i.e. the Add button is re-enabled.
+        await pilot.pause()
+        for _ in range(100):
+            if not add_button.disabled:
+                break
+            await pilot.pause(0.05)
+        assert not add_button.disabled, "SSH add worker never landed"
     finally:
         registry.add_ssh_binding = original
 
@@ -345,8 +352,13 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
             # Flip the access choice to read-write before submitting.
             screen.query_one("#settings-workspace-ssh-access", Button).press()
             await pilot.pause(0.1)
-            screen.query_one("#settings-workspace-ssh-add", Button).press()
-            await pilot.pause(0.4)
+            add_button = screen.query_one("#settings-workspace-ssh-add", Button)
+            add_button.press()
+            await pilot.pause()
+            for _ in range(100):
+                if not add_button.disabled:
+                    break
+                await pilot.pause(0.05)
         finally:
             registry.add_ssh_binding = original
 
@@ -376,6 +388,70 @@ async def test_ssh_form_renders_and_submits_add_ssh_binding(
         )
         assert "me@devbox:2222/srv/app" in str(row.renderable)
         assert "[rw] ready" in str(row.renderable)
+
+
+@pytest.mark.timeout(240)
+@private_profile_test
+@pytest.mark.asyncio
+async def test_add_runs_off_the_ui_thread_and_blocks_double_submit(
+    request, tmp_path, monkeypatch, fresh_status_cache
+) -> None:
+    """add_ssh_binding (which runs ssh -G) never runs on the UI thread: the
+    handler returns with Add disabled while the registry call is parked, and
+    the pane re-enables and reports once it lands."""
+    app, registry, fake_ssh, host = await _open_workspaces_ssh_pane(
+        tmp_path, "ws-ssh-slow"
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "_settings_ssh_advisory_probe",
+        lambda binding_id, locator, python, metadata=None: None,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original = registry.add_ssh_binding
+
+    def slow_add(workspace_id, raw_locator, **kwargs):
+        entered.set()
+        release.wait(timeout=10)
+        return original(workspace_id, raw_locator, ssh_bin=str(fake_ssh), **kwargs)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-row-ws-ssh-slow", expect_type=Button
+        )).press()
+        (await _wait_for_widget(
+            pilot, screen, "#settings-workspace-ssh-target", expect_type=Input
+        )).value = "devbox"
+        screen.query_one("#settings-workspace-ssh-path", Input).value = "/srv/app"
+        registry.add_ssh_binding = slow_add
+        try:
+            add_button = screen.query_one("#settings-workspace-ssh-add", Button)
+            add_button.press()
+            for _ in range(40):
+                if entered.is_set():
+                    break
+                await pilot.pause(0.05)
+            assert entered.is_set(), "the add should be running on a worker"
+            # The UI thread is free while the registry call is parked.
+            assert add_button.disabled
+            assert "Adding SSH folder…" in _visible_text(screen)
+            release.set()
+            for _ in range(100):
+                if not add_button.disabled:
+                    break
+                await pilot.pause(0.05)
+        finally:
+            release.set()
+            registry.add_ssh_binding = original
+        assert not add_button.disabled
+        assert len(registry.list_ssh_bindings("ws-ssh-slow")) == 1
+        # The landed tail reported the add; the stubbed probe may already
+        # have replaced that line with its own receipt.
+        text = _visible_text(screen)
+        assert "SSH folder added (read-only)." in text or "Probe: ready." in text
 
 
 @pytest.mark.timeout(240)

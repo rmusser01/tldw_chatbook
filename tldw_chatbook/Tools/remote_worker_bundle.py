@@ -142,19 +142,33 @@ import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
-def log_counter(*args, **kwargs):
+def log_counter(name: str, value: int=1, labels: Optional[dict[str, str]]=None) -> None:
+    """Record a counter metric, or do nothing where metrics are unavailable.
+
+    Args:
+        name: Metric name.
+        value: Amount to add.
+        labels: Optional metric labels.
+    """
     try:
         raise ImportError("'..Metrics.metrics_logger' (importing log_counter) is not available inside the remote worker bundle")
     except ImportError:
-        return None
-    return emit(*args, **kwargs)
+        return
+    emit(name, value, labels)
 
-def log_histogram(*args, **kwargs):
+def log_histogram(name: str, value: float, labels: Optional[dict[str, str]]=None) -> None:
+    """Record a histogram observation, or do nothing where metrics are unavailable.
+
+    Args:
+        name: Metric name.
+        value: Observed value.
+        labels: Optional metric labels.
+    """
     try:
         raise ImportError("'..Metrics.metrics_logger' (importing log_histogram) is not available inside the remote worker bundle")
     except ImportError:
-        return None
-    return emit(*args, **kwargs)
+        return
+    emit(name, value, labels)
 
 class _NoOpLogger:
     """Silent stand-in for loguru's logger where loguru is not installed.
@@ -4792,4 +4806,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("6efd481c73166bbaa7c9e52d480a68b4c8a4b79a969e3d7e8e80a95ad2d786d5")
+BUNDLE_SHA256 = _enter_worker_exchange("2c8f19576daac7b81049362ba73e9c5b752494e6ab813dd6151ad9de289eaec8")

@@ -102,3 +102,15 @@ def test_console_ssh_settings_reject_unusable_values(raw_section):
     # Falls back to the shipped defaults — never to a silently disabled or
     # zero-sized posture.
     assert settings == ConsoleSshSettings()
+
+
+@pytest.mark.parametrize("value", ["10 minutes", "10m;", " 10m", "-5", "1h 30m", "forever"])
+def test_console_ssh_control_persist_rejects_malformed_durations(raw_section, value):
+    raw_section({"control_persist": value})
+    assert get_console_ssh_settings().control_persist == ConsoleSshSettings().control_persist
+
+
+@pytest.mark.parametrize("value", ["yes", "no", "600", "10m", "1h30m", "2d"])
+def test_console_ssh_control_persist_accepts_ssh_time_formats(raw_section, value):
+    raw_section({"control_persist": value})
+    assert get_console_ssh_settings().control_persist == value

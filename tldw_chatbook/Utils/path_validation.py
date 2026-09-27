@@ -28,20 +28,38 @@ from typing import Optional, Sequence, Union
 # relative import raises ImportError, and telemetry degrades to a no-op
 # instead of failing every validation call. In the parent application the
 # import always succeeds, so parent behaviour is unchanged.
-def log_counter(*args, **kwargs):
+def log_counter(
+    name: str, value: int = 1, labels: Optional[dict[str, str]] = None
+) -> None:
+    """Record a counter metric, or do nothing where metrics are unavailable.
+
+    Args:
+        name: Metric name.
+        value: Amount to add.
+        labels: Optional metric labels.
+    """
     try:
         from ..Metrics.metrics_logger import log_counter as emit
     except ImportError:
-        return None
-    return emit(*args, **kwargs)
+        return
+    emit(name, value, labels)
 
 
-def log_histogram(*args, **kwargs):
+def log_histogram(
+    name: str, value: float, labels: Optional[dict[str, str]] = None
+) -> None:
+    """Record a histogram observation, or do nothing where metrics are unavailable.
+
+    Args:
+        name: Metric name.
+        value: Observed value.
+        labels: Optional metric labels.
+    """
     try:
         from ..Metrics.metrics_logger import log_histogram as emit
     except ImportError:
-        return None
-    return emit(*args, **kwargs)
+        return
+    emit(name, value, labels)
 
 
 class _NoOpLogger:

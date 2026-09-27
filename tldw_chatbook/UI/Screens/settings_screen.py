@@ -26393,21 +26393,70 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         locator = f"ssh://{target}{raw_path}"
+        allow_write = self._settings_workspace_ssh_access_choice == "rw"
+        # add_ssh_binding runs ``ssh -G`` (up to its 10s timeout, and user
+        # ssh_config ``Match exec`` lines run commands), so it goes to a
+        # thread worker; the button stays disabled until it lands so a
+        # second click cannot race a duplicate add.
+        event.button.disabled = True
+        self._set_workspace_ssh_result("Adding SSH folder…")
+        self._add_settings_workspace_ssh_binding(
+            registry, workspace_id, locator, allow_write, python or "python3"
+        )
+
+    @work(thread=True, exclusive=True, group="settings-ssh-add", exit_on_error=False)
+    def _add_settings_workspace_ssh_binding(
+        self,
+        registry: Any,
+        workspace_id: str,
+        locator: str,
+        allow_write: bool,
+        python: str,
+    ) -> None:
+        """Register one SSH binding off the UI thread, then post the outcome."""
+        binding: Any = None
+        error: str | None = None
         try:
             binding = registry.add_ssh_binding(
                 workspace_id,
                 locator,
-                allow_write=self._settings_workspace_ssh_access_choice == "rw",
-                python_interpreter=python or "python3",
+                allow_write=allow_write,
+                python_interpreter=python,
             )
         except WorkspaceRegistryServiceError as exc:
-            self._set_workspace_ssh_result(str(exc))
+            error = str(exc)
+        except Exception:  # noqa: BLE001 - a worker must land, never kill the app
+            logger.warning("Adding an SSH folder failed", exc_info=True)
+            error = "Could not add the SSH folder."
+        try:
+            self.app.call_from_thread(
+                self._settings_workspace_ssh_add_landed,
+                workspace_id,
+                binding,
+                error,
+                allow_write,
+            )
+        except Exception:  # noqa: BLE001 - app shutting down; nothing to post to
+            pass
+
+    def _settings_workspace_ssh_add_landed(
+        self,
+        workspace_id: str,
+        binding: Any,
+        error: str | None,
+        allow_write: bool,
+    ) -> None:
+        """UI-thread tail of the add: re-enable, report, refresh, probe."""
+        if not self.is_attached:
             return
-        access_word = (
-            "read-write"
-            if self._settings_workspace_ssh_access_choice == "rw"
-            else "read-only"
-        )
+        for button in self.query("#settings-workspace-ssh-add"):
+            button.disabled = False
+        if self._settings_selected_workspace_id != workspace_id:
+            return
+        if error is not None or binding is None:
+            self._set_workspace_ssh_result(error or "Could not add the SSH folder.")
+            return
+        access_word = "read-write" if allow_write else "read-only"
         self._set_workspace_ssh_result(
             f"SSH folder added ({access_word}). Probing host…"
         )
