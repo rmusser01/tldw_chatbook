@@ -41,6 +41,7 @@ async def test_stock_text_area_raises_after_detach():
 
 @pytest.mark.asyncio
 async def test_detach_safe_text_area_renders_blank_after_detach():
+    """A detached DetachSafeTextArea renders blank strips instead of raising."""
     lines = await _render_after_removal(DetachSafeTextArea)
 
     assert len(lines) == 3
