@@ -54,7 +54,17 @@ def validate_v2_object(value: object) -> V2Object:
 
 
 def validate_v2_json(json_data: str | bytes | bytearray) -> V2Object:
-    """Decode duplicate-aware JSON then validate V2 structure and semantics."""
+    """Decode duplicate-aware JSON then validate V2 structure and semantics.
+
+    Args:
+        json_data: Built-in JSON text or UTF-8 bytes for one complete aggregate.
+
+    Returns:
+        A freshly validated explicit V2 aggregate, without source authority.
+
+    Raises:
+        ValueError: The JSON or aggregate is malformed or unsupported.
+    """
     try:
         return validate_v2_object(_decode_json(json_data))
     except (ValueError, TypeError, OverflowError, RecursionError):
@@ -62,19 +72,53 @@ def validate_v2_json(json_data: str | bytes | bytearray) -> V2Object:
 
 
 def canonical_v2_bytes(value: V2Object) -> bytes:
-    """Return JCS bytes only after fresh exact complete aggregate validation."""
+    """Return JCS bytes only after fresh exact complete aggregate validation.
+
+    Args:
+        value: An exact V2 manifest, record, or proposal instance.
+
+    Returns:
+        RFC 8785 canonical UTF-8 bytes for the complete validated aggregate.
+
+    Raises:
+        TypeError: The input is not an exact supported aggregate class.
+        ValueError: Stored aggregate fields fail fresh validation.
+    """
     if not any(type(value) is model for model in _MODELS):
         raise TypeError("V2 serialization requires an exact aggregate class")
     return canonical_bytes(validate_v2_object(value))
 
 
 def v2_object_digest(value: V2Object) -> str:
-    """Return SHA-256 of the freshly validated complete canonical aggregate."""
+    """Return SHA-256 of the freshly validated complete canonical aggregate.
+
+    Args:
+        value: An exact V2 manifest, record, or proposal instance.
+
+    Returns:
+        A lowercase hexadecimal SHA-256 digest of the canonical bytes.
+
+    Raises:
+        TypeError: The input is not an exact supported aggregate class.
+        ValueError: Stored aggregate fields fail fresh validation.
+    """
     return sha256(canonical_v2_bytes(value)).hexdigest()
 
 
 def v2_integrity_tag(value: V2Object, key: bytes) -> str:
-    """Return keyed byte integrity; this never proves authorship or permission."""
+    """Return keyed byte integrity; this never proves authorship or permission.
+
+    Args:
+        value: An exact V2 manifest, record, or proposal instance.
+        key: Exactly 32 built-in bytes of integrity key material.
+
+    Returns:
+        The versioned HMAC-SHA-256 tag for the validated canonical bytes.
+
+    Raises:
+        TypeError: The input is not an exact supported aggregate class.
+        ValueError: The key or stored aggregate fields are invalid.
+    """
     if type(key) is not bytes or len(key) != 32:
         raise ValueError("integrity key must be exactly 32 built-in bytes")
     return (

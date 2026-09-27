@@ -727,7 +727,9 @@ def test_explanation_distinguishes_insufficient_budget_from_empty(
 
     assert explained.snapshot.serialized_block == ""
     assert explained.explanation.state == expected
-    assert not any(row.disposition == "selected" for row in explained.explanation.rows)
+    assert [(row.record_id, row.disposition) for row in explained.explanation.rows] == [
+        ("eligible", "token_budget")
+    ]
 
 
 def test_explanation_empty_and_unknown_failure_are_not_authority_guesses() -> None:

@@ -429,15 +429,18 @@ class ProfileContextService:
         provider: str,
         decisions: list[tuple[ProfileRecord, str]] | None = None,
     ) -> tuple[str, tuple[str, ...]]:
-        if byte_budget <= 0 or token_budget <= 0:
-            return "", ()
         selected: list[dict[str, object]] = []
         versions: list[str] = []
         empty = cls._render_json([])
-        if (
-            len(empty.encode("utf-8")) > byte_budget
-            or estimate_tokens(empty, model=model, provider=provider) > token_budget
+        byte_fits = len(empty.encode("utf-8")) <= byte_budget
+        if not byte_fits or (
+            estimate_tokens(empty, model=model, provider=provider) > token_budget
         ):
+            if decisions is not None:
+                decisions.extend(
+                    (record, "token_budget" if byte_fits else "byte_budget")
+                    for record in records
+                )
             return "", ()
         for record in records:
             candidate_record = cls._record_json(

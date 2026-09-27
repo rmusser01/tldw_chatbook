@@ -121,6 +121,32 @@ def test_structural_denied_tombstone_and_receipt_shapes():
     assert list(v.iter_errors(active | {"schema_version": True}))
 
 
+@pytest.mark.parametrize("digest", ["A" * 64, "g" * 64])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("claim", "claim_digest"),
+        ("claim", "approval_receipt", "claim_digest"),
+        ("claim", "support_assessments", 0, "claim_digest"),
+        ("claim", "support_assessments", 0, "binding_digest"),
+        ("claim", "evidence_bindings", 0, "representation_sha256"),
+        ("claim", "evidence_bindings", 0, "span_sha256"),
+    ],
+)
+def test_schema_and_reference_validator_reject_malformed_digests(path, digest):
+    value = json.loads((ROOT / "fixtures/v2/02-active-record.json").read_text())["data"]
+    target = value
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = digest
+
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema()).validate(value)
+    c = importlib.import_module("tldw_profile_core.v2_contract")
+    with pytest.raises(ValueError, match="^invalid V2 profile object$"):
+        c.validate_v2_object(value)
+
+
 def test_real_offline_installed_wheel_conformance(tmp_path):
     schema()
     project = tmp_path / "project"

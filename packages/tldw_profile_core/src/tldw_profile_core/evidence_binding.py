@@ -47,8 +47,8 @@ Identity = Annotated[
 ]
 Digest = Annotated[
     str,
-    BeforeValidator(_builtin_string),
     Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"),
+    BeforeValidator(_builtin_string),
 ]
 Offset = Annotated[
     int, BeforeValidator(_builtin_integer), Field(ge=0, le=I_JSON_MAX_INTEGER)
