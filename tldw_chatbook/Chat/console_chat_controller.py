@@ -4448,24 +4448,27 @@ def _compose_profile_tool_provider(
         None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
     )
     try:
-        first_view = service.authorized_context_view(
-            active_workspace_id=active_workspace_id
-        )
-        scopes = service.list_scopes()
-        scope_id = first_view.workspace_scope_id or next(
-            scope.scope_id for scope in scopes if scope.kind.value == "global"
-        )
-        authority = service.get_scope_authority(scope_id)
-        stable_view = service.authorized_context_view(
-            active_workspace_id=active_workspace_id
-        )
-        if (
-            stable_view.generation != first_view.generation
-            or stable_view.authority_revision != first_view.authority_revision
-            or stable_view.workspace_scope_id != first_view.workspace_scope_id
-        ):
-            return None
-        manifest = service.get_manifest()
+        with service.read_operation():
+            first_view = service.authorized_context_view(
+                active_workspace_id=active_workspace_id
+            )
+            scopes = service.list_scopes()
+            scope_id = first_view.workspace_scope_id or next(
+                scope.scope_id for scope in scopes if scope.kind.value == "global"
+            )
+            authority = service.get_scope_authority(scope_id)
+            # Both views stay: the second fences the separately read scope and
+            # authority. Reusing a connection must not turn this into a snapshot.
+            stable_view = service.authorized_context_view(
+                active_workspace_id=active_workspace_id
+            )
+            if (
+                stable_view.generation != first_view.generation
+                or stable_view.authority_revision != first_view.authority_revision
+                or stable_view.workspace_scope_id != first_view.workspace_scope_id
+            ):
+                return None
+            manifest = service.get_manifest()
     except Exception:  # noqa: BLE001 - optional profile tools fail soft
         return None
 
@@ -14937,23 +14940,40 @@ class ConsoleChatController:
         # mount, the advisory permission summary fired INSIDE the human-wait
         # mark, decision stamping on cancel/timeout, and finishing-phase
         # retention at teardown.
-        self._interrupt_host.run_round(
-            "approval",
-            round_id,
-            payload,
-            round_state,
-            session_id=session_id,
-            owning_session_id=owning_session_id,
-            deadline=deadline,
-            is_parked=is_parked,
-            announce_detached=_announce_if_detached,
-            human_wait_run_id=owning_run_id,
-            on_cancelled=_on_cancelled,
-            on_timeout=_on_timeout,
-            before_wait=lambda: self._maybe_fire_permission_summary(payload),
-            on_teardown=_on_teardown,
-            on_outcome=_on_outcome,
-        )
+        activity_bridge = getattr(self, "_agent_bridge", None)
+        project_wait = getattr(activity_bridge, "set_tool_approval_pending", None)
+
+        def project_tool_wait(pending: bool) -> None:
+            if callable(project_wait):
+                try:
+                    project_wait(owning_session_id, owning_run_id, unique_keys, pending)
+                except Exception as exc:  # noqa: BLE001 — display cannot interrupt approval
+                    logger.warning(
+                        "Console tool approval display could not be updated ({})",
+                        type(exc).__name__,
+                    )
+
+        project_tool_wait(True)
+        try:
+            self._interrupt_host.run_round(
+                "approval",
+                round_id,
+                payload,
+                round_state,
+                session_id=session_id,
+                owning_session_id=owning_session_id,
+                deadline=deadline,
+                is_parked=is_parked,
+                announce_detached=_announce_if_detached,
+                human_wait_run_id=owning_run_id,
+                on_cancelled=_on_cancelled,
+                on_timeout=_on_timeout,
+                before_wait=lambda: self._maybe_fire_permission_summary(payload),
+                on_teardown=_on_teardown,
+                on_outcome=_on_outcome,
+            )
+        finally:
+            project_tool_wait(False)
         verdicts_out = ApprovalDecisions(
             result.get("map") or {key: "deny" for key in unique_keys}
         )

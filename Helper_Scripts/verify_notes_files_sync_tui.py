@@ -180,9 +180,11 @@ def _launch_and_capture(
     # the system temporary directory and always remove it in ``finally``.
     socket = Path("/private/tmp") / f"tnfs-{os.getpid()}-{time.time_ns():x}.sock"
     child = (
-        "from tldw_chatbook import app; "
-        "app._is_source_tree = lambda _package_root: False; "
-        "import sys; sys.argv = ['tldw-chatbook']; app.main_cli_runner()"
+        # main_cli_runner and _is_source_tree live in app_entry (TASK-33011);
+        # patching them on tldw_chatbook.app would not reach the runner.
+        "from tldw_chatbook import app_entry; "
+        "app_entry._is_source_tree = lambda _package_root: False; "
+        "import sys; sys.argv = ['tldw-chatbook']; app_entry.main_cli_runner()"
     )
     command = " ".join(
         (
