@@ -1,18 +1,19 @@
 # Tests/UI/test_mcp_servers_mode.py
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from textual.app import ComposeResult
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, DataTable, Static
 
 import tldw_chatbook
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
@@ -420,6 +421,103 @@ async def test_second_update_overview_leaves_only_latest_callouts():
         texts = [str(c.label) for c in callouts]
         assert len(texts) == 1
         assert "second-c" in texts[0], texts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["builtin", "recovery"])
+async def test_overlapping_overview_refreshes_render_only_latest_callout(
+    monkeypatch, kind
+):
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        canvas = app.query_one(MCPServersMode)
+        snapshot = (
+            builtin_readiness(enabled=False)
+            if kind == "builtin"
+            else _snap("local:old", "old", state=ReadinessState.NEEDS_SETUP)
+        )
+        latest = replace(snapshot, label="latest", message="latest status")
+        callouts = app.query_one("#mcp-overview-callouts")
+        remove_children = callouts.remove_children
+        removal_started = asyncio.Event()
+        release_removal = asyncio.Event()
+        second_started = asyncio.Event()
+
+        async def hold_first_removal():
+            await remove_children()
+            if not removal_started.is_set():
+                removal_started.set()
+                await release_removal.wait()
+
+        async def refresh_latest():
+            second_started.set()
+            await canvas.update_overview([latest])
+
+        monkeypatch.setattr(callouts, "remove_children", hold_first_removal)
+        first = asyncio.create_task(canvas.update_overview([snapshot]))
+        await removal_started.wait()
+        second = asyncio.create_task(refresh_latest())
+        try:
+            await second_started.wait()
+            await pilot.pause()
+        finally:
+            release_removal.set()
+            results = await asyncio.gather(first, second, return_exceptions=True)
+
+        assert results == [None, None]
+        rendered = list(app.query(".mcp-callout"))
+        assert len(rendered) == 1
+        assert "latest" in str(rendered[0].label)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", ["active", "queued"])
+async def test_cancelled_overview_refresh_does_not_block_next_refresh(
+    monkeypatch, cancelled
+):
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        canvas = app.query_one(MCPServersMode)
+        snapshot = builtin_readiness(enabled=False)
+        callouts = app.query_one("#mcp-overview-callouts")
+        remove_children = callouts.remove_children
+        removal_started = asyncio.Event()
+        release_removal = asyncio.Event()
+        second_started = asyncio.Event()
+
+        async def hold_first_removal():
+            await remove_children()
+            if not removal_started.is_set():
+                removal_started.set()
+                await release_removal.wait()
+
+        async def refresh_second():
+            second_started.set()
+            await canvas.update_overview([snapshot])
+
+        monkeypatch.setattr(callouts, "remove_children", hold_first_removal)
+        first = asyncio.create_task(canvas.update_overview([snapshot]))
+        await removal_started.wait()
+        second = asyncio.create_task(refresh_second())
+        try:
+            await second_started.wait()
+            await pilot.pause()
+            target = first if cancelled == "active" else second
+            target.cancel()
+            await asyncio.gather(target, return_exceptions=True)
+        finally:
+            release_removal.set()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+        assert target.cancelled()
+        await canvas.update_overview([replace(snapshot, label="after cancellation")])
+        rendered = list(app.query(".mcp-callout"))
+        assert len(rendered) == 1
+        assert "after cancellation" in str(rendered[0].label)
 
 
 @pytest.mark.asyncio
