@@ -43,7 +43,12 @@ Editor Try now records `(theme before this session's first Try, theme Try applie
 
 Revert interaction: the editor's Try never entered the picker's app-level `theme_revert_change`, and Discard does not touch it either, so a pending Revert keeps its target and Discard is an exact undo of the editor Try alone.
 
-Known gap (not in the ACs): Try, then the editor's Reset (edits cleared), then Back leaves no prompt and keeps the tried palette.
-
 Files: Widgets/settings_theme_editor.py, UI/Screens/settings_screen.py, Tests/UI/test_settings_theme_picker_screen.py (6 Pilot tests: Back, Esc, category switch, navigation, quit, Try→Save), Docs/User_Guide/settings.md.
+
+Fix round after the whole-branch review:
+- I-1 (prompt-free exits kept the tried custom_* palette; the "Reset then Back" gap above was one case). Rule: a Try never outlives its editor session unless saved -- every non-Save exit restores the pre-editor theme, with no extra prompt (Try is a preview, not an edit; asking Save/Discard about a preview the user never changed would be noise, and the exit already says "I'm done here"). Applied at two choke points every exit passes through: `ThemePane.show_picker` (Back/Esc, prompted or not) and `SettingsThemeEditor.on_unmount` (category switch, leaving Settings). The per-caller calls in the Back and category-leave Discard branches were dropped; `confirm_navigation`'s Discard keeps its call (the quit path does not unmount before exit). The picker's `_switch` now never records a `custom_*` theme as the Revert target: it maps to the listed theme behind it, else the launch default.
+- I-2 (AC#3 for Save as / renamed Save): `_write_theme_file` passes the running Try's registration to `_reapply_if_active(tried=...)`, so the saved theme is applied under its saved name before the undo record is cleared.
+- M-1: a second Try keeps the recorded "before" theme only while the app still runs the last Try; a theme chosen elsewhere in between (e.g. the palette) becomes what Discard restores.
+- M-3: `discard_try`'s failure toast runs the theme name and error through `printable()` as well as `escape_markup()`.
+Tests (each failed before the fix): test_try_then_clean_back_restores_the_pre_editor_theme[c,n], test_try_then_reset_then_back_restores_the_pre_editor_theme, test_try_then_clean_category_switch_restores_the_pre_editor_theme, test_try_then_clean_navigation_restores_when_the_editor_goes, test_revert_after_try_back_and_picker_try_targets_the_listed_theme, test_picker_revert_never_targets_an_unlisted_custom_theme, test_try_then_save_under_a_new_name_applies_the_saved_theme[save_as,rename_then_save], test_discard_keeps_a_theme_chosen_elsewhere_between_tries, test_discard_failure_toast_prints_the_theme_name_safely. Also Widgets/settings_theme_picker.py.
 <!-- SECTION:NOTES:END -->
