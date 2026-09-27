@@ -28,6 +28,7 @@ from ..css.Themes.theme_catalog import (
     build_catalog,
     current_launch_default,
     display_name,
+    launch_default_restorable,
     revert_theme,
     use_theme,
     use_theme_toast,
@@ -204,7 +205,14 @@ class ThemePicker(Vertical):
     def _sync_revert_chip(self) -> None:
         revert = self.query_one("#settings-theme-revert", Button)
         change = self._revert
-        revert.display = change is not None
+        restores_launch = change is not None and change.persisted and launch_default_restorable(self.app, change)
+        # TASK-33061: no chip when reverting would change nothing -- the
+        # target is already active and the launch default would stay as is.
+        # The pending change is kept: a later Try/Use merges into it.
+        revert.display = change is not None and (
+            change.previous_active != str(self.app.theme)
+            or (restores_launch and change.previous_launch_default != current_launch_default())
+        )
         if change is None:
             return
         # Button labels parse markup; theme names are untrusted file text (R28),
@@ -212,8 +220,11 @@ class ThemePicker(Vertical):
         label = f"Revert to {escape_markup(printable(display_name(change.previous_active)))}"
         # Only worth naming the launch default too when it persisted AND
         # disagrees with the active theme it's reverting to -- otherwise
-        # they're the same theme and the parenthetical is noise.
-        if change.persisted and change.previous_active != change.previous_launch_default:
+        # they're the same theme and the parenthetical is noise. A missing
+        # launch default is never written back, so say it stays put.
+        if change.persisted and not restores_launch:
+            label = f"{label} (launch unchanged)"
+        elif restores_launch and change.previous_active != change.previous_launch_default:
             label = f"{label} (launch: {escape_markup(printable(display_name(change.previous_launch_default)))})"
         revert.label = label
 
