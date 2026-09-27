@@ -255,6 +255,8 @@ $ds-messages-text-scroll-cap: 40vh;
 
 $ds-console-frame: #6f7782;
 
+$ds-tool-preview-max-height: 3;
+
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -10741,6 +10743,58 @@ ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
 
 .inspector-usage-detail.inspector-detail-narrow .inspector-section-list { width: $ds-width-fill; }
 ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
+
+
+.console-activity-status-tool {
+    width: $ds-width-auto;
+    min-width: $ds-size-0;
+    max-width: $ds-percent-70;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-activity-status-queued,
+.console-activity-status-running {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-activity-status-awaiting_approval,
+.console-activity-status-timed_out {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-tool-preview {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    max-height: $ds-tool-preview-max-height;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-inset;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.console-tool-detail {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval {
+    width: $ds-width-auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0 $ds-space-inset;
+    padding: $ds-space-0 $ds-space-inline;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+.console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
+.console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
 
 /* ===== MODULE: features/_library.tcss ===== */
 

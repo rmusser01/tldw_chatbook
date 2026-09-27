@@ -365,8 +365,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 36,
-      "diagnostic_digest": "6ff60e29a2ebf9c05e57",
+      "call_count": 38,
+      "diagnostic_digest": "d313308fcaabf7f5fc91",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -379,8 +379,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 88,
-      "diagnostic_digest": "2e58c49d016a9de23d51",
+      "call_count": 89,
+      "diagnostic_digest": "37daa61f45ba07ef8b6b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

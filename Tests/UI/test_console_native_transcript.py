@@ -4316,3 +4316,98 @@ def test_console_thinking_row_edit_action_gated_by_displayability():
 
     assert "edit" in displayable_ids
     assert "edit" not in proprietary_ids
+
+
+def test_chat_screen_fingerprint_tracks_tool_lifecycle_without_body_changes():
+    """Status-only updates must cross the production refresh gate after a preamble."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleActivityPresentation
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = SimpleNamespace(
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="session-1"
+        ),
+        _console_presentation_context=lambda: _roleplay_context(revision=1),
+    )
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="I will inspect that.", id="answer"
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="⚙ fs_read",
+        id="call",
+        activity_presentation=ConsoleActivityPresentation(
+            "tool", "fs_read", "queued", call_id="one"
+        ),
+    )
+    previous = ChatScreen._native_console_transcript_fingerprint(
+        screen, [assistant, tool]
+    )
+    for state in ("awaiting_approval", "running", "failed"):
+        tool = replace(
+            tool,
+            activity_presentation=replace(tool.activity_presentation, status=state),
+        )
+        current = ChatScreen._native_console_transcript_fingerprint(
+            screen, [assistant, tool]
+        )
+        assert current != previous, f"{state} must request a transcript repaint"
+        previous = current
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_mounted_console_refreshes_tool_status_after_assistant_preamble():
+    from tldw_chatbook.Agents.agent_models import AgentStep
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(120, 36)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-transcript")
+        store = screen._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Read the file."
+        )
+        store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="I will inspect it."
+        )
+        activity = ConsoleToolActivity(store, session.id)
+        activity.observe(
+            AgentStep(
+                index=1, kind="tool_proposed", tool_name="fs_read", call_id="read"
+            ),
+            1,
+        )
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        row = store.messages_for_session(session.id)[-1]
+        disclosure = screen.query_one(f"#console-activity-disclosure-{row.id}")
+        assert "Queued" in disclosure.header.status_widget.content.plain
+        await pilot.click(disclosure.header)
+        await pilot.pause()
+        assert disclosure.expanded
+        assert "Arguments" in disclosure.query_one(".console-tool-detail", Static).content.plain
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not disclosure.expanded
+        activity.approval(["read"], True)
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        assert "Awaiting approval" in disclosure.header.status_widget.content.plain
+        assert disclosure.approval_button.display
+        activity.observe(
+            AgentStep(index=2, kind="tool_execution_started", call_id="read"), 1
+        )
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        assert "Running" in disclosure.header.status_widget.content.plain
+        assert not disclosure.approval_button.display
+        activity.finish(True)
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        assert "Stopped" in disclosure.header.status_widget.content.plain
+        assert screen.query_one(f"#console-activity-disclosure-{row.id}") is disclosure

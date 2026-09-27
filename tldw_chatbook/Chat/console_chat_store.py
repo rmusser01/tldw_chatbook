@@ -10891,8 +10891,18 @@ class ConsoleChatStore:
             raise ValueError("raw CLI presentation requires a TOOL marker")
         if type(record_trajectory) is not bool:
             raise TypeError("record_trajectory must be a boolean")
-        if not record_trajectory and raw_cli_presentation is None:
-            raise ValueError("record_trajectory=False requires a raw CLI presentation")
+        if (
+            not record_trajectory
+            and raw_cli_presentation is None
+            and not (
+                role is ConsoleMessageRole.TOOL
+                and activity_presentation is not None
+                and activity_presentation.call_id
+            )
+        ):
+            raise ValueError(
+                "record_trajectory=False requires a live tool presentation"
+            )
         if raw_cli_presentation is not None:
             _validate_raw_cli_marker_text("content", content)
             _validate_raw_cli_marker_text("tool_output_full", tool_output_full)
@@ -11904,6 +11914,8 @@ class ConsoleChatStore:
         self,
         session_id: str,
         message_id: str,
+        *,
+        record_trajectory: bool = False,
         **bounded_fields: object,
     ) -> ConsoleChatMessage:
         """Replace bounded display facts on one existing TOOL marker.
@@ -11911,8 +11923,10 @@ class ConsoleChatStore:
         Args:
             session_id: Session that owns the display-only marker.
             message_id: Stable marker id to update.
+            record_trajectory: Capture a newly completed marker once, using
+                the same eligibility policy as terminal marker append.
             **bounded_fields: Any of ``content``, ``tool_output_full``,
-                ``activity_presentation``, or ``raw_cli_presentation``.
+                ``activity_presentation``, ``raw_cli_presentation``, or ``tool_diff``.
 
         Returns:
             An immutable snapshot of the replacement marker.
@@ -11923,11 +11937,14 @@ class ConsoleChatStore:
             ValueError: If a caller tries to mutate any other field.
         """
         self._session_or_raise(session_id)
+        if type(record_trajectory) is not bool:
+            raise TypeError("record_trajectory must be a boolean")
         allowed = {
             "content",
             "tool_output_full",
             "activity_presentation",
             "raw_cli_presentation",
+            "tool_diff",
         }
         unknown = set(bounded_fields) - allowed
         if unknown:
@@ -11985,6 +12002,14 @@ class ConsoleChatStore:
             replacement = replace(marker, **bounded_fields)
             markers[index] = (anchor, replacement)
             self._recompute_active_path(session_id)
+            if record_trajectory:
+                anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
+                self._record_trajectory_tool_marker(
+                    session_id,
+                    anchor_node,
+                    replacement.content,
+                    replacement.tool_output_full,
+                )
             return self._snapshot(replacement)
         raise KeyError(message_id)
 

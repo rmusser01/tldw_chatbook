@@ -375,6 +375,8 @@ $ds-messages-text-scroll-cap: 40vh;
  * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
  * travel). */
 $ds-console-frame: #6f7782;
+/* Tool-result preview cap, including the omission hint. */
+$ds-tool-preview-max-height: 3;
 
 /* ========================================
  * MOTION (ADR-150)
