@@ -26,6 +26,8 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Checkbox, Input, Select, Static, TextArea
 
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
+
 _SIMPLE_KINDS = ("string", "number", "integer", "boolean")
 
 _RAW_MODE_NOTE = "This tool's parameters can't be rendered as a form — edit raw JSON."
@@ -241,7 +243,7 @@ class MCPSchemaForm(Vertical):
                 classes="ds-field-row",
                 markup=False,
             )
-            yield TextArea("{}", id="mcp-schema-raw")
+            yield DetachSafeTextArea("{}", id="mcp-schema-raw")
             return
 
         for index, schema_field in enumerate(self._fields):
