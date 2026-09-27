@@ -666,6 +666,15 @@ def _app(
     )
 
 
+def _provider_test_rows_of(result: str) -> list[tuple[str, str]]:
+    """TASK-33002.2: the Test result as (label, text) rows, in display order."""
+    rows = []
+    for line in str(result).splitlines():
+        label, _gap, text = line.partition("  ")
+        rows.append((label, text.strip()))
+    return rows
+
+
 async def _wait_for_settings_text(
     screen, pilot, expected_text: str, *, timeout: float = 5.0
 ) -> None:
@@ -4590,7 +4599,9 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
+    request,
     monkeypatch,
 ):
     """task-191: URL-based providers get a live probe folded into the toast."""
@@ -4636,18 +4647,22 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
             )
         ]
         message, kwargs = toasts[-1]
+        # TASK-33002 rider: the reachable toast states generation once.
         assert message == (
             "Configuration check complete: Ollama is configured; model llama3. "
-            "Live generation has not been tested; model-listing evidence updated; "
-            "generation not tested."
+            "Model listing reached; generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        assert "model listing reached" in screen._provider_test_result
-        assert "generation not tested" in screen._provider_test_result
+        rows = dict(_provider_test_rows_of(screen._provider_test_result))
+        assert rows["Endpoint"] == "http://127.0.0.1:11434 · model listing reached"
+        assert rows["Generation"] == "not tested"
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_toast_reports_unreachable_endpoint(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
     app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
@@ -4679,18 +4694,26 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
             await pilot.pause(0.01)
 
         message, kwargs = toasts[-1]
+        # TASK-33002.2 AC#2/AC#6: the first row and the toast lead with the
+        # failure and its next step, not with "configuration is complete".
         assert message == (
-            "Configuration valid; model-listing check failed (connection refused); "
-            "generation not tested."
+            "Model listing failed (connection refused) — start the server or "
+            "check the URL; generation not tested."
         )
         assert kwargs.get("severity") == "warning"
-        assert (
-            "model listing failed (connection refused)" in screen._provider_test_result
+        assert _provider_test_rows_of(screen._provider_test_result)[0] == (
+            "Endpoint",
+            (
+                "http://127.0.0.1:11434 · model listing failed (connection refused) "
+                "— start the server or check the URL"
+            ),
         )
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_does_not_treat_missing_models_route_as_chat_failure(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -4781,9 +4804,15 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
     host = DestinationHarness(app, "settings")
 
     def assert_each_fact_once(result: str) -> None:
-        facts = result.split(" | ")
-        assert len(facts) == len(set(facts)), result
-        assert result.count("generation not tested") == 1, result
+        # TASK-33002.2: labelled rows, each label once, no pipe dump.
+        rows = _provider_test_rows_of(result)
+        labels = [label for label, _text in rows]
+        assert sorted(labels) == sorted(
+            ("Config", "Key", "Endpoint", "Model", "Generation")
+        ), result
+        assert " | " not in result
+        assert result.count("model listing") == 1, result
+        assert dict(rows)["Generation"] == "not tested", result
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
@@ -4802,7 +4831,7 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         screen.action_settings_test_category()
         await asyncio.wait_for(second_started.wait(), timeout=2)
         in_flight = screen._provider_test_result
-        assert "model listing checking" in in_flight
+        assert "checking the model listing" in in_flight
         assert "model listing failed" not in in_flight
         assert_each_fact_once(in_flight)
 
@@ -4812,8 +4841,10 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         second = screen._provider_test_result
         assert "model listing reached" in second
         assert "model listing failed" not in second
-        assert "model listing checking" not in second
-        assert "selected model confirmed" in second
+        assert "checking the model listing" not in second
+        assert dict(_provider_test_rows_of(second))["Model"] == (
+            "llama3 · listed by the server"
+        )
         assert_each_fact_once(second)
         rendered = screen.query_one("#settings-provider-test-result", Static)
         assert str(rendered.renderable) == second
@@ -4825,7 +4856,10 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_skips_probe_for_cloud_providers(
+    request, monkeypatch
+):
     """task-191: key-based cloud providers keep the local-only Test toast."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     app = _build_test_app()
@@ -4859,6 +4893,13 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
             "Live generation has not been tested."
         )
         assert kwargs.get("severity") == "information"
+        # TASK-33002.2 AC#5: the rows keep the local-readiness honesty.
+        rows = dict(_provider_test_rows_of(screen._provider_test_result))
+        assert rows["Key"] == (
+            "from env var OPENAI_API_KEY · present, not verified"
+        )
+        assert rows["Generation"] == "not tested"
+        assert "model listing" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -8902,7 +8943,8 @@ async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_redacts_secrets(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_redacts_secrets(request, monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
@@ -8913,11 +8955,12 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Configuration check")
+        await _wait_for_settings_text(screen, pilot, "from env var OPENAI_API_KEY")
         text = _visible_text(screen)
 
-        assert "Configuration check" in text
-        assert "OPENAI_API_KEY=<redacted>" in text
+        assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
+            "from env var OPENAI_API_KEY · present, not verified"
+        )
         assert "sk-" not in text
 
 
@@ -10776,7 +10819,8 @@ async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_blocks_unknown_provider():
+@private_profile_test
+async def test_settings_provider_test_blocks_unknown_provider(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
     app.app_config["api_settings"] = {}
@@ -10790,11 +10834,15 @@ async def test_settings_provider_test_blocks_unknown_provider():
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        assert "configuration=blocked" in text
+        label, verdict = _provider_test_rows_of(screen._provider_test_result)[0]
+        assert label == "Config"
+        assert "is not ready: Unknown provider" in verdict
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10814,11 +10862,14 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "GROQ_API_KEY=<redacted>")
+        await _wait_for_settings_text(screen, pilot, "from env var GROQ_API_KEY")
         text = _visible_text(screen)
 
         assert "env:GROQ_API_KEY" in text
-        assert "GROQ_API_KEY=<redacted>" in text
+        # TASK-33002.2 AC#3: the Key row names the source, never the value.
+        assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
+            "from env var GROQ_API_KEY · present, not verified"
+        )
         assert "gsk-secret-token" not in text
 
 
@@ -11056,7 +11107,9 @@ def test_failure_status_text_never_carries_raw_exception_text():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_does_not_depend_on_console_sampling_defaults(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -11095,11 +11148,12 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Configuration check")
+        await _wait_for_settings_text(screen, pilot, "model listing reached")
         text = _visible_text(screen)
 
-        assert "Configuration check" in text
-        assert "configuration=complete" in text
+        rows = _provider_test_rows_of(screen._provider_test_result)
+        assert rows[0] == ("Config", "Ollama is configured")
+        assert "configuration=" not in text
         assert "is ready" not in text
 
 

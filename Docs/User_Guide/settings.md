@@ -233,12 +233,20 @@ invalid values explain how to recover without replacing the saved interval.
 Changing these controls does not record startup consent.
 
 **Test Provider** checks your current draft before saving. URL-based local
-providers also get a short endpoint or model-listing probe. The result separates
-configuration readiness, endpoint/model-listing evidence, and whether generation
-was tested. A successful model listing does not prove that generation works.
-Running it again replaces the previous probe result: while the new probe runs
-the result says "model listing checking", and each fact appears once.
-If the tested values change, run **Test Provider** again.
+providers also get a short endpoint or model-listing probe. The result is five
+labelled rows, one fact each: **Config** (configured, or what blocks it and
+how to fix it), **Key** (saved in config, from env var *NAME*, or missing;
+never the key itself), **Endpoint** (the address without any user name, query
+or fragment, plus the model-listing outcome), **Model** and **Generation**.
+The row with the problem comes first: an unreachable server leads with, for
+example, "model listing failed (connection refused) — start the server or
+check the URL", and the toast says the same in one line. For cloud providers
+the check stays local: the Key row says the key is present but not verified,
+and Generation says not tested. A successful model listing does not prove that
+generation works. Running it again replaces the previous probe result: while
+the new probe runs the Endpoint row says "checking the model listing", and
+each fact appears once. If the tested values change, run **Test Provider**
+again.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
@@ -275,6 +283,22 @@ and "Next: Console Behavior › Thinking budget", and Enter landed on the
 Providers & Models field (Enter opens only the first match). The old names
 (Think budget, Response max tokens) stay in the search index as aliases; not
 driven live.*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.2 —
+2026-09-27: the Test Provider result reads as the Config, Key, Endpoint, Model
+and Generation rows described above, with no " | " line and no `model=` or
+`api_key_source=` spellings. Driven live at 211x44 on a scratch llama.cpp
+profile: with nothing listening on the saved endpoint the result led with
+"Endpoint    http://127.0.0.1:9199 · model listing failed (connection
+refused) — start the server or check the URL" and the toast said the same;
+after pointing the Endpoint at a server that lists models, the rows read
+"Config llama.cpp is configured", "Endpoint … (draft) · model listing
+reached", "Model qwen · listed by the server" and "Generation not tested".
+An endpoint typed with `?mycred=SEKRET` showed only
+`http://127.0.0.1:9198/v1 (draft)` in the rows, and the toast did not show
+it either. Overview's "Last connection test" shows the leading row only. The
+cloud (key present, not verified) rows are covered by tests; not driven
+live.*
 
 #### QwenCloud
 

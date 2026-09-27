@@ -2460,42 +2460,6 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
-def _mask_url_userinfo(url: object) -> str:
-    """Mask a password embedded in a URL's userinfo before display.
-
-    ``redact_secret_text`` is assignment-name based and misses credentials in
-    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
-    or password-less input is returned unchanged.
-
-    Args:
-        url: A candidate endpoint string.
-
-    Returns:
-        The URL with any userinfo password replaced by ``***``.
-    """
-    from urllib.parse import urlsplit, urlunsplit
-
-    text = str(url or "")
-    try:
-        parts = urlsplit(text)
-    except ValueError:
-        return text
-    # Reconstruct from the raw netloc substring rather than the lazy
-    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
-    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
-    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
-    # userinfo password is masked. (Never fall back to returning ``text`` with
-    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
-    netloc = parts.netloc
-    userinfo, at, hostport = netloc.rpartition("@")
-    if not at or ":" not in userinfo:
-        # No userinfo, or a username with no password -> nothing to mask.
-        return text
-    user = userinfo.partition(":")[0]
-    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
-    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
-
-
 def overlay_provider_draft_config(
     app_config,
     *,
@@ -14547,30 +14511,6 @@ class SettingsScreen(BaseAppScreen):
             )
         return ""
 
-    def _provider_endpoint_summary(
-        self, provider: str, endpoint: object | None = None
-    ) -> str:
-        provider_key = provider_config_key(provider)
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        endpoint_value = str(
-            endpoint
-            if endpoint is not None
-            else self._provider_endpoint_value(provider)
-        ).strip()
-        if not provider_key:
-            return "Endpoint: provider required before saving"
-        if endpoint_value:
-            return (
-                f"Endpoint: api_settings.{provider_key}.{endpoint_key}={endpoint_value}"
-            )
-        if provider_key in API_URL_PROVIDER_KEYS:
-            return (
-                f"Endpoint: api_settings.{provider_key}.{endpoint_key} not configured"
-            )
-        return (
-            f"Endpoint: api_settings.{provider_key}.{endpoint_key} or provider default"
-        )
-
     def _provider_endpoint_display_value(
         self, provider: str, endpoint: object | None = None
     ) -> str:
@@ -15322,19 +15262,21 @@ class SettingsScreen(BaseAppScreen):
                 pass
 
     def _provider_readiness_test_report(
-        self, *, probes_when_passing: bool = False
+        self,
+        *,
+        checking: bool = False,
+        probe: ProviderProbeResult | None = None,
     ) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
 
         Args:
-            probes_when_passing: The caller probes the endpoint when this
-                report passes. A passing report then leaves out the stored
-                evidence: the probe renders fresh evidence for the same facts,
-                and a stored copy would repeat them (TASK-33001.3).
+            checking: A model-listing probe for this draft is in flight.
+            probe: A settled probe to show when the draft has no stored
+                evidence (a draft without a semantic identity).
 
         Returns:
-            Tuple of (detail line for the results row, toast summary stating
-            the pass/fail outcome with its reason, whether the test passed).
+            Tuple of (labelled result rows, one-line toast summary stating the
+            outcome, whether the configuration check passed).
         """
         try:
             provider = self._provider_widget_value()
@@ -15361,64 +15303,171 @@ class SettingsScreen(BaseAppScreen):
             if readiness.subscription_status is not None
             else None
         )
-        detail, summary, passed = self._build_provider_readiness_findings(
-            provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
-        )
         identity = self._provider_current_draft_identity()
         evidence = (
             self._provider_evidence_store().evidence_for(identity)
             if identity is not None
             else None
         )
-        if evidence is not None and not (probes_when_passing and passed):
-            detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
-        return detail, summary, passed
+        # TASK-33001.3 / TASK-33002.2: the rows are rebuilt from the one
+        # current evidence value on every render, so no fact can repeat.
+        return self._build_provider_readiness_findings(
+            provider,
+            model,
+            readiness,
+            draft_endpoint=draft_endpoint,
+            dirty=dirty,
+            evidence=probe if evidence is None else evidence,
+            checking=checking,
+        )
 
     @staticmethod
-    def _provider_exact_evidence_copy(
-        evidence: ProviderTestEvidence,
-        selected_model: str,
-    ) -> str:
-        """Render bounded facts for one already identity-matched evidence value."""
+    def _provider_test_rows(
+        readiness,
+        *,
+        display_name: str,
+        model: str,
+        endpoint: str,
+        dirty: set[str] | frozenset[str] = frozenset(),
+        evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
+        checking: bool = False,
+    ) -> tuple[tuple[str, str], ...]:
+        """Return the Test result as (label, text) rows, one fact per row.
 
-        endpoint_category = SettingsScreen._provider_endpoint_category_copy(
-            evidence.category
-        )
-        generation_category = {
-            "authentication": "authentication",
-            "rate_limit": "rate limit",
-            "bad_request": "bad request",
-            "timeout": "timeout",
-            "connection_error": "connection error",
-            "provider_error": "provider error",
-        }.get(evidence.generation_category or "", "provider error")
+        TASK-33002.2 (spec §5): Config, Key, Endpoint, Model and Generation --
+        never a " | " dump, a config-key spelling or a secret. The row that
+        holds the failure that matters leads; otherwise the rows keep that
+        order. Reads no widgets, config or environment.
 
-        endpoint_copy = {
-            "not_tested": "model listing not tested",
-            "testing": "model listing checking",
-            "reachable": "model listing reached",
-            "unreachable": f"model listing failed ({endpoint_category})",
-            "model_listing_unavailable": "model listing unavailable",
-        }[evidence.endpoint]
-        model_copy = "model unconfirmed"
-        if selected_model and selected_model in evidence.model_ids:
-            model_copy = "selected model confirmed"
-        credential_copy = {
-            "not_required": "credential not required",
-            "missing": "credential missing",
-            "present_unverified": "credential present, not verified",
-            "authenticated": "credential authenticated by generation",
-        }[evidence.credential]
-        generation_copy = {
-            "not_tested": "generation not tested",
-            "testing": "generation checking",
-            "succeeded": "generation succeeded",
-            "failed": f"generation failed ({generation_category})",
-            "changed_since_test": "generation evidence stale",
-        }[evidence.generation]
-        return " | ".join(
-            (credential_copy, endpoint_copy, model_copy, generation_copy)
+        Args:
+            readiness: ``ProviderReadiness`` of the draft-overlaid config.
+            display_name: The provider's display name.
+            model: The model under test (may be empty).
+            endpoint: The endpoint under test. Only its safe display is shown:
+                no user info, query or fragment (TASK-486).
+            dirty: The draft's dirty field keys, to tag unsaved values.
+            evidence: Stored evidence, or a settled probe, for this draft.
+            checking: A model-listing probe is in flight.
+
+        Returns:
+            The rows as (label, text) pairs in display order.
+        """
+        listing = (
+            "testing" if checking else getattr(evidence, "endpoint", "not_tested")
         )
+        if readiness.ready:
+            config = f"{display_name} is configured"
+        else:
+            config = f"{display_name} is not ready: {readiness.reason}."
+            if readiness.recovery:
+                config += f" {readiness.recovery}"
+
+        source = readiness.api_key_source or ""
+        if readiness.subscription_status is not None:
+            key = {
+                "pending": "Claude subscription, being checked",
+                "ready": "Claude subscription (Claude Code login)",
+                "expired": "Claude subscription, expired",
+                "missing": "Claude subscription, missing",
+            }[readiness.subscription_status]
+        elif source.startswith("env:"):
+            draft_tag = " (draft)" if "credential_env_var" in dirty else ""
+            key = f"from env var {readiness.env_var}{draft_tag}"
+        elif source:
+            key = (
+                "entered here, not saved yet" if "api_key" in dirty else "saved in config"
+            )
+        elif not readiness.requires_api_key:
+            key = "not required"
+        elif readiness.env_var:
+            key = f"missing ({readiness.env_var} is not set)"
+        else:
+            key = "missing"
+        if source:
+            key += (
+                " · accepted by a generation test"
+                if getattr(evidence, "credential", "") == "authenticated"
+                else " · present, not verified"
+            )
+
+        shown = safe_endpoint_display(endpoint)
+        if not shown:
+            shown = (
+                "not set"
+                if readiness.provider_key in API_URL_PROVIDER_KEYS
+                else "provider default"
+            )
+        elif "endpoint" in dirty:
+            shown += " (draft)"
+        shown += {
+            "testing": " · checking the model listing",
+            "reachable": " · model listing reached",
+            "model_listing_unavailable": (
+                " · model listing unavailable; chat endpoint not tested"
+            ),
+        }.get(listing, "")
+        if listing == "unreachable":
+            shown += " · " + SettingsScreen._provider_listing_failure_copy(
+                getattr(evidence, "category", None)
+            )
+
+        if not model:
+            model_text = "not set — choose a default model"
+        else:
+            model_text = f"{model} (draft)" if "model" in dirty else model
+            model_ids = getattr(evidence, "model_ids", ())
+            if listing == "reachable" and model_ids:
+                model_text += (
+                    " · listed by the server"
+                    if model in model_ids
+                    else " · not listed by the server — pick a listed model"
+                )
+
+        generation = getattr(evidence, "generation", "not_tested")
+        failure = getattr(evidence, "generation_category", None) or "provider_error"
+        generation_text = {
+            "testing": "checking",
+            "succeeded": "succeeded",
+            "failed": f"failed ({failure.replace('_', ' ')})",
+            "changed_since_test": "stale — settings changed since the test",
+        }.get(generation, "not tested")
+
+        if not readiness.ready:
+            lead = "Config"
+        elif listing == "unreachable":
+            lead = "Endpoint"
+        elif not model:
+            lead = "Model"
+        elif generation == "failed":
+            lead = "Generation"
+        else:
+            lead = "Config"
+        rows = (
+            ("Config", config),
+            ("Key", key),
+            ("Endpoint", shown),
+            ("Model", model_text),
+            ("Generation", generation_text),
+        )
+        return tuple(sorted(rows, key=lambda row: row[0] != lead))
+
+    @staticmethod
+    def _provider_test_headline(result: str) -> str:
+        """Return a Test result's leading row as one line (for Overview)."""
+        label, _gap, text = result.partition("\n")[0].partition("  ")
+        return f"{label}: {text.strip()}" if text else label
+
+    @staticmethod
+    def _provider_listing_failure_copy(category: str | None) -> str:
+        """Name a failed model listing and the next step (TASK-33002.2 AC#2)."""
+        next_step = {
+            "unauthorized": "check the API key",
+            "forbidden": "check the API key's permissions",
+            "http_status": "check the URL",
+            "invalid_payload": "check the URL",
+        }.get(category or "", "start the server or check the URL")
+        failure = SettingsScreen._provider_endpoint_category_copy(category)
+        return f"model listing failed ({failure}) — {next_step}"
 
     @staticmethod
     def _provider_endpoint_category_copy(category: str | None) -> str:
@@ -15441,12 +15490,14 @@ class SettingsScreen(BaseAppScreen):
         readiness,
         *,
         draft_endpoint: str,
-        dirty: set[str],
+        dirty: set[str] | frozenset[str],
+        evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
+        checking: bool = False,
     ) -> tuple[str, str, bool]:
-        """Assemble the Test evidence line + toast from resolved inputs.
+        """Assemble the Test result rows + toast from resolved inputs.
 
-        Reads only ``app_config`` (via helpers) and ``os.environ`` -- never widgets
-        -- so it is unit-testable on a bare screen instance.
+        Reads only ``app_config`` (via helpers) -- never widgets -- so it is
+        unit-testable on a bare screen instance.
 
         Args:
             provider: Provider under test (draft widget value).
@@ -15454,111 +15505,59 @@ class SettingsScreen(BaseAppScreen):
             readiness: ``ProviderReadiness`` from the draft-overlaid config.
             draft_endpoint: The endpoint the test used (draft widget, may be empty).
             dirty: The provider draft's dirty field keys.
+            evidence: Stored evidence, or a settled probe, for this draft.
+            checking: A model-listing probe is in flight.
 
         Returns:
-            Tuple of (redacted detail line, redacted toast summary, passed).
+            Tuple of (redacted labelled rows, one line each, redacted toast
+            summary, passed).
         """
-        provider_key = provider_config_key(provider)
         passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
-        # TASK-366: lead with ONE verdict consistent with the configuration line.
-        # A config-ready provider with no default model is still blocked, so it
-        # must not read "<provider> is ready" next to "configuration=blocked".
-        if readiness.ready and not model:
-            verdict_message = (
-                f"{display_name} is configured, but no default model is set."
-            )
-        elif readiness.ready and readiness.requires_api_key:
-            verdict_message = (
-                f"{display_name} configuration is complete. Credential is present; "
-                "provider acceptance has not been tested."
-            )
-        elif readiness.ready:
-            verdict_message = (
-                f"{display_name} configuration is complete. No API key is required."
-            )
-        else:
-            verdict_message = readiness.user_message
-        findings: list[str] = ["Configuration check", verdict_message]
-
-        if not model:
-            findings.append("model=missing")
-        else:
-            findings.append(f"model={model}{' (draft)' if 'model' in dirty else ''}")
-
-        # This literal marker holds no secret material (just a provenance
-        # label). redact_secret_text() pattern-matches on "...key...=value",
-        # so if it were run through the same redaction pass as the other
-        # findings it would truncate the word "draft" right after "=". It is
-        # therefore excluded from redaction below (see `api_key_relabelled`).
-        draft_api_key_label = "api_key_source=draft api_key (unsaved)"
-        api_key_relabelled = False
-        if readiness.api_key_source:
-            if (
-                "api_key" in dirty
-                and readiness.api_key_source
-                == f"config:api_settings.{provider_key}.api_key"
-            ):
-                findings.append(draft_api_key_label)
-                api_key_relabelled = True
-            else:
-                findings.append(f"api_key_source={readiness.api_key_source}")
-        if readiness.env_var:
-            # Report presence only, never the raw value. ``redact_secret_text``
-            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
-            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
-            # otherwise print its secret verbatim into this screenshot-able UI.
-            # Emitting the established ``<redacted>`` marker for any set value
-            # keeps the standard-name output identical while closing that gap
-            # (folds in task-483).
-            env_present = bool(os.environ.get(readiness.env_var))
-            env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
-            findings.append(
-                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
-            )
-        elif not readiness.requires_api_key:
-            findings.append("api_key=not required")
-
-        # Mask any password embedded in the endpoint's userinfo before display
-        # (name-pattern redaction misses ``scheme://user:pass@host``).
-        endpoint_summary = self._provider_endpoint_summary(
-            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        rows = self._provider_test_rows(
+            readiness,
+            display_name=display_name,
+            model=model,
+            endpoint=draft_endpoint,
+            dirty=dirty,
+            evidence=evidence,
+            checking=checking,
         )
-        if "endpoint" in dirty:
-            endpoint_summary = f"{endpoint_summary} (draft)"
-        findings.append(endpoint_summary)
-
-        findings.append(f"configuration={'complete' if passed else 'blocked'}")
-
-        # task-185: the toast must state the outcome, not just "finished".
-        if passed:
-            summary = (
-                f"Configuration check complete: {display_name} is configured; "
-                f"model {model}. Live generation has not been tested."
-            )
-        elif not readiness.ready:
-            summary = f"Configuration check blocked: {readiness.user_message}"
+        generation = dict(rows)["Generation"]
+        listing = None if checking else getattr(evidence, "endpoint", None)
+        # task-185 / TASK-33002.2 AC#6: one line stating the outcome that the
+        # first row states.
+        if not readiness.ready:
+            summary = f"Configuration check blocked: {dict(rows)['Config']}"
             if not model:
                 summary += " Also set a default model."
-        else:
+        elif not model:
             summary = (
                 f"Configuration check blocked: {display_name} is configured but "
                 "no default model is set."
             )
-        if api_key_relabelled:
-            detail = " | ".join(
-                finding
-                if finding == draft_api_key_label
-                else redact_secret_text(finding)
-                for finding in findings
+        elif listing == "unreachable":
+            failure = self._provider_listing_failure_copy(
+                getattr(evidence, "category", None)
+            )
+            summary = f"{failure[:1].upper()}{failure[1:]}; generation {generation}."
+        elif listing == "model_listing_unavailable":
+            summary = (
+                "Configuration valid; model listing unavailable; "
+                "chat endpoint and generation not tested."
+            )
+        elif listing == "reachable":
+            summary = (
+                f"Configuration check complete: {display_name} is configured; "
+                f"model {model}. Model listing reached; generation {generation}."
             )
         else:
-            detail = redact_secret_text(" | ".join(findings))
-        return (
-            detail,
-            redact_secret_text(summary),
-            passed,
-        )
+            summary = (
+                f"Configuration check complete: {display_name} is configured; "
+                f"model {model}. Live generation has not been tested."
+            )
+        detail = "\n".join(f"{label:<12}{text}" for label, text in rows)
+        return redact_secret_text(detail), redact_secret_text(summary), passed
 
     def _run_provider_readiness_test(self) -> str:
         detail, _summary, _passed = self._provider_readiness_test_report()
@@ -15590,8 +15589,6 @@ class SettingsScreen(BaseAppScreen):
         self,
         base_url: str,
         provider: str,
-        detail: str,
-        summary: str,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
     ) -> None:
@@ -15619,8 +15616,6 @@ class SettingsScreen(BaseAppScreen):
             outcome = self._provider_probe_connection_error_outcome()
         try:
             self._apply_provider_endpoint_probe_outcome(
-                detail,
-                summary,
                 outcome,
                 identity=identity,
                 token=token,
@@ -15632,8 +15627,9 @@ class SettingsScreen(BaseAppScreen):
                     token,
                     self._provider_probe_result_from_outcome(failure),
                 )
-            self._provider_test_result = redact_secret_text(
-                f"{detail} | endpoint {failure.summary}"
+            # A fixed line: rebuilding the rows could raise again in here.
+            self._provider_test_result = (
+                "Configuration check could not finish; run it again."
             )
             self._update_provider_test_result()
 
@@ -15657,61 +15653,41 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_provider_endpoint_probe_outcome(
         self,
-        detail: str,
-        summary: str,
         outcome,
         *,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
     ) -> None:
-        """Fold a live endpoint probe outcome into the Test result and toast.
+        """Fold a live endpoint probe outcome into the Test rows and toast.
 
         Args:
-            detail: Readiness detail line shown in the results row.
-            summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
+            identity: The tested draft's identity, when it has one.
+            token: The evidence-store token of this probe.
         """
         from .settings_endpoint_probe import SettingsEndpointProbeOutcome
 
         if type(outcome) is not SettingsEndpointProbeOutcome:
             outcome = self._provider_probe_connection_error_outcome()
         probe_result = self._provider_probe_result_from_outcome(outcome)
-        if identity is not None and token is not None:
-            if not self._provider_evidence_store().settle(token, probe_result):
-                return
-            evidence = self._provider_evidence_store().evidence_for(identity)
-            if evidence is not None:
-                try:
-                    selected_model = self.query_one(
-                        "#settings-model-value", Input
-                    ).value.strip()
-                except QueryError:
-                    selected_model = ""
-                detail = (
-                    f"{detail} | "
-                    f"{self._provider_exact_evidence_copy(evidence, selected_model)}"
-                )
-        self._provider_test_result = redact_secret_text(detail)
+        if (
+            identity is not None
+            and token is not None
+            and not self._provider_evidence_store().settle(token, probe_result)
+        ):
+            return
+        detail, summary, passed = self._provider_readiness_test_report(
+            probe=probe_result
+        )
+        self._provider_test_result = detail
         self._update_provider_test_result()
-        if probe_result.endpoint == "reachable":
-            combined = (
-                f"{summary.rstrip('.')}; model-listing evidence updated; "
-                "generation not tested."
-            )
-        elif probe_result.endpoint == "model_listing_unavailable":
-            combined = (
-                "Configuration valid; model listing unavailable; "
-                "chat endpoint and generation not tested."
-            )
-        else:
-            category = self._provider_endpoint_category_copy(outcome.category)
-            combined = (
-                f"Configuration valid; model-listing check failed ({category}); "
-                "generation not tested."
-            )
         self.app.notify(
-            redact_secret_text(combined),
-            severity="information" if probe_result.endpoint == "reachable" else "warning",
+            summary,
+            severity=(
+                "information"
+                if passed and probe_result.endpoint == "reachable"
+                else "warning"
+            ),
         )
 
     def _update_provider_test_result(self) -> None:
@@ -16639,7 +16615,9 @@ class SettingsScreen(BaseAppScreen):
                     f"{provider or 'Not selected'} / {model}; Status: "
                     f"{self._provider_overview_readiness_status()}"
                 ),
-                "last_connection_test": self._provider_test_result,
+                "last_connection_test": self._provider_test_headline(
+                    self._provider_test_result
+                ),
                 "storage_privacy": (
                     f"Config path: {self._config_path_overview_value()}; "
                     "Privacy: local config by default; secret-looking diagnostics "
@@ -17055,7 +17033,11 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-test-provider-guidance",
                 classes="settings-status-row",
             )
-            yield Static(self._provider_test_result, id="settings-provider-test-result")
+            yield Static(
+                self._provider_test_result,
+                id="settings-provider-test-result",
+                markup=False,
+            )
             yield Static(
                 self._provider_save_result,
                 id="settings-provider-save-result",
@@ -31718,17 +31700,10 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
-            detail, summary, passed = self._provider_readiness_test_report(
-                probes_when_passing=bool(live_probe_url)
-            )
-            probe_base_url = live_probe_url if passed else ""
-            if probe_base_url:
+            detail, summary, passed = self._provider_readiness_test_report()
+            if passed and live_probe_url:
                 # task-191: readiness passed for a URL-based provider; run a
-                # short live probe in a worker and fold it into the toast.
-                self._provider_test_result = (
-                    f"{detail} | model listing checking | generation not tested"
-                )
-                self._update_provider_test_result()
+                # short live probe in a worker and fold it into the rows.
                 identity = self._provider_current_draft_identity()
                 token = None
                 if identity is not None:
@@ -31736,11 +31711,13 @@ class SettingsScreen(BaseAppScreen):
                         token = self._provider_evidence_store().begin(identity)
                     except ValueError:
                         identity = None
+                self._provider_test_result = self._provider_readiness_test_report(
+                    checking=True
+                )[0]
+                self._update_provider_test_result()
                 self._provider_endpoint_probe_worker(
-                    probe_base_url,
+                    live_probe_url,
                     provider_config_key(self._provider_widget_value()),
-                    detail,
-                    summary,
                     identity,
                     token,
                 )

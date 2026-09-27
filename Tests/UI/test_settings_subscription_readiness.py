@@ -180,8 +180,9 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         await wait_for_copy(
             screen, "#settings-provider-credential-status", "Claude subscription"
         )
+        # TASK-33002.2: labelled rows; the Config row states the outcome.
         await wait_for_copy(
-            screen, "#settings-provider-test-result", "configuration=complete"
+            screen, "#settings-provider-test-result", "Anthropic is configured"
         )
         assert model.value == "unsaved-model"
         assert "model" in screen._provider_draft().dirty_keys
@@ -199,14 +200,16 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         assert credential_io.entered.is_set()
         credential_io.release.set()
         await wait_for_copy(
-            screen, "#settings-provider-test-result", "configuration=complete"
+            screen, "#settings-provider-test-result", "Anthropic is configured"
         )
         credential_io.clock[0] = 102.0
         await wait_for_copy(screen, "#settings-provider-credential-status", "expired")
         await wait_for_copy(screen, "#settings-provider-test-result", "expired")
-        assert "configuration=blocked" in str(
+        result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
         )
+        assert result.startswith("Config      Anthropic is not ready")
+        assert "Claude subscription, expired" in result
 
 
 @pytest.mark.asyncio
@@ -268,7 +271,7 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
             "missing; log in with Claude Code",
         )
         await wait_for_copy(
-            screen, "#settings-provider-test-result", "configuration=blocked"
+            screen, "#settings-provider-test-result", "Anthropic is not ready"
         )
         result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
