@@ -16,12 +16,11 @@ from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from tldw_chatbook.Backup_Recovery.settings_file_participants import pet_operation
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
-# Import validators for state recovery
-try:
-    from .validators import StateValidator
-except ImportError:
-    # Fallback if validators module not available
-    StateValidator = None
+# Own sibling module, always shipped: a real ImportError here means
+# validators.py is broken, and silently disabling state validation (which
+# load_with_recovery then skips) is worse than failing loudly.
+# Tier-2 review, slice S16.
+from .validators import StateValidator
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ class StorageAdapter(ABC):
         Returns:
             Valid state dictionary or None
         """
-        if not self.enable_recovery or not StateValidator:
+        if not self.enable_recovery:
             return self.load(pet_id)
 
         try:
@@ -291,7 +290,7 @@ class JSONStorage(StorageAdapter):
         data = self._read_data()
 
         # Validate state before saving if recovery is enabled
-        if self.enable_recovery and StateValidator:
+        if self.enable_recovery:
             is_valid, error = StateValidator.validate_state(state)
             if not is_valid:
                 logger.warning(f"Attempting to save invalid state: {error}")
