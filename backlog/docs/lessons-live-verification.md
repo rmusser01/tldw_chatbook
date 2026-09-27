@@ -3123,6 +3123,11 @@ is not evidence that the picture is unobscured.
 
 ## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
 
+> **2026-09-27:** verification is now recorded in the task's Implementation Notes, not
+> as a "Verified against" paragraph on the User Guide page (CLAUDE.md "UI changes").
+> The discipline below -- run it before you claim it -- is unchanged; only where the
+> claim is written moved.
+
 **task-32558, 2026-09-14.** `Docs/User_Guide/library/file-notes.md` told
 readers the Session Git panel is headed "Prepare session for commit", with
 the scope line "Session paths only · stages complete file state" and the
