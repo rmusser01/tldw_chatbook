@@ -165,7 +165,11 @@ enabled by default and includes workspace file, read-only Git, web, and
 Watchlists tools
 (`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
 reads). The task tools `todo_create`, `todo_update`, `todo_get`,
-and `todo_list` require Console session state and are not Hub tools. Turning
+and `todo_list` require Console session state and are not Hub tools. The
+character tools `character_search`, `character_get`, and `character_save` also
+run only in Console, but they are listed (not runnable here) whenever `[tools]
+character_tools_enabled` is on, so you can give them per-tool permissions —
+for example, Allow on the two reads. Turning
 this control off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
 root uses the folder from which the app was launched; a non-blank root must be
@@ -481,6 +485,11 @@ which a blanket "allow everything" default is not. That is the whole
 distinction: the floor exists to stop a broad default from silently covering a
 dangerous tool, not to override a decision you made about one tool.
 
+One exception: `character_save` asks on **every** call, even when its own row
+is set to Allow — the row then shows **Ask ⚑** and the inspector says "Asks on
+every call, even when set to Allow." Every character save stays an approval
+card; the two character read tools take an explicit Allow normally.
+
 The separate rug-pull guard still applies on top: an explicit tool-level Allow
 is downgraded to Ask (marked **⚠**) when the tool's current definition no
 longer matches the one stored with the allow. Only setting the state again
@@ -791,3 +800,9 @@ save; and "Permission continuity for built-in tools" now distinguishes a
 Stop-cancelled round (`Denied (no decision)`, same as any other unresolved
 round) from a headless round with no app wired, which writes no audit row
 at all.*
+
+*Docs pass 2026-09-27 (task-32956, against code and tests, not a live
+screen): the Console character tools now appear as local permission rows
+(listed, not runnable from Tools mode, gone when `[tools]
+character_tools_enabled` is off), and `character_save` is the one tool an
+explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`).*
