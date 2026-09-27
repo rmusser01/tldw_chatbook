@@ -294,7 +294,9 @@ CSS_MODULES = [
     # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
     # verbatim to components/_shared_components.tcss to preserve them.
     "features/_llm-management.tcss",
-    "features/_tools-settings.tcss",
+    # task-33081: "features/_tools-settings.tcss" removed -- it styled the
+    # navigation-unreachable legacy Tools & Settings window, deleted along
+    # with the window; the canonical Settings hub styles its own surfaces.
     "features/_ingest.tcss",
     # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
     # standalone ingest window's tab strip and API form, deleted in task-684.4.
