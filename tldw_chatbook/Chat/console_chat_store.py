@@ -1734,6 +1734,21 @@ class ConsoleChatStore:
         self._provider_trace_settlement_worker_active = False
         self._provider_trace_settlement_executor_closed = False
         self._provider_trace_settlement_executor_close_complete = threading.Event()
+        # task-33081: the 0.2s Console tick folds stream buffers on the UI
+        # event loop; the pending-row INSERT that folding used to run inline
+        # could block the whole loop for sqlite's busy timeout under writer
+        # contention. The write runs on this single-slot executor instead.
+        self._stream_persistence_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="console-stream-persist",
+        )
+        self._stream_persistence_deferred_lock = threading.Lock()
+        self._stream_persistence_deferred_ids: set[str] = set()
+        self._stream_persistence_executor_closed = False
+        # task-33081 (Qodo round): serializes row creation for pending
+        # messages across the deferred stream worker and terminal
+        # persistence so the same message can never be inserted twice.
+        self._pending_row_insert_lock = threading.RLock()
         self._library_activity_lifecycle_lock = threading.RLock()
         self._library_activity_buffer = ConsoleLibraryActivityBuffer(
             self._persist_library_activity_batch
@@ -10766,6 +10781,9 @@ class ConsoleChatStore:
                 self._dispatch_recovery_generation_tokens.clear()
                 self._dispatch_recovery_queue_hydration_pending.clear()
         self._close_provider_trace_settlement_executor()
+        with self._stream_persistence_deferred_lock:
+            self._stream_persistence_executor_closed = True
+        self._stream_persistence_executor.shutdown(wait=True)
         self._retry_failed_provider_trace_settlements_on_teardown()
 
     @staticmethod
@@ -11834,7 +11852,10 @@ class ConsoleChatStore:
         """Return messages for a session in transcript order."""
         self._session_or_raise(session_id)
         for message in self._messages_by_session[session_id]:
-            self._materialize_stream_buffer(message)
+            # task-33081: this read runs on the UI event loop from the 0.2s
+            # Console tick -- fold in memory, persist the pending row off the
+            # calling thread so sqlite writer contention cannot stall the loop.
+            self._materialize_stream_buffer_deferred(message)
         return [
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
@@ -17894,6 +17915,7 @@ class ConsoleChatStore:
         envelope: ThinkingEnvelope | None,
         *,
         generation_token: int | None = None,
+        validated: bool = False,
     ) -> ConsoleChatMessage | None:
         """Replace canonical thinking at the generation-owner seam."""
         with self._generation_owner_scope(message_id):
@@ -17905,10 +17927,16 @@ class ConsoleChatStore:
                     return self._snapshot(self._message_or_raise(message_id))
                 except KeyError:
                     return None
-            return self._replace_message_thinking(message_id, envelope)
+            return self._replace_message_thinking(
+                message_id, envelope, validated=validated
+            )
 
     def _replace_message_thinking(
-        self, message_id: str, envelope: ThinkingEnvelope | None
+        self,
+        message_id: str,
+        envelope: ThinkingEnvelope | None,
+        *,
+        validated: bool = False,
     ) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
@@ -17918,9 +17946,14 @@ class ConsoleChatStore:
                 "This conversation contains a newer thinking format; "
                 "upgrade before regenerating it."
             )
-        # The dumper is the shared strict boundary; no provider-delta plumbing
-        # belongs in this foundation seam.
-        dump_thinking_blocks_json(envelope)
+        if not validated:
+            # The dumper is the shared strict boundary; no provider-delta
+            # plumbing belongs in this foundation seam. task-33081: callers
+            # streaming envelopes straight from a live ThinkingCapture may
+            # pass validated=True -- the capture enforces the same limits
+            # incrementally per delta, and a full canonical round-trip of
+            # the growing envelope here made reasoning streams quadratic.
+            dump_thinking_blocks_json(envelope)
         message.thinking = envelope
         message.opaque_thinking_json = None
         message.thinking_warning = None
@@ -20113,32 +20146,53 @@ class ConsoleChatStore:
             )
         if citation_write is not None:
             create_kwargs["citation_write"] = citation_write
-        try:
-            if terminal_persistence:
-                persisted_message_id = self._create_terminal_message(
-                    create_kwargs=create_kwargs,
-                    citation_write=citation_write,
-                    existing_message_id=message.persisted_message_id,
-                )
-                if persisted_message_id is None:
-                    self._settle_provider_trace_settlements(message.id, None)
-                    raise ConsoleDispatchSettlementError(
-                        "Terminal assistant persistence was refused."
+        # task-33081 (Qodo round): the claim lock makes row creation for one
+        # pending message atomic across the deferred stream worker and every
+        # other persistence path. Idempotence: if a concurrent path already
+        # created this ordinary row, there is nothing to insert; receipt
+        # ownership is rechecked here so a receipt primed while a deferred
+        # worker sat queued can never be bypassed by an unmarked insert.
+        with self._pending_row_insert_lock:
+            if (
+                not terminal_persistence
+                and message.persisted_message_id is not None
+            ):
+                return True
+            if (
+                terminal_receipt_id is None
+                and message.id in self._pending_terminal_receipts
+            ):
+                return False
+            try:
+                if terminal_persistence:
+                    persisted_message_id = self._create_terminal_message(
+                        create_kwargs=create_kwargs,
+                        citation_write=citation_write,
+                        existing_message_id=message.persisted_message_id,
                     )
-            else:
-                persisted_message_id = self.persistence.create_message(**create_kwargs)
-        except Exception:
-            self._settle_provider_trace_settlements(message.id, None)
-            raise
-        message.persisted_message_id = persisted_message_id
-        if terminal_persistence or message.status in {
-            "complete",
-            "stopped",
-            "failed",
-        }:
-            self._settle_provider_trace_settlements(message.id, persisted_message_id)
-        self._pending_persistence_message_ids.discard(message.id)
-        self._refresh_generation_owner_version(message)
+                    if persisted_message_id is None:
+                        self._settle_provider_trace_settlements(message.id, None)
+                        raise ConsoleDispatchSettlementError(
+                            "Terminal assistant persistence was refused."
+                        )
+                else:
+                    persisted_message_id = self.persistence.create_message(
+                        **create_kwargs
+                    )
+            except Exception:
+                self._settle_provider_trace_settlements(message.id, None)
+                raise
+            message.persisted_message_id = persisted_message_id
+            if terminal_persistence or message.status in {
+                "complete",
+                "stopped",
+                "failed",
+            }:
+                self._settle_provider_trace_settlements(
+                    message.id, persisted_message_id
+                )
+            self._pending_persistence_message_ids.discard(message.id)
+            self._refresh_generation_owner_version(message)
         # Carried-forward (Task 8): when this newly persisted message IS the
         # session's active leaf, write the durable active-leaf pointer through
         # NOW that it owns a persisted id. ``append_message`` advances the
@@ -20845,6 +20899,16 @@ class ConsoleChatStore:
             or message.id not in self._pending_persistence_message_ids
             or message.id in self._terminal_persistence_deferred_ids
             or not message.content
+        ):
+            return False
+        # task-33081 (Qodo round): a receipt primed after this call was
+        # enqueued belongs to the terminal row+mark transaction -- an
+        # ordinary insert here would strand an unmarked partial row. The
+        # same check runs again under the insert claim lock inside
+        # ``_persist_new_message`` so the enqueue-to-run window is covered.
+        if (
+            terminal_receipt_id is None
+            and message.id in self._pending_terminal_receipts
         ):
             return False
         session_id = self._message_session_index[message.id]
@@ -22313,6 +22377,76 @@ class ConsoleChatStore:
                 # persists it atomically rather than writing an orphan first.
                 return
             self._persist_pending_message_if_ready(message)
+
+    def _materialize_stream_buffer_deferred(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        """Fold buffered chunks inline and persist the pending row off-thread.
+
+        task-33081: read paths running on the UI event loop (the 0.2s Console
+        tick via ``messages_for_session``) must not write SQLite inline --
+        under writer contention the inline pending-row INSERT blocks the
+        whole loop for the connection's busy timeout. The fold itself is
+        in-memory so readers still observe streamed text immediately; only
+        the write moves to the store's single-slot persistence executor.
+        """
+        if self._fold_stream_buffer_without_persistence(message):
+            if message.id in self._pending_terminal_receipts:
+                return
+            self._defer_pending_message_persistence(message)
+
+    def _defer_pending_message_persistence(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        if self.persistence is None:
+            return
+        with self._stream_persistence_deferred_lock:
+            if self._stream_persistence_executor_closed:
+                return
+            if message.id in self._stream_persistence_deferred_ids:
+                return
+            self._stream_persistence_deferred_ids.add(message.id)
+        try:
+            self._stream_persistence_executor.submit(
+                self._persist_deferred_message, message
+            )
+        except RuntimeError:
+            # Teardown raced the submit: the store is retiring, so this
+            # pending write is moot and must never surface on the read path.
+            with self._stream_persistence_deferred_lock:
+                self._stream_persistence_deferred_ids.discard(message.id)
+
+    def _persist_deferred_message(self, message: ConsoleChatMessage) -> None:
+        with self._stream_persistence_deferred_lock:
+            self._stream_persistence_deferred_ids.discard(message.id)
+        try:
+            self._persist_pending_message_if_ready(message)
+        except KeyError:
+            # The message's session was retired between submit and run --
+            # nothing durable remains to write for it.
+            logger.debug(
+                "Deferred stream persistence skipped a retired message ({})",
+                message.id,
+            )
+        except Exception:
+            logger.exception(
+                "Deferred stream persistence failed for message {}", message.id
+            )
+
+    def flush_deferred_stream_persistence(self) -> None:
+        """Block until every queued deferred stream write has completed.
+
+        Test and teardown seam for the off-thread pending-row writes
+        (task-33081): callers that must observe durable state immediately
+        after a fold-driven read drain the executor here.
+        """
+        with self._stream_persistence_deferred_lock:
+            executor = self._stream_persistence_executor
+        if executor is None:  # pragma: no cover - always constructed today
+            return
+        barrier = threading.Event()
+        executor.submit(barrier.set).add_done_callback(lambda _f: barrier.set())
+        barrier.wait(timeout=30.0)
 
     @staticmethod
     def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:
