@@ -65,9 +65,9 @@ class MCPTools:
     """Container for MCP tool implementations."""
 
     #: TASK-32955: the standalone server sets a per-process CharacterReadGuard
-    #: it shares with its external character_get, so update_character refuses
-    #: to replace a long field that was never read in full. None (the
-    #: in-process runtime) applies no guard.
+    #: once it has published character_get ([mcp] expose_character_tools), so
+    #: update_character refuses to replace a long field that was never read in
+    #: full. None (switch off, or the in-process runtime) applies no guard.
     character_read_guard: Any = None
 
     def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):

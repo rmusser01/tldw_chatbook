@@ -198,16 +198,17 @@ def hub_character_service() -> Any:
     )
 
 
-def server_character_service(tools: Any) -> Any:
+def server_character_service(tools: Any, read_guard: Any) -> Any:
     """The external MCP server's real character read service (TASK-32955).
 
     Reads go through ``LocalCharacterPersonaService`` over the server's own
-    ChaChaNotes database, and share ``tools.character_read_guard`` -- one per
-    server process, so one per stdio client session -- with ADR-183's
-    ``update_character``, whose truncation guard it feeds.
+    ChaChaNotes database. ``read_guard`` is one per server process, so one per
+    stdio client session; the server hands the same guard to ADR-183's
+    ``update_character`` once these reads are published.
 
     Args:
-        tools: The server's ``MCPTools`` (its database and read guard).
+        tools: The server's ``MCPTools`` (its database).
+        read_guard: The ``CharacterReadGuard`` the reads record into.
 
     Returns:
         A ``CharacterToolService`` whose ``search``/``get`` back the external
@@ -224,7 +225,7 @@ def server_character_service(tools: Any) -> Any:
     return CharacterToolService(
         service_loader=lambda: LocalCharacterPersonaService(tools.chachanotes_db),
         runtime_source_loader=load_runtime_source,
-        read_guard=tools.character_read_guard,
+        read_guard=read_guard,
     )
 
 

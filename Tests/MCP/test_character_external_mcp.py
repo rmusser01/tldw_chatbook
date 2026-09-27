@@ -22,7 +22,6 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Tools.character_tool_service import (
     CHARACTER_FIELD_READ_BOUND,
     SERVER_REFUSAL,
-    CharacterReadGuard,
 )
 
 # Real config consumers retain the isolated profile selected during collection.
@@ -48,11 +47,8 @@ def env(tmp_path, monkeypatch):
         config, "get_cli_setting", lambda s, k, d=None: settings.get((s, k), d)
     )
     db = CharactersRAGDB(str(tmp_path / "characters.sqlite"), "mcp-external")
-    tools = tools_module.MCPTools(db, None)
-    tools.character_read_guard = CharacterReadGuard()
     yield SimpleNamespace(
         settings=settings,
-        tools=tools,
         db=db,
         store=MCPPermissionStore(tmp_path / "mcp_permissions.json"),
         monkeypatch=monkeypatch,
@@ -61,17 +57,17 @@ def env(tmp_path, monkeypatch):
 
 
 def _serve(env):
-    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
-    from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
+    """The real constructor, over this test's database instead of the profile's."""
+    from tldw_chatbook.MCP.server import TldwMCPServer
 
-    server = TldwMCPServer.__new__(TldwMCPServer)
-    server.tools = env.tools
-    server.mcp = ChatbookGatewayRuntime(
-        name="test", version="1", tool_descriptors=_describe_local_tools()
-    )
-    server._register_tools()
-    server._register_local_agent_tools()
-    server.mcp.finalize()
+    def _init_databases(server):
+        server.chachanotes_db = env.db
+        server.media_db = None
+        server.notes_service = None
+
+    env.monkeypatch.setattr(TldwMCPServer, "_init_databases", _init_databases)
+    server = TldwMCPServer(version="1")
+    env.tools = server.tools
     return server
 
 
@@ -255,11 +251,48 @@ async def test_update_of_a_long_field_needs_a_full_character_get_first(env):
 
 
 @pytest.mark.asyncio
+async def test_switch_off_keeps_adr_183_long_field_updates(env):
+    """No read tool is exposed to satisfy a guard, so none applies (as on dev)."""
+    character_id = _card(env, description=LONG)
+    server = _serve(env)
+    _grant_update(env)
+    updated = await _call(
+        server,
+        "update_character",
+        {"character_id": character_id, "expected_version": 1, "fields": {"description": "S"}},
+    )
+    assert updated.get("version") == 2, updated
+    assert env.db.get_character_card_by_id(character_id)["description"] == "S"
+
+
+@pytest.mark.asyncio
+async def test_failed_read_registration_applies_no_guard(env):
+    """A guard without its published read tool would strand long-field edits."""
+    env.settings[("mcp", "expose_character_tools")] = True
+    env.monkeypatch.setattr(
+        local_server_tools, "_local_agent_tool_registrations", lambda _p: [None]
+    )
+    character_id = _card(env, description=LONG)
+    server = _serve(env)
+    assert not READS & await _names(server)
+    _grant_update(env)
+    updated = await _call(
+        server,
+        "update_character",
+        {"character_id": character_id, "expected_version": 1, "fields": {"description": "S"}},
+    )
+    assert updated.get("version") == 2, updated
+
+
+@pytest.mark.asyncio
 async def test_in_process_runtime_applies_no_guard(env):
     """No read tool exists in-process; the operator runs the write by hand."""
+    from tldw_chatbook.MCP.tools import MCPTools
+
     character_id = _card(env, description=LONG)
-    env.tools.character_read_guard = None
-    updated = await env.tools.update_character(character_id, 1, {"description": "S"})
+    tools = MCPTools(env.db, None)
+    assert tools.character_read_guard is None
+    updated = await tools.update_character(character_id, 1, {"description": "S"})
     assert updated["version"] == 2
 
 

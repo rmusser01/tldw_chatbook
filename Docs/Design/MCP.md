@@ -306,9 +306,10 @@ They delegate text/JSON authoring to `LocalCharacterPersonaService` and return
 id/name/version receipts or structured errors. Code-owned mutation tags are
 enforced with and without a catalog snapshot; standalone writes require a fresh
 operator grant from the shared permission store. Both refuse while the
-runtime source is `server`, and the standalone `update_character` refuses to
-replace a field longer than one `character_get` card page until this server
-process has read it in full (`read_full_field_first`). See
+runtime source is `server`. When `expose_character_tools` publishes
+`character_get`, the standalone `update_character` also refuses to replace a
+field longer than one `character_get` card page until this server process has
+read it in full (`read_full_field_first`). See
 [ADR-183](../../backlog/decisions/183-mcp-character-card-authoring.md) for the
 conflict, field, and permission contract.
 List all available characters.

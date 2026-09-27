@@ -38,9 +38,10 @@ the retired `todo_write` tool is also absent.
 `expose_local_tools` and of the Console's `[tools] character_tools_enabled`)
 publishes `character_search` and `character_get` through the same permission
 gate. `character_save` stays Console-only; external writes are ADR-183's
-`create_character`/`update_character`, which refuse in server runtime mode
-and share this process's read guard: `update_character` cannot replace a long
-field that `character_get` has not returned in full at the current version.
+`create_character`/`update_character`, which refuse in server runtime mode.
+Once the reads are published, `update_character` shares their per-process read
+guard and cannot replace a long field that `character_get` has not returned in
+full at the current version; with the switch off it behaves as ADR-183 shipped.
 
 ## Exposed local Library tools (task-1337)
 
@@ -512,11 +513,7 @@ class TldwMCPServer:
         from .resources import MCPResources
         from .prompts import MCPPrompts
 
-        from ..Tools.character_tool_service import CharacterReadGuard
-
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
-        # One per process = one per stdio client session (TASK-32955).
-        self.tools.character_read_guard = CharacterReadGuard()
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 
@@ -1046,6 +1043,7 @@ class TldwMCPServer:
         staged together and published only after the full set validates.
         """
         from ..config import get_user_data_dir
+        from ..Tools.character_tool_service import CharacterReadGuard
         from .local_server_tools import (
             _local_agent_tool_registrations,
             build_server_local_provider,
@@ -1068,17 +1066,22 @@ class TldwMCPServer:
         try:
             workspace_root = resolve_server_workspace_root()
             store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
+            # One per process = one per stdio client session (TASK-32955).
+            guard = CharacterReadGuard() if character_tools else None
             provider = build_server_local_provider(
                 workspace_root,
                 store,
                 local_tools=local_tools,
                 character_service=(
-                    server_character_service(self.tools) if character_tools else None
+                    server_character_service(self.tools, guard) if guard else None
                 ),
             )
 
             registrations = _local_agent_tool_registrations(provider)
             self.mcp.register_local_tools(registrations)
+            # Only once character_get is published can the guard be satisfied;
+            # otherwise update_character stays exactly as ADR-183 shipped it.
+            self.tools.character_read_guard = guard
         except Exception:  # noqa: BLE001 — never sink the whole server for this
             import sys
 

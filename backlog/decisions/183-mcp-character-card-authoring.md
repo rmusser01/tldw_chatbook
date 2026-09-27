@@ -46,14 +46,16 @@ gate: an explicit Allow runs them and ask is refused. `character_save` stays
 Console-only; these two ADR-183 tools remain the only external write path, and
 their standing-grant rule above is unchanged.
 
-Each standalone server process owns one `CharacterReadGuard` (stdio serves one
+When `expose_character_tools` is on and the reads are published, each
+standalone server process owns one `CharacterReadGuard` (stdio serves one
 client per process), shared by the external `character_get` and
-`update_character`. `update_character` refuses with `read_full_field_first`
-when a field it would replace is longer than one `character_get` card page and
-that field has not been read contiguously in full at the card's current
-version, using the Console's thresholds and message. With the reads unexposed,
-long fields therefore cannot be updated externally; short fields are
-unaffected. The in-process runtime applies no guard: it has no read tool that
+`update_character`. `update_character` then refuses with
+`read_full_field_first` when a field it would replace is longer than one
+`character_get` card page and that field has not been read contiguously in
+full at the card's current version, using the Console's thresholds and
+message. With the switch off, or if publishing the reads fails, no read tool
+could satisfy a guard, so none applies and `update_character` behaves as first
+shipped here. The in-process runtime applies no guard: it has no read tool that
 could satisfy one, so a guard there would block every long-field edit from the
 Hub. Its calls keep the gates above (the Hub's gated action, or the Console's
 approval card, which an explicit tool-level Allow skips), and the Console's own

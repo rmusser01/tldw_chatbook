@@ -137,14 +137,15 @@ so an explicit Allow on each read is needed; Ask is refused as for every
 external local tool. `character_save` is never published externally: external
 writes are `create_character` and `update_character` above.
 
-`update_character` will not replace a field that `character_get`'s whole-card
-view cuts short (about 1,000 characters) until that field has been read in
-full. Page it with `character_get` using `field` and `offset` from 0 until no
+While these reads are exposed, `update_character` will not replace a field
+that `character_get`'s whole-card view cuts short (about 1,000 characters)
+until that field has been read in full. Page it with `character_get` using `field` and `offset` from 0 until no
 `next_offset` comes back; otherwise the call returns
 `error_code: "read_full_field_first"` and the card is untouched. The record of
 what was read lasts for one server process (one client session) and one card
 version, so read again after each saved edit. With `expose_character_tools`
-off, long fields cannot be updated externally; short fields are unaffected.
+off there is no external read tool to satisfy the guard, so it does not apply
+and `update_character` works as described above for every field.
 
 While Chatbook's runtime source is `server`, `create_character` and
 `update_character` return `error_code: "unsupported"` and the reads return
@@ -840,4 +841,5 @@ character tools' rules instead of listing them as omitted.*
 *Docs pass 2026-09-27 (task-32955, against code and tests, not a live
 screen): "Character reads and the long-field guard" documents `[mcp]
 expose_character_tools`, the external character reads, and the
-`update_character` long-field guard and server-mode refusal.*
+`update_character` long-field guard (only while the reads are exposed) and
+server-mode refusal.*
