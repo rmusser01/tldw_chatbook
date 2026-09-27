@@ -16584,3 +16584,41 @@ fail, so the wrapper runs the real assertions.
 in setup, check whether its file already uses `private_profile_test` before
 calling it CI-only. The wrapper adds isolation (a fresh profile in a child
 pytest); it does not bypass the gate.
+
+### A config seeded into `app.app_config` in place stops being the config after Console mounts (TASK-33001.5)
+
+**What happened.** TASK-33001.5 removed the readiness gates from the
+untouched-chat refresh, which re-derives defaults from the fresh-config seam
+(`_provider_readiness_app_config` -> `load_settings()`). Fifteen mounted
+Console tests went red. In eleven, an untouched chat showed the template's
+`OpenAI / gpt-5.6-terra` instead of the provider the test had seeded with
+`app.app_config["chat_defaults"] = ...`. The seed lived only in
+the snapshot. Console writes its rail state to the config file on mount, that
+write swaps `load_settings()`'s cache, and from then on every fresh-config
+seam reads the file. The old gates hid this: a Ready chat, or a blocked chat whose template
+target could not send either, was never re-derived. `Tests/UI/app_factory.py`'s own docstring already names this
+"one seam in that armour".
+
+Two details cost a round each. Deleting a key from the file does not make it
+absent: `load_settings()` merges the shipped template under the file, so a
+seeded `chat_defaults` with no `model` came back with the template's model.
+Seed an empty string instead. The other four were mounted first-chat tests
+whose snapshot was monkeypatched away from the real config, and they showed a
+real interplay: the refresh moved the handoff's freshly created target inside
+the handoff's own transaction, so its rollback fence no longer matched. That
+one was a production fix, not a fixture fix.
+
+A whole-file comparison also flagged two unrelated tests. The cause was a
+side change that made the 0.2 s draft-sync poll cheaper, which exposed their
+timing races. Reverting that change cleared both.
+
+**What to do.** When a mounted test needs a provider, persist it
+(`persist_seeded_config(app, "chat_defaults", "api_settings.<p>")`, or the
+`_persist_console_provider_config` helper in `test_console_native_chat_flow.py`)
+rather than seeding the snapshot. When a change makes a fresh-config seam
+matter more, expect this class of failure and measure it over whole files:
+export BASE and HEAD to scratch trees, wrap every module-level test in
+`private_profile_test` there, and compare failing-name sets. Keep
+`Tests/ProductionApp/` out of that pytest invocation: its conftest binds
+config at startup and every Tests/UI module then fails collection with
+`RecoveryRequired`.

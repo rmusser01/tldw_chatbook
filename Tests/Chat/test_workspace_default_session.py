@@ -286,18 +286,13 @@ def test_provider_setup_recovery_keeps_created_persona_prompt(monkeypatch):
         canonical_settings_baseline=ConsoleSessionSettings(provider="openai"),
     )
     before = session.settings
+    # TASK-33001.5 (D1): the refresh no longer consults readiness, so the
+    # host no longer stubs it or the retired blocked-label filter.
     host = SimpleNamespace(
         _console_new_chat_default_generation=lambda: 0,
         _provider_readiness_app_config=dict,
-        _CONSOLE_REFRESHABLE_BLOCKED_LABELS={"missing-key"},
+        _pristine_defaults_checked=None,
         _notify_stale_default_provider_swap=lambda *_args: None,
-    )
-    monkeypatch.setattr(
-        session_module,
-        "build_console_settings_readiness",
-        lambda value, **_kwargs: SimpleNamespace(
-            native_send_supported=value.provider == "llama_cpp", label="missing-key"
-        ),
     )
     monkeypatch.setattr(
         session_module,

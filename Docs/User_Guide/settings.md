@@ -251,8 +251,11 @@ A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
 were editing, even if another action changes the defaults. This also applies
 to API mode, credential-source and generation-profile edits. **Discard changes**
-loads the latest saved defaults. Existing Console chats retain their own session
-selection; new chats inherit the saved defaults.
+loads the latest saved defaults. New Console chats take the saved defaults, and
+so does an open chat you have not touched yet: no messages and no edited
+settings. It follows the next time Console shows it, even when its provider
+already reads Ready, and Console tells you if its provider changed. A chat that
+holds any work keeps its own settings.
 
 #### QwenCloud
 
@@ -822,8 +825,8 @@ problem and choose **Retry**. The previously saved choice remains active until a
 write succeeds. If the file was saved but live settings could not refresh, restart
 Chatbook or reload the configuration before relying on the new choice.
 
-Global sampling fallbacks reach **new or default sessions**, not a conversation
-already open. Context defaults follow the conversation's existing override
+Global sampling fallbacks reach **new chats and untouched open chats**, not a
+chat that already holds work. Context defaults follow the conversation's existing override
 precedence. The target percentage must stay at least 15 points below the trigger;
 invalid ratios and frame rates stay in the draft until corrected or reverted.
 
@@ -1224,9 +1227,9 @@ not open an editor.
   category's Save/Revert draft, while Arm/Disarm changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
-- **A Console setting didn't take.** Global fallbacks reach *new or default*
-  sessions; a conversation already open keeps what it resolved, and a session or
-  provider+model setting outranks them. Rail presentation is different: after a
+- **A Console setting didn't take.** Global fallbacks reach new chats and open
+  chats you have not touched; a chat with messages or edited settings keeps
+  what it resolved, and a session or provider+model setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
 - **Save Raw TOML is greyed out.** Validate the current text. If the file changed
@@ -1480,3 +1483,13 @@ inspector with the field still reading 1, and the next F6 landed on the
 Appearance row. The focus line under the panes and the focus tint named each
 stop, and "No workbench pane focus target is available." never appeared. The
 rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 7335d3edad + TASK-33001.5
+— 2026-09-26: an untouched open Console chat follows a Providers & Models
+save. Driven live at 211x44 on a scratch profile whose llama.cpp endpoint had
+nothing listening, so Console read Ready. Saving Model "qwen-next-d1" here and
+returning moved Chat 1's status line from "Model: qwen" to "Model:
+qwen-next-d1". After a draft was typed into Chat 1 and Ctrl+T opened Chat 2, a
+second save (the field read "qwenqwen-thir" after a key race in the drive)
+moved Chat 2 to that model, while Chat 1 kept "qwen-next-d1". The rest of this
+page's content unchanged from the prior stamp.*

@@ -12,7 +12,7 @@ from textual.worker import Worker, WorkerState
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_workspace_controller import _conversation_tree_payload
@@ -145,6 +145,9 @@ def _configure_ready_console(app: object) -> None:
             "model": "local-model",
         }
     }
+    # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
+    # must be on disk too, not only in the in-memory snapshot.
+    persist_seeded_config(app, "chat_defaults", "api_settings.llama_cpp")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
 

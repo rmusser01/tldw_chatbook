@@ -49,7 +49,7 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
 from Tests.console_provider_doubles import with_destination
-from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.app_factory import attach_chachanotes_db, persist_seeded_config
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -67,6 +67,9 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": model}
     }
+    # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
+    # must be on disk too, not only in the in-memory snapshot.
+    persist_seeded_config(app, "chat_defaults", "api_settings.llama_cpp")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = model
 

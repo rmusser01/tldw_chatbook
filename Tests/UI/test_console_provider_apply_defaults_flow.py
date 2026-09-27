@@ -26,7 +26,11 @@ from Tests.UI.background_signals import (
     wait_for_background_signal,
     wait_for_signal,
 )
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.app_factory import (
+    _build_test_app,
+    attach_chachanotes_db,
+    persist_seeded_config,
+)
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.console_context_policy import (
@@ -194,6 +198,11 @@ def _console_app():
                 },
             },
         }
+    )
+    # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
+    # must be on disk too, not only in the in-memory snapshot.
+    persist_seeded_config(
+        app, "chat_defaults", "api_settings.llama_cpp", "api_settings.vllm"
     )
     attach_chachanotes_db(app)
     app.chat_api_provider_value = "llama_cpp"

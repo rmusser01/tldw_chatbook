@@ -127,6 +127,41 @@ def build_test_app_config(
     return config
 
 
+def persist_seeded_config(app, *sections: str) -> None:
+    """Make the sandbox config file agree with sections seeded in memory.
+
+    A test that seeds ``app.app_config["chat_defaults"] = ...`` (or passes
+    ``config_overrides``) changes only the snapshot. The first config write
+    after boot -- Console persists its rail state on mount -- swaps
+    `load_settings()`'s cache, and every seam that re-reads it (provider
+    readiness, and since TASK-33001.5 the convergence of an untouched chat to
+    the saved defaults) then sees the file, not the seed. This writes each
+    named dotted section exactly as the snapshot holds it, deleting keys the
+    file has and the snapshot lacks, so disk and snapshot say the same thing.
+    A deleted key still loads with its shipped template default (the loader
+    merges the template under the file), so seed ``""`` to mean "none".
+
+    Args:
+        app: The test-built app whose ``app_config`` holds the seeds.
+        *sections: Dotted section paths, e.g. ``"api_settings.llama_cpp"``.
+    """
+    import tomllib
+
+    from tldw_chatbook.config import get_cli_config_path, save_settings_to_cli_config
+
+    on_disk = tomllib.loads(get_cli_config_path().read_text(encoding="utf-8"))
+    values: dict[str, dict] = {}
+    deletes: dict[str, tuple[str, ...]] = {}
+    for section in sections:
+        seeded, stored = app.app_config, on_disk
+        for part in section.split("."):
+            seeded = seeded[part]
+            stored = stored.get(part, {}) if isinstance(stored, Mapping) else {}
+        values[section] = deepcopy(dict(seeded))
+        deletes[section] = tuple(key for key in stored if key not in seeded)
+    assert save_settings_to_cli_config(values, delete_keys=deletes)
+
+
 def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     """Give a factory-built app the durable ChaChaNotes DB a real send needs.
 
