@@ -16,7 +16,7 @@ from textual.binding import Binding
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
-from textual.events import Click, Key
+from textual.events import Click, Key, Resize
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -231,8 +231,14 @@ class SettingsThemeEditor(Vertical):
             yield Static("", id="settings-theme-editor-header", markup=False)
             yield from self._compose_theme_section()
             yield from self._compose_actions_section()
-            yield from self._compose_palette_section()
-            yield from self._compose_preview_section()
+            # TASK-33066: preview beside the palette so edits show without
+            # scrolling at full screen; `-stacked` (on_resize) stacks them
+            # again when the editor is too narrow for two usable columns.
+            with Horizontal(id="settings-theme-editor-columns"):
+                with Vertical(id="settings-theme-editor-palette-column"):
+                    yield from self._compose_palette_section()
+                with Vertical(id="settings-theme-editor-preview-column"):
+                    yield from self._compose_preview_section()
 
     def _compose_theme_section(self) -> ComposeResult:
         # TASK-32948: the theme list and New/Clone/Delete/Export moved to
@@ -327,6 +333,16 @@ class SettingsThemeEditor(Vertical):
         # TASK-31259: painted from the palette being edited (see
         # _refresh_preview), so it follows every keystroke, not just Apply.
         yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
+
+    # TASK-33066: below this editor width a palette column (label 24 +
+    # input + swatch 9) cannot sit beside the preview without the inputs
+    # collapsing -- measured 3 cols at a 52-col editor (120x36 terminal).
+    # The workbench's terminal-width compact class flips too late for that
+    # (100 terminal cols is still a 33-col editor), so key on our own width.
+    TWO_COLUMN_MIN_WIDTH = 100
+
+    def on_resize(self, event: Resize) -> None:
+        self.set_class(event.size.width < self.TWO_COLUMN_MIN_WIDTH, "-stacked")
 
     def on_mount(self) -> None:
         """Initialize after composed descendants are mounted."""

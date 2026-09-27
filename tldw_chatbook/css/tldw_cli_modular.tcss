@@ -5474,6 +5474,20 @@ StatCard:hover {
 }
 
 
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
+}
+
+
 .settings-theme-preview {
     width: $ds-width-full;
     height: auto;
