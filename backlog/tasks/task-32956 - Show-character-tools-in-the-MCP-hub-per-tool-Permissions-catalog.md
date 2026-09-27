@@ -49,10 +49,10 @@ Skill: SKILL.md gains a one-paragraph Permissions section (tell the user once). 
 
 ask_user needs no row: it is gate_exempt and never reaches the permission layer.
 
-Tests: Tests/MCP/test_character_tool_permission_rows.py (real service local_hub_tools, real MCPPermissionStore, hub set_tool_state, real ConsoleChatController._compose_local_provider over an in-memory CharactersRAGDB); Tests/Skills/test_builtin_skills.py; the Console-only pin in Tests/UI/test_mcp_workbench.py.
-Files: MCP/local_server_tools.py, MCP/permission_store.py, UI/MCP_Modules/mcp_inspector.py, assets/skills/character-creator/SKILL.md, Skills_Interop/builtin_skills.py, Docs/User_Guide/mcp.md, Docs/User_Guide/console/agent-runs-and-tools.md, backlog/docs/lessons-testing-evidence.md.
+Tests: Tests/MCP/test_character_tool_permission_rows.py (real service local_hub_tools, real MCPPermissionStore, hub set_tool_state, real ConsoleChatController._compose_local_provider over an in-memory CharactersRAGDB); Tests/Skills/test_builtin_skills.py; the Console-only pin in Tests/UI/test_mcp_workbench.py; the 2-option card render in Tests/UI/test_console_mcp_approval.py.
+Files: MCP/local_server_tools.py, Agents/local_tool_provider.py, Tool_Packs/catalog_snapshot.py, MCP/permission_store.py, UI/MCP_Modules/mcp_inspector.py, assets/skills/character-creator/SKILL.md, Skills_Interop/builtin_skills.py, Docs/User_Guide/mcp.md, Docs/User_Guide/console/agent-runs-and-tools.md, backlog/docs/lessons-testing-evidence.md.
 
-Follow-ups (not done): the Console card's 'Always allow' option on character_save persists an Allow that is then floored, so the button does nothing; approve_session still skips later save cards in that session; the Tool Packs permission inventory (Tool_Packs/catalog_snapshot.py) does not list the character tools, so an export reports their stored rules as omitted.
+Fix round (coordinator ruling: approval on EVERY save): an ALWAYS_ASK_TOOLS card offers only approve_once/deny (LocalToolProvider._resolve_pending_gate). Defensively, local_tool_provider._every_call_decision turns a stale or forged approve_session/always_allow verdict, from either the stamp path or the callback path, into approve_once, so it writes no session grant and persists no Allow. _is_session_approved_safe ignores any session grant for these tools. The approval card already renders a narrowed Select; a mounted test confirms a 2-option row (Once/Deny, fast buttons, Submit). Tool Packs: catalog_snapshot passes _hub_character_service() too, so a stored character-tool rule exports instead of being reported omitted. Stamps remain per-turn by design: the review hook clears them at turn entry, and the next turn's save asks again.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
