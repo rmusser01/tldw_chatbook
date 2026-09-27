@@ -184,10 +184,27 @@ instruction file changes.
 | `task-2062-2-gguf-source-evidence.yml` | Narrow `paths` to its own file, `Model_Artifacts/**`, `Event_Handlers/LLM_Management_Events/**`, `UI/LLM_Management_Window.py`, `UI/Screens/llm_screen.py`, `Tests/LLM_Management/**`, `Tests/Model_Artifacts/**`, `Tests/UI/test_llm_gguf_source_modes.py`. Drop `pyproject.toml`, `app.py`, `config.py`, `Tests/conftest.py`, `Tests/private_profile.py`, `Tests/UI/app_factory.py`, `Tests/UI/conftest.py`. Keep `workflow_dispatch`. | Same reasoning. |
 | `task-32011-linux-storage-evidence.yml` | Replace the `pull_request` trigger with `workflow_dispatch` | TASK-32011 is Done. This stops a skipped run on every push. |
 | `task-19637-platform-evidence.yml` | No change | TASK-19637 is In Progress. Its label-gated re-run on `synchronize` is still wanted, and its skipped runs cost no runner time. |
+| `nightly-deep.yml` | **Pause:** remove the `schedule:` trigger and keep `workflow_dispatch`. Add a header comment naming this spec and the condition for restoring the schedule (phase 3: the run can finish and report). | Owner decision, 2026-09-27. It uses about 22% of all runner-minutes and 64% of macOS minutes, and produced no complete result in 8/8 nights: a serial run reaches about 11% in 240 min. It can still be run by hand. |
 
 Also update the comments that name the deleted guards: `derived-artifacts.yml:26` and `:255`,
-and `perf-guard.yml:9` and `:43`. No test pins these workflows (grep of `origin/dev`,
-2026-09-27).
+and `perf-guard.yml:9` and `:43`. No test pins the guard or evidence workflows (grep of
+`origin/dev`, 2026-09-27).
+
+**Pausing the nightly: where it lands and which tests change.**
+
+- **Two branches.** Schedules register from the default branch, and the file's header
+  requires it to stay identical on `dev` and `main`. So the change lands on `dev` (this
+  sub-project's PR) and on `main`.
+- **The `main` change ships `dev`'s entire paused file.** `main`'s copy is 25 lines behind
+  `dev`'s, which is what open PR #2819 fixes, so this supersedes #2819. Merging to `main` is
+  the owner's call.
+- **Contract tests.** Two tests pin the cron:
+  - `Tests/CI/test_ci_queue_pressure_contract.py:153-154` (`triggers == {"schedule",
+    "workflow_dispatch"}`, cron `30 8 * * *`);
+  - `Tests/CI/test_github_actions_test_workflow.py:391`.
+
+  They change to assert the paused shape (dispatch only), with a comment pointing at phase 3,
+  which restores both the schedule and these assertions.
 
 ### D. Quarantine the flaky MCP workbench tests from the fast lane
 
@@ -245,7 +262,8 @@ Each item needs evidence, not assertion:
 |---|---|---|
 | Share of `dev -> branch` sync merges with any conflict (same replay method) | 48% | ≤ 20% |
 | Inventory share of required-check failures | 41 of 84 | ≤ 10% |
-| Runner-minutes per day | ~2.8k | Down by ≥ 15% |
+| Runner-minutes per day | ~2.8k | Down by ≥ 35% (GGUF about 16% plus the nightly about 22%) |
+| macOS minutes per day | ~290 | Down by ≥ 60% |
 | Windows minutes | – | Down by ≥ 70% |
 | Runs per PR head SHA | 5.47 | ≤ 4 |
 | Spurious `PR Fast Lane` failures from the MCP group | 16 of 37 failed jobs | 0 |
@@ -260,7 +278,30 @@ Each item needs evidence, not assertion:
 - **A quarantine outlives its fix.** Mitigated by pinning the set in the contract test and
   tracking removal in TASK-32049.
 
-## Program context (sub-projects 2-5, not designed here)
+## Program context
+
+**Owner priority order (2026-09-27):**
+
+1. CI throughput: sub-projects 1, 2 and 5.
+2. Clear the open-PR backlog: 34 open PRs on 2026-09-27; 30 to `dev`, 5 drafts, 4
+   conflicting, 10 idle for more than 14 days.
+3. Tests and issues: sub-projects 3 and 4, plus TASK-32049.
+
+Sub-project 4 widens the PR gate, which adds CI work per PR, so it deliberately waits for
+phase 3.
+
+The nightly's red is mostly one harness cause, not product bugs. A local re-run of its three
+worst files on `origin/dev`, 2026-09-27:
+
+- `Tests/Agents/test_local_tool_provider.py`: 248 of 263 fail, all with
+  `RecoveryRequired: raw_source_selection_changed` from the backup/recovery gate.
+- `Tests/Agents/test_fleet_runtime.py` and `Tests/Agents/test_agent_service.py`: 146 and 79
+  fail, matching the nightly's counts. They are dominated by the same gate
+  (`raw_source_selection_changed`, `raw_participant_not_installed`,
+  `config_source_not_installed`), surfacing directly or as agent runs that end in `error`.
+- A small remainder looks like real test drift.
+
+The sub-projects not designed here:
 
 2. **Account-wide runner queue.** `tldw_server` creates 3-6× this repo's runs, mostly from
    `workflow_run` fan-out. At 2026-09-27 04:00Z it had 366 runs queued and 0 in progress; this
