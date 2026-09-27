@@ -290,6 +290,16 @@ Each item needs evidence, not assertion:
 Sub-project 4 widens the PR gate, which adds CI work per PR, so it deliberately waits for
 phase 3.
 
+**Merge gate: strict is back on (owner decision, 2026-09-27; applied the same day).** `dev`
+again requires PRs to be up to date before merging, so a stale-base merge is now refused
+server-side for every merger. The rationale is recorded in
+`backlog/docs/branch-protection-baseline.md` and noted on ADR-103.
+
+Strict makes part A a prerequisite for throughput, not just a nicety. Every merge forces
+each other ready PR to re-sync. Before part A, 80% of re-syncs where both sides touch the
+inventory conflict, and a conflicting PR gets no CI. After part A, most re-syncs are clean,
+so the only serial cost left is one CI run per re-sync.
+
 The nightly's red is mostly one harness cause, not product bugs. A local re-run of its three
 worst files on `origin/dev`, 2026-09-27:
 

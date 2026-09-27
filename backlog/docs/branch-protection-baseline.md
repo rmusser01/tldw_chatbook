@@ -3,7 +3,35 @@
 Deliberate owner decision recorded after the PR #2634 merge flow. Do not
 re-tighten these without the owner's say-so.
 
-## Standing state
+## 2026-09-27: strict re-enabled (owner decision)
+
+**"Require branches to be up to date" (strict): true** again. The owner chose
+this after stale-base merges (PRs merged on a green run against an older
+`dev`) had caused breakage.
+
+Why it was needed:
+
+- PR CI tests the PR merged into `dev` as `dev` stood when the run started.
+- On a push to `dev` only the artifact checkers run; both fast lanes are
+  `if: github.event_name == 'pull_request'`. So a broken combination was
+  rarely caught after merge.
+- 4 of the 84 required-check failures on 2026-09-19..26 were inventory drift on
+  pushes to `dev` itself.
+
+What changed since the 2026-09-12 relaxation:
+
+- The account-wide runner starvation was traced to tldw_server's
+  `LICENSE_FIRST_CI_ENABLED` duplicate CI lane. The variable was deleted on
+  2026-09-27.
+- The inventory conflict churn is addressed by
+  `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`
+  (drop the committed `summary` totals).
+
+The cost is serialization: every merge makes the other ready PRs stale, so
+they must re-sync and re-pass before merging. Merge the instant the required
+check is green on a head that contains the current `dev`.
+
+## Standing state (as of 2026-09-12; strict superseded above)
 
 - **Required approving reviews: 0.** Set to 0 by the owner on 2026-09-12
   after a same-day change to 1 blocked every PR authored from the owner's
