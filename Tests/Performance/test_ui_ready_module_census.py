@@ -175,6 +175,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # TASK-33011: process entry points; reached only via cli.py / `python -m`.
+    "tldw_chatbook.app_entry",
     # Serving metadata discovery is first-use work; pure capacity defaults are not.
     "tldw_chatbook.Chat.console_context_window",
     # Parsing imported notes and assigning settings controls are first-use work.

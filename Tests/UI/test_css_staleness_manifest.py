@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.css import build_css
-from tldw_chatbook.app import _generated_css_is_stale
+from tldw_chatbook.app_entry import _generated_css_is_stale
 
 
 @pytest.fixture()
