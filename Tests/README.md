@@ -365,8 +365,8 @@ The project uses GitHub Actions for continuous integration:
      `--run-slow` tier and coverage
    - Test result and coverage reporting
 
-2. **Guard Workflows** (`backlog-guard.yml`, `css-bundle-guard.yml`):
-   - Repo-hygiene and CSS bundle checks
+2. **Derived Artifacts Workflow** (`derived-artifacts.yml`):
+   - Required job runs repo-hygiene and CSS bundle checks on every PR and push
 
 ### Running Tests Locally Like CI
 
