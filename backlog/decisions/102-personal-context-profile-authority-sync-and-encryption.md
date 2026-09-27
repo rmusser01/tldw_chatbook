@@ -218,6 +218,38 @@ the Persona/User Profile inversion rejected by ADR-037.
   canaries; this is regression evidence, not proof that plaintext never
   existed in process memory or external snapshots.
 
+## Send-read lifetime amendment (2026-09-05, TASK-31504)
+
+Chatbook may reuse one lazily opened, hardened SQLite read connection for a
+synchronous authorized-view or Console tool-provider composition operation.
+The lifetime is thread-local, nested scopes borrow it, and the outer scope
+closes it on success or failure. Reuse stays in autocommit mode except for the
+existing short export snapshot transaction. Mutations retain independent write
+transactions. Every final manifest, policy, binding, and revocation fence still
+reads live state after the export snapshot ends.
+
+Every reused repository read retains trusted-directory verification and checks
+database identity, owner, permissions, and link count. Sidecar ownership and
+privacy are checked too. Replacing a database or its parent during the operation
+fails closed; a later operation starts with a new hardened open. This removes
+repeated SQLite opens and PRAGMAs, not the trusted-directory security walk.
+
+Only proven ABSENT status may be retained between sends. Its cache contains
+content-free database/WAL/journal identity and change metadata, never profile
+content or READY authority. Changed metadata, uncertain reads, setup (including
+failed setup), and Start Fresh discard the cached absence. External commits in
+WAL invalidate it even when the database file has not changed. SHM is validated
+for ownership/privacy but holds coordination rather than committed content;
+empty WAL/journal creation and retirement are equivalent to their absence.
+Locked facades continue to need no SQLite access; unlock installs an unlocked
+service with a fresh cache.
+
+The Console keeps both authorized views: its second view fences the identity
+and scope authority read between them. Removing that view would require a
+different authorization contract. Live tool invocations still obtain fresh
+authority; a connection lifetime is neither a permission cache nor a whole-run
+read transaction. No schema or dependency changes are involved.
+
 ## Migration/rollback
 
 tldw_server migrates one user at a time behind a legacy-write fence. It creates
