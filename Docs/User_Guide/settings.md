@@ -691,7 +691,7 @@ overwrite confirmation or a valid name keeps you on the editor either way.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
-in place of your themes, and Edit, Rename, Delete and Export (list keys and
+beneath the saved themes it last listed (they stay grouped as yours), and Edit, Rename, Delete and Export (list keys and
 picker buttons alike) are disabled with that same reason as a tooltip — Use
 and Try still work, and so does the editor's Try, but the editor's Save and
 Save as are disabled with the same tooltip too, since both write a file. The

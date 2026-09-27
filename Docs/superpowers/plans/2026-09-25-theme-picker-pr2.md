@@ -93,13 +93,18 @@
   - `request_delete(name)`: the body of `on_delete_theme`, parameterised by `name` instead of `self.current_theme_name`. Keep the built-in/shipped/no-file guards and the confirmation copy. `on_delete_theme` becomes `self.request_delete(self.current_theme_name)` after `_require_theme_name()`.
   - `_delete_user_theme(path, name)`. Keep the unlink and the catalog re-register. Replace the launch-default block and the `self.load_theme("textual-dark")` tail with this fallback, which uses the existing `theme_catalog` API:
     ```python
-    from ..css.Themes.theme_catalog import current_launch_default, use_theme
+    from ..css.Themes.theme_catalog import current_launch_default, persist_launch_default, use_theme
     launch = current_launch_default()
     was_active = str(self.app.theme) in (name, f"custom_{name}")
-    if launch == name:
+    if launch == name and was_active:
         use_theme(self.app, "textual-dark", persist=True)
         self.post_message(self.LaunchDefaultChanged("textual-dark"))
         self.app.notify(f"Deleted '{name}'; launch default and theme reset to Textual Dark", severity="success")
+    elif launch == name:
+        # User decision: an inactive launch default changes only the setting.
+        persist_launch_default(self.app, "textual-dark")
+        self.post_message(self.LaunchDefaultChanged("textual-dark"))
+        self.app.notify(f"Deleted '{name}'; launch default reset to Textual Dark", severity="success")
     elif was_active:
         use_theme(self.app, launch if launch in self.app.available_themes else "textual-dark", persist=False)
         self.app.notify(f"Deleted '{name}'; switched to your launch default", severity="success")
