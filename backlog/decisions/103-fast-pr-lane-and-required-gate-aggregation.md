@@ -99,7 +99,7 @@ cron entry on `dev`.
   runs first, followed by the install-free derived checks. Together with the
   one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
   peak of at most two runners instead of approximately thirteen.
-- That four-runner figure is not a global maximum. The two path-scoped GGUF
+- That two-runner figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.
