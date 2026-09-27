@@ -226,6 +226,7 @@ LEGACY_REQUEST_OPTION_KEYS = MappingProxyType(
             "num_steps",
             "guidance_scale",
             "max_reference_duration",
+            "seed",
         ),
     }
 )
