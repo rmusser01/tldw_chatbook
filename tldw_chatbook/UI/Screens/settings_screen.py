@@ -22673,15 +22673,31 @@ class SettingsScreen(BaseAppScreen):
 
     def action_focus_next_workbench_pane(self) -> None:
         """F6: move focus to the next Settings pane (TASK-33001.4)."""
-        focus_relative_workbench_pane(
-            self, self._workbench_focus_targets(), direction=1
-        )
+        self._cycle_workbench_pane(1)
 
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Settings pane."""
-        focus_relative_workbench_pane(
-            self, self._workbench_focus_targets(), direction=-1
-        )
+        self._cycle_workbench_pane(-1)
+
+    def _cycle_workbench_pane(self, direction: int) -> None:
+        """Focus the next (1) or previous (-1) pane, after any pending swap.
+
+        Mid-switch the detail and inspector panes still hold the OUTGOING
+        category's widgets (the TASK-2831 window), and the swap ends by moving
+        focus itself, so a press aimed now is undone. It queues behind the
+        swap instead; ``app.call_later`` runs it after the swap's own focus
+        lands, because ``Widget.focus`` defers through that same queue.
+        """
+
+        def cycle() -> None:
+            focus_relative_workbench_pane(
+                self, self._workbench_focus_targets(), direction=direction
+            )
+
+        if self._category_pane_swap_pending:
+            self._after_category_panes(self.app.call_later, cycle)
+        else:
+            cycle()
 
     def _workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
         """F6 pane targets, rebuilt on every press.

@@ -142,17 +142,21 @@ def _settings_pane_holding_focus(app) -> str | None:
     return None
 
 
-async def _press_and_wait_for_pane(app, pilot, key: str, pane_id: str) -> None:
-    await pilot.press(key)
+async def _wait_for_pane(app, pilot, pane_id: str, what: str) -> None:
     for _ in range(40):
         if _settings_pane_holding_focus(app) == pane_id:
             return
         await pilot.pause(0.05)
     raise AssertionError(
-        f"{key}: expected focus in {pane_id!r}, found "
+        f"{what}: expected focus in {pane_id!r}, found "
         f"{getattr(app.focused, 'id', None)!r} in "
         f"{_settings_pane_holding_focus(app)!r}"
     )
+
+
+async def _press_and_wait_for_pane(app, pilot, key: str, pane_id: str) -> None:
+    await pilot.press(key)
+    await _wait_for_pane(app, pilot, pane_id, key)
 
 
 @pytest.mark.asyncio
@@ -242,6 +246,76 @@ async def test_settings_f6_and_shift_f6_cycle_rail_detail_and_inspector(request)
         await _press_and_wait_for_pane(app, pilot, "f6", "settings-impact-pane")
         await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
         assert app.focused.id == "settings-category-search"
+
+    assert "No workbench pane focus target is available." not in notices
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_f6_pressed_mid_category_swap_lands_in_the_new_panes(request):
+    """F6/Shift+F6 pressed while a category switch is still swapping panes.
+
+    Until the swap runs, the detail and inspector panes hold the OUTGOING
+    category's widgets (the TASK-2831 window), and the swap ends by focusing
+    the new rail row. The swap lock is held so each key lands in that window
+    on every run, not by timing luck.
+    """
+    app = _build_test_app(configured_default="settings")
+    notices: list[str] = []
+    real_notify = app.notify
+
+    def record_notify(message, *args, **kwargs):
+        notices.append(str(message))
+        return real_notify(message, *args, **kwargs)
+
+    app.notify = record_notify
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                break
+            await pilot.pause(0.01)
+        settings = app.screen
+        assert isinstance(settings, SettingsScreen)
+        await _wait_for_selector(settings, pilot, "#settings-impact-pane-body")
+        await _press_and_wait_for_pane(app, pilot, "f6", "settings-category-pane")
+
+        async def switch_with_key_mid_swap(key: str) -> list:
+            """Enter on the focused rail row, then ``key`` before the swap."""
+            await settings._category_swap_lock.acquire()
+            try:
+                await pilot.press("enter")
+                assert settings._category_pane_swap_pending
+                outgoing = list(
+                    settings.query("#settings-detail-pane *, #settings-impact-pane *")
+                )
+                await pilot.press(key)
+            finally:
+                settings._category_swap_lock.release()
+            for _ in range(40):
+                if not settings._category_pane_swap_pending:
+                    break
+                await pilot.pause(0.05)
+            assert not settings._category_pane_swap_pending
+            return outgoing
+
+        for _ in range(40):
+            if app.focused.id == "settings-category-appearance":
+                break
+            await pilot.press("down")
+        outgoing = await switch_with_key_mid_swap("f6")
+        await _wait_for_pane(app, pilot, "settings-detail-pane", "f6 mid-swap")
+        assert settings.active_category == "appearance"
+        assert app.focused.is_attached and app.focused not in outgoing
+        assert app.focused.id != "settings-detail-pane-body"
+
+        await _press_and_wait_for_pane(app, pilot, "shift+f6", "settings-category-pane")
+        await pilot.press("down")
+        assert app.focused.id == "settings-category-theme"
+        outgoing = await switch_with_key_mid_swap("shift+f6")
+        await _wait_for_pane(app, pilot, "settings-impact-pane", "shift+f6 mid-swap")
+        assert settings.active_category == "theme"
+        assert app.focused.is_attached and app.focused not in outgoing
 
     assert "No workbench pane focus target is available." not in notices
 
