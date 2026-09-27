@@ -1,4 +1,4 @@
-# ADR-174: Consume durable sharing operations and versioned Notes link deletion
+# ADR-187: Consume durable sharing operations and versioned Notes link deletion
 
 Status: Accepted
 Date: 2026-09-20

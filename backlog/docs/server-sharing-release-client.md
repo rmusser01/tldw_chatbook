@@ -1,6 +1,6 @@
 # Connected sharing and Notes release contracts
 
-TASK-32881; [ADR-174](../decisions/174-server-sharing-release-contracts.md).
+TASK-32881; [ADR-187](../decisions/187-server-sharing-release-contracts.md).
 
 ## Clone and retry
 

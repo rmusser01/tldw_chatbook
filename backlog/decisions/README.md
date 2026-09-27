@@ -173,4 +173,4 @@ Use numeric filenames:
 
 Do not reuse numbers.
 
-| [ADR-174](174-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
+| [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
