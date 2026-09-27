@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -162,6 +162,39 @@ def _page_end(text: str, offset: int, max_chars: int, max_bytes: int) -> int:
 def _card_truncates(text: str) -> bool:
     """Would full-card ``character_get`` cut this field short?"""
     return _page_end(text, 0, CHARACTER_FIELD_READ_BOUND, _CARD_FIELD_BYTES) < len(text)
+
+
+def first_unread_long_field(
+    guard: CharacterReadGuard, card: Mapping[str, Any], fields: Iterable[str]
+) -> str | None:
+    """The first field to change that ``character_get`` truncates and this
+    session has not read in full at the card's current version, else None.
+
+    Shared by ``character_save`` and ADR-183's external ``update_character``
+    (TASK-32955), so both apply the same threshold and coverage rule.
+    """
+    character_id, version = int(card["id"]), int(card["version"])
+    for field in fields:
+        if (field in EDITABLE_FIELDS and _card_truncates(_text(card.get(field)))
+                and not guard.permits(character_id, version, field)):
+            return field
+    return None
+
+
+def read_full_field_first_message(field: str) -> str:
+    return f"Read the full '{field}' field with character_get before changing it."
+
+
+def load_runtime_source() -> str:
+    """The default profile's runtime source, normalized to local/server.
+
+    For callers outside a Console session (the MCP server, TASK-32955); an
+    unknown value reads as local, like ``WatchlistsToolService``.
+    """
+    from tldw_chatbook.runtime_policy.bootstrap import load_default_runtime_source_state
+
+    source = getattr(load_default_runtime_source_state(), "active_source", None)
+    return "server" if source == "server" else "local"
 
 
 def _outcome(status: str, message: str, *, retryable: bool = False, **extra: Any) -> str:
@@ -503,11 +536,9 @@ class CharacterToolService:
             if int(current["version"]) != expected:
                 return _outcome("stale_version",
                                 "The card changed since you read it; re-read with character_get.")
-            for f in changes:
-                if (_card_truncates(_text(current.get(f)))
-                        and not self._guard.permits(character_id, expected, f)):
-                    return _outcome("read_full_field_first",
-                                    f"Read the full '{f}' field with character_get before changing it.")
+            unread = first_unread_long_field(self._guard, current, changes)
+            if unread is not None:
+                return _outcome("read_full_field_first", read_full_field_first_message(unread))
             card_for_prompt = {**current, **changes}
 
         # Validate before resolving the avatar (spec §4.3 order): a paid

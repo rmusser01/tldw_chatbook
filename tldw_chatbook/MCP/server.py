@@ -32,6 +32,16 @@ Console path. The standalone server supplies no Console `SessionTodoStore`, so
 `todo_create`, `todo_update`, `todo_get`, and `todo_list` are not registered;
 the retired `todo_write` tool is also absent.
 
+## Exposed character reads (opt-in, TASK-32955)
+
+`[mcp] expose_character_tools = true` (default false, independent of
+`expose_local_tools` and of the Console's `[tools] character_tools_enabled`)
+publishes `character_search` and `character_get` through the same permission
+gate. `character_save` stays Console-only; external writes are ADR-183's
+`create_character`/`update_character`, which refuse in server runtime mode
+and share this process's read guard: `update_character` cannot replace a long
+field that `character_get` has not returned in full at the current version.
+
 ## Exposed local Library tools (task-1337)
 
 The 21 descriptor-backed `library_*` tools (media/notes/prompts/skills/
@@ -502,7 +512,11 @@ class TldwMCPServer:
         from .resources import MCPResources
         from .prompts import MCPPrompts
 
+        from ..Tools.character_tool_service import CharacterReadGuard
+
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
+        # One per process = one per stdio client session (TASK-32955).
+        self.tools.character_read_guard = CharacterReadGuard()
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 
@@ -1012,10 +1026,12 @@ class TldwMCPServer:
             )
 
     def _register_local_agent_tools(self):
-        """Register workspace, web, and Watchlists agent tools when enabled.
+        """Register workspace, web, Watchlists, and character reads when enabled.
 
-        Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
-        when the flag is off. Called from ``__init__`` -- deliberately NOT
+        Gated behind ``[mcp] expose_local_tools`` and, for
+        ``character_search``/``character_get``, the independent
+        ``[mcp] expose_character_tools`` (both default false); a no-op when
+        both are off. Called from ``__init__`` -- deliberately NOT
         part of ``_register_tools`` so the AST-walking
         ``_extract_registered_entries`` capability catalog stays unaffected.
 
@@ -1033,14 +1049,18 @@ class TldwMCPServer:
         from .local_server_tools import (
             _local_agent_tool_registrations,
             build_server_local_provider,
+            character_tools_exposure_enabled,
             local_tools_exposure_enabled,
             resolve_server_workspace_root,
+            server_character_service,
         )
         from .permission_store import MCPPermissionStore
 
-        # The gate lives in local_server_tools (server.py never calls
+        # The gates live in local_server_tools (server.py never calls
         # get_cli_setting directly — an AST test pins that).
-        if not local_tools_exposure_enabled():
+        local_tools = local_tools_exposure_enabled()
+        character_tools = character_tools_exposure_enabled()
+        if not (local_tools or character_tools):
             return
 
         # Guard the whole flag-on body: a failure here must never cost the
@@ -1048,7 +1068,14 @@ class TldwMCPServer:
         try:
             workspace_root = resolve_server_workspace_root()
             store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
-            provider = build_server_local_provider(workspace_root, store)
+            provider = build_server_local_provider(
+                workspace_root,
+                store,
+                local_tools=local_tools,
+                character_service=(
+                    server_character_service(self.tools) if character_tools else None
+                ),
+            )
 
             registrations = _local_agent_tool_registrations(provider)
             self.mcp.register_local_tools(registrations)

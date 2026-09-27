@@ -305,7 +305,10 @@ The roster includes each card's optimistic-lock `version`. ADR-183 adds
 They delegate text/JSON authoring to `LocalCharacterPersonaService` and return
 id/name/version receipts or structured errors. Code-owned mutation tags are
 enforced with and without a catalog snapshot; standalone writes require a fresh
-operator grant from the shared permission store. See
+operator grant from the shared permission store. Both refuse while the
+runtime source is `server`, and the standalone `update_character` refuses to
+replace a field longer than one `character_get` card page until this server
+process has read it in full (`read_full_field_first`). See
 [ADR-183](../../backlog/decisions/183-mcp-character-card-authoring.md) for the
 conflict, field, and permission contract.
 List all available characters.
@@ -446,13 +449,20 @@ Character-based creative writing.
 
 ## Configuration
 
-The standalone gateway is stdio-only. The only `[mcp]` configuration key
-consumed by the standalone gateway is `expose_local_tools`. Its default is:
+The standalone gateway is stdio-only. The `[mcp]` configuration keys
+consumed by the standalone gateway are `expose_local_tools` and
+`expose_character_tools`. Their defaults are:
 
 ```toml
 [mcp]
 expose_local_tools = false
+expose_character_tools = false
 ```
+
+`expose_character_tools` publishes the Console's `character_search` and
+`character_get` reads (never `character_save`) through the same permission
+gate, independently of `expose_local_tools` and of `[tools]
+character_tools_enabled` (TASK-32955).
 
 The shipped entry point does not open an HTTP listener and does not implement
 standalone authentication or client allowlisting. `mcp-unified` applies its

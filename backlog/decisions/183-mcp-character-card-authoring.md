@@ -33,6 +33,37 @@ and timeout cannot release recovery protection before persistence finishes.
 Standalone writes also require current native recovery review for their installed
 MCP sources, in addition to the tool permission grant.
 
+## External character reads, long-field guard, and server mode amendment (2026-09-27)
+
+TASK-32955 publishes the Console's `character_search` and `character_get` to
+external clients behind `[mcp] expose_character_tools`, default off and
+independent of both `[mcp] expose_local_tools` and the Console's `[tools]
+character_tools_enabled`. The standalone server builds them over the real
+`LocalCharacterPersonaService` and re-marks only those two specs as external
+when composing its provider, so the Hub-local composition and its Console-only
+permission rows are unchanged. The reads use the ordinary external local-tool
+gate: an explicit Allow runs them and ask is refused. `character_save` stays
+Console-only; these two ADR-183 tools remain the only external write path, and
+their standing-grant rule above is unchanged.
+
+Each standalone server process owns one `CharacterReadGuard` (stdio serves one
+client per process), shared by the external `character_get` and
+`update_character`. `update_character` refuses with `read_full_field_first`
+when a field it would replace is longer than one `character_get` card page and
+that field has not been read contiguously in full at the card's current
+version, using the Console's thresholds and message. With the reads unexposed,
+long fields therefore cannot be updated externally; short fields are
+unaffected. The in-process runtime applies no guard: it has no read tool that
+could satisfy one, so a guard there would block every long-field edit from the
+Hub. Its calls keep the gates above (the Hub's gated action, or the Console's
+approval card, which an explicit tool-level Allow skips), and the Console's own
+`character_save` keeps its per-session guard.
+
+In both runtimes `create_character` and `update_character` return
+`error_code: "unsupported"` with the Console's local-only message while the
+default profile's runtime source is `server`; the external reads return the
+same refusal. A failing runtime-source read fails the write closed.
+
 ## Alternatives
 
 - Automatically reading the latest version discards optimistic conflict detection.
