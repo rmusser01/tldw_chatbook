@@ -1223,7 +1223,10 @@ def _relative_target_is_safe(
         return not _is_relative_sensitive_path(
             resolved.relative_to(resolved_workspace), exclusions, is_directory=is_directory
         )
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
+        # Python <= 3.12 raises RuntimeError for a symlink loop (3.13+:
+        # OSError); ValueError covers an embedded NUL. Any unresolvable
+        # entry is inadmissible -- skip it rather than fail the listing.
         return False
 
 

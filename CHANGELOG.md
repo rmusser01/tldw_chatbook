@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
+## [Unreleased]
+
+### Added
+- SSH remote workspace bindings (ADR-181): a named workspace can bind a folder
+  on a remote host over SSH. Agent `fs_*` tools run there through a transient
+  worker; nothing is installed on the host.
+
+### Changed
+- Agent `fs_read`, `fs_write`, `fs_edit` and `fs_patch` results now end with
+  `sha256:` and `size:` lines for the file content -- for local workspace
+  folders too, not only SSH ones. They carry the read-before-write stamps;
+  anything that parses these results should ignore the two trailing lines.
+
+### Fixed
+- `fs_list` of a workspace folder containing a symlink loop failed outright;
+  the looping entry is now skipped.
+
 ## [0.2.2] - 2026-09-14
 
 ### Changed
