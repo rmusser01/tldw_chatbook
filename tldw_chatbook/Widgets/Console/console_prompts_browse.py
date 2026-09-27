@@ -13,7 +13,7 @@ from textual.events import Key
 from textual.message import Message
 from textual.widgets import Button, Input, Select, Static
 
-from ...Prompt_Management.prompt_draft_contract import (
+from ...Prompt_Management import (
     PROMPT_DRAFT_SHELF_CAPACITY,
 )
 from .console_prompts_state import PromptBrowseResult, PromptSource

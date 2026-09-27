@@ -68,6 +68,7 @@ import sys
 import tldw_chatbook.UI.Screens.chat_screen
 
 deferred = (
+    'tldw_chatbook.Prompt_Management.prompt_draft_contract',
     'tldw_chatbook.Widgets.Console.console_prompt_draft_editor',
     'tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog',
 )

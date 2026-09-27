@@ -3,15 +3,24 @@
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+# UI-neutral Draft Shelf limits live on the already-resident package facade
+# so storage and presentation share one contract without another boot module.
+PROMPT_DRAFT_SHELF_CAPACITY = 100
+PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE = 100
+
 if TYPE_CHECKING:
     from .local_prompt_service import LocalPromptService as LocalPromptService
     from .prompt_chatbook_scope_service import (
         PromptChatbookBackend as PromptChatbookBackend,
+    )
+    from .prompt_chatbook_scope_service import (
         PromptChatbookScopeService as PromptChatbookScopeService,
     )
     from .server_prompt_service import ServerPromptService as ServerPromptService
 
 __all__ = [
+    "PROMPT_DRAFT_SHELF_CAPACITY",
+    "PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE",
     "LocalPromptService",
     "PromptChatbookBackend",
     "PromptChatbookScopeService",

@@ -27,7 +27,7 @@ from .prompt_batch_models import (
     PromptBatchTarget,
     validate_prompt_batch_targets,
 )
-from .prompt_draft_contract import (
+from . import (
     PROMPT_DRAFT_SHELF_CAPACITY,
     PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE,
 )
