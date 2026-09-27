@@ -1102,6 +1102,34 @@ async def test_single_row_batch_renders_fast_approve_and_deny_buttons():
 
 
 @pytest.mark.asyncio
+async def test_two_option_save_row_renders_once_and_deny_only():
+    """TASK-32956: character_save cards offer only Approve once / Deny --
+    the narrowed Select and the fast buttons must still render cleanly."""
+    call = {
+        **_single_call()[0],
+        "llm_name": "character_save",
+        "server_key": "local:__local__",
+        "tool_name": "character_save",
+        "options": ["approve_once", "deny"],
+    }
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([call], timeout_seconds=45.0, round_id="round-save")
+        await pilot.pause()
+
+        select = app.query_one(".approval-row-decision", Select)
+        assert [value for _label, value in select._options] == ["approve_once", "deny"]
+        assert select.value == "approve_once"
+        assert str(app.query_one(".approval-row-fast-approve", Button).label) == "Approve once"
+        assert str(app.query_one(".approval-row-fast-deny", Button).label) == "Deny"
+
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"character_save": "approve_once"}]
+
+
+@pytest.mark.asyncio
 async def test_multi_row_batch_omits_fast_buttons():
     """Multi-row cards keep the Select+Submit-only flow -- the fast path
     is gated on exactly one row (`ChatApprovalCard.set_batch`'s

@@ -50,7 +50,7 @@ from tldw_chatbook.MCP.execution_log import (
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import ALWAYS_ASK_TOOLS, EffectiveToolState
 from tldw_chatbook.Tools.remote_root_types import (
     AdmittedRoot,
     LocalRoot,
@@ -1962,7 +1962,12 @@ class LocalToolProvider:
             # LocalToolProvider has no arg-rule path to consume it, so it
             # would fail closed silently. Local tools keep the whole-tool
             # choices only.
-            options=("approve_once", "approve_session", "always_allow", "deny"),
+            # TASK-32956: an ALWAYS_ASK_TOOLS card offers no standing grant.
+            options=(
+                ("approve_once", "deny")
+                if (hub.server_key, hub.name) in ALWAYS_ASK_TOOLS
+                else ("approve_once", "approve_session", "always_allow", "deny")
+            ),
         )
         return gate, False
 
@@ -3253,7 +3258,7 @@ class LocalToolProvider:
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
         detail = self._stamp_detail(run_id, name)
-        stamp = detail.decision if detail is not None else None
+        stamp = _every_call_decision(hub, detail.decision if detail is not None else None)
         if stamp in ("approve_once", "approve_session", "always_allow"):
             if stamp != "approve_once":
                 self._persist_approval_safe(hub, stamp)
@@ -3323,7 +3328,7 @@ class LocalToolProvider:
                     approval_consumed=False,
                     refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
                 )
-            decision = (decisions or {}).get(name, "timeout")
+            decision = _every_call_decision(hub, (decisions or {}).get(name, "timeout"))
             if decision in ("approve_session", "always_allow"):
                 self._persist_approval_safe(hub, decision)
             if decision in ("approve_once", "approve_session", "always_allow"):
@@ -3355,7 +3360,7 @@ class LocalToolProvider:
 
     def _is_session_approved_safe(self, hub: HubTool) -> bool:
         """Never-raise session-grant read; absent/failed read means not approved."""
-        if self._is_session_approved is None:
+        if self._is_session_approved is None or (hub.server_key, hub.name) in ALWAYS_ASK_TOOLS:
             return False
         try:
             return bool(self._is_session_approved(hub))
@@ -3386,6 +3391,18 @@ class LocalToolProvider:
             logger.warning(
                 f"LocalToolProvider: record_decision ({decision}) failed for {hub.name}: {exc}"
             )
+
+
+def _every_call_decision(hub: HubTool, decision: Any) -> Any:
+    """TASK-32956: for an ``ALWAYS_ASK_TOOLS`` tool every approval is
+    ``approve_once`` -- a stale or forged session/always verdict writes no
+    grant and covers only this call."""
+    if decision in ("approve_session", "always_allow") and (
+        hub.server_key,
+        hub.name,
+    ) in ALWAYS_ASK_TOOLS:
+        return "approve_once"
+    return decision
 
 
 def _promotion_call_kind(name: str, args: object) -> str | None:

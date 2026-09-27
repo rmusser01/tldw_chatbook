@@ -487,8 +487,10 @@ dangerous tool, not to override a decision you made about one tool.
 
 One exception: `character_save` asks on **every** call, even when its own row
 is set to Allow — the row then shows **Ask ⚑** and the inspector says "Asks on
-every call, even when set to Allow." Every character save stays an approval
-card; the two character read tools take an explicit Allow normally.
+every call, even when set to Allow." Its Console approval card offers only
+**Approve once** and **Deny**, and a session grant is never honoured for it,
+so every character save stays an approval card; the two character read tools
+take an explicit Allow normally.
 
 The separate rug-pull guard still applies on top: an explicit tool-level Allow
 is downgraded to Ask (marked **⚠**) when the tool's current definition no
@@ -805,4 +807,6 @@ at all.*
 screen): the Console character tools now appear as local permission rows
 (listed, not runnable from Tools mode, gone when `[tools]
 character_tools_enabled` is off), and `character_save` is the one tool an
-explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`).*
+explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`); its
+card offers only Approve once / Deny, and Tool Pack exports now carry the
+character tools' rules instead of listing them as omitted.*

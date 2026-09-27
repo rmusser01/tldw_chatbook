@@ -82,8 +82,12 @@ def test_rows_absent_when_gate_off(hub):
     assert CHARACTER_TOOLS.isdisjoint(_rows(hub.service))
 
 
-def _console(monkeypatch, hub):
-    """The Console's real local-provider composition over a real card DB."""
+def _console(monkeypatch, hub, answer=None):
+    """The Console's real local-provider composition over a real card DB.
+
+    ``answer`` is what the approval card returns for every pending row;
+    ``None`` means nobody answers (the call times out).
+    """
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
@@ -106,7 +110,7 @@ def _console(monkeypatch, hub):
 
     def request_mcp_approvals(pending, *, session_id=None):
         approvals.extend(pending)
-        return {}  # nobody answers: an asked call times out
+        return {} if answer is None else {p.llm_name: answer for p in pending}
 
     controller.request_mcp_approvals = request_mcp_approvals
     provider, _hook = _compose_local_provider(controller, session.id)
@@ -165,3 +169,88 @@ def test_hub_inspector_notice_names_the_every_call_floor():
     inherited = EffectiveToolState("ask", "global_default", risk_floored=True)
     assert _risk_floored_notice(explicit) == "Asks on every call, even when set to Allow."
     assert "inherited default" in _risk_floored_notice(inherited)
+
+
+# -- Fix round: the save card offers only Approve once / Deny ---------------
+
+_SAVE = ("local:__local__", "character_save")
+
+
+def _no_standing_save_grant(service):
+    assert service.is_session_approved(*_SAVE) is False
+    assert service.permission_store.get_tool_entry(*_SAVE) is None
+
+
+def test_save_card_offers_only_approve_once_or_deny(monkeypatch, hub):
+    provider, _approvals, card_id = _console(monkeypatch, hub)
+    save = provider.pending_gate_for("character_save", {"name": "Nova"})
+    assert save.options == ("approve_once", "deny")
+    # The reads keep the ordinary whole-tool choices.
+    read = provider.pending_gate_for("character_get", {"id": card_id})
+    assert "approve_session" in read.options and "always_allow" in read.options
+    # A session grant from any other path is not honoured for the save.
+    hub.service.approve_for_session(*_SAVE)
+    assert provider.pending_gate_for("character_save", {"name": "Nova"}) is not None
+
+
+@pytest.mark.parametrize("answer", ["approve_once", "approve_session", "always_allow"])
+def test_the_next_save_still_asks_after_one_is_approved(monkeypatch, hub, answer):
+    # approve_session / always_allow cannot be picked on the narrowed card;
+    # a stale or forged one must still count as this call only.
+    provider, approvals, _card_id = _console(monkeypatch, hub, answer=answer)
+    for attempt in range(2):
+        result = provider.invoke("local:character_save", {"name": f"Nova{attempt}"})
+        assert result.ok is True
+        assert json.loads(result.content)["status"] == "saved"
+    assert [p.tool_name for p in approvals] == ["character_save", "character_save"]
+    _no_standing_save_grant(hub.service)
+
+
+@pytest.mark.parametrize("forged", ["approve_session", "always_allow"])
+def test_forged_stamp_writes_no_grant_and_the_next_turn_asks(monkeypatch, hub, forged):
+    # The Console's batch-review path: a stamped verdict applied at invoke.
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    provider, approvals, _card_id = _console(monkeypatch, hub)
+    provider.apply_batch_decisions("run-forged", {"character_save": forged})
+    with use_run_id("run-forged"):
+        first = provider.invoke("local:character_save", {"name": "Nova"})
+    assert first.ok is True
+    _no_standing_save_grant(hub.service)
+
+    # Next turn: the review hook clears the run's stamps on entry.
+    provider.apply_batch_decisions("run-forged", {})
+    with use_run_id("run-forged"):
+        second = provider.invoke("local:character_save", {"name": "Vega"})
+    assert second.ok is False  # asked again; nobody answered
+    assert [p.tool_name for p in approvals] == ["character_save"]
+
+
+# -- Fix round: Tool Pack export carries the character rules ----------------
+
+
+class _NoServers:
+    """The v1 registry's two local-control reads, with nothing registered."""
+
+    def get_inventory(self):
+        return {"tools": []}
+
+    def get_external_servers(self):
+        return []
+
+
+def test_tool_pack_export_carries_a_stored_character_rule(hub):
+    from tldw_chatbook.Tool_Packs.catalog_snapshot import PermissionInventoryRegistry
+    from tldw_chatbook.Tool_Packs.export import ToolPackExportService
+
+    _allow_in_hub(hub.service, "character_get")
+    registry = PermissionInventoryRegistry.v1(_NoServers(), fallback_root=hub.workspace)
+    review = ToolPackExportService(hub.service.permission_store, registry).capture(
+        profile_id="default", display_name="Characters", suggested_id="characters"
+    )
+    rules = {
+        (rule.server_key, rule.tool_name): rule.state for rule in review.payload.tools
+    }
+    assert ("local:__local__", "character_get") not in review.omitted_allow_ask
+    assert rules[("local:__local__", "character_get")] == "allow"
+    assert rules[("local:__local__", "character_save")] == "ask"
