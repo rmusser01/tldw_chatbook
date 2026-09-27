@@ -51,7 +51,6 @@ from textual.widgets import Button, Static, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
-    ConsoleProviderIntent,
     HandoffChannel,
     HandoffClaim,
     PendingHandoffStore,
@@ -7965,149 +7964,6 @@ class ChatScreen(BaseAppScreen):
             "",
         )
 
-    def _configured_console_provider(
-        self,
-        provider: str,
-    ) -> tuple[str, list[str]] | None:
-        """Resolve a normalized intent against configured provider identities."""
-        requested_key = provider_config_key(provider)
-        for configured_provider, configured_models in self._providers_models().items():
-            if provider_config_key(configured_provider) != requested_key:
-                continue
-            models = [
-                str(model).strip()
-                for model in configured_models
-                if str(model or "").strip()
-                and str(model).strip().lower() not in {"none", "null"}
-            ]
-            return requested_key, models
-        return None
-
-    def _configured_console_provider_default_model(
-        self,
-        provider: str,
-        models: list[str],
-    ) -> str | None:
-        """Return a valid configured default model for one provider."""
-        config = self._provider_readiness_app_config()
-        api_settings = (
-            config.get("api_settings", {}) if isinstance(config, Mapping) else {}
-        )
-        provider_settings: Mapping[str, Any] = {}
-        if isinstance(api_settings, Mapping):
-            for configured_provider, configured_settings in api_settings.items():
-                if provider_config_key(str(configured_provider)) != provider:
-                    continue
-                if isinstance(configured_settings, Mapping):
-                    provider_settings = configured_settings
-                break
-        candidates = (
-            provider_settings.get("model"),
-            provider_settings.get("api_model"),
-            provider_settings.get("default_model"),
-        )
-        for candidate in candidates:
-            model = str(candidate or "").strip()
-            if model and model in models:
-                return model
-
-        defaults = self._persisted_chat_defaults()
-        if provider_config_key(str(defaults.get("provider") or "")) == provider:
-            default_model = str(defaults.get("model") or "").strip()
-            if default_model and default_model in models:
-                return default_model
-        return models[0] if models else None
-
-    def _apply_console_provider_intent(
-        self,
-        intent: ConsoleProviderIntent,
-        *,
-        store: ConsoleChatStore,
-        session_id: str,
-        settings: ConsoleSessionSettings,
-    ) -> bool:
-        """Apply one validated intent to the session captured by its consumer."""
-        configured = self._configured_console_provider(intent.provider)
-        if configured is None:
-            self.app_instance.notify(
-                "That provider is unavailable. Choose a configured provider in Settings.",
-                severity="warning",
-            )
-            return False
-
-        provider, models = configured
-        model = self._configured_console_provider_default_model(provider, models)
-        derived = build_default_console_session_settings(
-            self._provider_readiness_app_config(),
-            provider,
-            model,
-        )
-        next_settings = replace(
-            settings,
-            provider=provider,
-            model=model,
-            base_url=derived.base_url,
-            source="user",
-        )
-        store.replace_session_settings(session_id, next_settings)
-        if store.active_session_id == session_id:
-            self._console_control_provider = next_settings.provider
-            self._console_control_model = next_settings.model
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            self._sync_console_control_bar()
-        self.app_instance.notify(
-            f"Console provider set to {provider} for this session.",
-            severity="information",
-        )
-        return True
-
-    def consume_pending_console_provider_intent(self) -> bool:
-        """Consume one typed provider intent after the Console session is ready."""
-        try:
-            store = self._ensure_console_chat_store()
-            settings = self._session._ensure_active_console_session_settings()
-            session_id = store.active_session_id
-            if session_id is None:
-                return False
-        except Exception as exc:
-            logger.warning(
-                "Console provider handoff is not ready (exception_category={})",
-                type(exc).__name__,
-            )
-            return False
-
-        claim = self.app_instance.pending_handoffs.claim(
-            HandoffChannel.CONSOLE_PROVIDER
-        )
-        if claim is None:
-            return False
-        try:
-            if not isinstance(claim.value, ConsoleProviderIntent):
-                raise TypeError("Console provider handoff was not typed")
-            self._apply_console_provider_intent(
-                claim.value,
-                store=store,
-                session_id=session_id,
-                settings=settings,
-            )
-        except Exception as exc:
-            self.app_instance.pending_handoffs.release(claim)
-            logger.warning(
-                "Console provider handoff will retry "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(exc).__name__,
-            )
-            self.app_instance.notify(
-                "Console provider selection could not be applied yet; it will retry.",
-                severity="warning",
-            )
-            return False
-        self.app_instance.pending_handoffs.acknowledge(claim)
-        return True
-
     def consume_pending_vllm_console_intent(self) -> bool:
         """Apply one current verified vLLM target to the active session only."""
 
@@ -8326,13 +8182,6 @@ class ChatScreen(BaseAppScreen):
             severity="information",
         )
         return True
-
-    def current_console_provider_for_command(self) -> str | None:
-        """Return the active session provider without creating a session."""
-        settings = self._session._active_console_session_settings()
-        if settings is None:
-            return None
-        return str(settings.provider or "").strip() or None
 
     def _active_console_settings_context_estimate(
         self,
@@ -16873,7 +16722,6 @@ class ChatScreen(BaseAppScreen):
             # a failed early attempt releases its claim for this screen's
             # existing resume/user-triggered retry paths.
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert)
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
@@ -16950,7 +16798,6 @@ class ChatScreen(BaseAppScreen):
             )
             self._consume_pending_console_roleplay_repair()
             await self._consume_pending_console_prompt_insert()
-            self.consume_pending_console_provider_intent()
             fleet_result = self._fleet.consume_pending_console_fleet_completion()
             if inspect.isawaitable(fleet_result):
                 await fleet_result
@@ -23767,10 +23614,6 @@ class ChatScreen(BaseAppScreen):
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self._consume_pending_console_prompt_insert,
-                ),
-                self.set_timer(
-                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self.consume_pending_console_provider_intent,
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,

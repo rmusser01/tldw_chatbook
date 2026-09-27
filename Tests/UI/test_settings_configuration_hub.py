@@ -4425,7 +4425,10 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_unavailable_fields_render_single_summary_line():
+@private_profile_test
+async def test_settings_provider_unavailable_fields_render_single_summary_line(
+    request,
+):
     """task-189: gated fields collapse to one summary line instead of per-row
     'Unavailable for <provider>' placeholders."""
     app = _build_test_app()
@@ -4436,20 +4439,30 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line()
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
+        # TASK-33001.2: the summary names exactly the rows the request drops.
+        # llama.cpp's request carries reasoning effort and a thinking budget
+        # (chat_template_kwargs / reasoning_budget_tokens), so only these hide.
         summary = screen.query_one("#settings-provider-generation-support", Static)
         assert (
             str(summary.renderable)
-            == "Reasoning/Thinking controls: unavailable for llama.cpp."
+            == "Hidden for llama.cpp: Summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
         for row_id in (
-            "#settings-model-profile-reasoning-effort-row",
             "#settings-model-profile-reasoning-summary-row",
             "#settings-model-profile-verbosity-row",
             "#settings-model-profile-thinking-effort-row",
-            "#settings-model-profile-thinking-budget-tokens-row",
         ):
             assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
+        for row_id in (
+            "#settings-model-profile-reasoning-effort-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-top-k-row",
+        ):
+            assert not screen.query_one(row_id).has_class(
                 "settings-gated-profile-hidden"
             ), row_id
         assert "Unavailable for" not in _visible_text(screen)
@@ -4458,13 +4471,119 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line()
         screen._sync_provider_model_profile_widgets("openai", "gpt-4.1")
         await pilot.pause()
 
-        assert str(summary.renderable) == "Thinking controls: unavailable for OpenAI."
+        assert (
+            str(summary.renderable)
+            == "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+        )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
         ).has_class("settings-gated-profile-hidden")
-        assert screen.query_one(
-            "#settings-model-profile-thinking-effort-row"
-        ).has_class("settings-gated-profile-hidden")
+        for row_id in (
+            "#settings-model-profile-thinking-effort-row",
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-top-k-row",
+        ):
+            assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("Anthropic", "claude-sonnet-4-5"),
+        ("anthropic", "claude-sonnet-5"),
+        ("OpenAI", "gpt-5"),
+        ("moonshot", "kimi-k3"),
+        ("moonshot", "moonshot-v1-8k"),
+        ("llama_cpp", "qwen"),
+        ("custom_2", "private-model"),
+        ("acme-private-llm", "any"),
+    ],
+)
+def test_settings_model_profile_rows_ask_the_request_field_decision(provider, model):
+    """TASK-33001.2: every model-default row asks supported_generation_fields
+    for the draft provider AND model -- no sampler is supported by default."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        supported_generation_fields,
+    )
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
+    expected = supported_generation_fields(provider, model)
+
+    assert {
+        field
+        for draft_key, field in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+        if screen._model_profile_field_supported(provider, draft_key, model)
+    } == expected
+
+
+def test_settings_generation_summary_names_every_hidden_row():
+    """TASK-33001.2: one line names the rows Anthropic's request drops."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
+
+    assert screen._provider_generation_support_copy(
+        "anthropic", "claude-sonnet-4-5"
+    ) == (
+        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+        "Summary, Verbosity."
+    )
+    assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
+        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+        "Summary, Verbosity, Think budget."
+    )
+    assert screen._provider_generation_support_copy("openai", "gpt-5") == (
+        "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+    )
+
+
+def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
+    """TASK-33001.2 AC#9: a saved value for a now-hidden field stays in config.
+
+    The Settings writer used to pop every unsupported field from the saved
+    profile; it now leaves the fields the request drops exactly as saved.
+    """
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
+    saved = {
+        "claude-sonnet-4-5": {
+            "temperature": 0.8,
+            "min_p": 0.05,
+            "seed": 7,
+            "reasoning_summary": "auto",
+        },
+        "sibling": {"temperature": 0.4},
+    }
+    screen._provider_model_defaults = lambda _provider: saved
+    values = {draft_key: "" for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS}
+    values["model_profile_temperature"] = 0.3
+
+    updated = screen._updated_model_defaults_for_values(
+        "anthropic", "claude-sonnet-4-5", values
+    )
+
+    assert updated == {
+        "claude-sonnet-4-5": {
+            "temperature": 0.3,
+            "min_p": 0.05,
+            "seed": 7,
+            "reasoning_summary": "auto",
+        },
+        "sibling": {"temperature": 0.4},
+    }
 
 
 @pytest.mark.asyncio
@@ -4611,6 +4730,95 @@ async def test_settings_provider_test_does_not_treat_missing_models_route_as_cha
         assert kwargs.get("severity") == "warning"
         assert "model listing unavailable" in screen._provider_test_result
         assert "model listing failed" not in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
+    request, monkeypatch
+):
+    """TASK-33001.3: a second Test on one draft shows only the new probe.
+
+    The first probe fails; the second is held in flight, then reaches the
+    endpoint. The real ProviderTestEvidenceStore keeps the first result between
+    the runs, so a stored copy must never reach the second run's result line.
+    """
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderTestEvidenceStore
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    outcomes = [
+        SettingsEndpointProbeOutcome(
+            reachable=False,
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        ),
+        SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("llama3",),
+        ),
+    ]
+    second_started = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def fake_probe(base_url, **kwargs):
+        outcome = outcomes.pop(0)
+        if not outcomes:
+            second_started.set()
+            await release_second.wait()
+        return outcome
+
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
+    host = DestinationHarness(app, "settings")
+
+    def assert_each_fact_once(result: str) -> None:
+        facts = result.split(" | ")
+        assert len(facts) == len(set(facts)), result
+        assert result.count("generation not tested") == 1, result
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        assert type(screen._provider_evidence_store()) is ProviderTestEvidenceStore
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        first = screen._provider_test_result
+        assert "model listing failed (connection refused)" in first
+        assert_each_fact_once(first)
+
+        screen.action_settings_test_category()
+        await asyncio.wait_for(second_started.wait(), timeout=2)
+        in_flight = screen._provider_test_result
+        assert "model listing checking" in in_flight
+        assert "model listing failed" not in in_flight
+        assert_each_fact_once(in_flight)
+
+        release_second.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        second = screen._provider_test_result
+        assert "model listing reached" in second
+        assert "model listing failed" not in second
+        assert "model listing checking" not in second
+        assert "selected model confirmed" in second
+        assert_each_fact_once(second)
+        rendered = screen.query_one("#settings-provider-test-result", Static)
+        assert str(rendered.renderable) == second
+
+        message, kwargs = toasts[-1]
+        assert kwargs.get("severity") == "information"
+        assert "failed" not in message
+        assert message.count("generation not tested") == 1, message
 
 
 @pytest.mark.asyncio
@@ -8616,6 +8824,8 @@ async def test_settings_provider_openai_endpoint_placeholder_uses_provider_conte
 
 
 def test_settings_endpoint_display_breaks_browser_autolinks_without_mutating_value():
+    # TASK-33001.7: this is the textual-web display only; a native terminal
+    # paints the raw URL (Tests/UI/test_settings_url_input.py covers both).
     endpoint = "http://localhost:8000/v1/chat/completions"
 
     display_value = settings_screen_module._textual_web_safe_url_display(endpoint)
@@ -8860,7 +9070,10 @@ async def test_settings_saves_each_mistral_entry_to_its_distinct_owner(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_openai_generation_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_openai_generation_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "o3"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {"o3": {}}}}
@@ -8896,7 +9109,8 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
-        assert "Thinking controls: unavailable for OpenAI." in text
+        # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
+        assert "Hidden for OpenAI: Min P, Top K, Thinking, Think budget." in text
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -8922,8 +9136,6 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
         "o3": {
             "temperature": 0.3,
             "top_p": 0.86,
-            "min_p": 0.04,
-            "top_k": 42,
             "max_tokens": 2048,
             "seed": 123,
             "presence_penalty": 0.2,
@@ -9003,14 +9215,18 @@ def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_anthropic_thinking_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_anthropic_thinking_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "Anthropic",
         "model": "claude-opus-4-7",
     }
+    # TASK-33001.2 AC#9: a Min P saved before stays untouched by the save.
     app.app_config["api_settings"] = {
-        "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
+        "anthropic": {"model_defaults": {"claude-opus-4-7": {"min_p": 0.05}}},
     }
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
@@ -9037,7 +9253,22 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
-        assert "Reasoning controls: unavailable for Anthropic." in text
+        # TASK-33001.2: Anthropic's request carries no Min P, Seed or
+        # penalties, and Opus 4.7 rejects a fixed thinking budget.
+        assert (
+            "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
+            "Summary, Verbosity, Think budget."
+        ) in text
+        for row_id in (
+            "#settings-model-profile-min-p-row",
+            "#settings-model-profile-seed-row",
+            "#settings-model-profile-presence-penalty-row",
+            "#settings-model-profile-frequency-penalty-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+        ):
+            assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
         assert (
             screen.query_one(
                 "#settings-model-profile-reasoning-effort", Select
@@ -9067,12 +9298,50 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     sections, _deletes = mutations[0]
     assert sections["api_settings.anthropic"]["model_defaults"] == {
         "claude-opus-4-7": {
+            "min_p": 0.05,
             "max_tokens": 12000,
             "thinking_effort": "xhigh",
-            "thinking_budget_tokens": 4096,
             "streaming": False,
         },
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model"), [("moonshot", "kimi-k3"), ("zai", "glm-5.2")]
+)
+@private_profile_test
+async def test_settings_provider_category_saves_moonshot_and_zai_reasoning_effort(
+    request, monkeypatch, provider, model
+):
+    """TASK-33001.2: the Settings form reader used to blank reasoning effort
+    for every provider but OpenAI, so a Moonshot or Z.ai reasoning default
+    shown and edited in Settings was never saved. Both requests carry it for
+    reasoning-capable models, so the save now keeps it."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": model}
+    app.app_config["api_settings"] = {provider: {"model_defaults": {model: {}}}}
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        effort = screen.query_one("#settings-model-profile-reasoning-effort", Select)
+        assert effort.disabled is False
+        assert not screen.query_one(
+            "#settings-model-profile-reasoning-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+        effort.value = "high"
+        await pilot.pause()
+
+        await pilot.click("#settings-save-category")
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    saved = sections[f"api_settings.{provider}"]["model_defaults"][model]
+    assert saved["reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio
@@ -9690,10 +9959,11 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
     "environment"`` and delete a stored ``api_key`` that was resolving. ADR-012
     (2026-09-19) ranks the stored key above that env var. The real writer runs
     on this private profile's TLDW_CONFIG_PATH; the spy only records. The
-    explicit rows (choose env var, clear, type) keep their dev behaviour, and
-    so does the keyless row. The over-limit row (Qodo on PR #2847) holds a key
-    the resolver accepts but the builder would reject as a new entry: the
-    untouched key is kept verbatim, not revalidated, so the save succeeds.
+    explicit rows (choose env var, clear, type) keep their dev behaviour; the
+    keyless row records "none" per TASK-33001.7. The over-limit row (Qodo on
+    PR #2847) holds a key the resolver accepts but the builder would reject as
+    a new entry: the untouched key is kept verbatim, not revalidated, so the
+    save succeeds.
 
     Args:
         request: Pytest request; ``private_profile_test`` runs this test in a
@@ -9832,11 +10102,13 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
             )
             assert resolved[:2] == before[:2]
     elif action == "model":
-        # Keyless legacy section, no stored key: this fix leaves dev's behaviour
-        # alone. TASK-33001.7 changes this row to credential_source "none".
+        # Keyless legacy section, no stored key. TASK-33001.7 changed this row
+        # on purpose: the untyped template env-var name is not a credential
+        # choice, so the save records "none" and drops the name (it used to
+        # pin dev's "environment").
         assert saved["model"] == new_model
-        assert saved["credential_source"] == "environment"
-        assert saved["api_key_env_var"] == template_env
+        assert saved["credential_source"] == "none"
+        assert "api_key_env_var" not in saved
         assert before[:2] == after[:2] == (None, None)
         assert readiness_before == readiness_after
     elif action == "choose-env":
@@ -10172,6 +10444,100 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         "model": "",
         "credential_source": "none",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("env_key", "persisted_source"),
+    [
+        (None, None),
+        ("sk-llama-server-canary", None),
+        (None, "environment"),
+    ],
+    ids=["legacy-env-unset", "legacy-env-set", "explicit-environment"],
+)
+@private_profile_test
+async def test_settings_keyless_provider_save_keeps_template_env_name_out(
+    request, monkeypatch, env_key, persisted_source
+):
+    """TASK-33001.7 AC#4: a keyless save writes no unused credential routing.
+
+    The shipped template names ``LLAMA_CPP_API_KEY`` for llama.cpp ("if you
+    set one on the server"), and Settings prefills that name, so saving the
+    model used to write ``api_key_env_var`` plus ``credential_source =
+    "environment"`` for a server that has no key. The real writer runs on
+    this private profile's TLDW_CONFIG_PATH (no mocked config writer). With
+    the variable unset the save records the explicit "none" decision and
+    drops the name; with it set, a key IS configured and still resolves. An
+    explicit persisted "environment" decision is the user's and is kept.
+    Every case resolves the credential exactly as it did before the save.
+    """
+    import os
+
+    from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
+
+    if env_key is None:
+        monkeypatch.delenv("LLAMA_CPP_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LLAMA_CPP_API_KEY", env_key)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+    template = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        "llama_cpp"
+    ]
+    assert template["api_key_env_var"] == "LLAMA_CPP_API_KEY"
+    assert not {"api_key", "credential_source"} & set(template)
+    if persisted_source is not None:
+        template["credential_source"] = persisted_source
+    before = resolve_provider_credential("llama_cpp", template, environ=os.environ)
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
+    app.app_config["api_settings"] = {"llama_cpp": deepcopy(template)}
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "qwen3-coder"
+        screen.handle_model_value_changed(Input.Changed(model, model.value))
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert screen._provider_save_result == "Provider settings saved."
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+        "llama_cpp"
+    ]
+    assert saved["model"] == "qwen3-coder"
+    after = resolve_provider_credential("llama_cpp", saved, environ=os.environ)
+    assert after[:2] == before[:2]
+    if persisted_source is not None:
+        assert saved["credential_source"] == persisted_source
+        assert saved["api_key_env_var"] == "LLAMA_CPP_API_KEY"
+    elif env_key is None:
+        assert "api_key_env_var" not in saved
+        assert saved["credential_source"] == "none"
+        assert after[0] is None
+    else:
+        assert after[0] == env_key
+
+    # The runtime reads the template merged under the file, and the app's quit
+    # (persist_cli_config_for_shutdown) writes that merge back: the live run's
+    # config regained the template name 12s after this save. Only the explicit
+    # decision keeps the name inert, even once the variable is exported.
+    exported = env_key or "sk-exported-later"
+    monkeypatch.setenv("LLAMA_CPP_API_KEY", exported)
+    assert config_module.persist_cli_config_for_shutdown()
+    expected = None if (env_key, persisted_source) == (None, None) else exported
+    for config in (
+        config_module.load_cli_config_and_ensure_existence(force_reload=True),
+        tomllib.loads(config_path.read_text(encoding="utf-8")),
+    ):
+        section = config["api_settings"]["llama_cpp"]
+        assert resolve_provider_credential(
+            "llama_cpp", section, environ=os.environ
+        )[0] == expected
 
 
 @pytest.mark.asyncio
@@ -12708,6 +13074,49 @@ async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
         )
         assert "disabled right now" in status, status
         assert target_label in status, status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "field_id"),
+    (
+        ("Seed", "settings-model-profile-seed"),
+        ("Min P", "settings-model-profile-min-p"),
+    ),
+)
+@private_profile_test
+async def test_search_landing_on_a_row_hidden_for_the_provider_says_so(
+    request, query, field_id
+):
+    """TASK-33001.2: '/' for a sampler the Anthropic request drops opens
+    Providers & Models without focusing the hidden, disabled row, and the
+    status says the row is hidden for this provider -- not 'enable the option
+    that controls it', which no option can do."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search(query)
+        for _ in range(10):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        target = screen.query_one(f"#{field_id}")
+        assert target.disabled
+        focused = host.focused
+        assert focused is None or focused.id != field_id
+        status = str(
+            screen.query_one("#settings-category-search-status", Static).renderable
+        )
+        assert status == (
+            f"'{query}' is hidden for this provider and model: its requests "
+            "do not carry it."
+        ), status
 
 
 @pytest.mark.asyncio

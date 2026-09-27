@@ -118,6 +118,7 @@ from ...Chat.provider_test_evidence import (
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
+    supported_generation_fields,
 )
 from ...Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -152,6 +153,10 @@ from ...Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -885,6 +890,24 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
 }
+# Generation defaults row labels, as the one-line hidden-rows summary names
+# them (TASK-33001.2). TASK-33002 owns the single field table.
+MODEL_PROFILE_ROW_LABELS = {
+    "model_profile_temperature": "Temperature",
+    "model_profile_top_p": "Top P",
+    "model_profile_min_p": "Min P",
+    "model_profile_top_k": "Top K",
+    "model_profile_max_tokens": "Response max tokens",
+    "model_profile_seed": "Seed",
+    "model_profile_presence_penalty": "Presence",
+    "model_profile_frequency_penalty": "Frequency",
+    "model_profile_reasoning_effort": "Reasoning",
+    "model_profile_reasoning_summary": "Summary",
+    "model_profile_verbosity": "Verbosity",
+    "model_profile_thinking_effort": "Thinking",
+    "model_profile_thinking_budget_tokens": "Think budget",
+    "model_profile_streaming": "Streaming",
+}
 REASONING_EFFORT_OPTIONS = frozenset(
     {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
@@ -933,21 +956,6 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
         "model_profile_verbosity",
         "model_profile_thinking_effort",
         "model_profile_streaming",
-    }
-)
-OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
-REASONING_EFFORT_PROVIDER_KEYS = frozenset({"openai", "moonshot", "zai"})
-ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
-OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_reasoning_summary",
-        "model_profile_verbosity",
-    }
-)
-ANTHROPIC_THINKING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_thinking_effort",
-        "model_profile_thinking_budget_tokens",
     }
 )
 MODEL_PROFILE_INPUT_PLACEHOLDERS = {
@@ -2355,9 +2363,11 @@ class SettingsURLInput(Input):
     """Render endpoint URLs without browser autolinking.
 
     SettingsURLInput preserves the raw ``value`` used for validation, saving,
-    selection, and event handling. Only the rendered display text is adjusted by
-    inserting a zero-width break after URL schemes so textual-web/browser
-    terminals do not treat provider endpoint values as clickable links.
+    selection, and event handling. Only under textual-web (``App.is_web``) is
+    the rendered display text adjusted, by inserting a zero-width break after
+    URL schemes so browser terminals do not treat provider endpoint values as
+    clickable links. A native terminal paints the raw URL (TASK-33001.7), so a
+    URL copied off the screen carries no invisible character.
 
     Args:
         *args: Positional arguments forwarded to ``textual.widgets.Input``.
@@ -2365,8 +2375,12 @@ class SettingsURLInput(Input):
     """
 
     @property
+    def _breaks_autolinks(self) -> bool:
+        return not self.password and self.app.is_web
+
+    @property
     def _value(self) -> Text:
-        if self.password:
+        if not self._breaks_autolinks:
             return super()._value
         text = Text(
             _textual_web_safe_url_display(self.value),
@@ -2385,7 +2399,7 @@ class SettingsURLInput(Input):
         return self._value.cell_len + 1
 
     def _display_index(self, index: int) -> int:
-        if self.password:
+        if not self._breaks_autolinks:
             return index
         return _textual_web_safe_url_display_index(self.value, index)
 
@@ -2746,6 +2760,17 @@ class SettingsScreen(BaseAppScreen):
     audio_cpp_result_cleanup_fenced = reactive(False)
 
     BINDINGS = [
+        # TASK-33001.4 (also task-32943): F6 is app-global (ADR-031 rule 1)
+        # and app.py hands it to action_focus_next_workbench_pane below;
+        # Shift+F6 has no app binding, so the screen owns it (Personas
+        # precedent).
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
         ("t", "settings_test_category", "Test Settings category"),
@@ -2762,15 +2787,6 @@ class SettingsScreen(BaseAppScreen):
         ("e", "settings_personal_context_edit", "Edit profile record"),
         ("d", "settings_personal_context_delete", "Delete profile record"),
         ("x", "settings_personal_context_export", "Export profile"),
-        # task-32943: F6 itself is the app-global binding that delegates to
-        # action_focus_next_workbench_pane; the reverse needs its own.
-        Binding(
-            "shift+f6",
-            "focus_previous_workbench_pane",
-            "Previous pane",
-            show=False,
-            priority=True,
-        ),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -6831,7 +6847,9 @@ class SettingsScreen(BaseAppScreen):
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
         """Build the staged closed-enum Select for a model-profile field."""
-        supported = self._model_profile_field_supported(provider, draft_key)
+        supported = self._model_profile_field_supported(
+            provider, draft_key, values.get("model")
+        )
         allowed = (
             self._model_profile_reasoning_effort_options(provider, values.get("model"))
             if draft_key == "model_profile_reasoning_effort"
@@ -9367,10 +9385,19 @@ class SettingsScreen(BaseAppScreen):
             if widget.disabled or any(
                 getattr(node, "disabled", False) for node in widget.ancestors
             ):
+                # TASK-33001.2: a row hidden for the provider has no option
+                # that enables it.
+                hidden = any(
+                    node.has_class("settings-gated-profile-hidden")
+                    for node in widget.ancestors
+                )
                 self._set_static_text(
                     "#settings-category-search-status",
-                    f"'{field_label}' is disabled right now — its category is "
-                    "open; enable the option that controls it first.",
+                    f"'{field_label}' is hidden for this provider and model: "
+                    "its requests do not carry it."
+                    if hidden
+                    else f"'{field_label}' is disabled right now — its category "
+                    "is open; enable the option that controls it first.",
                 )
                 return
         expanded = False
@@ -12562,18 +12589,6 @@ class SettingsScreen(BaseAppScreen):
         raise ValueError("Streaming must be true or false.")
 
     @staticmethod
-    def _provider_supports_openai_reasoning(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in OPENAI_REASONING_PROVIDER_KEYS
-        )
-
-    @staticmethod
-    def _provider_supports_reasoning_effort(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in REASONING_EFFORT_PROVIDER_KEYS
-        )
-
-    @staticmethod
     def _model_profile_reasoning_effort_options(
         provider: object, model: object
     ) -> tuple[str, ...]:
@@ -12591,20 +12606,23 @@ class SettingsScreen(BaseAppScreen):
             return GLM_REASONING_EFFORT_SELECT_OPTIONS
         return REASONING_EFFORT_SELECT_OPTIONS
 
-    @staticmethod
-    def _provider_supports_anthropic_thinking(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
-        )
+    def _model_profile_field_supported(
+        self, provider: object, draft_key: str, model: object
+    ) -> bool:
+        """Whether the provider+model request carries this model-default row.
 
-    def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
-        if draft_key == "model_profile_reasoning_effort":
-            return self._provider_supports_reasoning_effort(provider)
-        if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_openai_reasoning(provider)
-        if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_anthropic_thinking(provider)
-        return True
+        TASK-33001.2: a thin draft-key adapter over the one field-support
+        decision (``supported_generation_fields``) the Console shares. The
+        config carries the ADR-146 registry, so a ``custom-ep`` id is decided
+        as its entry's family, as the Console rebase decides it.
+        """
+        return PROVIDER_MODEL_PROFILE_FIELD_KEYS[
+            draft_key
+        ] in supported_generation_fields(
+            str(provider or ""),
+            str(model or "").strip() or None,
+            self._app_config_mapping(),
+        )
 
     def _unsupported_model_profile_placeholder(self, provider: object) -> str:
         provider_label = self._provider_display_name(str(provider or "").strip())
@@ -12612,8 +12630,10 @@ class SettingsScreen(BaseAppScreen):
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
 
-    def _model_profile_input_placeholder(self, provider: object, draft_key: str) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+    def _model_profile_input_placeholder(
+        self, provider: object, draft_key: str, model: object
+    ) -> str:
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return self._unsupported_model_profile_placeholder(provider)
         return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
 
@@ -12621,34 +12641,35 @@ class SettingsScreen(BaseAppScreen):
         self,
         provider: object,
         draft_key: str,
+        model: object,
         value: object,
     ) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return ""
         return self._profile_input_value(value)
 
-    def _provider_generation_support_copy(self, provider: object) -> str:
-        """Summarize gated generation controls in one line (task-189).
+    def _provider_generation_support_copy(self, provider: object, model: object) -> str:
+        """Name the hidden generation rows in one line (task-189, TASK-33001.2).
 
         Instead of rendering rows of "Unavailable for <provider>" placeholder
         fields, the Generation defaults disclosure shows this single summary
-        and hides the dead rows entirely.
+        and hides the rows the provider+model request does not carry.
 
         Returns:
-            Copy such as ``"Reasoning/Thinking controls: unavailable for
-            llama.cpp."`` or ``""`` when every gated control is available.
+            Copy such as ``"Hidden for Anthropic: Min P, Seed, Presence,
+            Frequency, ..."`` or ``""`` when every row is supported.
         """
         provider_label = self._provider_display_name(str(provider or "").strip())
         if not provider_label:
             provider_label = "this provider"
-        unavailable: list[str] = []
-        if not self._provider_supports_reasoning_effort(provider):
-            unavailable.append("Reasoning")
-        if not self._provider_supports_anthropic_thinking(provider):
-            unavailable.append("Thinking")
-        if not unavailable:
+        hidden = [
+            label
+            for draft_key, label in MODEL_PROFILE_ROW_LABELS.items()
+            if not self._model_profile_field_supported(provider, draft_key, model)
+        ]
+        if not hidden:
             return ""
-        return f"{'/'.join(unavailable)} controls: unavailable for {provider_label}."
+        return f"Hidden for {provider_label}: {', '.join(hidden)}."
 
     @staticmethod
     def _gated_profile_row_classes(supported: bool) -> str:
@@ -12762,14 +12783,7 @@ class SettingsScreen(BaseAppScreen):
         model_profile_streaming = self._streaming_select_text(
             self.query_one("#settings-model-profile-streaming", Select).value
         )
-        if not self._provider_supports_openai_reasoning(provider):
-            model_profile_reasoning_effort = ""
-            model_profile_reasoning_summary = ""
-            model_profile_verbosity = ""
-        if not self._provider_supports_anthropic_thinking(provider):
-            model_profile_thinking_effort = ""
-            model_profile_thinking_budget_tokens = ""
-        return {
+        values = {
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
@@ -12792,6 +12806,10 @@ class SettingsScreen(BaseAppScreen):
             "model_profile_thinking_budget_tokens": model_profile_thinking_budget_tokens,
             "model_profile_streaming": model_profile_streaming,
         }
+        for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                values[draft_key] = ""
+        return values
 
     def _stage_provider_value(self, key: str, value: object) -> None:
         self._discard_openai_reconnect_review()
@@ -13352,6 +13370,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_current_credential_source(self, provider: str) -> str:
         from tldw_chatbook.Chat.provider_readiness import (
+            KEYLESS_PROVIDER_KEYS,
             configured_provider_credential_source,
             resolve_provider_credential,
         )
@@ -13362,9 +13381,10 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
+        provider_config = self._provider_config(provider)
+        configured_source = configured_provider_credential_source(provider_config)
         if not credential_fields_dirty:
-            provider_config = self._provider_config(provider)
-            if configured_provider_credential_source(provider_config) == "none":
+            if configured_source == "none":
                 return "none"
             # TASK-33001.13 / ADR-012 (2026-09-19): an untouched credential
             # keeps whichever one resolves now. A stored key outranks the env
@@ -13392,9 +13412,15 @@ class SettingsScreen(BaseAppScreen):
             ).strip()
         if api_key_dirty:
             return "environment" if env_var else "none"
-        if "credential_env_var" in dirty and env_var:
-            return "environment"
-        if env_var:
+        # TASK-33001.7: the shipped template names an env var for keyless
+        # local servers too ("if you set one on the server"). On a legacy
+        # keyless section that untyped name is not a credential choice; the
+        # readiness fallback below counts it only when the variable holds a key.
+        if env_var and (
+            "credential_env_var" in dirty
+            or configured_source is not None
+            or provider_config_key(provider) not in KEYLESS_PROVIDER_KEYS
+        ):
             return "environment"
         if self._provider_api_key_value(provider):
             return "stored"
@@ -14020,8 +14046,9 @@ class SettingsScreen(BaseAppScreen):
             else {}
         )
         for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
-            if not self._model_profile_field_supported(provider, draft_key):
-                next_profile.pop(profile_key, None)
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                # TASK-33001.2: the request never carries this field, so a
+                # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
             if value == "":
@@ -14160,7 +14187,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             for draft_key, value in input_values.items():
                 selector = f"#settings-{draft_key.replace('_', '-')}"
-                supported = self._model_profile_field_supported(provider, draft_key)
+                supported = self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
                 if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
                     try:
                         select = self.query_one(selector, Select)
@@ -14204,7 +14233,7 @@ class SettingsScreen(BaseAppScreen):
                         continue
                     widget.disabled = not supported
                     widget.placeholder = self._model_profile_input_placeholder(
-                        provider, draft_key
+                        provider, draft_key, model
                     )
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
@@ -14221,7 +14250,7 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_model_profile = False
         self._sync_provider_context_window_widget(provider, model)
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
 
     def _sync_provider_context_window_widget(self, provider: str, model: str) -> None:
         state = model_context_window_state(self._app_config_mapping(), provider, model)
@@ -14265,9 +14294,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue.append(value)
         context_window_input.value = value
 
-    def _refresh_generation_support_summary(self, provider: str) -> None:
+    def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
-        support_copy = self._provider_generation_support_copy(provider)
+        support_copy = self._provider_generation_support_copy(provider, model)
         try:
             summary = self.query_one("#settings-provider-generation-support", Static)
         except QueryError:
@@ -15117,8 +15146,16 @@ class SettingsScreen(BaseAppScreen):
                 # The app stopped; admitted writes still drain without UI access.
                 pass
 
-    def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
+    def _provider_readiness_test_report(
+        self, *, probes_when_passing: bool = False
+    ) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
+
+        Args:
+            probes_when_passing: The caller probes the endpoint when this
+                report passes. A passing report then leaves out the stored
+                evidence: the probe renders fresh evidence for the same facts,
+                and a stored copy would repeat them (TASK-33001.3).
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -15158,7 +15195,7 @@ class SettingsScreen(BaseAppScreen):
             if identity is not None
             else None
         )
-        if evidence is not None:
+        if evidence is not None and not (probes_when_passing and passed):
             detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
         return detail, summary, passed
 
@@ -15598,7 +15635,7 @@ class SettingsScreen(BaseAppScreen):
             reconnect.disabled = self._openai_reconnect_busy
         except QueryError:
             pass
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._refresh_provider_field_guidance()
 
@@ -15879,7 +15916,11 @@ class SettingsScreen(BaseAppScreen):
         if field_id in model_profile_guidance:
             label, purpose, key, validation = model_profile_guidance[field_id]
             draft_key = field_id.removeprefix("settings-").replace("-", "_")
-            if not self._model_profile_field_supported(provider, draft_key):
+            if not self._model_profile_field_supported(
+                provider,
+                draft_key,
+                self._provider_setting_values_mapping().get("model"),
+            ):
                 return (
                     ("Focused setting", label),
                     (
@@ -17212,6 +17253,15 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_custom_endpoints_section()
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
+            model = str(values["model"])
+            # TASK-33001.2: a row the provider+model request does not carry is
+            # hidden and disabled (never a focus stop), as the gated rows were.
+            row_supported = {
+                draft_key: self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
+                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS
+            }
             with Collapsible(
                 title="Generation defaults",
                 collapsed=self._generation_defaults_collapsed,
@@ -17237,28 +17287,46 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-compact-input",
                         placeholder="0.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_p"]
+                    ),
+                ):
                     yield Static("Top P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_p"]),
                         id="settings-model-profile-top-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_p"],
                         placeholder="0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-min-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_min_p"]
+                    ),
+                ):
                     yield Static("Min P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_min_p"]),
                         id="settings-model-profile-min-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_min_p"],
                         placeholder="optional 0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-k-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_k"]
+                    ),
+                ):
                     yield Static("Top K", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_k"]),
                         id="settings-model-profile-top-k",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_k"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
@@ -17273,16 +17341,27 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-seed-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_seed"]
+                    ),
+                ):
                     yield Static("Seed", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_seed"]),
                         id="settings-model-profile-seed",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_seed"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-presence-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_presence_penalty"]
+                    ),
+                ):
                     yield Static("Presence", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17290,9 +17369,15 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-presence-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_presence_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-frequency-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_frequency_penalty"]
+                    ),
+                ):
                     yield Static("Frequency", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17300,11 +17385,12 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-frequency-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_frequency_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
                 # task-189: one summary line replaces per-row "Unavailable
                 # for <provider>" placeholders; unsupported rows are hidden.
-                support_copy = self._provider_generation_support_copy(provider)
+                support_copy = self._provider_generation_support_copy(provider, model)
                 support_summary = Static(
                     support_copy,
                     id="settings-provider-generation-support",
@@ -17317,10 +17403,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_effort",
-                        )
+                        row_supported["model_profile_reasoning_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17333,10 +17416,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-summary-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_summary",
-                        )
+                        row_supported["model_profile_reasoning_summary"]
                     )
                     + " settings-select-row",
                 ):
@@ -17349,10 +17429,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-verbosity-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_verbosity",
-                        )
+                        row_supported["model_profile_verbosity"]
                     )
                     + " settings-select-row",
                 ):
@@ -17365,10 +17442,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_effort",
-                        )
+                        row_supported["model_profile_thinking_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17381,10 +17455,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-budget-tokens-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        )
+                        row_supported["model_profile_thinking_budget_tokens"]
                     ),
                 ):
                     yield Static("Think budget", classes="settings-input-label")
@@ -17392,6 +17463,7 @@ class SettingsScreen(BaseAppScreen):
                         value=self._model_profile_input_value(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                             values["model_profile_thinking_budget_tokens"],
                         ),
                         id="settings-model-profile-thinking-budget-tokens",
@@ -17399,12 +17471,12 @@ class SettingsScreen(BaseAppScreen):
                         placeholder=self._model_profile_input_placeholder(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                         ),
                         restrict=r"^[0-9]*$",
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        ),
+                        disabled=not row_supported[
+                            "model_profile_thinking_budget_tokens"
+                        ],
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static("Streaming", classes="settings-input-label")
@@ -22617,55 +22689,69 @@ class SettingsScreen(BaseAppScreen):
         self._focus_category(category_values[next_index])
 
     def action_focus_next_workbench_pane(self) -> None:
-        """F6: rail -> detail -> inspector -> rail (task-32943)."""
-        self._focus_relative_settings_pane(1)
+        """F6: move focus to the next Settings pane (TASK-33001.4)."""
+        self._cycle_workbench_pane(1)
 
     def action_focus_previous_workbench_pane(self) -> None:
-        """Shift+F6: the F6 cycle in reverse (task-32943)."""
-        self._focus_relative_settings_pane(-1)
+        """Shift+F6: move focus to the previous Settings pane."""
+        self._cycle_workbench_pane(-1)
 
-    def _focus_relative_settings_pane(self, direction: int) -> None:
-        """Focus the first focusable widget of the next non-empty pane.
+    def _cycle_workbench_pane(self, direction: int) -> None:
+        """Focus the next (1) or previous (-1) pane, after any pending swap.
 
-        The rail lands on the active category button rather than its filter
-        box; a pane with nothing focusable (an inspector of plain text) is
-        skipped.
+        Mid-switch the detail and inspector panes still hold the OUTGOING
+        category's widgets (the TASK-2831 window), and the swap ends by moving
+        focus itself, so a press aimed now is undone. It queues behind the
+        swap instead; ``app.call_later`` runs it after the swap's own focus
+        lands, because ``Widget.focus`` defers through that same queue.
         """
+
+        def cycle() -> None:
+            focus_relative_workbench_pane(
+                self, self._workbench_focus_targets(), direction=direction
+            )
+
+        if self._category_pane_swap_pending:
+            self._after_category_panes(self.app.call_later, cycle)
+        else:
+            cycle()
+
+    def _workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
+        """F6 pane targets, rebuilt on every press.
+
+        The rail lands on the ACTIVE category row (the filter when a search
+        hides that row); each category pane lands on its first focusable
+        control. Both change with the category, so a static tuple would aim
+        at the previous category. A pane's scroll body sorts after its
+        controls: it is the target only for a pane with no control (a
+        read-only inspector), where focus still lets the keys scroll it.
+
+        Returns:
+            The rail, detail and inspector targets, in F6 order.
+        """
+        targets = [
+            WorkbenchPaneTarget(
+                "settings-category-pane",
+                (
+                    f"settings-category-{self.active_category}",
+                    "settings-category-search",
+                ),
+            )
+        ]
         chain = self.focus_chain
-        targets = []
-        for pane_id in (
-            "settings-category-pane",
-            "settings-detail-pane",
-            "settings-impact-pane",
-        ):
+        for pane_id in ("settings-detail-pane", "settings-impact-pane"):
             try:
                 pane = self.query_one(f"#{pane_id}")
             except QueryError:
                 continue
-            members = [w for w in chain if pane in w.ancestors_with_self]
-            if not members:
-                continue
-            target = members[0]
-            if pane_id == "settings-category-pane":
-                active_id = f"settings-category-{self.active_category}"
-                target = next((w for w in members if w.id == active_id), target)
-            targets.append((pane, target))
-        if not targets:
-            return
-        focused = self._focused_widget()
-        current = next(
-            (
-                index
-                for index, (pane, _target) in enumerate(targets)
-                if pane in getattr(focused, "ancestors_with_self", ())
-            ),
-            None,
-        )
-        if current is None:
-            index = 0 if direction > 0 else len(targets) - 1
-        else:
-            index = (current + direction) % len(targets)
-        targets[index][1].focus()
+            focusable = [
+                widget for widget in chain if widget.id and pane in widget.ancestors
+            ]
+            focusable.sort(key=lambda widget: type(widget) is VerticalScroll)
+            targets.append(
+                WorkbenchPaneTarget(pane_id, tuple(widget.id for widget in focusable))
+            )
+        return tuple(targets)
 
     def _jk_category_navigation_blocked(self) -> bool:
         """Guard the j/k category bindings (task-1373, narrowed by task-32944).
@@ -30194,7 +30280,7 @@ class SettingsScreen(BaseAppScreen):
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
-                and self._model_profile_field_supported(provider, key)
+                and self._model_profile_field_supported(provider, key, model)
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )
@@ -31090,8 +31176,11 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            detail, summary, passed = self._provider_readiness_test_report()
-            probe_base_url = self._provider_live_probe_base_url() if passed else ""
+            live_probe_url = self._provider_live_probe_base_url()
+            detail, summary, passed = self._provider_readiness_test_report(
+                probes_when_passing=bool(live_probe_url)
+            )
+            probe_base_url = live_probe_url if passed else ""
             if probe_base_url:
                 # task-191: readiness passed for a URL-based provider; run a
                 # short live probe in a worker and fold it into the toast.

@@ -6,6 +6,7 @@ import pytest
 from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets._input import Selection
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsOption
@@ -333,3 +334,41 @@ async def test_set_options_clears_selection_dropped_from_refreshed_options() -> 
         status = app.query_one("#console-settings-provider-picker-status", Static)
         assert search.value == ""
         assert str(status.renderable) == "Choose a provider."
+
+
+@pytest.mark.asyncio
+async def test_focus_keeps_committed_provider_selected_so_typing_replaces_it() -> None:
+    """TASK-33001.7 AC#5: focus opens the list without blanking the provider."""
+    app = ProviderPickerApp(OPTIONS, current_provider="openai")
+
+    async with app.run_test() as pilot:
+        search = app.query_one("#console-settings-provider-picker-input", Input)
+        search.focus()
+        await pilot.pause()
+
+        picker = app.query_one(ConsoleProviderPicker)
+        assert search.value == "OpenAI"
+        assert search.selection == Selection(0, len("OpenAI"))
+        assert "llama_cpp" in picker.visible_provider_ids()
+
+        await pilot.press("l", "l", "a", "m", "a")
+        assert search.value == "llama"
+        assert picker.visible_provider_ids() == ("llama_cpp", "local_llamacpp")
+
+
+@pytest.mark.asyncio
+async def test_focusing_click_selects_provider_so_typing_replaces_it() -> None:
+    """TASK-33001.7: the click that focuses the field selects, like Tab."""
+    app = ProviderPickerApp(OPTIONS, current_provider="openai")
+
+    async with app.run_test() as pilot:
+        app.query_one("#after", Button).focus()
+        await pilot.pause()
+        search = app.query_one("#console-settings-provider-picker-input", Input)
+        await pilot.click("#console-settings-provider-picker-input", offset=(4, 1))
+        await pilot.pause()
+        assert search.value == "OpenAI"
+        assert search.selection == Selection(0, len("OpenAI"))
+
+        await pilot.press("l", "l", "a", "m", "a")
+        assert search.value == "llama"

@@ -195,10 +195,10 @@ The biggest page, and where to start.
 | Group | What's in it |
 |---|---|
 | **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
-| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
+| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
+| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, Summary, Verbosity."). Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
 **Space** to check a model. Checked rows survive leaving this category and
@@ -212,7 +212,14 @@ operation cannot replace the new form’s results or Model value.
 
 Open **Generation defaults** to edit overrides for the selected provider and
 model. Supported controls remain reachable with **Tab**; unsupported controls
-are hidden. Leave an override blank and save to remove it and inherit the
+are hidden. "Supported" is the same answer Console uses: the provider's
+capability rules (reasoning and thinking follow the model, e.g. a Claude model
+that rejects a fixed thinking budget hides **Think budget**) narrowed to the
+fields that provider's request actually sends. A value saved earlier for a
+field that is now hidden stays in `config.toml` untouched, and it is never
+sent. Searching **/** for a hidden field (say "seed" with Anthropic) opens
+this category and says the field is hidden for this provider and model. Leave
+an override blank and save to remove it and inherit the
 fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
 lets you keep editing or discard the draft. The section remembers whether
 you opened or closed it while moving between Settings categories; resizing or
@@ -229,6 +236,8 @@ Changing these controls does not record startup consent.
 providers also get a short endpoint or model-listing probe. The result separates
 configuration readiness, endpoint/model-listing evidence, and whether generation
 was tested. A successful model listing does not prove that generation works.
+Running it again replaces the previous probe result: while the new probe runs
+the result says "model listing checking", and each fact appears once.
 If the tested values change, run **Test Provider** again.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
@@ -242,8 +251,11 @@ A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
 were editing, even if another action changes the defaults. This also applies
 to API mode, credential-source and generation-profile edits. **Discard changes**
-loads the latest saved defaults. Existing Console chats retain their own session
-selection; new chats inherit the saved defaults.
+loads the latest saved defaults. New Console chats take the saved defaults, and
+so does an open chat you have not touched yet: no messages and no edited
+settings. It follows the next time Console shows it, even when its provider
+already reads Ready, and Console tells you if its provider changed. A chat that
+holds any work keeps its own settings.
 
 #### QwenCloud
 
@@ -813,8 +825,8 @@ problem and choose **Retry**. The previously saved choice remains active until a
 write succeeds. If the file was saved but live settings could not refresh, restart
 Chatbook or reload the configuration before relying on the new choice.
 
-Global sampling fallbacks reach **new or default sessions**, not a conversation
-already open. Context defaults follow the conversation's existing override
+Global sampling fallbacks reach **new chats and untouched open chats**, not a
+chat that already holds work. Context defaults follow the conversation's existing override
 precedence. The target percentage must stay at least 15 points below the trigger;
 invalid ratios and frame rates stay in the draft until corrected or reverted.
 
@@ -1144,13 +1156,14 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |
 | ↑ / ↓ | Move up and down the rail (while a category row has focus) |
 | j / k | Move up and down the rail — while the rail has focus, or with nothing focused. Inert in the detail and inspector panes, so they never pull focus out of an editor (task-32944) |
-| F6 / Shift+F6 | Cycle focus rail → detail pane → Scope Inspector → rail (reverse with Shift+F6). The rail lands on the active category; a pane with nothing focusable is skipped |
 | Enter | Open the focused category; in the filter, jump to the top match; on an action button, press it |
 | a / c / b | RAG only — set active, clone, backfill. See [RAG defaults](settings/rag.md) |
+| F6 | Move to the next pane: category rail, then detail pane, then inspector, then back to the rail. Works from inside a text field and leaves its text alone. Entering the rail lands on the active category's row (on the filter when a search hides that row); the detail pane and inspector land on their first control (an inspector with no control takes focus itself, so the arrow keys scroll it) |
+| Shift+F6 | The same ring, backwards |
 
-**F1** opens
-the active category's help: a "How this category works" section (its save
-contract, scope, runtime owner, whether writes are allowed, boundary, and
+**F1** opens the active category's help: a "How this category works"
+section (its save contract, scope, runtime owner, whether writes are allowed,
+boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
 only while on RAG. Every category has a non-empty help body; one without
@@ -1214,9 +1227,9 @@ not open an editor.
   category's Save/Revert draft, while Arm/Disarm changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
-- **A Console setting didn't take.** Global fallbacks reach *new or default*
-  sessions; a conversation already open keeps what it resolved, and a session or
-  provider+model setting outranks them. Rail presentation is different: after a
+- **A Console setting didn't take.** Global fallbacks reach new chats and open
+  chats you have not touched; a chat with messages or edited settings keeps
+  what it resolved, and a session or provider+model setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
 - **Save Raw TOML is greyed out.** Validate the current text. If the file changed
@@ -1436,3 +1449,81 @@ is a "duplicate of" row; New works with a filter that matches nothing;
 leaving Settings or quitting with unsaved theme edits asks Stay / Discard /
 Save (one prompt at a time); linked theme files are never replaced and are
 skipped at startup (R43). Pinned by pilot and unit tests, not driven live.*
+
+*Verified against feat/model-config-p1-root-fixes @ c28979b31d + TASK-33001.2
+— 2026-09-26: Generation defaults show only the rows the provider + model
+request carries. Driven live at 211x44 on a scratch profile (Anthropic /
+claude-sonnet-4-5): Min P, Seed, Presence and Frequency are hidden and the
+summary reads "Hidden for Anthropic: Min P, Seed, Presence, Frequency,
+Reasoning, Summary, Verbosity."; Temperature, Top P, Top K, Response max
+tokens, Thinking, Think budget and Streaming stay. Fix round 1 (mounted
+tests, not driven live): "/" for a hidden field lands in Providers & Models
+with "'Seed' is hidden for this provider and model: its requests do not carry
+it."; Moonshot and Z.ai reasoning defaults now save. The rest of this page's
+content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 465f1a5a88 + TASK-33001.3
+— 2026-09-26: a second **Test Provider** run on an unchanged llama.cpp draft
+shows only the new probe. Driven live at 211x50 on a scratch profile: with the
+endpoint down the result read "model listing failed (connection refused) |
+model unconfirmed | generation not tested"; with a stub `/v1/models` up, the
+next run read "model listing reached | selected model confirmed | generation
+not tested", with no failure beside it and "generation not tested" once in the
+result and once in the toast. The in-flight "checking" line is pinned by a
+mounted test, not seen live. The rest of this page's content unchanged from
+the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 8e8a2f309f + TASK-33001.4
+— 2026-09-26: F6 and Shift+F6 cycle the three panes. Driven live at 211x44 on
+a scratch profile: from the nav bar, F6 went to the Overview rail row, then
+Backup & Restore in the detail pane, then Open Theme editor in the inspector,
+then back to Overview; Shift+F6 walked the same ring backwards. After Down
+and Enter opened Appearance, F6 from the Palette limit field moved to the
+inspector with the field still reading 1, and the next F6 landed on the
+Appearance row. The focus line under the panes and the focus tint named each
+stop, and "No workbench pane focus target is available." never appeared. The
+rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 7335d3edad + TASK-33001.5
+— 2026-09-26: an untouched open Console chat follows a Providers & Models
+save. Driven live at 211x44 on a scratch profile whose llama.cpp endpoint had
+nothing listening, so Console read Ready. Saving Model "qwen-next-d1" here and
+returning moved Chat 1's status line from "Model: qwen" to "Model:
+qwen-next-d1". After a draft was typed into Chat 1 and Ctrl+T opened Chat 2, a
+second save (the field read "qwenqwen-thir" after a key race in the drive)
+moved Chat 2 to that model, while Chat 1 kept "qwen-next-d1". The rest of this
+page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes + TASK-33001.7 — 2026-09-27:
+endpoint URLs paint exactly as stored, and a keyless save writes no unused
+credential routing. Driven live at 211x44 on a scratch profile (llama.cpp,
+legacy section carrying the shipped `api_key_env_var = "LLAMA_CPP_API_KEY"`,
+variable unset): the Endpoint row's capture holds no zero-width character
+(TASK-33001.5's capture of the same row read `http<U+200B>://…`; only
+textual-web still gets that invisible autolink break). Saving Model
+`qwen-t7` wrote the model, removed `api_key_env_var` and recorded
+`credential_source = "none"`; the Env var field then read "No credential
+required". The rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes + TASK-33001.7 fix round 1
+— 2026-09-27: after that save the app was quit, and 12 s later
+`config.toml` held the shipped `api_key_env_var` again next to
+`credential_source = "none"` (quitting writes the shipped defaults back).
+Relaunched from that file through `tldw-serve` in headless Chromium at
+212x44, Providers & Models read Env var "LLAMA_CPP_API_KEY" and "API key
+source: not required for this provider". The Endpoint row carried the
+zero-width autolink break (`http<U+200B>://127.0.0.1:18777`), and hovering
+it raised no link. The Conversation settings modal's plain Base URL field
+(`http://127.0.0.1:18777`, no break) did underline as a link on hover.*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
+final fix wave, merged with dev 88b61879b9). Dev's task-32943 had landed a
+second F6 handler for this screen; the merge keeps one (TASK-33001.4's), so
+the keys table has one F6 row and one Shift+F6 row. A category whose
+inspector holds no control (Theme) takes F6 on the inspector itself rather
+than skipping it; pinned by a mounted key-press test, which also checks that
+Settings binds Shift+F6 once and leaves F6 to the app. Generation defaults
+for a named endpoint (`custom-ep:<slug>`) now hide the rows that endpoint's
+family request drops, as Console does (an ollama-family endpoint hides Min
+P); pinned by a real-rebase comparison test. Not driven live. The rest of
+this page's content unchanged from the prior stamp.*

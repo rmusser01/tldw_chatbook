@@ -2223,13 +2223,6 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
             _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
         ),
         (
-            CHAT_SCREEN_PATH,
-            _method_definition(
-                chat_class,
-                "consume_pending_console_provider_intent",
-            ),
-        ),
-        (
             STUDY_SCREEN_PATH,
             _method_definition(study_class, "_apply_pending_scope_handoff"),
         ),

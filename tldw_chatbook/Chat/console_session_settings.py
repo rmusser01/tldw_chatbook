@@ -1268,18 +1268,48 @@ def resolve_effective_chat_configuration(
     provider: str | None = None,
     model: str | None = None,
 ) -> EffectiveChatConfiguration:
-    """Resolve canonical chat defaults without mutating loaded configuration."""
+    """Resolve canonical chat defaults without mutating loaded configuration.
+
+    ``chat_defaults.model`` belongs to ``chat_defaults.provider`` (ADR-006):
+    an explicit provider that is not canonically that provider falls through
+    to its own configured model, never the global default model.
+
+    Args:
+        app_config: The live app configuration snapshot. Read only; never
+            mutated.
+        provider: An explicit provider override (e.g. the session's current
+            selection), or ``None`` to use ``chat_defaults.provider``.
+        model: An explicit model override, or ``None`` to fall back to
+            ``chat_defaults.model`` (only when the provider owns it) and then
+            the provider's own configured model.
+
+    Returns:
+        The effective configuration: the canonical provider id, the resolved
+        model (``None`` when nothing is configured), the provider's base URL,
+        and ``model_source`` naming which layer supplied the model.
+    """
+    # Lazy import: custom_endpoint_registry imports this module (see
+    # _canonical_chat_provider_id).
+    from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
+    )
+    defaults_provider_id = _canonical_chat_provider_id(
+        _string_setting(chat_defaults, "provider"), app_config
     )
     provider_id = _canonical_chat_provider_id(
         _string_value(provider) or _string_setting(chat_defaults, "provider"),
         app_config,
     )
+    # Identity spelling: a registry id may arrive as ``custom_ep:<slug>``.
+    owns_defaults_model = provider_identity_key(provider_id) == provider_identity_key(
+        defaults_provider_id
+    )
     provider_settings = _provider_settings(app_config, provider_id)
     candidates = (
         ("session", model),
-        ("chat_defaults", chat_defaults.get("model")),
+        ("chat_defaults", chat_defaults.get("model") if owns_defaults_model else None),
         ("provider_fallback", provider_settings.get("model")),
         ("provider_fallback", provider_settings.get("api_model")),
         ("provider_fallback", provider_settings.get("default_model")),

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
@@ -859,3 +860,205 @@ class TestWizardAtomicProviderHandoff:
         )
         assert readiness.api_key == "new-inline-replacement-key"
         assert readiness.api_key_source == "config:api_settings.custom.api_key"
+
+
+# -- TASK-33001.5 (D1): every setup exit reaches an untouched Console chat ----
+#
+# The shipped template default is OpenAI. With an OpenAI key in the
+# environment it reads Ready, which is the state whose early return used to
+# keep setup's saved provider out of an open, untouched Console chat: only
+# "Start chatting" staged a handoff, and Home, Library, Notes and Skip left the
+# chat on the template. Each case runs the wizard's own commit and exit code
+# against a fresh private profile (real TOML, no mocked config writer).
+
+
+def _console_on_template_defaults(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-template-ready-key")
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    boot = config_module.load_settings(force_reload=True)
+    app_instance = MagicMock(
+        app_config=boot,
+        pending_handoffs=PendingHandoffStore(),
+        console_new_chat_default_generation=0,
+    )
+    console = ChatScreen(app_instance)
+    console._console_chat_store = ConsoleChatStore()
+    app_instance.screen_stack = [console]
+    template = console._session._ensure_active_console_session_settings()
+    assert template.provider.lower() == "openai"
+    assert build_console_settings_readiness(
+        template, app_config=boot
+    ).native_send_supported, "the template chat must read Ready"
+    return app_instance, console
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exit_route", ["chat", "home", "library", "library_notes"]
+)
+@private_profile_test
+async def test_saving_setup_exit_moves_an_untouched_console_chat_to_setup_choice(
+    exit_route, monkeypatch, request
+):
+    """AC#3: Start chatting, Home, Library and Notes all land setup's pair."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME, TAB_LIBRARY
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        EXIT_ROUTE_LIBRARY_NOTES,
+    )
+
+    route = {
+        "chat": TAB_CHAT,
+        "home": TAB_HOME,
+        "library": TAB_LIBRARY,
+        "library_notes": EXIT_ROUTE_LIBRARY_NOTES,
+    }[exit_route]
+    app_instance, console = _console_on_template_defaults(monkeypatch)
+    container = SetupWizardContainer(app_instance)
+    container._dismiss_screen = MagicMock()
+    assert container.stage_provider_setup(
+        _typed_provider_draft(
+            provider="llama_cpp",
+            endpoint="http://127.0.0.1:8080",
+            source="none",
+            value="",
+        )
+    )
+    assert await container.commit_staged_provider_setup("setup-model.gguf")
+
+    await container._finalize(route)
+
+    container._dismiss_screen.assert_called_once_with(
+        {"completed": True, "exit_route": route}
+    )
+    if route == TAB_CHAT:
+        # Console consumes the staged first-chat target when it is shown; that
+        # handoff path is pinned elsewhere and unchanged (AC#3).
+        assert console._session.consume_pending_console_first_chat_intent(
+            defer_presentation=True
+        )
+    else:
+        assert (
+            app_instance.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+            is None
+        ), "only Start chatting stages the first-chat handoff"
+    shown = console._session._ensure_active_console_session_settings()
+    assert (provider_config_key(shown.provider), shown.model) == (
+        "llama_cpp",
+        "setup-model.gguf",
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_handoff(
+    monkeypatch, request
+):
+    """AC#3 in the order the live app runs on a fresh profile.
+
+    Start chatting stages the first-chat handoff at the config generation its
+    commit published. Console's first mount then writes the missing rail
+    scope to the config file (``_ensure_console_rail_scope_seed``) before
+    ``on_mount`` consumes the handoff, so the generation fence releases it
+    and the handoff's own target is never created (tmux capture, 2026-09-26,
+    on BASE and HEAD alike). The untouched chat must still show setup's pair.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.config import save_setting_to_cli_config
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app_instance, console = _console_on_template_defaults(monkeypatch)
+    container = SetupWizardContainer(app_instance)
+    container._dismiss_screen = MagicMock()
+    assert container.stage_provider_setup(
+        _typed_provider_draft(
+            provider="llama_cpp",
+            endpoint="http://127.0.0.1:8080",
+            source="none",
+            value="",
+        )
+    )
+    assert await container.commit_staged_provider_setup("setup-model.gguf")
+    await container._finalize(TAB_CHAT)
+    claim = app_instance.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    intent = claim.value
+    assert app_instance.pending_handoffs.release(claim)
+
+    assert save_setting_to_cli_config(
+        "console.rail_state",
+        "console_rail_state:global:shared-layout-v1",
+        {"left_open": True},
+    )
+
+    assert not console._session.consume_pending_console_first_chat_intent(
+        defer_presentation=True
+    )
+    store = console._session._ensure_console_chat_store()
+    assert all(session.id != intent.session_id for session in store.sessions())
+    shown = console._session._ensure_active_console_session_settings()
+    assert (provider_config_key(shown.provider), shown.model) == (
+        "llama_cpp",
+        "setup-model.gguf",
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_skip_leaves_an_untouched_console_chat_on_the_saved_defaults(
+    monkeypatch, request
+):
+    """AC#4: Skip saves no pair; the chat holds what a new blank chat gets."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_session_settings import (
+        blank_console_session_settings,
+    )
+    from tldw_chatbook.UI.Screens.settings_config_adapter import (
+        SettingsConfigAdapter,
+    )
+
+    app_instance, console = _console_on_template_defaults(monkeypatch)
+    # The saved defaults moved on after this chat was created (the Settings
+    # exit's Providers & Models save), then setup is skipped.
+    adapter = SettingsConfigAdapter()
+    assert adapter.save_values(
+        "api_settings.llama_cpp", {"api_url": "http://127.0.0.1:8080"}
+    )
+    assert adapter.save_values(
+        "chat_defaults", {"provider": "llama_cpp", "model": "settings-model.gguf"}
+    )
+    saved_pair = dict(config_module.load_settings()["chat_defaults"])
+    container = SetupWizardContainer(app_instance)
+    container._dismiss_screen = MagicMock()
+
+    await container._skip_entirely()
+
+    container._dismiss_screen.assert_called_once_with(
+        {"completed": True, "exit_route": None}
+    )
+    config = config_module.load_settings()
+    assert config["first_run"]["setup_completed"] is True
+    assert config["chat_defaults"] == saved_pair, "Skip must save no provider/model"
+    shown = console._session._ensure_active_console_session_settings()
+    assert shown == blank_console_session_settings(config)
+    assert (shown.provider, shown.model) == ("llama_cpp", "settings-model.gguf")

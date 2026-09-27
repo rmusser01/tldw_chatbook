@@ -45,6 +45,10 @@ Constraints:
 - ADR-097 ratchets never rise.
 - ADR-066 legacy aliases stay selectable.
 - Test copy for cloud providers stays a local readiness check (TASK-30011 AC#2). Changing what Test checks is out of scope.
+
+Carried from phase 1 (TASK-33001 final review, riders with no code in phase 1):
+- The field table's option lists: the Reasoning select that Settings now shows for llama.cpp and other local keys offers "minimal", which `build_local_thinking_payload_fields` drops with only a debug log (Chat/console_provider_support.py `_TEMPLATE_SAFE_EFFORTS`). TASK-33001.2 exposed this value-level silent drop.
+- The Provider Test result rows (AC#2): the reachable-probe toast still states the generation fact twice in two phrasings ("Live generation has not been tested; ... generation not tested"), and the in-flight line hard-codes "generation not tested" even for an identity whose stored generation test succeeded (TASK-33001.3 review minors 1-2; TASK-33001 AC#3 is met for the literal string only).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
