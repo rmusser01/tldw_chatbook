@@ -1,9 +1,10 @@
 # Structured document validation and formatting
 
 Date: 2026-09-27
-Status: Revised design; awaiting written-spec approval
+Status: Approved by the user on 2026-09-27
 Task: [TASK-33096](../../../backlog/tasks/task-33096%20-%20Design-structured-document-validation-and-formatting-across-Chatbook-and-server-Notes.md)
-ADR: [ADR-194](../../../backlog/decisions/194-structured-note-language-and-local-editor-validation.md) (proposed)
+ADR: [ADR-194](../../../backlog/decisions/194-structured-note-language-and-local-editor-validation.md) (accepted)
+Plan: [Implementation programme](../plans/2026-09-27-structured-document-editing.md)
 Applications: tldw_chatbook and tldw_server web Notes
 
 ## Purpose and approved scope

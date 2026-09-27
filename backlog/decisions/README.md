@@ -131,7 +131,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-185](185-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-186 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
 | [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
-| [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Proposed | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
+| [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
 
 ## Historical Decision Material
 
