@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -195,9 +196,11 @@ class ThemePicker(Vertical):
         # TASK-32957: the folder scan runs in a thread worker. Only the newest
         # scan may land (a stale one never overwrites a newer listing), a
         # caller's highlight waits for it, and until the first one lands
-        # YOUR THEMES shows a loading row.
+        # YOUR THEMES shows a loading row. The pending highlight is
+        # (requested id, the highlight when requested): a user move in
+        # between wins over it (Qodo 4116061873).
         self._scan_generation = 0
-        self._pending_highlight: str | None = None
+        self._pending_highlight: tuple[str, str | None] | None = None
         self._scanned = False
 
     # The pending Revert lives on the app, not this widget: the pane is
@@ -280,14 +283,16 @@ class ThemePicker(Vertical):
         stays up meanwhile and ``highlight`` is applied when it lands.
         """
         if not rescan and self.files_available:
+            if highlight is not None:
+                self._pending_highlight = None  # a newer, explicit highlight
             self._rebuild(self._last_user_names, self._last_unreadable, highlight)
             return
-        if highlight is not None:
-            self._pending_highlight = highlight
         self._scan_generation += 1
         if not self._scanned:
             # First open: show the registered themes now, a loading row for yours.
             self._rebuild(self._last_user_names, self._last_unreadable, highlight)
+        if highlight is not None:
+            self._pending_highlight = (highlight, self.highlighted_id)
         generation = self._scan_generation
         self.run_worker(
             lambda: self._scan(generation),
@@ -305,11 +310,14 @@ class ThemePicker(Vertical):
             outcome = ("paused", set(), {})
         except OSError as exc:
             # R27 (6): an unreadable themes dir reads as "no user themes".
-            logger.warning(f"Could not list saved themes: {exc.strerror or type(exc).__name__}")
+            logger.warning(f"Could not list saved themes (scan {generation}): {exc.strerror or type(exc).__name__}")
             outcome = ("oserror", set(), {})
         except Exception as exc:  # noqa: BLE001 - never leave "Loading" up for good
-            logger.error(f"Saved-theme listing failed: {type(exc).__name__}")
-            outcome = ("oserror", set(), {})
+            # Qodo 4116061876/4116061867: the frames, not str(exc) -- the
+            # message may carry the themes path (R16).
+            frames = "".join(traceback.format_tb(exc.__traceback__))
+            logger.error(f"Saved-theme listing failed (scan {generation}): {type(exc).__name__}\n{frames}")
+            outcome = ("failed", set(), {})
         self.app.call_from_thread(self._apply_scan, generation, outcome)
 
     def _apply_scan(self, generation: int, outcome: tuple[str, set[str], Mapping[str, str]]) -> None:
@@ -318,14 +326,18 @@ class ThemePicker(Vertical):
             return
         status, user_names, unreadable = outcome
         self._scanned = True
-        if status == "paused":
+        if status in ("paused", "failed"):
+            # A failed scan is not "no user themes" (R27 (6) is OSError only):
+            # keep the last good listing and the current availability.
             user_names, unreadable = self._last_user_names, self._last_unreadable
-            self.files_available = False
+            if status == "paused":
+                self.files_available = False
         else:
             self.files_available = True
             if status == "ok":
                 self._last_user_names, self._last_unreadable = user_names, unreadable
-        highlight, self._pending_highlight = self._pending_highlight, None
+        pending, self._pending_highlight = self._pending_highlight, None
+        highlight = pending[0] if pending is not None and pending[1] == self.highlighted_id else None
         self._rebuild(user_names, unreadable, highlight)
 
     def _rebuild(
@@ -383,6 +395,10 @@ class ThemePicker(Vertical):
         target = highlight if highlight in ids else (ids[0] if ids else None)
         if target is not None:
             lst.highlighted = lst.get_option_index(target)
+        pending = self._pending_highlight
+        if pending is not None and pending[1] == self.highlighted_id:
+            # A re-render's move is not the user's: the request still stands.
+            self._pending_highlight = (pending[0], target)
         self._show(target)
 
     def _show(self, theme_id: str | None) -> None:
