@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     provider_config_key,
@@ -74,48 +75,6 @@ class ConsoleProviderCatalogEntry:
     display_name: str
     requires_api_key: bool
     uses_direct_llama_path: bool = False
-
-
-_PROVIDER_DISPLAY_NAMES = {
-    "anthropic": "Anthropic",
-    "cerebras": "Cerebras",
-    "cohere": "Cohere",
-    "custom": "Custom OpenAI",
-    "custom_2": "Custom OpenAI 2",
-    "databricks": "Databricks",
-    "deepinfra": "DeepInfra",
-    "deepseek": "DeepSeek",
-    "fireworks": "Fireworks",
-    "google": "Google",
-    "groq": "Groq",
-    "huggingface": "Hugging Face",
-    "llama_cpp": "llama.cpp",
-    "local_llamacpp": "local llama.cpp",
-    "local_mlx_lm": "MLX LM",
-    "local_vllm": "local vLLM",
-    "minimax": "MiniMax",
-    "mistral": "Mistral",
-    "mistralai": "MistralAI",
-    "moonshot": "Moonshot",
-    "nebius": "Nebius Token Factory",
-    "novita": "Novita AI",
-    "nvidia": "NVIDIA NIM",
-    "openai": "OpenAI",
-    "openrouter": "OpenRouter",
-    "qwencloud": "QwenCloud",
-    "sambanova": "SambaNova",
-    "together": "Together",
-    "vllm": "vLLM",
-    "zai": "Z.ai",
-}
-
-
-def _provider_display_name(provider_key: str) -> str:
-    """Return a compact human-readable label for a provider key."""
-    return _PROVIDER_DISPLAY_NAMES.get(
-        provider_key,
-        provider_key.replace("_", " ").replace("-", " ").title(),
-    )
 
 
 # ADR-066: per-execution-key wire formats for Console thinking controls.
@@ -708,7 +667,7 @@ def supported_console_provider_catalog(
             ConsoleProviderCatalogEntry(
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
-                display_name=_provider_display_name(identity.readiness_key),
+                display_name=provider_display_name(identity.readiness_key),
                 requires_api_key=identity.readiness_key
                 in PROVIDERS_REQUIRING_API_KEY_KEYS,
                 uses_direct_llama_path=identity.uses_direct_llama_path,

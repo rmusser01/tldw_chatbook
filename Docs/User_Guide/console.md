@@ -350,7 +350,7 @@ fails without playing a truncated file.
 
 | Chip | What it shows |
 |---|---|
-| **Provider** / **Model** | The active provider and model for this session. |
+| **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
 | **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
@@ -895,3 +895,16 @@ tokens), **Presence penalty**, **Frequency penalty**, **Reasoning effort** and
 tokens" under Model capacity. The Alt+M popover's Temperature and Streaming
 labels come from the same table (pinned by a mounted test, not driven live).
 The rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.5 —
+2026-09-27: the status row's **Provider** chip names the provider as the
+pickers do. Driven live at 211x44 on a scratch profile: a saved
+`provider = "Llama_cpp"` read "Provider: Llama_cpp" before and
+"Provider: llama.cpp" after; OpenAI read "Provider: OpenAI"; a custom endpoint
+named "GPU Box" read "Provider: GPU Box" (was "Provider: custom-ep:gpu-box";
+also at 235x52); Oobabooga read "Provider: Text Generation Web…", cut by the
+chip's existing width cap. When an unused chat follows new saved defaults to
+another provider, the warning names both by display name ("Console provider
+changed OpenAI -> llama.cpp: …"); that notice is pinned by a Console test,
+not driven live. The rest of this page's content unchanged from the prior
+stamp.*

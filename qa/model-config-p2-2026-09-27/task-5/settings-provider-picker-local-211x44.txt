@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ ▊  ▶ Prompt-cache snapshots                                                                                         ▎ │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │  Focused setting: None — Tab to a       │
+│     Appearance               │  │  │ │ Provider                                                                                                              │▄ │  │  │  setting                                │
+│     Theme                    │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │                                       ▅ │
+│     Splash Screen            │  │  │ │ ▊  Search providers by name or ID                                                                                   ▎ │  │  │  │  Purpose: Configure the default         │
+│     Console Behavior         │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  provider, model, endpoint, and         │
+│  Data & Privacy              │  │  │ │ Together                                                                                                              │  │  │  │  credential source.                     │
+│     Storage                  │  │  │ │ Z.ai                                                                                                                  │  │  │  │                                         │
+│     Workspaces               │  │  │ │ Local                                                                                                              ▅▅ │  │  │  │  Saved as: chat_defaults plus           │
+│     Tool Profiles            │  │  │ │ Aphrodite Engine                                                                                                   ▅▅ │  │  │  │  provider-specific api_settings         │
+│     Privacy & Security       │  │  │ │ KoboldCpp                                                                                                             │  │  │  │                                         │
+│     Network                  │  │  │ │ llama.cpp                                                                                                             │  │  │  │  Save: staged - press s to save, r to   │
+│     My Profile               │  │  │ │ Choose a provider or enter a provider ID.                                                                             │  │  │  │  revert                               ▂ │
+│  Troubleshooting             │  │  │ │ Model                   │ local-model                                                                                 │  │  │  │                                         │
+│     Diagnostics (view)       │  │  │ │ Endpoint                │ http://127.0.0.1:9199/v1/chat/completions                                                   │  │  │  │  Validation: test provider readiness    │
+│     About (view)             │  │  │ │                                                                                                                       │  │  │  │  before saving Console defaults         │
+│     Agents                   │  │  │ │  Credentials                                                                                                          │  │  │  │                                         │
+│  Expert                      │  │  │ │  API key source: not required for this provider                                                                       │  │  │  │  Runtime owner: Settings persisted      │
+│     Internal Prompts         │  │  │ │ API key                 │ No credential required                                                                      │  │  │  │  defaults; Console runtime selection    │
+│     Advanced Config          │  │  │ │                          Clear saved key                                                                              │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │ Env var                 │ LLAMA_CPP_API_KEY                                                                           │  │  │  │  Writes allowed: Yes                    │
+│                              │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │                                         │
+│                              │  │  │ │  Test Provider                                                                                                        │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │ Configuration check has not run.                                                                                      │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Default provider, model, context window, and readiness shared with Console.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

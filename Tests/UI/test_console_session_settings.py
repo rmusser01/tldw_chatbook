@@ -11303,9 +11303,9 @@ def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_de
     assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
 
 
-def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> (
-    None
-):
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_readiness_uses_saved_session_settings_over_stale_global_provider(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -11328,12 +11328,43 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     )
 
     assert screen._console_provider_blocker_copy() == ""
-    assert control_state.provider_label == "Provider: llama_cpp"
+    # TASK-33002.5 rewrote this pin on purpose: the chip shows the catalog
+    # name, while identity consumers (recovery navigation, readiness,
+    # prompts) still receive the config key.
+    assert control_state.provider_label == "Provider: llama.cpp"
+    assert screen._active_console_provider_model_display()[0] == "llama_cpp"
     assert control_state.model_label == "Model: local-model"
     assert "llama.cpp / local-model" in run_recipe_row.value
     assert "llama_cpp" not in run_recipe_row.value
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_provider_chip_names_a_custom_endpoint_by_its_registry_entry(request) -> None:
+    """TASK-33002.5: a custom-ep chip reads its entry name, as the pickers do."""
+    app = _build_test_app()
+    app.app_config["custom_endpoints"] = {
+        "gpu-box": {
+            "display_name": "GPU Box",
+            "family": "openai_compatible",
+            "base_url": "http://127.0.0.1:9000/v1",
+            "models": ["served-model"],
+        }
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="served-model"),
+    )
+
+    control_state = screen._build_console_control_state(None)
+
+    assert control_state.provider_label == "Provider: GPU Box"
+    assert screen._active_console_provider_model_display()[0] == "custom-ep:gpu-box"
 
 
 def test_console_control_state_reads_persona_label_without_storing_it_on_session(

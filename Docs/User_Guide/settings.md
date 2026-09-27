@@ -356,6 +356,18 @@ box showed "Focused setting: Provider" and the new Purpose in the inspector.
 The partial-failure copy (file written but not reloaded, or not written) is
 unchanged; covered by tests, not driven live.*
 
+*Verified against feat/model-config-p2-field-table + TASK-33002.5 —
+2026-09-27: the Provider list takes its names from the one provider catalog
+Console uses, so some rows are relabelled: **Google Gemini** (was Google),
+**Moonshot AI** (was Moonshot), **Mistral AI** (was MistralAI), **Custom
+OpenAI-compatible** and **Custom OpenAI-compatible #2** (were Custom OpenAI
+and Custom OpenAI 2), **Aphrodite Engine**, **KoboldCpp**, and the legacy
+aliases now say so: **llama.cpp (legacy alias)**, **Ollama (legacy alias)**,
+**vLLM (legacy alias)**, **Mistral AI (legacy alias)** and **Local LLM (legacy
+generic)**. Old names still work as typed provider IDs. Driven live at 211x44
+on a scratch llama.cpp profile by filtering the list with `g`, `mo`, `custom`
+and `legacy`.*
+
 #### QwenCloud
 
 Choose **QwenCloud** to reveal its provider-scoped **API mode** field. The two
@@ -408,7 +420,7 @@ Recovery is fail-closed:
 
 #### Moonshot Kimi and Z.ai GLM
 
-Choose **Moonshot** or **ZAI** without changing their saved provider identity.
+Choose **Moonshot AI** or **Z.ai** without changing their saved provider identity.
 They use Chat Completions only, so neither provider shows an **API mode**
 selector.
 

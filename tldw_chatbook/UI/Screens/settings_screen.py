@@ -162,7 +162,6 @@ from ...Widgets.workbench_focus import (
 )
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
-    PROVIDER_DISPLAY_NAMES,
     PROVIDER_GROUP_CLOUD,
     PROVIDER_GROUP_CUSTOM,
     PROVIDER_GROUP_LOCAL,
@@ -13827,14 +13826,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _provider_display_name(self, provider: str) -> str:
-        provider_key = provider_config_key(provider)
-        display_name = PROVIDER_DISPLAY_NAMES.get(provider_key)
-        if display_name:
-            return display_name
-        for entry in self._provider_catalog_entries():
-            if entry.readiness_key == provider_key:
-                return entry.display_name
-        return provider
+        return provider_display_name(provider)
 
     @staticmethod
     def _provider_catalog_group(entry: ConsoleProviderCatalogEntry) -> str:

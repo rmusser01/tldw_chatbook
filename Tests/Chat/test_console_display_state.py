@@ -443,6 +443,40 @@ def test_console_inspector_save_chatbook_action_is_blocked_when_ephemeral():
     assert normal_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
 
 
+@pytest.mark.parametrize(
+    ("provider", "label"),
+    [
+        ("llama_cpp", "Provider: llama.cpp"),
+        # The saved [chat_defaults] spelling reaches the chip as-is.
+        ("Llama_cpp", "Provider: llama.cpp"),
+        ("local_llamacpp", "Provider: llama.cpp (legacy alias)"),
+        ("openai", "Provider: OpenAI"),
+        (None, "Provider: not selected"),
+    ],
+)
+def test_provider_chip_names_the_catalog_display_name(provider, label):
+    """TASK-33002.5: the chip shows the name, never the config key."""
+    assert ConsoleControlState.from_values(provider=provider).provider_label == label
+
+
+def test_provider_chip_names_a_custom_endpoint_by_its_entry():
+    app_config = {
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU Box",
+                "family": "openai_compatible",
+                "base_url": "http://127.0.0.1:9000/v1",
+            }
+        }
+    }
+
+    state = ConsoleControlState.from_values(
+        provider="custom-ep:gpu-box", app_config=app_config
+    )
+
+    assert state.provider_label == "Provider: GPU Box"
+
+
 def test_assistant_label_names_the_active_character():
     state = ConsoleControlState.from_values(
         provider="llama_cpp", model="m", character="Seraphina"

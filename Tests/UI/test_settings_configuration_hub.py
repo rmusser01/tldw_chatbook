@@ -52,6 +52,7 @@ from tldw_chatbook.Chat import provider_setup_persistence as provider_persistenc
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
@@ -3709,7 +3710,7 @@ def test_settings_provider_display_names_cover_every_catalog_key():
     screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
 
     for entry in screen._provider_catalog_entries():
-        assert entry.readiness_key in settings_screen_module.PROVIDER_DISPLAY_NAMES, (
+        assert entry.readiness_key in PROVIDER_DISPLAY_NAMES, (
             f"missing display name for provider key: {entry.readiness_key}"
         )
 

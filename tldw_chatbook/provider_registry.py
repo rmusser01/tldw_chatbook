@@ -19,9 +19,11 @@ test in ``Tests/test_provider_registry.py`` unless noted):
   ``Chat/console_provider_endpoints.py::_BUILTIN_PROVIDER_ENDPOINTS``.
   Local providers configure ``api_url`` (a FULL endpoint path, not a base
   URL), so their ``default_base_url`` stays ``None``.
-- ``display_name``: ``Chat/console_provider_support.py::
-  _PROVIDER_DISPLAY_NAMES``; keys absent from that map (directly or via a
-  readiness alias) use the same module's title-case fallback.
+- ``display_name``: transcribed from the retired
+  ``Chat/console_provider_support.py::_PROVIDER_DISPLAY_NAMES`` map (and its
+  title-case fallback), not parity-guarded. These values are engine
+  error-copy prefixes only; every UI label reads
+  ``Chat/provider_catalog.py::provider_display_name`` (TASK-33002.5).
 - ``native_tools``: ``Agents/native_tools.py::NATIVE_TOOLS_PROVIDERS``.
 - ``auto_refresh``: ``LLM_Provider_Catalog/model_catalog_settings.py::
   AUTO_REFRESH_PROVIDER_LIST_KEYS``.
