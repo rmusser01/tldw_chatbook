@@ -147,7 +147,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Snapshot refreshed via ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
 # TASK-32856: Media_Generation core adds 2 ui-ready residents (measured
 # 1030); limit = measured + the documented +/-1 warm-boot wobble.
-MAX_TLDW_MODULES_AT_UI_READY = 1031
+#: 1031 -> 1032 (2026-09-27, PR #2838, TASK-32929): owner-approved ADR-097
+#: exception for Tools.remote_root_types, the SSH bindings' LocalRoot |
+#: RemoteRoot descriptors (pure dataclasses; stdlib-only imports). Four
+#: already-resident modules (console_chat_controller, tool_catalog,
+#: workspace_file_roots, project_instruction_resolver/runtime) type-check
+#: against it at ~50 sites, so deferring it is lazy-import surgery in hot
+#: Console code for a microsecond-scale import -- the 1022 -> 1023 reasoning.
+#: The SSH locator module WAS deferred off this path (registry_service).
+MAX_TLDW_MODULES_AT_UI_READY = 1032
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
