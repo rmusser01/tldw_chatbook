@@ -773,8 +773,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
 }
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
-    # UI Configuration for all media types
-    "ui_style": "default",  # Options: "default", "redesigned", "new", "grid", "wizard", "split"
     "pdf": {
         "chunk_method": "semantic",
         "chunk_size": 500,
@@ -9211,30 +9209,6 @@ def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     )
 
 
-def get_ingest_ui_style() -> str:
-    """
-    Get the configured UI style for media ingestion.
-
-    Returns:
-        UI style string: "simplified", "grid", "wizard", or "split"
-    """
-    config = load_cli_config_and_ensure_existence()
-    media_ingestion_config = config.get("media_ingestion", {})
-
-    # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get(
-        "ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default")
-    )
-
-    # Validate the UI style
-    valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
-    if ui_style not in valid_styles:
-        logger.warning(
-            f"Invalid ingest UI style '{ui_style}', falling back to 'default'"
-        )
-        return "default"
-
-    return ui_style
 
 
 def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
