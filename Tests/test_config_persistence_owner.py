@@ -142,7 +142,12 @@ def test_shutdown_persistence_preserves_unreadable_config(
 def test_production_config_persistence_has_one_owner_and_no_mutable_imports():
     package_root = Path(config.__file__).parent
     config_source = Path(config.__file__).read_text(encoding="utf-8")
-    app_source = (package_root / "app.py").read_text(encoding="utf-8")
+    # TASK-33011: the entry points (including the boot-time config load)
+    # moved from app.py to app_entry.py; both are the app's config callers.
+    app_source = "\n".join(
+        (package_root / name).read_text(encoding="utf-8")
+        for name in ("app.py", "app_entry.py")
+    )
     settings_source = (
         package_root / "UI" / "Screens" / "settings_screen.py"
     ).read_text(encoding="utf-8")
