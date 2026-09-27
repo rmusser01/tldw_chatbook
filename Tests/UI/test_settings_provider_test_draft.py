@@ -923,19 +923,79 @@ def test_findings_key_row_names_its_source_never_its_value(missing_env):
     environ = {} if missing_env else {"OPENAI_API_KEY": "sk-env-value-canary"}
     app_config = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
     screen = _bare_settings_screen(app_config)
-    with patch.dict(os.environ, environ, clear=True):
-        readiness = get_provider_readiness("OpenAI", app_config)
-        detail, summary, _passed = screen._build_provider_readiness_findings(
-            "OpenAI", "gpt-4o", readiness, draft_endpoint="", dirty=set(),
-        )
+    readiness = get_provider_readiness("OpenAI", app_config, environ=environ)
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        "OpenAI", "gpt-4o", readiness, draft_endpoint="", dirty=set(),
+    )
 
     rows = _assert_labelled_rows(detail)
     if missing_env:
-        assert rows["Key"] == "missing (OPENAI_API_KEY is not set)"
-        assert _result_rows(detail)[0][0] == "Config"
+        # Round-1 I2: the Key row owns the blocker, so it leads with a
+        # Settings-local next step; Config states only the verdict (spec §5:
+        # each fact once) and no row spells a config table.
+        assert _result_rows(detail)[0] == (
+            "Key",
+            "missing — enter one in the API key field or set OPENAI_API_KEY",
+        )
+        assert rows["Config"] == "OpenAI is not ready"
+        assert "api_settings" not in detail + summary
+        assert summary == "Configuration check blocked: OpenAI is not ready: Missing API key."
     else:
         assert rows["Key"] == "from env var OPENAI_API_KEY · present, not verified"
     assert "sk-env-value-canary" not in detail + summary
+
+
+@pytest.mark.parametrize(
+    ("provider", "app_config", "environ", "lead"),
+    (
+        # ADR-179: the key is set (env or saved) but the workspace URL is not.
+        (
+            "Databricks",
+            {"api_settings": {}},
+            {"DATABRICKS_TOKEN": "dapi-canary-value-0123456789"},
+            ("Endpoint", "not set — enter the workspace URL in the Endpoint field"),
+        ),
+        (
+            "Databricks",
+            {"api_settings": {"databricks": {"api_key": "dapi-canary-value-0123456789"}}},
+            {},
+            ("Endpoint", "not set — enter the workspace URL in the Endpoint field"),
+        ),
+        # _invalid_settings_readiness: a malformed provider table.
+        (
+            "QwenCloud",
+            {"api_settings": {"qwencloud": "not-a-table"}},
+            {"DASHSCOPE_API_KEY": "sk-canary-value-0123456789"},
+            (
+                "Config",
+                (
+                    "{name} is not ready: Invalid provider settings — fix this "
+                    "provider's settings in Advanced Config"
+                ),
+            ),
+        ),
+    ),
+)
+def test_key_row_never_claims_missing_when_another_setting_blocks(
+    provider, app_config, environ, lead
+):
+    """Round-1 I1 (AC#3): readiness drops the credential source whenever it
+    blocks, so a non-key blocker must not read as a missing key."""
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness(provider, app_config, environ=environ)
+    assert not readiness.ready
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        provider, "some-model", readiness, draft_endpoint="", dirty=set(),
+    )
+
+    rows = _assert_labelled_rows(detail)
+    assert rows["Key"] == "not checked until the provider is ready"
+    display = screen._provider_display_name(provider)
+    assert _result_rows(detail)[0] == (lead[0], lead[1].format(name=display))
+    if lead[0] != "Config":
+        assert rows["Config"] == f"{display} is not ready"
+    assert "api_settings" not in detail + summary
+    assert "canary" not in detail + summary
 
 
 def test_findings_never_print_a_custom_named_credential_query_param():

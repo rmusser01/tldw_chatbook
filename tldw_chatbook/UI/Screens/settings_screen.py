@@ -15355,20 +15355,31 @@ class SettingsScreen(BaseAppScreen):
         listing = (
             "testing" if checking else getattr(evidence, "endpoint", "not_tested")
         )
+        # A blocker owned by the Key or Endpoint row is stated there, with a
+        # Settings-local next step; Config then keeps only the verdict, so no
+        # fact repeats and readiness.recovery's config-table spellings never
+        # show (spec §5, parent AC#2).
+        issue = None if readiness.ready else readiness.configuration_issue
         if readiness.ready:
             config = f"{display_name} is configured"
+        elif issue in ("credential_missing", "endpoint_missing"):
+            config = f"{display_name} is not ready"
         else:
-            config = f"{display_name} is not ready: {readiness.reason}."
-            if readiness.recovery:
-                config += f" {readiness.recovery}"
+            config = f"{display_name} is not ready: {readiness.reason}"
+            config += {
+                "Unknown provider": " — choose a supported provider",
+                "Invalid provider settings": (
+                    " — fix this provider's settings in Advanced Config"
+                ),
+            }.get(readiness.reason, "")
 
         source = readiness.api_key_source or ""
         if readiness.subscription_status is not None:
             key = {
                 "pending": "Claude subscription, being checked",
                 "ready": "Claude subscription (Claude Code login)",
-                "expired": "Claude subscription, expired",
-                "missing": "Claude subscription, missing",
+                "expired": "Claude subscription, expired — log in with Claude Code",
+                "missing": "Claude subscription, missing — log in with Claude Code",
             }[readiness.subscription_status]
         elif source.startswith("env:"):
             draft_tag = " (draft)" if "credential_env_var" in dirty else ""
@@ -15377,12 +15388,19 @@ class SettingsScreen(BaseAppScreen):
             key = (
                 "entered here, not saved yet" if "api_key" in dirty else "saved in config"
             )
+        elif issue not in (None, "credential_missing"):
+            # Readiness drops the credential source whenever it blocks, so a
+            # set key is unknowable here -- never call it missing (AC#3).
+            key = "not checked until the provider is ready"
         elif not readiness.requires_api_key:
             key = "not required"
         elif readiness.env_var:
-            key = f"missing ({readiness.env_var} is not set)"
+            key = (
+                "missing — enter one in the API key field or set "
+                f"{readiness.env_var}"
+            )
         else:
-            key = "missing"
+            key = "missing — enter one in the API key field"
         if source:
             key += (
                 " · accepted by a generation test"
@@ -15391,7 +15409,9 @@ class SettingsScreen(BaseAppScreen):
             )
 
         shown = safe_endpoint_display(endpoint)
-        if not shown:
+        if issue == "endpoint_missing":
+            shown = "not set — enter the workspace URL in the Endpoint field"
+        elif not shown:
             shown = (
                 "not set"
                 if readiness.provider_key in API_URL_PROVIDER_KEYS
@@ -15433,7 +15453,9 @@ class SettingsScreen(BaseAppScreen):
         }.get(generation, "not tested")
 
         if not readiness.ready:
-            lead = "Config"
+            lead = {"credential_missing": "Key", "endpoint_missing": "Endpoint"}.get(
+                issue or "", "Config"
+            )
         elif listing == "unreachable":
             lead = "Endpoint"
         elif not model:
@@ -15528,7 +15550,10 @@ class SettingsScreen(BaseAppScreen):
         # task-185 / TASK-33002.2 AC#6: one line stating the outcome that the
         # first row states.
         if not readiness.ready:
-            summary = f"Configuration check blocked: {dict(rows)['Config']}"
+            summary = (
+                f"Configuration check blocked: {display_name} is not ready: "
+                f"{readiness.reason}."
+            )
             if not model:
                 summary += " Also set a default model."
         elif not model:

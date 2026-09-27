@@ -175,7 +175,10 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         model.value = "unsaved-model"
         await pilot.pause()
         screen.action_settings_test_category(allow_text_entry_focus=True)
-        await wait_for_copy(screen, "#settings-provider-test-result", "Checking Claude")
+        # TASK-33002.2 round-1 I2: the pending state is the Key row's fact.
+        await wait_for_copy(
+            screen, "#settings-provider-test-result", "Claude subscription, being checked"
+        )
         credential_io.release.set()
         await wait_for_copy(
             screen, "#settings-provider-credential-status", "Claude subscription"
@@ -196,7 +199,10 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         credential_io.entered.clear()
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
-        await wait_for_copy(screen, "#settings-provider-test-result", "Checking Claude")
+        # TASK-33002.2 round-1 I2: the pending state is the Key row's fact.
+        await wait_for_copy(
+            screen, "#settings-provider-test-result", "Claude subscription, being checked"
+        )
         assert credential_io.entered.is_set()
         credential_io.release.set()
         await wait_for_copy(
@@ -208,8 +214,13 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
         )
-        assert result.startswith("Config      Anthropic is not ready")
-        assert "Claude subscription, expired" in result
+        # TASK-33002.2 round-1 I2: the Key row owns a credential blocker, so
+        # it leads with the next step; Config keeps only the verdict.
+        assert result.startswith(
+            "Key         Claude subscription, expired — log in with Claude Code"
+        )
+        assert "Config      Anthropic is not ready\n" in result
+        assert "api_settings" not in result
 
 
 @pytest.mark.asyncio
@@ -276,7 +287,10 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
         result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
         )
-        assert "Checking Claude" not in result
+        assert "being checked" not in result
+        assert result.startswith(
+            "Key         Claude subscription, missing — log in with Claude Code"
+        )
         assert "private-token" not in result
         assert str(credential_io.path) not in result
 

@@ -3727,7 +3727,8 @@ def test_settings_provider_catalog_summary_groups_display_names():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_toast_states_failure_reason(monkeypatch, request):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -4903,7 +4904,8 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch, request):
     """task-191: a failed readiness check keeps the failure toast, no probe."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": ""}

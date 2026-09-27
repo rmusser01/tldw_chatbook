@@ -234,13 +234,17 @@ Changing these controls does not record startup consent.
 
 **Test Provider** checks your current draft before saving. URL-based local
 providers also get a short endpoint or model-listing probe. The result is five
-labelled rows, one fact each: **Config** (configured, or what blocks it and
-how to fix it), **Key** (saved in config, from env var *NAME*, or missing;
-never the key itself), **Endpoint** (the address without any user name, query
-or fragment, plus the model-listing outcome), **Model** and **Generation**.
-The row with the problem comes first: an unreachable server leads with, for
-example, "model listing failed (connection refused) — start the server or
-check the URL", and the toast says the same in one line. For cloud providers
+labelled rows, one fact each: **Config** (configured, or not ready),
+**Key** (saved in config, from env var *NAME*, or missing; never the key
+itself), **Endpoint** (the address without any user name, query or fragment,
+plus the model-listing outcome), **Model** and **Generation**. The row with
+the problem comes first and says what to do next: a missing key leads with
+"Key missing — enter one in the API key field or set *NAME*", a Databricks
+profile without a workspace URL leads with the Endpoint row, and an
+unreachable server leads with, for example, "model listing failed
+(connection refused) — start the server or check the URL". The toast says the
+same in one line. While another setting blocks the provider, the Key row says
+"not checked until the provider is ready" rather than guessing. For cloud providers
 the check stays local: the Key row says the key is present but not verified,
 and Generation says not tested. A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
@@ -296,9 +300,17 @@ after pointing the Endpoint at a server that lists models, the rows read
 reached", "Model qwen · listed by the server" and "Generation not tested".
 An endpoint typed with `?mycred=SEKRET` showed only
 `http://127.0.0.1:9198/v1 (draft)` in the rows, and the toast did not show
-it either. Overview's "Last connection test" shows the leading row only. The
-cloud (key present, not verified) rows are covered by tests; not driven
-live.*
+it either. Overview's "Last connection test" shows the leading row only.
+Review fix round 1, same day, on scratch profiles: OpenAI with no key led with
+"Key missing — enter one in the API key field or set OPENAI_API_KEY" above
+"Config OpenAI is not ready" (211x44 and 235x52); OpenAI with the key in the
+environment read "Config OpenAI is configured" and "Key from env var
+OPENAI_API_KEY · present, not verified"; Databricks with DATABRICKS_TOKEN set
+and no workspace URL led with "Endpoint not set — enter the workspace URL in
+the Endpoint field" and "Key not checked until the provider is ready", and
+typing the workspace host into Endpoint turned it configured; llama.cpp with
+nothing listening, launched at 235x52, kept every row on one line. The
+Claude-subscription rows are covered by tests; not driven live.*
 
 #### QwenCloud
 
