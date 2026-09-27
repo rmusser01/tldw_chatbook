@@ -4,7 +4,6 @@
 # Imports
 from typing import AsyncGenerator, Optional, Dict, Any
 import httpx
-import os
 from loguru import logger
 
 # Local imports
@@ -18,7 +17,11 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import (
+    get_api_key,
+    get_cli_setting,
+    resolve_provider_api_key,
+)
 
 #######################################################################################################################
 #
@@ -76,48 +79,30 @@ class OpenAITTSBackend(APITTSBackend):
         self.authentication_mode = authentication_mode
         self.api_key = None
         if authentication_mode is OpenAIAuthenticationMode.API_KEY:
-            self.api_key = os.getenv("OPENAI_API_KEY")
-            logger.debug(
-                f"OpenAITTSBackend: Checking env var OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
-            )
-            if not self.api_key:
-                self.api_key = self.config.get("OPENAI_API_KEY")
-                logger.debug(
-                    f"OpenAITTSBackend: Checking config dict for OPENAI_API_KEY: {'found' if self.api_key else 'not found'}"
-                )
-            if not self.api_key:
-                from tldw_chatbook.config import load_cli_config_and_ensure_existence
-
-                full_config = load_cli_config_and_ensure_existence()
-                api_settings = full_config.get("api_settings", {})
-                if isinstance(api_settings, dict):
-                    openai_settings = api_settings.get("openai", {})
-                    if isinstance(openai_settings, dict):
-                        self.api_key = openai_settings.get("api_key")
-                logger.debug(
-                    f"OpenAITTSBackend: Checking api_settings.openai/api_key: {'found' if self.api_key else 'not found'}"
-                )
-            if not self.api_key:
-                openai_api_settings = get_cli_setting("openai_api")
-                if openai_api_settings and isinstance(openai_api_settings, dict):
-                    self.api_key = openai_api_settings.get("api_key")
-                logger.debug(
-                    f"OpenAITTSBackend: Checking openai_api/api_key: {'found' if self.api_key else 'not found'}"
-                )
-            if not self.api_key:
-                api_settings = get_cli_setting("API")
-                if api_settings and isinstance(api_settings, dict):
-                    self.api_key = api_settings.get("openai_api_key")
-                logger.debug(
-                    f"OpenAITTSBackend: Checking API/openai_api_key: {'found' if self.api_key else 'not found'}"
-                )
+            # TASK-32894. This used to hand-roll its own five-branch lookup
+            # with `os.getenv("OPENAI_API_KEY")` FIRST, inverting ADR-012's
+            # 2026-09-19 amendment (a stored `api_settings.openai.api_key`
+            # outranks the env var it names), and screened no branch -- so
+            # the shipped `<API_KEY_HERE>` placeholder and a padded key both
+            # reached the wire. `config.get_api_key` is the shared accessor
+            # that implements the ruling, and it runs every source through
+            # `resolve_provider_api_key`. Order here: the caller's explicit
+            # per-instance config, then the shared resolver
+            # (api_settings > env > legacy `[API]` > conventional env), then
+            # the TTS-only `app_tts` fallback.
+            self.api_key = resolve_provider_api_key(
+                self.config.get("OPENAI_API_KEY")
+            ) or get_api_key("openai")
             if not self.api_key:
                 app_tts_settings = get_cli_setting("app_tts")
-                if app_tts_settings and isinstance(app_tts_settings, dict):
-                    self.api_key = app_tts_settings.get("OPENAI_API_KEY_fallback")
-                logger.debug(
-                    f"OpenAITTSBackend: Checking app_tts/OPENAI_API_KEY_fallback: {'found' if self.api_key else 'not found'}"
-                )
+                if isinstance(app_tts_settings, dict):
+                    self.api_key = resolve_provider_api_key(
+                        app_tts_settings.get("OPENAI_API_KEY_fallback")
+                    )
+            logger.debug(
+                "OpenAITTSBackend: API key resolved: "
+                f"{'found' if self.api_key else 'not found'}"
+            )
 
         self.endpoint = endpoint
         self.base_url = endpoint.speech_url

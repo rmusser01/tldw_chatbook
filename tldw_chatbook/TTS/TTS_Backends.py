@@ -198,17 +198,30 @@ class TTSBackendManager:
             config.update(self.app_config["app_tts"])
 
         # Special handling for specific backends - set defaults first
+        #
+        # TASK-32894 (Qodo review of #2800): these blocks resolve the
+        # credential from the CONFIG this manager was handed, and
+        # deliberately no longer consult `os.getenv`.
+        #
+        # Each backend's `__init__` treats `config["<PROVIDER>_API_KEY"]` as
+        # the caller's EXPLICIT per-instance override, ranked above
+        # `config.get_api_key`. Reading the environment here therefore put
+        # the env var above the shared accessor -- inverting ADR-012's
+        # 2026-09-19 rule that a stored `api_settings.<provider>.api_key`
+        # outranks the env var it names, for every manager-created backend,
+        # i.e. every real one. The rule held only for hand-constructed
+        # backends, which is the path the fix was tested on.
+        #
+        # The config lookups stay: they carry the projected/unsaved settings
+        # the legacy bridge supplies, which `load_settings()` alone does not
+        # see. They are config-sourced, same trust level as the accessor's
+        # own sources, so they cannot invert the rule. The env var is not
+        # lost -- `get_api_key` still reads it, as the fallback.
         if backend_id.startswith("openai_official"):
-            # Add OpenAI API key from various sources
-            import os
-
             openai_key = None
 
-            # Check environment variable
-            openai_key = os.getenv("OPENAI_API_KEY")
-
             # Check api_settings.openai section
-            if not openai_key and "api_settings.openai" in self.app_config:
+            if "api_settings.openai" in self.app_config:
                 openai_key = self.app_config["api_settings.openai"].get("api_key")
 
             # Check openai_api section (legacy)
@@ -223,13 +236,10 @@ class TTSBackendManager:
                 config["OPENAI_API_KEY"] = openai_key
 
         elif backend_id.startswith("elevenlabs"):
-            import os
-
-            elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-            if not elevenlabs_key:
-                api_settings = self.app_config.get("API", {})
-                if isinstance(api_settings, dict):
-                    elevenlabs_key = api_settings.get("elevenlabs_api_key")
+            elevenlabs_key = None
+            api_settings = self.app_config.get("API", {})
+            if isinstance(api_settings, dict):
+                elevenlabs_key = api_settings.get("elevenlabs_api_key")
             if not elevenlabs_key:
                 normalized_settings = self.app_config.get("elevenlabs_api", {})
                 if isinstance(normalized_settings, dict):
