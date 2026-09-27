@@ -57,6 +57,21 @@ Basic                                    Advanced
 
 ## Features & controls
 
+### Promoting Console Draft Shelf entries
+
+Console's Prompt Workbench has a device-local **Draft Shelf** source for
+unfinished, unsent composer text. A shelf entry is not yet a Library artifact.
+Open it in the Workbench, add a Prompt name, optionally choose one existing
+local collection, and press **Save to Library**. The result is an ordinary,
+first-class local Prompt: it appears in this Prompts list and can be renamed,
+edited, versioned, collected, exported, and reused like any other Prompt.
+
+Promotion copies the exact current draft-editor text into the Prompt's User
+lane and leaves its System lane empty. It never deletes the shelf entry; use
+the Workbench's two-press **Delete draft** action separately when the staging
+copy is no longer needed. The Draft Shelf itself is local-only, capped at 100,
+and excluded from Library sync and export.
+
 ### The prompts list
 
 | Control | What it does |
