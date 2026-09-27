@@ -1078,19 +1078,12 @@ def build_inventory() -> dict[str, Any]:
         if candidates:
             path_privacy_candidates.append({"path": relative, "candidates": candidates})
 
-    task_492_calls = sum(
-        entry["call_count"] for entry in owners if entry["owner"] == "TASK-492"
-    )
-    task_31551_calls = sum(
-        entry["call_count"] for entry in owners if entry["owner"] == "TASK-31551"
-    )
-    task_494_calls = sum(
-        entry["call_count"] for entry in owners if entry["owner"] == "TASK-494"
-    )
     return {
-        # 3: adds the unresolved path-privacy candidate projection. Existing
-        # owner digests and sink identities retain their schema-v2 meaning.
-        "schema_version": 3,
+        # 4: drops the stored `summary` totals; `inventory_summary()` derives
+        # them from the rows (they caused a conflict on nearly every re-sync).
+        # 3 added the unresolved path-privacy candidate projection; owner
+        # digests and sink identities keep their schema-v2 meaning.
+        "schema_version": 4,
         "scope": "tldw_chatbook/**/*.py",
         "classification_rules": {
             "TASK-492": {
@@ -1118,19 +1111,51 @@ def build_inventory() -> dict[str, Any]:
                 "reason": "not Chatbook-owned; persistent filtering is tested separately",
             },
         ],
-        "summary": {
-            "owner_files": len(owners),
-            "task_492_calls": task_492_calls,
-            "task_31551_calls": task_31551_calls,
-            "task_494_calls": task_494_calls,
-            "persistent_sink_files": len(topology),
-            "path_privacy_candidate_calls": sum(
-                len(row["candidates"]) for row in path_privacy_candidates
-            ),
-        },
         "owners": owners,
         "persistent_sink_topology": topology,
         "path_privacy_candidates": path_privacy_candidates,
+    }
+
+
+def inventory_summary(inventory: dict[str, Any]) -> dict[str, int]:
+    """Derive the headline totals from an inventory's rows.
+
+    Since schema 4 the committed file stores no totals: any two pull requests
+    that each touch any diagnostic would otherwise both edit the same total
+    lines and conflict on every re-sync (102 of 127 real two-sided sync merges
+    did, 2026-09-19..26). The rows are the reviewed record; totals are
+    arithmetic over them.
+
+    Args:
+        inventory: A parsed inventory, committed or rebuilt. A row missing a
+            field counts as zero instead of raising, so a malformed committed
+            file still produces a drift report.
+
+    Returns:
+        dict[str, int]: ``owner_files``, ``task_492_calls``,
+            ``task_31551_calls``, ``task_494_calls``,
+            ``persistent_sink_files`` and ``path_privacy_candidate_calls``.
+    """
+    owners = [row for row in inventory.get("owners", []) if isinstance(row, dict)]
+
+    def calls(owner: str) -> int:
+        return sum(
+            row["call_count"]
+            for row in owners
+            if row.get("owner") == owner and isinstance(row.get("call_count"), int)
+        )
+
+    return {
+        "owner_files": len(owners),
+        "task_492_calls": calls("TASK-492"),
+        "task_31551_calls": calls("TASK-31551"),
+        "task_494_calls": calls("TASK-494"),
+        "persistent_sink_files": len(inventory.get("persistent_sink_topology", [])),
+        "path_privacy_candidate_calls": sum(
+            len(row.get("candidates", []))
+            for row in inventory.get("path_privacy_candidates", [])
+            if isinstance(row, dict)
+        ),
     }
 
 
@@ -1239,7 +1264,7 @@ def _path_candidate_rows(
 
 
 def _summary_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
-    old, new = committed.get("summary", {}), rebuilt.get("summary", {})
+    old, new = inventory_summary(committed), inventory_summary(rebuilt)
     lines: list[str] = []
     for key in sorted(set(old) | set(new)):
         if old.get(key) != new.get(key):
@@ -1770,8 +1795,8 @@ def main() -> int:
             "diagnostic inventory is missing; review and run with --write",
             f"{INVENTORY_PATH.relative_to(REPO_ROOT)} does not exist, so there "
             "is nothing to diff against. The rebuild found "
-            f"{inventory['summary']['owner_files']} owner files and "
-            f"{inventory['summary']['persistent_sink_files']} sink files.\n"
+            f"{inventory_summary(inventory)['owner_files']} owner files and "
+            f"{inventory_summary(inventory)['persistent_sink_files']} sink files.\n"
             + NEXT_STEPS,
         )
         return 1
@@ -1785,7 +1810,7 @@ def main() -> int:
     if args.diff:
         print("no drift: the committed inventory matches the rebuild exactly.")
     inventory = json.loads(actual)
-    summary = inventory["summary"]
+    summary = inventory_summary(inventory)
     print(
         "diagnostic inventory verified: "
         f"{summary['owner_files']} owners, "
