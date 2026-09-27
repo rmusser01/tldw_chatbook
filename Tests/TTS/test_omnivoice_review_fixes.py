@@ -463,3 +463,69 @@ def test_legacy_playground_path_routes_omnivoice_to_its_backend() -> None:
         STTSEventHandler._legacy_internal_model_id(request, dict(request.options))
         == "local_omnivoice_default"
     )
+
+
+# --- per-request seed ------------------------------------------------------
+
+
+async def test_request_seed_overrides_configured_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch, extra_config={"OMNIVOICE_SEED": 7})
+    seen: list = []
+
+    def capture(lm, prompt_ids, target_len, *, config, **_):
+        seen.append(config.seed)
+        return np.zeros((8, target_len), dtype=np.int64)
+
+    monkeypatch.setattr(omnivoice_module, "run_diffusion_sampling", capture)
+    request = SimpleNamespace(
+        input="hi", voice="", response_format="wav", speed=1.0,
+        extra_params={"seed": 424242},
+    )
+    [c async for c in backend.generate_speech_stream(request)]
+    [c async for c in backend.generate_speech_stream(text="hi", voice="")]
+    assert seen == [424242, 7]
+
+
+@pytest.mark.parametrize("bad", [-1, 2**31, True, 1.5, "12"])
+async def test_invalid_request_seed_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad
+) -> None:
+    root = tmp_path / "m"
+    _make_tree(root)
+    backend, _, _ = _make_backend(root, monkeypatch, extra_config={"OMNIVOICE_SEED": 7})
+    seen: list = []
+    monkeypatch.setattr(
+        omnivoice_module, "run_diffusion_sampling",
+        lambda lm, p, t, *, config, **_: seen.append(config.seed) or np.zeros((8, t), dtype=np.int64),
+    )
+    request = SimpleNamespace(input="hi", voice="", response_format="wav", speed=1.0,
+                              extra_params={"seed": bad})
+    [c async for c in backend.generate_speech_stream(request)]
+    assert seen == [7]
+
+
+def test_admission_accepts_seed_in_range() -> None:
+    from tldw_chatbook.TTS.effective_settings import (
+        TTSEffectiveResolutionError, _validated_options,
+    )
+    assert dict(_validated_options("omnivoice", {"seed": 0}, None)) == {"seed": 0}
+    assert dict(_validated_options("omnivoice", {"seed": 2**31 - 1}, None)) == {"seed": 2**31 - 1}
+    for bad in (-1, 2**31, True, 3.0):
+        with pytest.raises(TTSEffectiveResolutionError):
+            _validated_options("omnivoice", {"seed": bad}, None)
+
+
+def test_seed_setting_binding_targets_omnivoice_section() -> None:
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import _TTS_SETTING_BINDINGS
+    binding = _TTS_SETTING_BINDINGS["OMNIVOICE_SEED"]
+    assert binding.destinations == (("OmniVoiceSettings", "seed"),)
+    assert binding.provider_id == "omnivoice"
+
+
+def test_managed_model_root_is_public() -> None:
+    assert omnivoice_module.managed_model_root is not None
+    assert omnivoice_module._managed_root is omnivoice_module.managed_model_root
