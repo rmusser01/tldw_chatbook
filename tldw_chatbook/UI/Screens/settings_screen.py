@@ -294,7 +294,7 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
-from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
+from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -2907,6 +2907,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
+        if category is SettingsCategoryId.THEME:
+            shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -2943,6 +2945,19 @@ class SettingsScreen(BaseAppScreen):
         ("a", "set active"),
         ("c", "clone"),
         ("b", "backfill"),
+    )
+
+    #: TASK-33062: ThemeOptionList's own bindings (spec §5), advertised in
+    #: the footer while the theme list has focus and always in F1.
+    THEME_SHORTCUTS = (
+        ("Enter", "use"),
+        ("t", "try"),
+        ("c", "clone"),
+        ("n", "new"),
+        ("i", "import"),
+        ("e", "edit yours"),
+        ("r", "rename yours"),
+        ("Del", "delete yours"),
     )
 
     PERSONAL_CONTEXT_SHORTCUTS = (
@@ -3695,6 +3710,13 @@ class SettingsScreen(BaseAppScreen):
             )
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+        if (
+            self._active_category_id() is SettingsCategoryId.THEME
+            and self._theme_list_focused()
+        ):
+            # TASK-33062: the keys are the list's bindings; elsewhere (the
+            # filter, the editor) they type or do nothing.
+            shortcuts = shortcuts + self.THEME_SHORTCUTS
         if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
             profile_shortcuts = self._active_personal_context_shortcuts()
             if text_entry_focused:
@@ -3714,6 +3736,12 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return ()
         return panel.available_shortcuts()
+
+    def _theme_list_focused(self) -> bool:
+        try:
+            return isinstance(self.app.focused, ThemeOptionList)
+        except Exception:
+            return False  # no active app (bare-screen tests / teardown)
 
     def _text_entry_focused(self) -> bool:
         """Whether a printable-key-consuming widget owns focus right now."""
@@ -4113,6 +4141,8 @@ class SettingsScreen(BaseAppScreen):
                 notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
+        if category is SettingsCategoryId.THEME:
+            notes.append("The keys below act on the highlighted theme while the theme list has focus.")
         return tuple(notes)
 
     def on_mount(self) -> None:
@@ -5662,8 +5692,8 @@ class SettingsScreen(BaseAppScreen):
                 writes_allowed=True,
                 runtime_owner="Theme picker and editor",
                 boundary_copy=(
-                    "Settings Theme editor owns custom color palettes and theme files; "
-                    "use the editor's Apply/Save/Reset buttons."
+                    "Settings Theme owns custom color palettes and theme files. "
+                    "Use/Try switch themes; the editor's Save stores a theme file."
                 ),
                 recovery_copy=(
                     f"Themes are saved to {_display_path(_theme_save_target())}{os.sep}; reset or delete "
@@ -8183,6 +8213,9 @@ class SettingsScreen(BaseAppScreen):
                 else None
             )
             return bool(state and state.is_dirty)
+        if category is SettingsCategoryId.THEME:
+            # TASK-33063: the editor's flag is Theme's only draft.
+            return bool(self.theme_editor_modified)
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty) or (
             category is SettingsCategoryId.PROVIDERS_MODELS
@@ -8968,10 +9001,6 @@ class SettingsScreen(BaseAppScreen):
         )
         dirty_marker = ""
         if self._category_has_unsaved_changes(summary.category):
-            dirty_marker = " *"
-        elif (
-            summary.category == SettingsCategoryId.THEME and self.theme_editor_modified
-        ):
             dirty_marker = " *"
         # task-1563: view-only stub categories are full nav peers whose whole
         # page says "edit elsewhere" -- badge them in the rail so a third of
@@ -22643,7 +22672,8 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Save target", f"{_display_path(_theme_save_target())}{os.sep}")
             yield self._detail_row(
-                "Save", "editor-owned - use the editor's Apply/Save/Reset buttons"
+                "Save",
+                "editor-owned - Use/Try switch themes; the editor's Save stores a file",
             )
             modified = "Yes" if self.theme_editor_modified else "No"
             yield self._detail_row(
@@ -24334,6 +24364,7 @@ class SettingsScreen(BaseAppScreen):
         if choice == "save":
             editor.on_save_theme()
             return not editor.is_modified
+        editor.discard_try()  # TASK-33060
         return True
 
     async def confirm_quit(self) -> bool:
@@ -24384,6 +24415,7 @@ class SettingsScreen(BaseAppScreen):
             if editor.is_modified:
                 return  # refused name or pending overwrite confirmation: stay
         else:
+            editor.discard_try()  # TASK-33060
             editor.is_modified = False
             self.theme_editor_modified = False
             self._refresh_theme_modified_widgets()
@@ -24400,16 +24432,20 @@ class SettingsScreen(BaseAppScreen):
             choice = await self.app.push_screen_wait(ThemeLeaveModal())
             if choice == "cancel":
                 return
-            if choice == "save":
-                try:
-                    editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
-                except QueryError:
+            try:
+                editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            except QueryError:
+                if choice == "save":
                     return
+                editor = None
+            if choice == "save":
                 editor.on_save_theme()
                 if editor.is_modified:
                     # Save refused (bad name) or is waiting on its overwrite
                     # confirmation: stay so the edit is not lost.
                     return
+            elif editor is not None:
+                editor.discard_try()  # TASK-33060
             self._theme_leave_bypass = True
             self._select_category(category_value, restore_focus=restore_focus)
         finally:
@@ -25009,7 +25045,8 @@ class SettingsScreen(BaseAppScreen):
         theme editor and wipe the very in-progress edit that raised this
         notification (see the theme_editor_modified reactive's comment).
         """
-        self._refresh_category_button_label(SettingsCategoryId.THEME)
+        # TASK-33063: the inspector header and rail marker, from the one flag.
+        self._update_draft_status_widgets(SettingsCategoryId.THEME)
         try:
             row = self.query_one("#settings-theme-unsaved-note", Static)
         except QueryError:
