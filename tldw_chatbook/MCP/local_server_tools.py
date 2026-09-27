@@ -178,6 +178,10 @@ def hub_character_service() -> Any:
     so the shared-descriptor filter drops them from every executable
     projection -- and every handler here fails closed. The ``[tools]
     character_tools_enabled`` gate still decides whether the rows exist.
+
+    Returns:
+        A ``CharacterToolService`` for Hub inspection only: its service loader
+        always raises, so no handler built from it can read or write a card.
     """
     from tldw_chatbook.Tools.character_tool_service import (
         CharacterReadGuard,
