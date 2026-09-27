@@ -99,11 +99,14 @@ Representative evidence: exact node and error status are preserved, but its trac
 
 Already represented: TASK-602 design/evidence documents this smoke, but no matching open failure task was found by text search.
 
-Resolution (TASK-19642.4, 2026-09-27): a focused rerun showed the test patched
-`smoke.time.monotonic`, which mutated Python's shared `time` module. One extra
-process-wide clock read exhausted its three-value iterator, causing
-`StopIteration` in `run_smoke()`. The test now rebinds only the smoke module's
-`time` name to a private clock and asserts the global clock identity is stable.
+Resolution (TASK-19642.4, 2026-09-27): a focused probe of the pre-fix test
+showed it patched `smoke.time.monotonic`, mutating Python's shared `time`
+module. One extra global clock read shifted its timed observations and caused
+the test's exact result assertion to fail. Its iterator has a `5.0` fallback,
+so this probe did not raise `StopIteration`. The original interrupted run's
+traceback remains unavailable; its exact exception is unconfirmed. The test
+now rebinds only the smoke module's `time` name to a private clock and asserts
+the global clock identity is stable.
 The exact node passed in the [eight-lane Ubuntu/macOS Python 3.11-3.14 run](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349152184).
 TASK-602's [five native Python 3.12 lanes](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617)
 also passed on one reviewed executable commit; the validated aggregate is in

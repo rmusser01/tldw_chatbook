@@ -12,8 +12,8 @@ evidence.
 **Architecture:** Keep the executable smoke runner unchanged. Replace only the
 dynamically loaded test module's `time` binding with a private fake clock, pin
 that the standard-library clock identity is unchanged, and retain every exact
-bounded-output assertion. Verify the pure harness across Python 3.11-3.14 and
-standard CI, then rerun TASK-602's governed five-lane native evidence because
+bounded-output assertion. Verify the pure harness across Python 3.11-3.14 in
+the scoped Ubuntu/macOS PR matrix, then rerun TASK-602's five native lanes because
 its approved design invalidates evidence after a task-owned test change.
 
 **Tech Stack:** Python 3.11-3.14, pytest, Ruff, GitHub Actions, existing
@@ -36,8 +36,12 @@ to govern STT artifact and runtime behavior.
 
 - Modify: `Tests/STT/test_task602_platform_smoke.py` — keep the fake clock
   private and assert the process clock is untouched.
+- Add: `.github/workflows/task-19642-smoke-clock-matrix.yml` — run the exact
+  node across Ubuntu/macOS and Python 3.11-3.14 on this PR.
+- Modify: `Docs/superpowers/specs/2026-08-22-task-19642-4-stt-smoke-clock-isolation-design.md`
+  — correct the reviewed diagnostic and available PR checks.
 - Modify: `backlog/docs/task-19520-verification-failure-inventory.md` — replace
-  the low-confidence entry with the focused traceback and resolution evidence.
+  the low-confidence entry with the focused reproduction and resolution evidence.
 - Modify: `backlog/docs/lessons-testing-evidence.md` — record the shared-module
   monkeypatch incident and its deterministic proof.
 - Modify: `Docs/STT_Evaluation/task-602/platform-evidence.json` — replace the
@@ -47,7 +51,9 @@ to govern STT artifact and runtime behavior.
 - Modify:
   `backlog/tasks/task-19642.4 - Diagnose-the-task-602-STT-platform-smoke-error.md`
   — track the plan, verification, acceptance criteria, and closeout.
-- No production, smoke-runner, normalizer, dependency, or workflow file changes.
+- No production, smoke-runner, normalizer, or dependency changes. The exact-node
+  PR matrix is the scoped workflow addition needed because the broad core
+  workflow does not trigger for this PR.
 
 ## Global constraints
 
@@ -119,11 +125,11 @@ python -m pytest -q Tests/STT/test_task602_platform_smoke.py --tb=long
 
 Expected: `20 passed` before the repair.
 
-- [ ] **Step 3: Reproduce the broad-run failure shape deterministically**
+- [ ] **Step 3: Reproduce the shared-clock failure shape deterministically**
 
-Run this bounded one-off probe; it calls `time.monotonic()` once immediately
-after the test installs its current `smoke.time.monotonic` patch and leaves no
-file behind:
+Run this bounded one-off probe on the pre-fix test commit; it calls
+`time.monotonic()` once immediately after the test installs its current
+`smoke.time.monotonic` patch and leaves no file behind:
 
 ```bash
 python -c 'exec("""import importlib.util
@@ -150,30 +156,32 @@ patch = ProbeMonkeyPatch()
 try:
     with tempfile.TemporaryDirectory() as directory:
         module.test_run_smoke_returns_only_bounded_allowlisted_observations(Path(directory), patch)
-except StopIteration as error:
+except AssertionError as error:
     frames = traceback.extract_tb(error.__traceback__)
-    assert frames[-1].filename.endswith(".github/scripts/task602_platform_smoke.py")
-    assert frames[-1].lineno == 714
+    assert frames[-1].filename.endswith("Tests/STT/test_task602_platform_smoke.py")
+    assert frames[-1].lineno == 285
     traceback.print_exception(error)
 else:
-    raise AssertionError("expected the extra process-clock consumer to exhaust the smoke clock")
+    raise AssertionError("expected the extra process-clock read to shift durations")
 finally:
     patch.undo()
 assert shared_patch_seen == [True]
 """)'
 ```
 
-Expected traceback:
+Expected focused traceback:
 
 ```text
-Tests/STT/test_task602_platform_smoke.py:278
-.github/scripts/task602_platform_smoke.py:714
-StopIteration
+Tests/STT/test_task602_platform_smoke.py:285
+AssertionError
 ```
 
-Also record that direct inspection proves
-`smoke.time is time` and the fourth process-clock call exhausts the three-value
-iterator.
+Direct inspection proves `smoke.time is time`. The extra read consumes `0.0`,
+so the smoke sees `3.0`, `5.0`, then the `5.0` fallback and reports acquisition
+and total durations of `2.0` instead of the asserted `3.0` and `5.0`.
+`next(monotonic_values, 5.0)` cannot raise `StopIteration`; the interrupted
+broad run's original traceback was not retained, so its exact exception is
+unknown.
 
 ### Task 2: Test-drive the private clock binding
 
@@ -213,8 +221,8 @@ python -m pytest -q \
 ```
 
 Expected: FAIL at the new identity assertion because the process clock was
-replaced. This RED is deliberately distinct from Task 1's diagnostic
-`StopIteration` traceback.
+replaced. This RED occurs at the new identity assertion, distinct from Task 1's
+result-equality assertion.
 
 - [ ] **Step 3: Implement the minimal clock isolation**
 
@@ -335,34 +343,28 @@ Push the branch, open a ready PR, and wait for Qodo and other configured
 reviewers. Address every technically valid comment through a focused RED/GREEN
 cycle. Rebase again before freezing if `origin/dev` advances.
 
-- [ ] **Step 4: Require the standard CI platform lanes**
+- [ ] **Step 4: Require the scoped PR platform lanes**
 
-The PR's Python 3.12 Ubuntu and macOS core-test lanes must pass. Inspect the
-exact node if either lane fails; do not attribute unrelated failures to this
-task without a focused traceback.
+The path-scoped PR workflow runs the exact node on Ubuntu and macOS under
+Python 3.11-3.14. All eight lanes must pass. The broad `test.yml` core workflow
+does not trigger on pull requests; do not count its absent lanes as passing.
 
-Query the repository's branch rules and PR checks. Require every configured
-required check to pass. If no performance, security, or licence check applies
+Query the PR's required checks, which include classic branch protection as
+well as rulesets. `dev` currently requires `Derived artifacts reproduce from
+their sources`; require it to pass. If no performance, security, or licence check applies
 to this test-only/no-dependency diff, record each as scoped N/A in the task
 notes; the bounded/path-private assertion gate remains the applicable security
 check.
 
 ```bash
 task19642_pr_number="$(gh pr view --json number --jq .number)"
-task19642_required_rule_count="$(gh api repos/rmusser01/tldw_chatbook/rules/branches/dev \
-  --jq '[.[] | select(.type == "required_status_checks")] | length')"
-if test "${task19642_required_rule_count}" -gt 0; then
-  gh pr checks "${task19642_pr_number}" --required --watch --interval 10
-else
-  echo 'No required status-check rule applies to dev.'
-fi
+gh pr checks "${task19642_pr_number}" --required --watch --interval 10
 test "$(gh pr checks "${task19642_pr_number}" --json name,bucket \
-  --jq '[.[] | select(.name | startswith("Core Tests (all but UI) - Python 3.12")) | select(.bucket == "pass")] | length')" -eq 2
+  --jq '[.[] | select(.name | startswith("Smoke clock - Python")) | select(.bucket == "pass")] | length')" -eq 8
 ```
 
-Expected: every configured required check passes, or the rules API proves none
-exist; exactly two Python 3.12 core lanes (Ubuntu and macOS) are in the pass
-bucket.
+Expected: every configured required check, including the Derived Artifacts
+gate, passes; all eight exact-node Ubuntu/macOS Python lanes are in the pass bucket.
 
 - [ ] **Step 5: Freeze the reviewed executable commit**
 
@@ -570,7 +572,8 @@ required. Preserve fixture attribution and scope limits.
 Replace the low-confidence/truncated-trace entry with:
 
 - isolated and file-level passing controls;
-- deterministic `StopIteration` traceback at the third smoke clock read;
+- deterministic result `AssertionError` after one extra global clock read,
+  with the original broad-run traceback explicitly recorded as unavailable;
 - proof that the old patch replaced the process clock;
 - the private-binding repair; and
 - interpreter, CI, and native evidence results.
@@ -579,7 +582,8 @@ Replace the low-confidence/truncated-trace entry with:
 
 Add an incident-based entry explaining that patching an attribute on an
 imported standard-library module mutates that shared module process-wide. Name
-TASK-19642.4, the three-value iterator, the extra-consumer `StopIteration`, and
+TASK-19642.4, the three-value iterator with its `5.0` fallback, the shifted
+duration assertion, and
 the safer pattern of rebinding the owner module's imported name to a fake.
 
 - [ ] **Step 3: Complete the Backlog task**

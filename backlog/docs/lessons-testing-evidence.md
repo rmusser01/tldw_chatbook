@@ -16747,14 +16747,15 @@ built-ins and inherited defaults, not an explicit override.
 ### A module attribute patch can silently replace a process-wide clock (TASK-19642.4)
 
 **What happened.** The TASK-602 smoke node passed alone but errored during an
-interrupted broad run. The test patched `smoke.time.monotonic` with a
-three-value iterator; `smoke.time` was the shared standard-library `time`
-module. A focused extra clock read reproduced `StopIteration` at the third
-`run_smoke()` read. The repair rebound only the loaded smoke module's `time`
-name to a private clock and asserted the process-wide function identity had
-not changed. The exact node then passed in eight Ubuntu/macOS lanes across
-Python 3.11-3.14, and TASK-602's five native evidence lanes passed on the
-reviewed executable commit.
+interrupted broad run whose traceback was not retained. The test patched
+`smoke.time.monotonic` with a three-value iterator and a `5.0` fallback;
+`smoke.time` was the shared standard-library `time` module. A focused extra
+global clock read shifted the smoke's observations and failed its exact result
+assertion. The original broad-run exception remains unknown. The repair
+rebound only the loaded smoke module's `time` name to a private clock and
+asserted the process-wide function identity had not changed. The exact node
+then passed in eight Ubuntu/macOS lanes across Python 3.11-3.14, and
+TASK-602's five native evidence lanes passed on the reviewed executable commit.
 
 **What to do.** When faking time for a module, replace that module's binding
 with a private clock object. Assert that the shared `time.monotonic` identity

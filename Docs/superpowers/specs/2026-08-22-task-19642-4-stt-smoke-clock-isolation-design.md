@@ -20,11 +20,13 @@ process-wide with a three-value iterator.
 
 The node passes alone, and the complete task-602 smoke test file passes alone.
 A focused diagnostic uses a `pytest.MonkeyPatch` subclass to make one unrelated
-process-clock call immediately after the existing patch. That call
-deterministically exhausts the iterator and raises `StopIteration` from
-`run_smoke()` at `.github/scripts/task602_platform_smoke.py:714`. This explains
-why the node can error only during a broad, loaded run: any concurrent process
-clock consumer can steal one of the three values.
+process-clock call immediately after the existing patch. That call consumes
+the first value, shifts the smoke's three reads to `3.0`, `5.0`, and the
+`5.0` fallback, and fails the test's exact result assertion. The pre-fix stub
+uses `next(monotonic_values, 5.0)`, so it cannot raise `StopIteration` through
+exhaustion. The interrupted broad run preserved only the node and error status;
+its traceback is unavailable, so its precise exception remains unconfirmed.
+The focused probe establishes the shared-clock mutation and order dependence.
 
 ## Selected approach
 
@@ -50,10 +52,10 @@ serialization marker, or broad-suite exception.
 ## Verification
 
 1. Preserve the focused diagnostic command that consumes one process-clock
-   value and records `StopIteration` at the third `run_smoke()` clock read.
+   value and records the pre-fix test's result `AssertionError`.
 2. Add a process-clock identity assertion while retaining the current patch,
    and run the exact node to prove the permanent regression check RED with an
-   `AssertionError` distinct from the diagnostic traceback.
+   `AssertionError` at the new clock-identity assertion.
 3. Rebind only `smoke.time` to the private clock and rerun the exact node for
    GREEN.
 4. Run `Tests/STT/test_task602_platform_smoke.py` and the task-owned platform
@@ -61,22 +63,21 @@ serialization marker, or broad-suite exception.
 5. Provision or locate Python 3.11, 3.12, 3.13, and 3.14 and run the exact node
    under every interpreter. Equivalent exact-node CI evidence may substitute
    for a local interpreter, but absent coverage blocks completion. Require the
-   pull request's standard Python 3.12 Ubuntu and macOS core-test lanes to
-   remain green.
+   path-scoped Ubuntu/macOS pull-request matrix across all four versions to
+   remain green; the current broad core workflow is not a PR trigger.
 6. Because the approved TASK-602 evidence design invalidates native evidence
    after any task-owned test change, trigger the label-gated five-lane native
    Python 3.12 workflow on the reviewed commit and refresh its checked-in
    aggregate and README from that single green run.
 7. Run Ruff check/format and `git diff --check` for the modified files.
-8. Record both the focused traceback and the supported-platform results in the
-   task and TASK-19520 failure inventory.
+8. Record the focused assertion, the missing original traceback, and the
+   supported-platform results in the task and TASK-19520 failure inventory.
 
 ## Platform scope
 
 The repair is interpreter-level test isolation and does not depend on an STT
-native wheel. The exact node's supported test matrix is Python 3.11-3.14 plus
-the repository's standard Python 3.12 Ubuntu and macOS core-test lanes. It does
-not claim direct Windows execution of pytest.
+native wheel. The exact node's supported PR matrix is Python 3.11-3.14 on
+Ubuntu and macOS. It does not claim direct Windows execution of pytest.
 
 TASK-602's separate native runtime matrix remains Linux x86_64/aarch64, Windows
 x86_64, and macOS arm64/x86_64 on Python 3.12. Although the executable smoke
