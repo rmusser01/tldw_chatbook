@@ -3770,10 +3770,15 @@ class _StreamingModelAdapter:
                     if not is_subagent:
                         update = self._thinking_capture.observe(chunk)
                         if update.envelope is not None:
+                            # task-33081: validated=True -- the capture
+                            # enforces the canonical limits incrementally
+                            # per delta; re-validating the whole growing
+                            # envelope here was quadratic.
                             self._store.replace_message_thinking(
                                 self._assistant_message_id,
                                 update.envelope,
                                 generation_token=self._generation_token,
+                                validated=True,
                             )
                     if stream_cut():
                         break

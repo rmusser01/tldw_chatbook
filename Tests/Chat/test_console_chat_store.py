@@ -286,6 +286,70 @@ def test_console_settings_revision_tracks_only_settings_owned_changes():
     assert store.payload_revision(session.id) == payload_revision + 1
 
 
+def test_messages_for_session_defers_pending_row_persistence_off_thread():
+    """task-33081: the tick's read path folds inline but persists off-thread.
+
+    ``messages_for_session`` runs on the UI event loop from the 0.2s Console
+    tick; its fold used to run the pending-row INSERT inline, which could
+    block the whole loop for sqlite's busy timeout under writer contention.
+    """
+    caller_thread = get_ident()
+
+    class ThreadRecordingPersistence(FakePersistence):
+        # Module fixtures can attach thinking envelopes, so the persist call
+        # may carry kwargs beyond FakePersistence's signature.
+        _ACCEPTED_CREATE_KWARGS = frozenset(
+            {
+                "conversation_id",
+                "sender",
+                "content",
+                "image_data",
+                "image_mime_type",
+                "message_id",
+                "parent_message_id",
+                "feedback",
+                "metadata_json",
+            }
+        )
+
+        def __init__(self):
+            super().__init__()
+            self.create_threads: list[int] = []
+
+        def create_message(self, **kwargs):
+            self.create_threads.append(get_ident())
+            return super().create_message(
+                **{
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in self._ACCEPTED_CREATE_KWARGS
+                }
+            )
+
+    persistence = ThreadRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Deferred persist")
+    # Cold-send optimistic echo: appended with persist=False, then armed as a
+    # pending-persistence row once the send is confirmed (the production
+    # route into _pending_persistence_message_ids for streamed replies).
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.persist_message_if_needed(message.id)
+    store.append_stream_chunk(message.id, "partial answer")
+
+    snapshots = store.messages_for_session(session.id)
+
+    # The fold is observable immediately ...
+    assert snapshots[-1].content == "partial answer"
+    # ... and the pending-row write ran, but never on the calling thread.
+    store.flush_deferred_stream_persistence()
+    assert persistence.created_messages
+    assert persistence.create_threads
+    assert caller_thread not in persistence.create_threads
+    assert persistence.created_messages[-1]["content"] == "partial answer"
+
+
 def test_message_completed_subscription_emits_first_live_completion_once():
     store = ConsoleChatStore()
     session = store.create_session()
@@ -9676,3 +9740,173 @@ def test_character_swap_off_persona_session_clears_persona_identity():
     assert session.persona_system_template is None
     assert session.settings is not None
     assert session.settings.system_prompt == "Be Alraune."
+
+
+def test_messages_for_session_defers_pending_row_persistence_off_thread():
+    """task-33081: the tick's read path folds inline but persists off-thread.
+
+    ``messages_for_session`` runs on the UI event loop from the 0.2s Console
+    tick; its fold used to run the pending-row INSERT inline, which could
+    block the whole loop for sqlite's busy timeout under writer contention.
+    """
+    caller_thread = get_ident()
+
+    class ThreadRecordingPersistence(FakePersistence):
+        # Module fixtures can attach thinking envelopes, so the persist call
+        # may carry kwargs beyond FakePersistence's signature.
+        _ACCEPTED_CREATE_KWARGS = frozenset(
+            {
+                "conversation_id",
+                "sender",
+                "content",
+                "image_data",
+                "image_mime_type",
+                "message_id",
+                "parent_message_id",
+                "feedback",
+                "metadata_json",
+            }
+        )
+
+        def __init__(self):
+            super().__init__()
+            self.create_threads: list[int] = []
+
+        def create_message(self, **kwargs):
+            self.create_threads.append(get_ident())
+            return super().create_message(
+                **{
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in self._ACCEPTED_CREATE_KWARGS
+                }
+            )
+
+    persistence = ThreadRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Deferred persist")
+    # Cold-send optimistic echo: appended with persist=False, then armed as a
+    # pending-persistence row once the send is confirmed (the production
+    # route into _pending_persistence_message_ids for streamed replies).
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.persist_message_if_needed(message.id)
+    store.append_stream_chunk(message.id, "partial answer")
+
+    snapshots = store.messages_for_session(session.id)
+
+    # The fold is observable immediately ...
+    assert snapshots[-1].content == "partial answer"
+    # ... and the pending-row write ran, but never on the calling thread.
+    store.flush_deferred_stream_persistence()
+    assert persistence.created_messages
+    assert persistence.create_threads
+    assert caller_thread not in persistence.create_threads
+    assert persistence.created_messages[-1]["content"] == "partial answer"
+
+
+def test_deferred_persist_yields_to_receipt_primed_after_enqueue():
+    """task-33081 (Qodo round): a receipt primed while the deferred worker
+    sat queued must not be bypassed by an unmarked partial-row insert."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Receipt race")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.persist_message_if_needed(message.id)
+    store.append_stream_chunk(message.id, "partial")
+    live = store._messages_by_session[session.id][-1]
+    store._fold_stream_buffer_without_persistence(live)
+
+    # Enqueue the deferred write, then prime a terminal receipt BEFORE the
+    # single-slot executor runs it.
+    # Hold the single-slot executor so the deferred write stays queued
+    # while the receipt is primed -- deterministic enqueue-to-run window.
+    barrier = Event()
+    store._stream_persistence_executor.submit(barrier.wait)
+    store._defer_pending_message_persistence(live)
+    store._pending_terminal_receipts[message.id] = "receipt-1"
+    barrier.set()
+    store.flush_deferred_stream_persistence()
+
+    assert persistence.created_messages == []
+    assert message.persisted_message_id is None
+
+
+def test_concurrent_persist_paths_create_exactly_one_row():
+    """task-33081 (Qodo round): deferred and ordinary persistence racing on
+    one pending message may not insert two rows -- the second path waits on
+    the insert claim and then finds the row already created."""
+    persistence_block = {"entered": Event(), "release": Event()}
+
+    class OneShotBlockingPersistence(FakePersistence):
+        _ACCEPTED_CREATE_KWARGS = frozenset(
+            {
+                "conversation_id",
+                "sender",
+                "content",
+                "image_data",
+                "image_mime_type",
+                "message_id",
+                "parent_message_id",
+                "feedback",
+                "metadata_json",
+            }
+        )
+
+        def __init__(self):
+            super().__init__()
+            self.create_threads: list[int] = []
+
+        def create_message(self, **kwargs):
+            self.create_threads.append(get_ident())
+            if len(self.created_messages) == 0:
+                persistence_block["entered"].set()
+                assert persistence_block["release"].wait(timeout=5)
+            return super().create_message(
+                **{
+                    k: v
+                    for k, v in kwargs.items()
+                    if k in self._ACCEPTED_CREATE_KWARGS
+                }
+            )
+
+    persistence = OneShotBlockingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Insert race")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.persist_message_if_needed(message.id)
+    store.append_stream_chunk(message.id, "race")
+    live = store._messages_by_session[session.id][-1]
+    store._fold_stream_buffer_without_persistence(live)
+
+    # Deferred worker enters create_message and blocks holding the claim.
+    store._defer_pending_message_persistence(live)
+    assert persistence_block["entered"].wait(timeout=5)
+
+    second_result: list[bool] = []
+
+    def race_ordinary_persist() -> None:
+        # NOTE: the live store-owned message, not append_message's snapshot
+        # copy (whose content never folded).
+        second_result.append(store._persist_pending_message_if_ready(live))
+
+    racer = Thread(target=race_ordinary_persist, daemon=True)
+    racer.start()
+    import time as _time
+
+    _time.sleep(0.1)
+    # The racer cannot insert while the deferred worker holds the claim.
+    assert len(persistence.created_messages) == 0
+    persistence_block["release"].set()
+    racer.join(timeout=5)
+    store.flush_deferred_stream_persistence()
+
+    assert not racer.is_alive()
+    assert second_result == [True]
+    assert len(persistence.created_messages) == 1
+    assert live.persisted_message_id is not None
