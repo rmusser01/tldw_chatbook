@@ -612,21 +612,17 @@ def test_worker_swallows_a_store_failure_and_leaves_the_registry_empty(
 
 
 def test_alternate_startup_metrics_failures_are_type_only() -> None:
-    source = (REPO_ROOT / "tldw_chatbook/app.py").read_text(encoding="utf-8")
+    # TASK-33011: the `python -m tldw_chatbook.app` body moved verbatim from
+    # app.py's `if __name__ == "__main__":` block into
+    # `app_entry._run_module_main`; app.py's block now only delegates.
+    source = (REPO_ROOT / "tldw_chatbook/app_entry.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     main_blocks = [
         node
         for node in tree.body
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name)
-        and node.test.left.id == "__name__"
-        and len(node.test.ops) == 1
-        and isinstance(node.test.ops[0], ast.Eq)
-        and len(node.test.comparators) == 1
-        and isinstance(node.test.comparators[0], ast.Constant)
-        and node.test.comparators[0].value == "__main__"
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_module_main"
     ]
+    assert len(main_blocks) == 1
     metrics_tries = [
         node
         for main_block in main_blocks
