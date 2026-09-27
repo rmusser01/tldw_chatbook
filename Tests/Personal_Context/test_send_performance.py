@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -153,6 +154,7 @@ def test_operations_are_thread_local(profile, opens):
     assert len(opens) == 2
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX open-file and mode contract")
 @pytest.mark.parametrize("replacement", ["file", "symlink", "permissions", "parent"])
 def test_scoped_read_rejects_mid_operation_path_authority_change(profile, replacement):
     repository, service = profile
@@ -234,6 +236,8 @@ def test_same_path_replacement_invalidates_absence_and_fresh_operation(profile, 
     service.create_profile()
     service.set_runtime_enabled(True)
     assert compose(service) is not None
+    if os.name != "posix":
+        return
     repository.db_path.rename(copied)
     repository.db_path.symlink_to(copied)
     opens.clear()
