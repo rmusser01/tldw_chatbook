@@ -4,7 +4,7 @@ title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
 created_date: 2026-09-23 20:15
-updated_date: 2026-09-27 15:24
+updated_date: 2026-09-27 15:33
 labels: []
 dependencies: []
 references:
@@ -31,8 +31,8 @@ Match Chatbook connected-mode audio diagnostics to the server administrator auth
 
 <!-- SECTION:PLAN:BEGIN -->
 Docs/superpowers/plans/2026-09-23-server-audio-diagnostic-admin-parity.md
+Final latest-dev qualification: reproduce the existing from_config client-factory bootstrap failure on dev 74965f694; align that one real-config test with the existing bootstrap_profile fixture contract, keeping its assertions intact; rerun all four affected test modules without exclusions, security/style and artifact guards; obtain read-only review; push the approved task-ID repair and rebase with exact force-with-lease; require fresh checks and Qodo review before merge.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -60,6 +60,8 @@ Inventory red/green complete: official --write changed only owner_files and task
 
 2026-09-27 second integration: all checks and required Derived Artifacts passed on 805c20ec5, but dev advanced through the tier-2 security merge to 906b6e253. Rebased cleanly; all eight prior patches are identical by range-diff. The upstream generated inventory remains unchanged; the official checker passes with 597 owners, 7543 TASK-494 calls and 14 sink files. The focused service/scope/capability run passed 21 cases with one known unrelated from_config bootstrap test deselected. Diff check passes. No PR Python source changed; prior touched-source Bandit remains applicable. Fresh required CI must qualify this latest-dev head before merge.
 2026-09-27 integration approval: the requester explicitly approved the manual task-renumbering exception. TASK-32917 remains the older audio diagnostic task; the younger provider-engine task moves to free ID TASK-33009 and ADR-179's inbound task link is updated. Status, ownership, acceptance criteria and implementation notes of the provider task are preserved, with provenance recorded. Continue PR #2822 on latest dev and require fresh CI before merge.
+Baseline evidence 2026-09-27: test_server_audio_services_service_from_config_returns_provider_backed_service fails unchanged on latest dev 74965f694 with RecoveryRequired(raw_source_selection_changed), via build_client -> TLS trust -> real config read after the global per-test config redirect. Tests/conftest.py explicitly supports a per-node bootstrap_profile marker for real config consumers. Qualify this test under that existing isolated bootstrap fixture rather than excluding it. Production configuration/recovery guards remain intact.
+Final local qualification on dev 74965f694: approved TASK-32917/TASK-33009 collision repair preserves provider task content and updates ADR-179. All nine prior patches survive rebase identically. Inventory checker passes (600 owners, 1362 TASK-492, 56 TASK-31551, 7550 TASK-494, 14 sinks); task guard passes 4436 files. The unchanged from_config failure reproduced on dev; applying the existing bootstrap_profile marker to its real TLS/config consumer preserves all assertions and yields 26 passed across the four affected modules with no exclusions. Ruff lint/format on five small files, changed-module compileall, diff check and touched-source Bandit pass (zero findings). Both server dependencies are merged. Final-head remote CI/Qodo and merge confirmation remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
