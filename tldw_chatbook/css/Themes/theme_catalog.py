@@ -330,7 +330,9 @@ def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
 
 def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
     """Undo ``change``: restore the active theme and, if it was persisted,
-    the launch default.
+    the launch default -- unless that launch default is not a registered
+    theme (TASK-33061): writing it back would resurrect the "Launch default
+    missing" state, so the saved launch default is left as it is.
 
     Args:
         app: The running app.
@@ -346,9 +348,24 @@ def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
             registered.
     """
     app.theme = change.previous_active
-    if change.persisted:
+    if change.persisted and launch_default_restorable(app, change):
         return _persist_launch_default(app, change.previous_launch_default)
     return True, True
+
+
+def launch_default_restorable(app: Any, change: ThemeChange) -> bool:
+    """Whether a Revert of ``change`` may write its previous launch default.
+
+    It must still be a registered theme (TASK-33061).
+
+    Args:
+        app: The running app, for its registered themes.
+        change: The switch a Revert would undo.
+
+    Returns:
+        True when ``change.previous_launch_default`` is a registered theme.
+    """
+    return change.previous_launch_default in app.available_themes
 
 
 def user_theme_names(directory: Path) -> set[str]:
