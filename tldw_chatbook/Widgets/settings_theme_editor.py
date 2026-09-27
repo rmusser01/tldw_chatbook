@@ -14,13 +14,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import QueryError
 from textual.events import Click, Key, Resize
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import BUILTIN_THEMES, Theme
+from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ..Backup_Recovery import raw_participants as raw
@@ -106,6 +107,30 @@ class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
         self.dismiss("save")
 
 _INVALID_COLOUR_TEXT = "Invalid — use #RRGGBB"
+
+
+# TASK-33064/33066 (review M-2): the theme picker and editor both switch
+# from two columns to stacked below this own width -- one threshold, so the
+# pane never shows side-by-side list/card over a stacked editor. The
+# editor's palette column (label 24 + input + swatch 9) collapsed to 3 cols
+# beside the preview at a 52-col editor; the workbench's terminal-width
+# compact class flips too late (100 terminal cols is still a 33-col pane).
+THEME_STACK_BELOW = 100
+
+
+def theme_stack_width(widget: Widget) -> int:
+    """The width the theme picker/editor stack decision is made on.
+
+    The nearest scrolling ancestor's content width (the Settings detail
+    body), which its own vertical scrollbar does not change: stacking makes
+    the content taller and can add that scrollbar, so measuring the widget
+    itself let the class stick a column or two past the threshold (review
+    M-2). Falls back to the widget's own width outside a scroller.
+    """
+    for ancestor in widget.ancestors:
+        if isinstance(ancestor, ScrollableContainer):
+            return ancestor.size.width
+    return widget.size.width
 
 
 class SettingsThemeEditor(Vertical):
@@ -338,15 +363,8 @@ class SettingsThemeEditor(Vertical):
         # _refresh_preview), so it follows every keystroke, not just Apply.
         yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
 
-    # TASK-33066: below this editor width a palette column (label 24 +
-    # input + swatch 9) cannot sit beside the preview without the inputs
-    # collapsing -- measured 3 cols at a 52-col editor (120x36 terminal).
-    # The workbench's terminal-width compact class flips too late for that
-    # (100 terminal cols is still a 33-col editor), so key on our own width.
-    TWO_COLUMN_MIN_WIDTH = 100
-
     def on_resize(self, event: Resize) -> None:
-        self.set_class(event.size.width < self.TWO_COLUMN_MIN_WIDTH, "-stacked")
+        self.set_class(theme_stack_width(self) < THEME_STACK_BELOW, "-stacked")
 
     def on_mount(self) -> None:
         """Initialize after composed descendants are mounted."""

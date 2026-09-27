@@ -46,7 +46,7 @@
    the card (title + preview + grouped chips, ~18 rows; ~27 with its chips
    stacked) whole on a short terminal: the body scrolls instead. The editor
    view keeps `auto`, and compact restores the auto chain below.
-   ThemePane sets `-stacked` from its own width (below 96 cols the two
+   ThemePane sets `-stacked` from its own width (below 100 cols the two
    columns squeeze the list to ~26 cols, e.g. 120x36 and 150x40): the card
    then sits under a list that still takes the remaining height. */
 #settings-theme-pane.-picker {

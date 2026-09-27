@@ -2014,3 +2014,29 @@ async def test_editor_stacks_the_preview_when_too_narrow_for_two_columns(request
         preview = host.screen.query_one("#settings-theme-preview")
         assert primary.region.width >= 10
         assert preview.region.y > primary.region.y  # stacked below, not beside
+
+
+# -- Fix round (review M-2): picker and editor stack at ONE threshold, measured
+# on the detail body so the scrollbar that stacking adds cannot hold the
+# stacked layout past it. At 44 rows a 180-col terminal gives a
+# 99-col body, 181 a 100-col body (the threshold).
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("width", "stacked"), [(180, True), (181, False)])
+@private_profile_test
+async def test_picker_and_editor_stack_together_at_one_threshold(request, width, stacked):
+    host = _host()
+    async with host.run_test(size=(170, 44)) as pilot:  # start stacked, scrollbar shown
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        await pilot.resize_terminal(width, 44)
+        await pilot.pause(0.3)
+        assert pane.has_class("-stacked") is stacked
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.3)
+        await pilot.resize_terminal(170, 44)
+        await pilot.pause(0.3)
+        await pilot.resize_terminal(width, 44)
+        await pilot.pause(0.3)
+        assert settings.query_one("#settings-theme-editor").has_class("-stacked") is stacked

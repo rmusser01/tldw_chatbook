@@ -37,7 +37,12 @@ from ..css.Themes.theme_catalog import (
 )
 from ..css.Themes.themes import printable
 from ..Utils.input_validation import escape_markup
-from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
+from .settings_theme_editor import (
+    THEME_STACK_BELOW,
+    THEMES_UNAVAILABLE_LABEL,
+    SettingsThemeEditor,
+    theme_stack_width,
+)
 from .theme_preview import ThemePreview
 
 _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
@@ -636,14 +641,14 @@ class ThemePane(ContentSwitcher):
 
     # TASK-33064: own-width layout switches (the workbench's compact class
     # only fires at <=100 terminal cols; 101-180 squeezed the columns).
-    # Below _STACK_BELOW the list and card stack; below _NARROW_CARD_BELOW
-    # card cols the chips stack too (four chips need ~48).
-    _STACK_BELOW = 96
+    # Below THEME_STACK_BELOW (shared with the editor, review M-2) the list
+    # and card stack; below _NARROW_CARD_BELOW card cols the chips stack too
+    # (four chips need ~48).
     _NARROW_CARD_BELOW = 48
 
     def on_resize(self, event: events.Resize) -> None:
-        width = event.size.width
-        stacked = width < self._STACK_BELOW
+        width = theme_stack_width(self)
+        stacked = width < THEME_STACK_BELOW
         self.set_class(stacked, "-stacked")
         card_width = width if stacked else width // 2
         self.set_class(card_width < self._NARROW_CARD_BELOW, "-narrow-card")

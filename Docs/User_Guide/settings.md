@@ -611,7 +611,7 @@ dark/light · yours/shipped/textual") and a live swatch preview — without
 touching the app you're actually using. The list takes all the height the
 detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
 highlighted row is filled in the theme's primary text colour as well as bold.
-When the picker is narrower than 96 columns (a mid-width terminal), the card
+When the picker is narrower than 100 columns (a mid-width terminal), the card
 moves below the list instead of squeezing both. If the configured launch default no
 longer exists (its file was deleted or renamed outside the app), a notice
 appears above the list — "Launch default missing: \<id\> — Use any theme to
