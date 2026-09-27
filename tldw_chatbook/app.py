@@ -664,9 +664,6 @@ from tldw_chatbook.Skills_Interop import (  # noqa: E402
     SkillsScopeService,
     default_local_skills_store_dir,
 )
-from tldw_chatbook.Skills_Interop.builtin_skills import (
-    disabled_builtins_from_config,
-)
 from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
     MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,
     SkillTrustStore,
@@ -1096,6 +1093,15 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
         return False
     console = config.get("console")
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+
+def _disabled_builtin_skills(config: Any) -> frozenset[str]:
+    """Built-in skills disabled in config; imported lazily (off boot path, ADR-097)."""
+    from tldw_chatbook.Skills_Interop.builtin_skills import (
+        disabled_builtins_from_config,
+    )
+
+    return disabled_builtins_from_config(config)
 
 
 def _build_terminal_backend() -> "TerminalBackend":
@@ -8781,7 +8787,7 @@ class TldwCli(
                 trust_service_factory=lambda: self.local_skill_trust_service,
                 # In-memory config read: this runs on every skills read,
                 # including the Console's per-send capture.
-                builtin_disabled_loader=lambda: disabled_builtins_from_config(
+                builtin_disabled_loader=lambda: _disabled_builtin_skills(
                     getattr(self, "app_config", None)
                 ),
             )
