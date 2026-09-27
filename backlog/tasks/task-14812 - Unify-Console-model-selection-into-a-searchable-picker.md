@@ -1,11 +1,11 @@
 ---
 id: TASK-14812
 title: Unify Console model selection into a searchable picker
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 21:52'
-updated_date: '2026-08-11 01:31'
+updated_date: '2026-09-26 12:40'
 labels:
   - console
   - models
@@ -59,6 +59,8 @@ Reason: ADR-020 already defines catalog authority, uncapped search, transient cu
 - The blocking-I/O architecture suite passes all six tests after its repository scanner was corrected to decode UTF-8 source explicitly on Windows. TASK-14878 now makes the unrelated symlink containment test skip clearly when the host account lacks link privilege; its file passed 22 tests with that one capability skip. Repository-wide completion remains blocked by the pre-existing screen-size ratchet, which reports `chat_screen.py` at 19,743 lines versus its 17,727 budget even though this patch removes three lines, and by the unrelated timing-sensitive gateway concurrency test. TASK-3600 is still in progress, so this task remains In Progress despite its acceptance criteria being met.
 - ADR required: no. Existing ADR-020 remains the governing catalog-authority and fallback decision.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+Closed by TASK-33001.1 (2026-09-26). AC#6 had regressed. The picker reset the model, but the rebase behind it asked `resolve_effective_chat_configuration` for the target provider's default, and that resolver ranked `chat_defaults.model` above the target provider's own model whichever provider owned it. So every provider switch inherited the global default model (llama.cpp -> Anthropic filled `gpt-5.6-terra`). The resolver now applies `chat_defaults.model` only when the target is canonically `chat_defaults.provider`. Real-path rebase tests pin the fix (Tests/Chat/test_console_settings_apply.py; mounted modal in Tests/Chat/test_console_session_settings.py). TASK-3600, listed as a dependency, is still In Progress. The model-config redesign spec says to close this task once AC#6 holds, because every AC is met; TASK-3600's catalog-staleness scope is its own.
 
 Qodo review remediation: validated custom model IDs with the shared input-validation helpers and a 256-character single-line boundary; restored the committed catalog model after an uncommitted filter loses focus; deferred blur collapse briefly so pointer clicks complete before layout reflow; renamed ModelPickerInput to conform to class naming; and replaced the provider-error and Windows privilege literals with named constants. Added picker and modal regressions. Verification: 24 picker tests passed, 49 Console settings model tests passed, 45 Console rail/popover tests passed, the targeted provider 400 recovery test passed, and the file-tool suite passed 22 tests with one explicit symlink-capability skip. Scoped Ruff and git diff --check passed.
 <!-- SECTION:NOTES:END -->

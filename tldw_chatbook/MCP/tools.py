@@ -8,6 +8,7 @@ functionality through MCP.
 from typing import Dict, List, Optional, Any
 import asyncio
 import json
+import logging
 
 from loguru import logger
 
@@ -17,6 +18,8 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
 from ..Utils.input_validation import validate_number_range, validate_text_input
+from ..Utils.persistent_diagnostics import persist_event
+from .activation import in_worker
 
 # Bounds for `search_conversations`' free-text `query` / integer `limit`
 # inputs, mirroring the same query+limit validation shape already used for
@@ -219,11 +222,7 @@ class MCPTools:
             limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
         ):
             return [
-                {
-                    "error": (
-                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
-                    )
-                }
+                {"error": (f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}")}
             ]
         limit = int(limit)
 
@@ -322,11 +321,7 @@ class MCPTools:
             ]
         if not 1 <= limit <= MAX_SEARCH_RESULTS_LIMIT:
             return [
-                {
-                    "error": (
-                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
-                    )
-                }
+                {"error": (f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}")}
             ]
 
         try:
@@ -370,11 +365,14 @@ class MCPTools:
             List of character profiles
         """
         try:
-            characters = self.chachanotes_db.list_character_cards()
+            characters = await asyncio.to_thread(
+                self.chachanotes_db.list_character_cards
+            )
             return [
                 {
                     "id": char["id"],
                     "name": char["name"],
+                    "version": char["version"],
                     "description": char.get("description", ""),
                     "message_count": char.get("message_count", 0),
                 }
@@ -383,6 +381,136 @@ class MCPTools:
         except Exception as e:
             logger.error(f"Error listing characters: {e}")
             return [{"error": str(e)}]
+
+    async def create_character(
+        self, name: str, fields: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Create a character through the validated local persona service.
+
+        Args:
+            name: Non-empty, unique character name.
+            fields: Optional text/JSON card fields; images are unsupported.
+
+        Returns:
+            An id/name/version receipt or a structured application error.
+        """
+        from .character_authoring_models import MCPCharacterCreateRequest
+
+        try:
+            request = MCPCharacterCreateRequest.model_validate(
+                {"name": name, "fields": fields}
+            )
+        except ValueError:
+            return {
+                "error_code": "invalid_arguments",
+                "error": "Character fields failed validation.",
+            }
+        return await in_worker(
+            self, self._write_character, {"name": request.name, **request.fields}
+        )
+
+    async def update_character(
+        self, character_id: int, expected_version: int, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Edit selected card fields using the version read by the caller.
+
+        Args:
+            character_id: Positive character id.
+            expected_version: Positive version returned by list/create/update.
+            fields: Non-empty patch of supported text/JSON card fields.
+
+        Returns:
+            An id/name/version receipt or a structured application error.
+        """
+        from .character_authoring_models import MCPCharacterUpdateRequest
+
+        try:
+            request = MCPCharacterUpdateRequest.model_validate(
+                {
+                    "character_id": character_id,
+                    "expected_version": expected_version,
+                    "fields": fields,
+                }
+            )
+        except ValueError:
+            return {
+                "error_code": "invalid_arguments",
+                "error": "Character fields failed validation.",
+            }
+        return await in_worker(
+            self,
+            self._write_character,
+            request.fields,
+            request.character_id,
+            request.expected_version,
+        )
+
+    def _write_character(
+        self,
+        fields: dict[str, Any],
+        character_id: int | None = None,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        from ..Character_Chat.local_character_persona_service import (
+            LocalCharacterPersonaService,
+        )
+        from ..DB.ChaChaNotes_DB import ConflictError, InputError
+
+        try:
+            service = LocalCharacterPersonaService(self.chachanotes_db)
+            if character_id is None:
+                record = service.create_character(fields)
+            else:
+                if self.chachanotes_db.get_character_card_by_id(character_id) is None:
+                    return {
+                        "error_code": "not_found",
+                        "error": "Character was not found.",
+                    }
+                record = service.update_character(
+                    character_id, fields, expected_version=expected_version
+                )
+            return {key: record[key] for key in ("id", "name", "version")}
+        except ConflictError:
+            return {
+                "error_code": "conflict",
+                "error": "Character name already exists or the version has changed. Read the roster before retrying.",
+            }
+        except (ValueError, InputError):
+            return {
+                "error_code": "invalid_arguments",
+                "error": "Character fields failed validation.",
+            }
+        except Exception as exc:  # noqa: BLE001 -- bounded MCP error boundary
+            # Keep structural traceback context, never card data, paths, or the
+            # exception message: the persistent diagnostic schema enforces this.
+            frame_fields = {}
+            trace = exc.__traceback__
+            while trace is not None:
+                frame_fields = {
+                    "raise_module": trace.tb_frame.f_globals.get("__name__", ""),
+                    "raise_function": trace.tb_frame.f_code.co_name,
+                    "raise_line": trace.tb_lineno,
+                }
+                trace = trace.tb_next
+            try:
+                persist_event(
+                    "mcp",
+                    "character_write_failed",
+                    level=logging.ERROR,
+                    operation=(
+                        "create_character"
+                        if character_id is None
+                        else "update_character"
+                    ),
+                    exception_type=type(exc).__name__,
+                    **frame_fields,
+                )
+            except Exception:  # noqa: BLE001, S110 -- diagnostics must not mask the error
+                pass
+            return {
+                "error_code": "storage_error",
+                "error": "Character could not be saved.",
+            }
 
     async def get_conversation_history(
         self, conversation_id: int, limit: Optional[int] = None

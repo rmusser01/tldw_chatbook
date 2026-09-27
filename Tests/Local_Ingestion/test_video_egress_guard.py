@@ -172,3 +172,32 @@ def test_video_processing_references_the_egress_policy() -> None:
     source = Path(video_processing.__file__).read_text(encoding="utf-8")
     assert "check_url_or_raise" in source
     assert "origin_set" in source
+
+
+# --- task-32902 (tier-2 review, slice S11 P3) --------------------------------
+
+
+def test_missing_ytdlp_warning_reaches_the_loguru_sinks(monkeypatch):
+    """The module imports loguru at :17 and used stdlib ``logging`` for exactly
+    one line -- the warning telling a user why video download is unavailable.
+    Logging_Config configures the two independently (no InterceptHandler), so
+    that one message never reached the app's Logs window."""
+    import importlib
+    import sys
+
+    from loguru import logger
+
+    import tldw_chatbook.Local_Ingestion.video_processing as video_processing
+
+    # sys.modules[name] = None makes `import name` raise ImportError.
+    monkeypatch.setitem(sys.modules, "yt_dlp", None)
+    records: list[str] = []
+    sink_id = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        importlib.reload(video_processing)
+    finally:
+        logger.remove(sink_id)
+        monkeypatch.undo()
+        importlib.reload(video_processing)
+
+    assert any("yt-dlp not available" in message for message in records)

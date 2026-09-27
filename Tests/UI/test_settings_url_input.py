@@ -2,7 +2,10 @@
 
 task-1375 audit result: the widget keeps ``value`` raw and only rewrites the
 RENDERED text (a zero-width break after ``http``/``https`` schemes so
-textual-web browsers do not autolink endpoints). Because the break is a
+textual-web browsers do not autolink endpoints). TASK-33001.7: only a
+textual-web host (``App.is_web``) gets the break; a native terminal paints the
+raw URL, so a URL copied off the screen is clean. The widget-level math pins
+below therefore run on a web-mode host. Because the break is a
 zero-cell character, all editing operations (cursor left/right, Home/End,
 selection, backspace/delete) run on the raw value and are correct by
 construction; the only raw->display mapping lives in
@@ -105,13 +108,23 @@ VALUE = "https://api.example.com/v1"
 
 
 class _URLInputTestApp(App[None]):
+    """A native terminal host: Textual's headless driver is not web."""
+
     def compose(self):
         yield SettingsURLInput(value=VALUE, id="url")
 
 
+class _WebURLInputTestApp(_URLInputTestApp):
+    """A textual-web host, the only one that autolinks URLs."""
+
+    @property
+    def is_web(self) -> bool:
+        return True
+
+
 @pytest.fixture
 async def app_and_pilot():
-    app = _URLInputTestApp()
+    app = _WebURLInputTestApp()
     async with app.run_test(size=(60, 5)) as pilot:
         yield app, pilot
 
@@ -132,7 +145,30 @@ def _freeze_cursor_blink(widget: SettingsURLInput) -> None:
 
 
 @pytest.mark.asyncio
+async def test_native_terminal_renders_url_without_zero_width_break():
+    """TASK-33001.7 AC#3: a native terminal paints exactly the stored URL."""
+    app = _URLInputTestApp()
+    async with app.run_test(size=(60, 5)) as pilot:
+        widget = app.query_one("#url", SettingsURLInput)
+        assert app.is_web is False
+        assert widget.render_line(0).text.rstrip() == VALUE
+
+        # Focused and fully selected (select_on_focus), still no break, and
+        # the selection highlight covers the raw characters one-for-one.
+        widget.focus()
+        _freeze_cursor_blink(widget)
+        await pilot.pause()
+        widget.selection = Selection(0, 5)
+        await pilot.pause()
+        widget._cursor_visible = True
+        strip = widget.render_line(0)
+        assert BREAK not in strip.text
+        assert [char for _index, char in _styled_cells(strip)] == list("https:")
+
+
+@pytest.mark.asyncio
 async def test_rendered_text_matches_display_without_visual_change(app_and_pilot):
+    """Under textual-web the break is painted, invisibly and zero cells wide."""
     app, pilot = app_and_pilot
     widget = app.query_one("#url", SettingsURLInput)
     await pilot.pause()

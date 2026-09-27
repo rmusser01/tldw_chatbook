@@ -151,6 +151,7 @@ idx_keywords_last_modified	pre-convention	plan never captured without stats
 idx_keywords_merge_parent_uuid	pre-convention	plan never captured without stats
 idx_keywords_prev_version	pre-convention	plan never captured without stats
 idx_keywords_uuid	pre-convention	plan never captured without stats
+idx_local_prompt_drafts_updated	plan-pinned	Tests/Prompt_Management/test_prompt_draft_shelf.py
 idx_local_watchlist_runs_batch	pre-convention	plan never captured without stats
 idx_media_active_ingested	plan-pinned	Tests/DB/test_media_db_schema_v9.py
 idx_media_active_recent	plan-pinned	Tests/DB/test_media_db_schema_v9.py

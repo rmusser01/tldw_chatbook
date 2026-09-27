@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityLease,
 )
@@ -17,24 +18,8 @@ from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 
 
 QUICK_MODEL_DEFAULT_FIELDS = frozenset({"temperature", "streaming"})
-FULL_MODEL_DEFAULT_FIELDS = frozenset(
-    {
-        "temperature",
-        "top_p",
-        "min_p",
-        "top_k",
-        "max_tokens",
-        "seed",
-        "presence_penalty",
-        "frequency_penalty",
-        "reasoning_effort",
-        "reasoning_summary",
-        "verbosity",
-        "thinking_effort",
-        "thinking_budget_tokens",
-        "streaming",
-    }
-)
+# One field list: the fields the request-key table maps (TASK-33001.2).
+FULL_MODEL_DEFAULT_FIELDS = frozenset(GENERATION_FIELD_REQUEST_KEYS)
 
 
 class ConsoleSettingsAction(str, Enum):

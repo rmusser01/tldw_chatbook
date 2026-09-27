@@ -142,14 +142,14 @@ profile. Batch requests are accepted only with `2025-03-26`; `2025-11-25` and
 The retired `ingest_media` placeholder is absent. Use Library Import for
 persistent URL or file ingestion.
 
-- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
+- **Built-in tools (11):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `create_character`, `update_character`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (21):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`
 
 ### Standalone behavior and controls
 
-All 24 Library tools are excluded from the standalone stdio catalog. They
+All 21 Library tools are excluded from the standalone stdio catalog. They
 remain available only through the app's gated, logged direct Library execution
 path, whose raw in-app `tools/call` route is refused.
 
@@ -298,6 +298,16 @@ Create a new note.
 - **Returns**: Note ID and creation details
 
 #### `list_characters`
+
+The roster includes each card's optimistic-lock `version`. ADR-183 adds
+`create_character(name, fields)` and
+`update_character(character_id, expected_version, fields)` to both runtimes.
+They delegate text/JSON authoring to `LocalCharacterPersonaService` and return
+id/name/version receipts or structured errors. Code-owned mutation tags are
+enforced with and without a catalog snapshot; standalone writes require a fresh
+operator grant from the shared permission store. See
+[ADR-183](../../backlog/decisions/183-mcp-character-card-authoring.md) for the
+conflict, field, and permission contract.
 List all available characters.
 - **Returns**: List of character profiles with basic info
 

@@ -165,6 +165,18 @@ async def test_concurrent_scrapes_do_not_use_the_session_simultaneously(monkeypa
     # The egress policy rejects the synthetic host before the session is ever
     # reached; this test is about session concurrency, not egress.
     monkeypatch.setattr(auth_module, "check_url_or_raise", lambda *a, **k: None)
+    # `guarded_fetch_requests` -- the branch production GETs now take --
+    # runs its own per-hop check inside `Utils.egress`, so that module's
+    # resolver and config read have to be stubbed as well (same idiom as
+    # `Tests/Utils/test_egress.py`'s autouse fixture).
+    from tldw_chatbook.Utils import egress as egress_module
+
+    monkeypatch.setattr(egress_module, "_resolve", lambda host: ["93.184.216.34"])
+    monkeypatch.setattr(
+        egress_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
 
     auth = ConfluenceAuth("https://example.invalid/wiki")
     auth._auth_configured = True
@@ -172,7 +184,11 @@ async def test_concurrent_scrapes_do_not_use_the_session_simultaneously(monkeypa
     overlap = {"max": 0, "cur": 0}
     guard = threading.Lock()
 
-    def recording_request(method, url, **kwargs):
+    # TASK-32894: production GETs now route through `guarded_fetch_requests`,
+    # which drives the session via `prepare_request`/`send` rather than
+    # `.request` -- so `send` is the seam this test has to record, or it
+    # measures a method the shipped path no longer calls.
+    def recording_send(prepared, **kwargs):
         with guard:
             overlap["cur"] += 1
             overlap["max"] = max(overlap["max"], overlap["cur"])
@@ -180,6 +196,8 @@ async def test_concurrent_scrapes_do_not_use_the_session_simultaneously(monkeypa
             threading.Event().wait(0.02)  # widen the window
             response = MagicMock()
             response.status_code = 200
+            response.is_redirect = False
+            response.iter_content.return_value = [b"{}"]
             response.json.return_value = {
                 "id": "1", "title": "T",
                 "body": {"storage": {"value": "<p>x</p>"}},
@@ -193,7 +211,7 @@ async def test_concurrent_scrapes_do_not_use_the_session_simultaneously(monkeypa
             with guard:
                 overlap["cur"] -= 1
 
-    auth.session.request = recording_request  # type: ignore[assignment]
+    auth.session.send = recording_send  # type: ignore[assignment]
     scraper = ConfluenceScraper(auth)
 
     await asyncio.gather(*(scraper.scrape_page_by_id(str(i)) for i in range(6)))

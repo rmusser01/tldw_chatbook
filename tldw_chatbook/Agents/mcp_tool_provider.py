@@ -131,23 +131,10 @@ _FAIL_CLOSED_STATE = EffectiveToolState(state="ask", origin="global_default")
 
 #: Qodo #1 (task-32278): names of ``builtin:tldw_chatbook`` tools that WRITE.
 #:
-#: Every built-in ``HubTool`` carries ``tags=()`` unconditionally
-#: (``hub_tool_catalog.builtin_tools_from_inventory`` hard-codes it) and the
-#: local MCP manifest it is built from carries no risk metadata at all --
-#: ``MCP/server.py`` synthesizes each entry from the tool function's AST
-#: signature. That empty tag tuple is load-bearing, not an oversight:
-#: ``permission_store.BY_KEY_HASH_FREE_SERVER_KEYS`` exempts this server key
-#: from ``resolve_effective_state_by_key()``'s "any allow collapses to ask"
-#: rule, which is safe ONLY while there is no tag for a floor to catch (see
-#: that constant's comment and the tripwire test
-#: ``test_builtin_tools_never_carry_risk_tags_even_when_offered_them``).
-#:
-#: So the card's read-vs-write wording is recovered HERE, from the one place
-#: the write fact is actually declared -- the Library descriptor table's
-#: ``mutates`` flag, plus the one hand-written note tool the local MCP server
-#: registers directly. This feeds ``effects`` only; nothing here reaches the
-#: permission layer, so no built-in's risk floor, argument rules, or
-#: Permissions-matrix row changes.
+#: Most legacy built-ins have no risk tags. Their effect wording comes from
+#: Library descriptors and the legacy note writer below. ADR-183 character
+#: writers have code-owned mutates tags, so approval_effects_for_tool derives
+#: their effects directly from those tags and the permission layer floors them.
 _MUTATING_BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
     {name for name, d in LIBRARY_TOOL_DESCRIPTORS.items() if d.mutates}
     | {"create_note"}

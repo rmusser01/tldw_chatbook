@@ -69,7 +69,6 @@ For Personal Context internals and extension work, see [Personal Context Profile
     *   `Summarization_General_Lib.py`, `Local_Summarization_Lib.py`: Libraries for text summarization functionalities.
 
 *   **`tldw_chatbook/Prompt_Management/`**:
-    *   `Prompt_Engineering.py`: Utilities and functions to help construct and refine prompts.
     *   `Prompts_Interop.py`: Manages the interaction between different prompt sources or formats.
 
 ### Configuration:

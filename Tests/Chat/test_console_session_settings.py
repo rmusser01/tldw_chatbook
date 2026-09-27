@@ -118,9 +118,59 @@ def test_readiness_does_not_import_gateway_or_config_runtime_modules(
 
 
 def test_settings_execution_provider_keys_match_chat_api_handlers() -> None:
-    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    """Console settings keys are identity spellings of the handler map.
 
-    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS == frozenset(API_CALL_HANDLERS)
+    b03c4e61df pinned set equality when every handler key was also a
+    Console-settings key. ADR-179 engine keys ended that 1:1 (Phase 1
+    databricks first; red since 37ecb890e2): ``custom-hosted`` is an
+    execution-only spelling -- identity surfaces keep the
+    ``custom``/``custom-openai-api`` spellings per ADR-179 Phase 2 Task 6
+    decision 1 -- and the cloud engine presets (databricks, together,
+    fireworks, cerebras) were temporarily absent from the Console settings
+    modal's support set (TASK-32918 pinned that gap; TASK-32919 closed it,
+    so the gap set below is now empty and must stay empty: engine presets
+    join the settings set the moment they become dispatchable).
+
+    The invariant therefore compares identity keys, not raw key sets:
+
+    1. every settings key is a real handler key (no orphaned spellings);
+    2. every settings key resolves to a supported identity through the
+       handler map (no spelling drift between the two sets);
+    3. every handler key is covered by the settings set, an explicit
+       engine-execution-only spelling, or the explicit Console-settings
+       gap below -- new handlers must join one side or the other
+       deliberately, so drift can never accumulate silently again.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+
+    handler_keys = frozenset(API_CALL_HANDLERS)
+    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS <= handler_keys
+    for settings_key in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS:
+        identity = resolve_console_provider_identity(
+            settings_key, handler_keys=handler_keys
+        )
+        assert identity.is_supported, settings_key
+
+    engine_execution_only_keys = frozenset({"custom-hosted"})
+    # TASK-32919: empty by design. New engine presets must land in
+    # CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS together with their dispatch
+    # entry; adding a key here again means the modal offers a "(WIP)" label
+    # for a provider the gateway can already send.
+    console_settings_gap = frozenset()
+    # Both exclusion lists must name real handlers (no typo'd gap entries).
+    assert (
+        engine_execution_only_keys | console_settings_gap
+    ) <= handler_keys
+    uncovered = (
+        handler_keys
+        - CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        - engine_execution_only_keys
+        - console_settings_gap
+    )
+    assert uncovered == frozenset(), sorted(uncovered)
 
 
 def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
@@ -256,6 +306,112 @@ def test_explicit_provider_alias_is_canonicalized_for_read_only_resolution() -> 
     assert config["chat_defaults"]["provider"] == "llama_cpp"
 
 
+def test_chat_defaults_model_does_not_follow_an_explicit_other_provider() -> None:
+    """TASK-33001.1: chat_defaults.model belongs to chat_defaults.provider.
+
+    An explicit provider that is not the chat-defaults provider takes its own
+    configured model, never the global default model (shipped OpenAI pair).
+    """
+    config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {"anthropic": {"model": "claude-sonnet-5"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider="anthropic",
+    )
+
+    assert effective.provider == "anthropic"
+    assert effective.model == "claude-sonnet-5"
+    assert effective.model_source == "provider_fallback"
+
+
+def test_explicit_other_provider_without_a_model_borrows_no_model() -> None:
+    config = {"chat_defaults": {"provider": "openai", "model": "gpt-5.6-terra"}}
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider="moonshot",
+    )
+
+    assert effective.provider == "moonshot"
+    assert effective.model is None
+    assert effective.model_source == "none"
+
+
+@pytest.mark.parametrize(
+    ("defaults_provider", "explicit_provider"),
+    [
+        ("openai", "OpenAI"),
+        ("OpenAI-Compatible", "openai"),
+        ("custom-ep:paid", "custom-ep:paid"),
+        ("custom-ep:paid", "custom_ep:paid"),
+    ],
+    ids=["case", "legacy-alias", "registry-id", "registry-config-key-spelling"],
+)
+def test_chat_defaults_model_follows_its_own_provider_under_canonical_identity(
+    defaults_provider: str, explicit_provider: str
+) -> None:
+    config = {
+        **_registry_config(),
+        "chat_defaults": {"provider": defaults_provider, "model": "chosen-model"},
+        "api_settings": {"openai": {"model": "legacy-model"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider=explicit_provider,
+    )
+
+    assert effective.model == "chosen-model"
+    assert effective.model_source == "chat_defaults"
+
+
+def test_new_chats_resolve_the_chat_defaults_pair() -> None:
+    """TASK-33001.1 AC#5: the startup chat and Ctrl+T keep their pair.
+
+    Drives the real ``ConsoleSessionController._default_console_session_settings``
+    (Ctrl+T) fed by the real ``ChatScreen._effective_console_provider_model``,
+    and the real blank-chat builder (startup).
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        blank_console_session_settings,
+    )
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {
+            "openai": {"model": "legacy-model"},
+            "anthropic": {"model": "claude-sonnet-5"},
+        },
+    }
+
+    def ctrl_t(control_provider, control_model):
+        screen = SimpleNamespace(
+            _persisted_chat_defaults=lambda: config["chat_defaults"],
+            _console_control_provider=control_provider,
+            _console_control_model=control_model,
+        )
+        session = SimpleNamespace(
+            _effective_console_provider_model=lambda: (
+                ChatScreen._effective_console_provider_model(screen)
+            ),
+            _provider_readiness_app_config=lambda: config,
+        )
+        settings = ConsoleSessionController._default_console_session_settings(session)
+        return settings.provider, settings.model
+
+    startup = blank_console_session_settings(config)
+    assert (startup.provider, startup.model) == ("openai", "gpt-5.6-terra")
+    assert ctrl_t(None, None) == ("openai", "gpt-5.6-terra")
+    assert ctrl_t("anthropic", "claude-opus-5") == ("anthropic", "claude-opus-5")
+
+
 def test_effective_chat_configuration_is_frozen_and_slotted() -> None:
     effective = session_settings.resolve_effective_chat_configuration(
         {"chat_defaults": {"provider": "openai", "model": "gpt-test"}}
@@ -300,8 +456,10 @@ def test_qwencloud_default_settings_use_canonical_fields_with_alias_fallbacks() 
 def test_qwencloud_public_builders_fail_closed_for_malformed_canonical_settings() -> (
     None
 ):
+    # TASK-33001.1: chat_defaults.model applies only to chat_defaults.provider,
+    # so the safe default names its provider.
     config = {
-        "chat_defaults": {"model": "safe-default"},
+        "chat_defaults": {"provider": "qwencloud", "model": "safe-default"},
         "api_settings": {
             "qwencloud": ["not", "a", "table"],
             "QwenCloud": {
@@ -327,8 +485,9 @@ def test_qwencloud_public_builders_fail_closed_for_malformed_canonical_settings(
 
 
 def test_qwencloud_public_builders_fail_closed_for_malformed_alias_only() -> None:
+    # TASK-33001.1: the safe default names its provider (see above).
     config = {
-        "chat_defaults": {"model": "safe-default"},
+        "chat_defaults": {"provider": "qwencloud", "model": "safe-default"},
         "api_settings": {"QwenCloud": "not-a-table"},
     }
 
@@ -586,6 +745,160 @@ def test_provider_options_label_configured_unsupported_providers_as_wip() -> Non
 
     assert options_by_value["local_onnx"].label == "local_onnx (WIP)"
     assert options_by_value["local_ollama"].label == "local_ollama"
+
+
+def test_engine_cloud_providers_are_first_class_console_provider_options() -> None:
+    """ADR-179 presets are selectable without configuring them first.
+
+    The modal's provider picker is fed by ``build_console_provider_options``:
+    a key outside the settings support set only appears once configured, and
+    then with a "(WIP)" label. databricks/together/fireworks/cerebras are
+    dispatchable, so they must be offered unconfigured and WIP-free, sorted
+    into the cloud group ahead of every local provider.
+    """
+    options = build_console_provider_options({"llama_cpp": ["local-model"]})
+    options_by_value = {option.value: option for option in options}
+    option_values = [option.value for option in options]
+
+    for engine_key in ("databricks", "together", "fireworks", "cerebras"):
+        assert engine_key in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        assert engine_key in options_by_value
+        assert "(WIP)" not in options_by_value[engine_key].label
+    # Cloud-group membership: all four sort ahead of the local llama.cpp.
+    for engine_key in ("databricks", "together", "fireworks", "cerebras"):
+        assert option_values.index(engine_key) < option_values.index("llama_cpp")
+
+
+def test_engine_cloud_providers_render_shared_catalog_display_names() -> None:
+    """Modal/provider-picker labels relabel through the shared catalog.
+
+    ``ConsoleSettingsModal._provider_select_options`` relabels every option
+    value with ``provider_display_name``; unmapped keys would render as raw
+    config keys, so the shared catalog (task-180's Settings/Wizard/Console
+    label source) must carry the four display names.
+    """
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+    assert provider_display_name("databricks") == "Databricks"
+    assert provider_display_name("together") == "Together"
+    assert provider_display_name("fireworks") == "Fireworks"
+    assert provider_display_name("cerebras") == "Cerebras"
+
+
+@pytest.mark.parametrize(
+    "provider_key,env_var",
+    [
+        ("databricks", "DATABRICKS_TOKEN"),
+        ("together", "TOGETHER_API_KEY"),
+        ("fireworks", "FIREWORKS_API_KEY"),
+        ("cerebras", "CEREBRAS_API_KEY"),
+    ],
+)
+def test_engine_cloud_readiness_is_configuration_blocked_not_unsupported(
+    provider_key: str, env_var: str
+) -> None:
+    """Selecting an engine preset blocks on configuration, never "Unknown".
+
+    With the keys in the settings support set, the readiness gate reports a
+    concrete, actionable credential blocker naming the provider's env var
+    instead of the pre-TASK-32919 ``provider_unsupported`` dead end, and the
+    shipped ``[api_settings]`` tables (api_key_env_var, and api_base_url for
+    the inference clouds) are enough for the credential to be the only
+    missing piece.
+    """
+    config = {
+        "api_settings": {
+            provider_key: {"api_key_env_var": env_var},
+        }
+    }
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider_key, model="some-model"),
+        app_config=config,
+        environ={},
+    )
+
+    assert readiness.blocker == "credential_missing"
+    assert env_var in readiness.detail
+    assert readiness.recovery_action == "configure_credential"
+
+
+def test_databricks_readiness_names_workspace_url_once_credentialed() -> None:
+    """A resolved Databricks token alone still blocks on the workspace URL.
+
+    provider_readiness requires api_base_url for databricks (per-account
+    workspace host, no shipped default); the settings readiness must surface
+    that copy -- and once the workspace URL joins the config the session is
+    send-capable (model picked), never "provider_unsupported".
+    """
+    base_config = {
+        "api_settings": {
+            "databricks": {
+                "api_key_env_var": "DATABRICKS_TOKEN",
+                "api_key": "dapi-stored-secret-canary",
+            }
+        }
+    }
+
+    without_url = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="databricks", model="databricks-mixtral"),
+        app_config=base_config,
+        environ={},
+    )
+    assert without_url.blocker != "provider_unsupported"
+    assert "workspace" in without_url.detail
+
+    with_url = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="databricks", model="databricks-mixtral"),
+        app_config={
+            "api_settings": {
+                "databricks": {
+                    **base_config["api_settings"]["databricks"],
+                    "api_base_url": "https://adb-1234567890123456.7.azuredatabricks.net",
+                }
+            }
+        },
+        environ={},
+    )
+    assert with_url.blocker is None
+    assert with_url.native_send_supported is True
+
+
+@pytest.mark.parametrize(
+    "provider_key,default_base",
+    [
+        ("together", "https://api.together.xyz/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+        ("cerebras", "https://api.cerebras.ai/v1"),
+    ],
+)
+def test_inference_cloud_readiness_is_ready_with_key_and_shipped_default(
+    provider_key: str, default_base: str
+) -> None:
+    """Key + the shipped default api_base_url is a send-capable session.
+
+    The inference clouds ship ``api_base_url`` in their default
+    ``[api_settings]`` tables (provider_registry records carry the same
+    default_base_url), so configuring the credential alone reaches Ready.
+    """
+    env_var = f"{provider_key.upper()}_API_KEY"
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider_key, model="served-model"),
+        app_config={
+            "api_settings": {
+                provider_key: {
+                    "api_key_env_var": env_var,
+                    "api_base_url": default_base,
+                    "api_key": "stored-secret-canary",
+                }
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.blocker is None
+    assert readiness.native_send_supported is True
+    assert readiness.operability == "ready_to_send"
 
 
 def test_validation_rejects_out_of_range_temperature() -> None:
@@ -2445,6 +2758,287 @@ async def _request_settings_close(pilot, source: str) -> None:
     else:
         await pilot.click(offset=(0, 0))
     await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_provider_switch_takes_the_target_providers_own_model() -> (
+    None
+):
+    """TASK-33001.1: the Conversation settings modal's provider switch runs the
+    REAL controller rebase and fills the target provider's own model -- never
+    the chat-defaults model that belongs to another provider."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    def real_rebase(state, **kwargs):
+        return ConsoleChatController.rebase_console_settings_draft(
+            object(), state, **kwargs
+        )
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
+    estimate = ConsoleSettingsContextEstimate(
+        used_tokens=None, token_limit=None, label="unavailable"
+    )
+    modal = ConsoleSettingsModal(
+        settings=settings,
+        app_config={
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+                "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
+            },
+        },
+        # The configured model is NOT the catalog's first entry, so a
+        # snap-to-first-catalog-model regression cannot pass.
+        providers_models={
+            "llama_cpp": ["local-gguf"],
+            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
+        },
+        context_estimate=estimate,
+        can_save=True,
+        draft_rebaser=real_rebase,
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        await pilot.pause()
+
+        assert modal._draft.settings.provider == "anthropic"
+        assert modal._draft.settings.model == "claude-sonnet-5"
+
+
+@pytest.mark.asyncio
+async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_model() -> (
+    None
+):
+    """TASK-33001.1: the mounted Alt+M popover, wired as chat_screen wires it.
+
+    The REAL controller rebase and the REAL ``ChatScreen._console_default_readiness``
+    drive a provider switch under the shipped OpenAI/gpt-5.6-terra defaults.
+    llama.cpp -> Anthropic fills Anthropic's own model; Anthropic -> Moonshot
+    (a key, no configured model, a non-empty catalog) leaves the model empty and
+    the popover reads as needing one instead of borrowing any model.
+    """
+    from types import SimpleNamespace
+
+    from textual.widgets import Input
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import (
+        ConsoleSettingsDraftState,
+        ConsoleSettingsFieldDraft,
+        ConsoleSettingsFieldProvenance,
+        ConsoleSettingsOrigin,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_model_popover import (
+        ConsoleModelPopover,
+    )
+    from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+
+    app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8080", "model": "local-gguf"},
+            "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
+            "moonshot": {"api_key": "sk-test-moonshot"},
+        },
+    }
+    screen = SimpleNamespace(_provider_readiness_app_config=lambda: app_config)
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
+    initial_draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+    popover = ConsoleModelPopover(
+        origin=ConsoleSettingsOrigin("session-a", None, 0),
+        app_config=app_config,
+        initial_draft=initial_draft,
+        providers_models={
+            "llama_cpp": ["local-gguf"],
+            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
+            "moonshot": ["kimi-k3"],
+        },
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=lambda state, **kwargs: (
+            ConsoleChatController.rebase_console_settings_draft(
+                object(), state, **kwargs
+            )
+        ),
+        live_committer=lambda _submission: pytest.fail("nothing may be applied"),
+        default_readiness_resolver=lambda provider, model: (
+            ChatScreen._console_default_readiness(screen, provider, model)
+        ),
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(popover, callback=app.capture)
+        await pilot.pause()
+        picker = popover.query_one("#console-popover-model-search", ModelSearchPicker)
+        picker_input = picker.query_one("#model-search-picker-input", Input)
+        provider_select = popover.query_one("#console-popover-provider", Select)
+
+        provider_select.value = "anthropic"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert popover._draft.settings.provider == "anthropic"
+        assert popover._draft.settings.model == "claude-sonnet-5"
+        assert picker.value == "claude-sonnet-5"
+        assert picker_input.value == "claude-sonnet-5"
+
+        provider_select.value = "moonshot"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # AC#3: no model, and nothing borrowed -- not gpt-5.6-terra, not
+        # Anthropic's model, not the first catalog entry.
+        assert popover._draft.settings.provider == "moonshot"
+        assert popover._draft.settings.model is None
+        assert picker.value is None
+        assert picker_input.value == ""
+        assert picker_input.placeholder == "Choose or search models"
+        target = popover.query_one("#console-popover-defaults-target", Static)
+        assert str(target.renderable) == "Defaults target: moonshot/No model"
+        block = popover.query_one("#console-popover-new-chat-default-block", Static)
+        assert str(block.renderable) == "Unavailable: choose a model first."
+        assert popover.query_one(
+            "#console-popover-make-new-chat-default", Button
+        ).disabled
+
+        popover.query_one("#console-popover-apply", Button).press()
+        await pilot.pause()
+
+        error = popover.query_one("#console-popover-error", Static)
+        assert error.display is True
+        assert str(error.renderable) == "Choose a model."
+        assert app.results == []
+        assert app.screen is popover
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() -> None:
+    """TASK-33001.2 AC#10: the modal still renders Min P for Anthropic.
+
+    Editing it after a real provider switch raises nothing and stays on the
+    conversation draft, but the real model-default writer leaves it out and
+    the real send builder (``_chat_api_kwargs_from_prepared``) and
+    ``chat_api_call`` projection never send it.
+    """
+    from textual.widgets import Input
+
+    from Tests.Chat.test_console_provider_support import production_send_kwargs
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+    from tldw_chatbook.Chat.console_settings_defaults import (
+        _build_locked_default_mutation,
+        build_console_default_intent,
+    )
+
+    def real_rebase(state, **kwargs):
+        return ConsoleChatController.rebase_console_settings_draft(
+            object(), state, **kwargs
+        )
+
+    model = "claude-sonnet-4-5"
+    app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-gguf"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
+            "anthropic": {
+                "api_key": "test-key",
+                "model": model,
+                "model_defaults": {model: {"min_p": 0.05}},
+            },
+        },
+    }
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="local-gguf"),
+        app_config=app_config,
+        providers_models={"llama_cpp": ["local-gguf"], "anthropic": [model]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="unavailable"
+        ),
+        can_save=True,
+        draft_rebaser=real_rebase,
+    )
+    app = _SettingsCloseHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        await pilot.pause()
+        assert "min_p" not in {field.name for field in modal._draft.field_drafts}
+
+        modal.query_one("#console-settings-min-p", Input).value = "0.13"
+        await pilot.pause()
+        submission = modal._submission_for_action(
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+        )
+
+    assert submission is not None
+    draft = submission.draft
+    assert (draft.settings.provider, draft.settings.model) == ("anthropic", model)
+    assert draft.settings.min_p == 0.13
+
+    intent = build_console_default_intent(
+        generation=1,
+        action=submission.action,
+        provider_config_key="anthropic",
+        literal_model_id=model,
+        field_drafts=draft.field_drafts,
+        field_mask=submission.default_field_mask,
+        endpoint=None,
+    )
+    assert intent.values["min_p"] == 0.13
+    mutation = _build_locked_default_mutation(
+        intent,
+        "anthropic",
+        model,
+        config_module.AtomicLiteralMutationSnapshot(
+            generation=1, raw_values=app_config, effective_values=app_config
+        ),
+    )
+    profile_path = ("api_settings", "anthropic", "model_defaults", model)
+    assert "min_p" not in mutation.section_values[profile_path]
+    assert "min_p" not in mutation.delete_keys[profile_path]
+
+    resolution = ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="",
+        model=model,
+        ready=True,
+        execution_key="anthropic",
+        api_key="test-key",
+        min_p=draft.settings.min_p,
+        temperature=draft.settings.temperature,
+    )
+    kwargs = production_send_kwargs(resolution)
+    assert kwargs["minp"] == 0.13
+    projected = project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+    assert 0.13 not in projected.values()
 
 
 @pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])

@@ -17,10 +17,71 @@
 #   text-error, block-cursor-blurred-background, input-selection-background,
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
+import re
 from pathlib import Path
 
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
+
+
+#: Longest slice of untrusted file text (a key or value) quoted in a message.
+PREVIEW_CHARS = 40
+
+#: The picker's id for an unreadable saved file: ``unreadable:<stem>``.
+UNREADABLE_ID_PREFIX = "unreadable:"
+
+#: Qodo 4104047299 / 4109320402: prefixes no saved theme may use. Apply
+#: registers the working palette as ``custom_<name>`` (process-only), and the
+#: picker lists a broken file as ``unreadable:<stem>``; a saved theme with
+#: either prefix would be hidden by, or hide, those.
+RESERVED_THEME_PREFIXES = ("custom_", UNREADABLE_ID_PREFIX)
+RESERVED_NAME_RULE = "names starting with 'custom_' or 'unreadable:' are reserved"
+
+
+def is_reserved_theme_name(name: str) -> bool:
+    """Whether ``name`` starts with a prefix the app keeps for itself.
+
+    Args:
+        name: A theme name, already stripped.
+
+    Returns:
+        True for ``custom_...`` and ``unreadable:...`` names.
+    """
+    return name.startswith(RESERVED_THEME_PREFIXES)
+
+
+_HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})")
+
+
+def is_hex_colour(value: object) -> bool:
+    """Whether ``value`` is a colour a theme file may hold (R41).
+
+    ``#RGB``, ``#RRGGBB`` and ``#RRGGBBAA`` are the only colours a theme file
+    or the editor's colour fields accept; ``#RRGGBBAA`` is what the editor
+    writes for a translucent colour (``Color.hex``).
+
+    Args:
+        value: Any parsed TOML value.
+
+    Returns:
+        True only for a ``str`` in one of those three forms.
+    """
+    return isinstance(value, str) and _HEX_COLOUR.fullmatch(value) is not None
+
+
+#: The base colours a theme file's ``[colors]`` may set (R32).
+THEME_COLOUR_KEYS = (
+    "primary",
+    "secondary",
+    "accent",
+    "warning",
+    "error",
+    "success",
+    "background",
+    "surface",
+    "panel",
+    "foreground",
+)
 
 
 # Helper to convert string dicts to Theme objects
@@ -30,36 +91,52 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
         if key == "dark":
             theme_args[key] = bool(value)
         # All other color keys are assumed to be color strings
-        elif key in [
-            "primary",
-            "secondary",
-            "accent",
-            "warning",
-            "error",
-            "success",
-            "background",
-            "surface",
-            "panel",
-            "foreground",
-        ]:
+        elif key in THEME_COLOUR_KEYS:
             try:
                 # Ensure value is a string before parsing, though it should be from the dict
                 theme_args[key] = Color.parse(str(value))
-            except Exception as e:
-                print(
-                    f"Warning: Could not parse color '{value}' for key '{key}' in theme '{name}'. Error: {e}"
-                )
-                # Fallback to a default color or skip if parsing fails
-                # For example, Color.parse("red") or continue
+            except Exception:  # noqa: BLE001 - skipped; file data is hex-checked first (R41)
+                from loguru import logger
+
+                logger.debug(f"Theme {printable(name)!r}: skipping unparseable colour {key!r}")
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
     return ensure_readable_text_hues(Theme(**theme_args))
 
 
-#: Generated text tints the Console rail paints ordinary text with
-#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
-_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+#: Generated text tints the app paints ordinary text with (TASK-31429:
+#: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent). TASK-32947
+#: adds the three status tints: the Settings > Theme card labels Save / Reset /
+#: Delete with them, and the only other consumers are Textual's own text uses
+#: (syntax highlighting, flat buttons, `$ds-status-error-readable`), so pinning
+#: them can only raise contrast -- 21 themes failed AA on text-success, 27 on
+#: text-warning (textual-light among them), 5 built-ins on text-error.
+_READABLE_TEXT_HUES = (
+    "text-primary",
+    "text-accent",
+    "text-success",
+    "text-warning",
+    "text-error",
+)
 _AA_RATIO = 4.5
+
+#: Review finding #3: ensure_readable_text_hues records the keys it wrote on
+#: the Theme under this attribute. A key a theme set by hand (22 shipped
+#: themes set text-error) is not in it, so the editor keeps that one.
+_PINNED_ATTR = "_tldw_pinned_text_hues"
+
+
+def pinned_text_hues(theme: Theme) -> set[str]:
+    """The readable text-* keys the AA guard generated for ``theme``.
+
+    Args:
+        theme: A theme that may have passed through
+            ``ensure_readable_text_hues``.
+
+    Returns:
+        The generated ``text-*`` variable names; empty when none were pinned.
+    """
+    return set(getattr(theme, _PINNED_ATTR, ()))
 
 
 def _relative_luminance(color: Color) -> float:
@@ -81,7 +158,7 @@ def _contrast_ratio(a: Color, b: Color) -> float:
 
 
 def ensure_readable_text_hues(theme: Theme) -> Theme:
-    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+    """Pin the readable ``text-*`` tints (_READABLE_TEXT_HUES) to AA in place.
 
     Textual derives both as a 66% tint of the theme's contrast text toward
     the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
@@ -109,12 +186,14 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
     pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
     variables = dict(theme.variables or {})
+    pinned = set(getattr(theme, _PINNED_ATTR, ()))
     for token in _READABLE_TEXT_HUES:
         if token in variables:
             continue
         color = Color.parse(generated[token])
         if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
             continue
+        pinned.add(token)
         for step in range(1, 21):
             candidate = color.blend(pole, step / 20)
             if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
@@ -123,16 +202,147 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         else:
             variables[token] = pole.hex
     theme.variables = variables
+    setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme
+
+
+_VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
+_TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
+_ALPHA_SUFFIX = re.compile(r"(.+) (\d{1,3})%")
+
+
+def _is_safe_variable_value(value: object) -> bool:
+    # Color.parse accepts "#fff\n"; nothing non-printable is a CSS value.
+    if not isinstance(value, str) or not value or not value.isprintable():
+        return False
+    if all(word in _TEXT_STYLES for word in value.split(" ")):
+        return True
+    match = _ALPHA_SUFFIX.fullmatch(value)
+    if match and match.group(1) == "auto":
+        return True
+    try:
+        Color.parse(match.group(1) if match else value)
+    except Exception:  # noqa: BLE001 - anything unparseable is dropped
+        return False
+    return True
+
+
+def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
+    """Keep only ``[variables]`` entries Textual's CSS tokenizer can take.
+
+    Review finding #1: Textual tokenizes theme variables on the CSS refresh
+    AFTER ``app.theme = ...`` returns, so a value such as
+    ``"red; } Screen { display: none"`` or a bare number escapes every
+    try/except and kills the app (every launch, if it is the default theme).
+    Kept: lowercase-hyphen names whose value is a colour (optionally
+    ``" NN%"``), ``"auto NN%"``, or space-separated text-style keywords.
+
+    Args:
+        variables: The raw ``[variables]`` table from a theme file.
+        source: The file name, for the warning (never a full user path).
+
+    Returns:
+        The safe entries; every dropped one is logged as a warning.
+    """
+    from loguru import logger
+
+    if not isinstance(variables, dict):
+        return {}
+    safe: dict[str, str] = {}
+    for key, value in variables.items():
+        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(value):
+            safe[key] = value
+        else:
+            # Name only (truncated), never the value: file content must not
+            # reach the persistent log verbatim.
+            logger.warning(f"Theme {printable(source)}: dropping invalid variable {str(key)[:PREVIEW_CHARS]!r}")
+    return safe
+
+
+def printable(text: object) -> str:
+    """``text`` with every non-printable character replaced by ``?`` (R39).
+
+    TOML ``\\u001b`` escapes yield real control characters; echoed into a
+    notice, card or title they reach the terminal (an OSC 52 clipboard
+    write, a reset). ``escape_markup`` does not remove them.
+    """
+    return "".join(c if c.isprintable() else "?" for c in str(text))
+
+
+_DARK_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def theme_file_dark(value: object) -> bool:
+    """A theme file's ``[theme].dark``: R31, ``dark = "false"`` is light.
+
+    Args:
+        value: The raw ``[theme].dark`` value.
+
+    Returns:
+        A real bool as given; False for the strings false/0/no/off (any
+        case, surrounding space ignored); True for anything else, the
+        default.
+    """
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() not in _DARK_FALSE
+
+
+def theme_from_file_data(data: dict, fallback_name: str, file_label: str) -> Theme:
+    """Build a Theme from one saved theme file's parsed TOML.
+
+    Args:
+        data: The parsed file (``[theme] name/dark``, ``[colors]``, optional
+            ``[variables]``).
+        fallback_name: The name used when ``[theme].name`` is missing (the
+            file stem).
+        file_label: The file name, for the variable sanitiser's log line.
+
+    Returns:
+        The theme, as the startup loader registers it.
+
+    Raises:
+        ValueError: ``[colors]`` holds a key that is not a base colour or a
+            value that is not ``#RGB``/``#RRGGBB``/``#RRGGBBAA`` (R41), the name has
+            control characters (R39), or the name is reserved
+            (``is_reserved_theme_name``).
+            R32: ``variables``/``dark`` are real ``Theme`` arguments, so they
+            used to pass and then crash ``to_color_system().generate()``.
+    """
+    meta = data.get("theme", {}) or {}
+    raw_name = str(meta.get("name") or fallback_name)
+    if not raw_name.isprintable():
+        raise ValueError("name has control characters")  # R39
+    name = raw_name.strip() or fallback_name
+    if is_reserved_theme_name(name):
+        raise ValueError("reserved name")
+    colors = dict(data.get("colors", {}) or {})
+    for key, value in colors.items():
+        if key not in THEME_COLOUR_KEYS:
+            raise ValueError(f"{printable(str(key)[:PREVIEW_CHARS])} is not a theme colour")
+        # R41: create_theme_from_dict skips an unparseable colour, so an
+        # ESC-laden secondary used to load and reach Edit's colour Input.
+        if not is_hex_colour(value):
+            raise ValueError(f"invalid colour '{printable(key)}'")
+    colors["dark"] = theme_file_dark(meta.get("dark", True))
+    # TASK-32940: extra colour variables the editor carried over.
+    variables = sanitize_theme_variables(data.get("variables", {}) or {}, file_label)
+    if variables:
+        colors["variables"] = variables
+    return create_theme_from_dict(name, colors)
 
 
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
 
-    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``
+    and, when the palette has any, ``[variables]``.
     Unreadable files, and files without the primary colour Textual requires,
     are skipped with a warning so one bad file cannot block startup
-    (TASK-31250).
+    (TASK-31250). So is a file that is not a regular single-link file (a
+    symlink, dangling symlink or hard link): R43, the same rule the Settings
+    listing and the backup layer apply, so startup never registers a theme
+    the picker shows as unreadable.
 
     Args:
         themes_dir: Directory holding the saved theme files (normally the
@@ -143,8 +353,12 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     Returns:
         The successfully parsed themes, in file-name order.
     """
+    import stat
+
     import toml
     from loguru import logger
+
+    from ...Backup_Recovery.settings_file_participants import NOT_REGULAR
 
     themes: list[Theme] = []
     root = Path(themes_dir)
@@ -152,16 +366,15 @@ def load_user_themes(themes_dir: str | Path) -> list[Theme]:
         return themes
     for path in sorted(root.glob("*.toml")):
         try:
-            data = toml.load(path)
-            meta = data.get("theme", {}) or {}
-            name = str(meta.get("name") or path.stem).strip() or path.stem
-            colors = dict(data.get("colors", {}) or {})
-            colors["dark"] = bool(meta.get("dark", True))
-            themes.append(create_theme_from_dict(name, colors))
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                logger.warning(f"Skipping user theme {printable(path.name)}: {NOT_REGULAR}")
+                continue
+            themes.append(theme_from_file_data(toml.load(path), path.stem, path.name))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
             # Only the file name: the themes directory is a user path and this
             # warning reaches the persistent log (path-privacy policy).
-            logger.warning(f"Skipping unreadable user theme {path.name}: {exc}")
+            logger.warning(f"Skipping unreadable user theme {printable(path.name)}: {printable(exc)}")
     return themes
 
 

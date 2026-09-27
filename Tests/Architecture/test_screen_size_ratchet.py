@@ -82,7 +82,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: tracks reality and the file can only shrink from here; nothing is
     #: raised above measured. Decomposition candidates are recorded in
     #: TASK-32809.3, none opened here. 16966/563 -> 25353/762.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25363, 762),
+    #: Lowered by TASK-33001.6, which removed the palette-only
+    #: CONSOLE_PROVIDER consumer and its helpers: 25363/762 -> 25174/757.
+    #: Re-measured on top of dev (dev had grown the file to 25375 lines
+    #: against its own 25363 row): the combined tree measures 25218/759,
+    #: still under dev's 25363/762, so nothing rises.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25218, 759),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

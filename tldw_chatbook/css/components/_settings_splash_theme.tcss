@@ -15,13 +15,114 @@
    value-identically from the raw literals; comments stay load-bearing. */
 
 
-/* ===== Settings theme editor ===== */
-#settings-theme-tree {
-    width: $ds-width-full;
-    height: $ds-size-12;
+/* TASK-32948: picker layout. The pane sits inside the VerticalScroll detail
+   body, so every container here must be height:auto with bounded children;
+   a 1fr child inside that scroll is the 07-19..09-17 clipping regression
+   (Vertical/Horizontal default to height:1fr -- see Textual's DEFAULT_CSS --
+   which collapses to zero height/width under an auto-height ancestor chain).
+   `#settings-theme-editor-view` already gets `height: auto` from
+   features/_settings.tcss (Task 5); not repeated here. */
+#settings-theme-pane,
+#settings-theme-picker,
+#settings-theme-picker-columns,
+#settings-theme-list-column,
+#settings-theme-card-column {
+    height: auto;
+}
+#settings-theme-list-column,
+#settings-theme-card-column {
+    width: 1fr;
+}
+#settings-theme-list {
+    height: auto;
     min-height: $ds-size-8;
-    border: solid $ds-grid-line;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    max-height: $ds-size-24;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
+    layout: vertical;
+}
+/* The highlighted row must not be carried by colour alone (PRODUCT.md
+   accessibility): bold as well as the highlight fill. Textual's OptionList
+   has no per-row cursor glyph slot; bold is the non-colour cue instead.
+   Component-class rules here need an ID (or the bare `OptionList` base
+   type, see _lists.tcss precedent) -- `ThemeOptionList > .option-list--
+   option-highlighted` (the subclass name) measured un-bolded: component
+   styles resolve against the declaring base type, not every subclass name
+   used as a CSS type-selector. */
+#settings-theme-list > .option-list--option-highlighted {
+    text-style: bold;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-list {
+    max-height: $ds-size-9;
+}
+/* Same stacking the editor's action row already gets under
+   `#settings-theme-card .settings-action-row` below -- the picker's chip row
+   lives under `#settings-theme-card-column` instead, so it needs its own
+   pair. Unconditional (not compact-scoped): `#settings-theme-card-column`
+   is only ever 1fr of the picker's width (half, once list-column takes the
+   other 1fr), so a horizontal 4-chip row overflows it even at 190x55 --
+   measured 66 cols of chips (Use 18 + Try/Clone/New 16 each) packed into a
+   54-col column, clipping New to a single visible column
+   (Region(x=145,w=16) against a Region(x=92,w=54) clip). Compact width
+   (<100 cols) just makes the same overflow worse, not a different bug. */
+#settings-theme-card-column .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+#settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+/* R19/R23/R24 (TASK-32948 PR 2 Task 6): the editor's colour-keeping
+   `-error`/`-primary` focus rules below live under `#settings-theme-card`,
+   whose own Delete button Task 4 removed (Try, still `-primary` there,
+   keeps its rule). The picker's Delete (yours-only) and Use (always
+   visible, this column) need the same overrides, or the generic
+   `.settings-action-row Button:focus` (0,2,1) neutralises them into the
+   plain chip fill -- the same class of bug TASK-32947 found for the
+   editor's own buttons. */
+#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    color: $ds-surface-panel;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+#settings-theme-card-column .settings-action-row .theme-editor-action.-primary:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+/* At compact width the preview shrinks to its two anchor rows (rail +
+   accent); a CSS-only alternative to a compose-time `compact` parameter on
+   ThemePreview (removed -- YAGNI, see theme_preview.py). */
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-success,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-warning,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-error {
+    display: none;
+}
+/* Measured at 80x24 (private_profile debug run): the detail-pane-body
+   viewport there is only 15 rows; with the border+margin still on, the
+   content after the list (card title/gap + preview + action chips) totals
+   12 rows, leaving only 3 rows of the list visible once the bottom-most
+   chip (New) is scrolled into view (viewport_height - after_list_total).
+   Dropping the compact preview's border and margin trims that block to 8,
+   giving the list 7 rows of headroom above the >=5 floor. */
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview {
+    border: none;
+    margin: $ds-space-0;
+}
+
+/* ===== Settings theme editor ===== */
+/* TASK-32948: the theme list moved to the picker; the header says what is
+   being edited ("Editing x · copy of Y"). */
+#settings-theme-editor-header {
+    width: $ds-width-full;
+    height: auto;
+    color: $ds-text-primary;
+    text-style: bold;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
@@ -53,6 +154,10 @@
     text-style: bold;
 }
 
+/* TASK-32947: 22/40 presets measured <3:1 against the dark card (17/40 on
+   light), so near-card colours read as gaps. Thin side rules in the theme's
+   foreground frame every cell; border cells keep the swatch's own fill, so
+   all three columns still show the colour. */
 .color-preset-swatch {
     width: $ds-size-3;
     min-width: $ds-size-3;
@@ -60,14 +165,20 @@
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
+    border-left: vkey $foreground;
+    border-right: vkey $foreground;
 }
 
 /* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
-   Space), so they need a visible focus indicator. An outline paints over the
-   swatch's own cells without needing a border row, so the colour stays
-   visible (TASK-31254). */
+   Space), so they need a visible focus indicator. TASK-32947: the old
+   `outline: solid $ds-focus-accent` drew box glyphs in $primary ON the
+   swatch (1.51:1 on the blue preset) and hid the colour. Focus now thickens
+   the side rules into half-block brackets at the cell's outer edges -- a
+   shape change judged against the card beside it, not the swatch. */
 .color-preset-swatch:focus {
-    outline: solid $ds-focus-accent;
+    outline: none;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
     text-style: bold;
 }
 
@@ -82,17 +193,81 @@
     border: none;
     padding: $ds-space-0;
 }
+/* TASK-32947: the off glyph was painted in the card's own fill (1.0:1), so
+   an unchecked box showed nothing. Off now shows Textual's own convention --
+   a dimmed X in the muted text tone -- and on keeps the success X; the
+   On/Off label still carries the state in words. */
 #settings-theme-dark-mode > .toggle--button {
-    color: $ds-surface-panel;
+    color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
     color: $success;
 }
 
+/* TASK-32947: theme-card action buttons. Textual's variant fills paint an
+   `auto 87%` label whose black/white pick uses perceived brightness, not
+   WCAG luminance (Apply 3.78:1 on textual-dark, Delete 4.47:1, 2.93:1 on
+   gruvbox_dark); default buttons filled with the card colour and read as
+   bold prose; and `.settings-action-row Button:focus` swapped every fill
+   for neutral, erasing Apply/Delete's meaning. Here each button is a
+   bracketed chip on the card: label and brackets in a readable hue (the
+   AA-pinned `text-*` tints, ensure_readable_text_hues), focus inverts the
+   chip into that hue. Low specificity on purpose: app-wide
+   `Button:hover`/`Button:disabled` still win for the neutral chips, and the
+   variant rules are `:enabled` so a disabled Delete never paints as live. */
+.theme-editor-action {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
+}
+.theme-editor-action.-primary:enabled {
+    background: $ds-surface-panel;
+    color: $text-primary;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+.theme-editor-action.-success:enabled {
+    background: $ds-surface-panel;
+    color: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+.theme-editor-action.-warning:enabled {
+    background: $ds-surface-panel;
+    color: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+.theme-editor-action.-error:enabled {
+    background: $ds-surface-panel;
+    color: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+/* Must beat the Settings screen sheet's `#settings-shell Button:hover:focus`
+   (1,2,1) and `.settings-action-row Button:focus` (0,2,1), hence (1,3,0). */
+#settings-theme-card .settings-action-row .theme-editor-action:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-success:focus {
+    background: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-warning:focus {
+    background: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+
 
 /* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
    detail pane is ~45 cells; four 16-cell-minimum buttons cannot share a row,
-   so the library and action rows stack and each button takes the width. */
+   so the action rows stack and each button takes the width. */
 #settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
     layout: vertical;
     height: auto;

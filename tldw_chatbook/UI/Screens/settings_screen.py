@@ -118,6 +118,7 @@ from ...Chat.provider_test_evidence import (
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
+    supported_generation_fields,
 )
 from ...Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -152,6 +153,10 @@ from ...Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -288,7 +293,8 @@ from .settings_config_models import (
     SettingsOwnershipRecord,
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
-from ...Widgets.settings_theme_editor import SettingsThemeEditor
+from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
+from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -884,6 +890,24 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
 }
+# Generation defaults row labels, as the one-line hidden-rows summary names
+# them (TASK-33001.2). TASK-33002 owns the single field table.
+MODEL_PROFILE_ROW_LABELS = {
+    "model_profile_temperature": "Temperature",
+    "model_profile_top_p": "Top P",
+    "model_profile_min_p": "Min P",
+    "model_profile_top_k": "Top K",
+    "model_profile_max_tokens": "Response max tokens",
+    "model_profile_seed": "Seed",
+    "model_profile_presence_penalty": "Presence",
+    "model_profile_frequency_penalty": "Frequency",
+    "model_profile_reasoning_effort": "Reasoning",
+    "model_profile_reasoning_summary": "Summary",
+    "model_profile_verbosity": "Verbosity",
+    "model_profile_thinking_effort": "Thinking",
+    "model_profile_thinking_budget_tokens": "Think budget",
+    "model_profile_streaming": "Streaming",
+}
 REASONING_EFFORT_OPTIONS = frozenset(
     {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
@@ -932,21 +956,6 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
         "model_profile_verbosity",
         "model_profile_thinking_effort",
         "model_profile_streaming",
-    }
-)
-OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
-REASONING_EFFORT_PROVIDER_KEYS = frozenset({"openai", "moonshot", "zai"})
-ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
-OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_reasoning_summary",
-        "model_profile_verbosity",
-    }
-)
-ANTHROPIC_THINKING_PROFILE_FIELD_KEYS = frozenset(
-    {
-        "model_profile_thinking_effort",
-        "model_profile_thinking_budget_tokens",
     }
 )
 MODEL_PROFILE_INPUT_PLACEHOLDERS = {
@@ -2147,11 +2156,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+            "Revert undoes a Use or Try this session; Clone opens the editor, where Reset restores the saved palette; delete a theme file to remove it",
         ),
         (
             "Boundary",
-            "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
+            "Use applies a theme and keeps it at launch; Try applies it for this session; Clone or New opens the editor",
         ),
     ),
     SettingsCategoryId.SPLASH_SCREEN: (
@@ -2354,9 +2363,11 @@ class SettingsURLInput(Input):
     """Render endpoint URLs without browser autolinking.
 
     SettingsURLInput preserves the raw ``value`` used for validation, saving,
-    selection, and event handling. Only the rendered display text is adjusted by
-    inserting a zero-width break after URL schemes so textual-web/browser
-    terminals do not treat provider endpoint values as clickable links.
+    selection, and event handling. Only under textual-web (``App.is_web``) is
+    the rendered display text adjusted, by inserting a zero-width break after
+    URL schemes so browser terminals do not treat provider endpoint values as
+    clickable links. A native terminal paints the raw URL (TASK-33001.7), so a
+    URL copied off the screen carries no invisible character.
 
     Args:
         *args: Positional arguments forwarded to ``textual.widgets.Input``.
@@ -2364,8 +2375,12 @@ class SettingsURLInput(Input):
     """
 
     @property
+    def _breaks_autolinks(self) -> bool:
+        return not self.password and self.app.is_web
+
+    @property
     def _value(self) -> Text:
-        if self.password:
+        if not self._breaks_autolinks:
             return super()._value
         text = Text(
             _textual_web_safe_url_display(self.value),
@@ -2384,7 +2399,7 @@ class SettingsURLInput(Input):
         return self._value.cell_len + 1
 
     def _display_index(self, index: int) -> int:
-        if self.password:
+        if not self._breaks_autolinks:
             return index
         return _textual_web_safe_url_display_index(self.value, index)
 
@@ -2745,6 +2760,17 @@ class SettingsScreen(BaseAppScreen):
     audio_cpp_result_cleanup_fenced = reactive(False)
 
     BINDINGS = [
+        # TASK-33001.4 (also task-32943): F6 is app-global (ADR-031 rule 1)
+        # and app.py hands it to action_focus_next_workbench_pane below;
+        # Shift+F6 has no app binding, so the screen owns it (Personas
+        # precedent).
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
         ("t", "settings_test_category", "Test Settings category"),
@@ -3184,6 +3210,8 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        self._theme_leave_in_progress = False
+        self._theme_leave_bypass = False
         self._speech_tts_model_library_route_token: str | None = None
         self._speech_tts_navigation_attempts: list[
             tuple[str, dict[str, object], str | None]
@@ -4006,6 +4034,14 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_timer = self.set_interval(
             0.25, self._poll_subscription_readiness
         )
+        # TASK-32948: keep Appearance's read-only Theme row live when the
+        # palette or picker switches theme. Signal.subscribe APPENDS, so drop
+        # this screen's earlier subscription first (it is the only one this
+        # node holds) -- a repeat on_mount must not double-fire.
+        self.app.theme_changed_signal.unsubscribe(self)
+        self.app.theme_changed_signal.subscribe(
+            self, self._refresh_appearance_theme_summary
+        )
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         # task-15475: claim this visit's sync-rows refresh -- but only if one
@@ -4289,7 +4325,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.THEME,
                 "Theme",
-                "Full theme editor, custom colors, presets, and live preview.",
+                "Pick, try, or clone a theme with live preview; Clone/New open the editor.",
                 "Custom",
             ),
             SettingsCategorySummary(
@@ -5512,7 +5548,6 @@ class SettingsScreen(BaseAppScreen):
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.APPEARANCE,
                 owns_config_sections=(
-                    "general.default_theme",
                     "general.palette_theme_limit",
                     "web_server.font_size",
                     "appearance.density",
@@ -5529,7 +5564,7 @@ class SettingsScreen(BaseAppScreen):
                     "theme editing and deeper visual preview."
                 ),
                 recovery_copy=(
-                    "Preview applies runtime-safe values for this session only; Save persists "
+                    "Preview checks the draft without applying it; Save persists "
                     "defaults, Revert restores loaded values."
                 ),
             ),
@@ -5538,7 +5573,7 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=("custom theme files", "general.default_theme"),
                 reads_runtime_state_from=("app theme", "custom theme files"),
                 writes_allowed=True,
-                runtime_owner="Theme editor",
+                runtime_owner="Theme picker and editor",
                 boundary_copy=(
                     "Settings Theme editor owns custom color palettes and theme files; "
                     "use the editor's Apply/Save/Reset buttons."
@@ -6812,7 +6847,9 @@ class SettingsScreen(BaseAppScreen):
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
         """Build the staged closed-enum Select for a model-profile field."""
-        supported = self._model_profile_field_supported(provider, draft_key)
+        supported = self._model_profile_field_supported(
+            provider, draft_key, values.get("model")
+        )
         allowed = (
             self._model_profile_reasoning_effort_options(provider, values.get("model"))
             if draft_key == "model_profile_reasoning_effort"
@@ -8708,7 +8745,7 @@ class SettingsScreen(BaseAppScreen):
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
         if category == SettingsCategoryId.THEME:
-            return "Use the editor's Apply/Save/Reset buttons to manage themes."
+            return "Use or Try a theme; Clone or New opens the editor."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return f"Splash defaults: {INSTANT_APPLY_BEHAVIOR_COPY}."
         if category == SettingsCategoryId.WORKSPACES:
@@ -9321,6 +9358,19 @@ class SettingsScreen(BaseAppScreen):
             widget = self.query_one(f"#{field_id}")
         except QueryError:
             return
+        # TASK-32948: Theme's editor sits hidden behind the picker (a
+        # ContentSwitcher); keystrokes must not go into a hidden editor
+        # field, so land on the picker list instead. (Not a generic
+        # display check: collapsed Collapsible contents are display:none
+        # too, and those are expanded below.)
+        theme_pane = next(
+            (node for node in widget.ancestors if isinstance(node, ThemePane)), None
+        )
+        if (
+            theme_pane is not None
+            and theme_pane.visible_content not in widget.ancestors_with_self
+        ):
+            widget = theme_pane.query_one("#settings-theme-list")
         if widget.disabled or any(
             getattr(node, "disabled", False) for node in widget.ancestors
         ):
@@ -9335,10 +9385,19 @@ class SettingsScreen(BaseAppScreen):
             if widget.disabled or any(
                 getattr(node, "disabled", False) for node in widget.ancestors
             ):
+                # TASK-33001.2: a row hidden for the provider has no option
+                # that enables it.
+                hidden = any(
+                    node.has_class("settings-gated-profile-hidden")
+                    for node in widget.ancestors
+                )
                 self._set_static_text(
                     "#settings-category-search-status",
-                    f"'{field_label}' is disabled right now — its category is "
-                    "open; enable the option that controls it first.",
+                    f"'{field_label}' is hidden for this provider and model: "
+                    "its requests do not carry it."
+                    if hidden
+                    else f"'{field_label}' is disabled right now — its category "
+                    "is open; enable the option that controls it first.",
                 )
                 return
         expanded = False
@@ -9431,12 +9490,14 @@ class SettingsScreen(BaseAppScreen):
             return "Reviewed actions"
         if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
+        if category is SettingsCategoryId.THEME:
+            # Use/Try/Revert act at once; the banner stays hidden for Theme,
+            # but F1/category help reads this (TASK-32948).
+            return "Applies immediately"
         if category is SettingsCategoryId.NETWORK:
             # No SettingsDraft: edits stage in `self._network_pending`
             # until the screen-wide `s` reaches the Network save branch.
             return "Pending — save with s"
-        if category is SettingsCategoryId.THEME:
-            return "Managed in editor"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
         if category is SettingsCategoryId.SCHEDULES:
@@ -9488,7 +9549,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.AGENTS:
             return "agent_runs.db (SQLite) — immediate CRUD, no draft"
         if category is SettingsCategoryId.THEME:
-            return "Use the editor's Apply/Save/Reset buttons below."
+            return "Use/Try apply at once; Save in the editor stores a theme file."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
         if category is SettingsCategoryId.SCHEDULES:
@@ -9549,8 +9610,6 @@ class SettingsScreen(BaseAppScreen):
         if validation.valid:
             return None
         message = validation.message
-        if message.startswith("Theme"):
-            return "default_theme"
         if message.startswith("Palette theme limit"):
             return "palette_theme_limit"
         if message.startswith("Font size"):
@@ -9592,7 +9651,6 @@ class SettingsScreen(BaseAppScreen):
 
     def _appearance_field_selector(self, key: str) -> str | None:
         selectors = {
-            "default_theme": "#settings-appearance-theme",
             "palette_theme_limit": "#settings-appearance-palette-theme-limit",
             "font_size": "#settings-appearance-font-size",
             "density": "#settings-appearance-density",
@@ -9622,7 +9680,6 @@ class SettingsScreen(BaseAppScreen):
     def _update_appearance_validation_classes(self) -> None:
         invalid_key = self._appearance_invalid_field_key()
         for key in (
-            "default_theme",
             "palette_theme_limit",
             "font_size",
             "density",
@@ -9676,40 +9733,26 @@ class SettingsScreen(BaseAppScreen):
         self._update_appearance_validation_classes()
         self._update_draft_status_widgets(category)
 
-    def _appearance_theme_options(self) -> list[tuple[str, str]]:
-        options: list[tuple[str, str]] = [
-            ("Textual Dark", "textual-dark"),
-            ("Textual Light", "textual-light"),
-        ]
-        seen = {value for _label, value in options}
-        try:
-            from tldw_chatbook.css.Themes.themes import ALL_THEMES
-        except (ImportError, ModuleNotFoundError):
-            ALL_THEMES = ()
-        for theme in ALL_THEMES:
-            theme_name = str(getattr(theme, "name", "") or "").strip()
-            if not theme_name or theme_name in seen:
-                continue
-            seen.add(theme_name)
-            options.append(
-                (theme_name.replace("_", " ").replace("-", " ").title(), theme_name)
-            )
-        # TASK-31250: the user's saved themes are registered with the app at
-        # startup and after Save; offer them like the shipped catalog.
-        registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
-        for theme_name in registered:
-            # custom_<name> is Apply's process-only registration of an unsaved
-            # palette; it would not exist at the next launch (PR #2375 #8).
-            if theme_name in seen or theme_name.startswith("custom_"):
-                continue
-            seen.add(theme_name)
-            options.append(
-                (f"{theme_name.replace('_', ' ').replace('-', ' ').title()} (saved)", theme_name)
-            )
-        current_theme = str(self._appearance_setting_values()["default_theme"])
-        if current_theme and current_theme not in seen:
-            options.append((f"Current: {current_theme}", current_theme))
-        return options
+    def _appearance_theme_summary(self) -> str:
+        """Read-only Theme row: the launch default and the active theme."""
+        from ...css.Themes.theme_catalog import current_launch_default, display_name
+        from ...css.Themes.themes import printable
+
+        # The running app (as the picker's use_theme does), not app_instance:
+        # the two differ in harnesses, and the palette switches self.app.
+        # Qodo 4109320405: config.toml is hand-editable; strip control chars.
+        launch = printable(current_launch_default())
+        active = str(getattr(self.app, "theme", launch))
+        registered = getattr(self.app, "available_themes", {}) or {}
+        if launch not in registered:
+            return f"launch default missing: {launch} · active: {display_name(active)}"
+        return f"{display_name(launch)} (launch default) · active: {display_name(active)}"
+
+    def _refresh_appearance_theme_summary(self, _theme: object = None) -> None:
+        # No-op when Appearance is not mounted (_set_static_text swallows QueryError).
+        self._set_static_text(
+            "#settings-appearance-theme-summary", self._appearance_theme_summary()
+        )
 
     def _appearance_bool_label(self, key: str) -> str:
         """Label for a boolean Appearance toggle button, from staged state.
@@ -11614,18 +11657,6 @@ class SettingsScreen(BaseAppScreen):
             f"Skill trust: {skill_trust_display(status)}",
         )
 
-    def _appearance_theme_summary(self) -> str:
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
-        if not isinstance(app_config, Mapping):
-            return "Theme: default"
-        for section_name in ("appearance", "ui", "theme"):
-            section = app_config.get(section_name, {})
-            if isinstance(section, Mapping):
-                theme = section.get("theme") or section.get("name")
-                if theme:
-                    return f"Theme: {theme} from [{section_name}]"
-        return "Theme: default"
-
     def _set_static_text(self, selector: str, text: str) -> None:
         try:
             self.query_one(selector, Static).update(text)
@@ -12558,18 +12589,6 @@ class SettingsScreen(BaseAppScreen):
         raise ValueError("Streaming must be true or false.")
 
     @staticmethod
-    def _provider_supports_openai_reasoning(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in OPENAI_REASONING_PROVIDER_KEYS
-        )
-
-    @staticmethod
-    def _provider_supports_reasoning_effort(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in REASONING_EFFORT_PROVIDER_KEYS
-        )
-
-    @staticmethod
     def _model_profile_reasoning_effort_options(
         provider: object, model: object
     ) -> tuple[str, ...]:
@@ -12587,20 +12606,23 @@ class SettingsScreen(BaseAppScreen):
             return GLM_REASONING_EFFORT_SELECT_OPTIONS
         return REASONING_EFFORT_SELECT_OPTIONS
 
-    @staticmethod
-    def _provider_supports_anthropic_thinking(provider: object) -> bool:
-        return (
-            provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
-        )
+    def _model_profile_field_supported(
+        self, provider: object, draft_key: str, model: object
+    ) -> bool:
+        """Whether the provider+model request carries this model-default row.
 
-    def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
-        if draft_key == "model_profile_reasoning_effort":
-            return self._provider_supports_reasoning_effort(provider)
-        if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_openai_reasoning(provider)
-        if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
-            return self._provider_supports_anthropic_thinking(provider)
-        return True
+        TASK-33001.2: a thin draft-key adapter over the one field-support
+        decision (``supported_generation_fields``) the Console shares. The
+        config carries the ADR-146 registry, so a ``custom-ep`` id is decided
+        as its entry's family, as the Console rebase decides it.
+        """
+        return PROVIDER_MODEL_PROFILE_FIELD_KEYS[
+            draft_key
+        ] in supported_generation_fields(
+            str(provider or ""),
+            str(model or "").strip() or None,
+            self._app_config_mapping(),
+        )
 
     def _unsupported_model_profile_placeholder(self, provider: object) -> str:
         provider_label = self._provider_display_name(str(provider or "").strip())
@@ -12608,8 +12630,10 @@ class SettingsScreen(BaseAppScreen):
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
 
-    def _model_profile_input_placeholder(self, provider: object, draft_key: str) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+    def _model_profile_input_placeholder(
+        self, provider: object, draft_key: str, model: object
+    ) -> str:
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return self._unsupported_model_profile_placeholder(provider)
         return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
 
@@ -12617,34 +12641,35 @@ class SettingsScreen(BaseAppScreen):
         self,
         provider: object,
         draft_key: str,
+        model: object,
         value: object,
     ) -> str:
-        if not self._model_profile_field_supported(provider, draft_key):
+        if not self._model_profile_field_supported(provider, draft_key, model):
             return ""
         return self._profile_input_value(value)
 
-    def _provider_generation_support_copy(self, provider: object) -> str:
-        """Summarize gated generation controls in one line (task-189).
+    def _provider_generation_support_copy(self, provider: object, model: object) -> str:
+        """Name the hidden generation rows in one line (task-189, TASK-33001.2).
 
         Instead of rendering rows of "Unavailable for <provider>" placeholder
         fields, the Generation defaults disclosure shows this single summary
-        and hides the dead rows entirely.
+        and hides the rows the provider+model request does not carry.
 
         Returns:
-            Copy such as ``"Reasoning/Thinking controls: unavailable for
-            llama.cpp."`` or ``""`` when every gated control is available.
+            Copy such as ``"Hidden for Anthropic: Min P, Seed, Presence,
+            Frequency, ..."`` or ``""`` when every row is supported.
         """
         provider_label = self._provider_display_name(str(provider or "").strip())
         if not provider_label:
             provider_label = "this provider"
-        unavailable: list[str] = []
-        if not self._provider_supports_reasoning_effort(provider):
-            unavailable.append("Reasoning")
-        if not self._provider_supports_anthropic_thinking(provider):
-            unavailable.append("Thinking")
-        if not unavailable:
+        hidden = [
+            label
+            for draft_key, label in MODEL_PROFILE_ROW_LABELS.items()
+            if not self._model_profile_field_supported(provider, draft_key, model)
+        ]
+        if not hidden:
             return ""
-        return f"{'/'.join(unavailable)} controls: unavailable for {provider_label}."
+        return f"Hidden for {provider_label}: {', '.join(hidden)}."
 
     @staticmethod
     def _gated_profile_row_classes(supported: bool) -> str:
@@ -12758,14 +12783,7 @@ class SettingsScreen(BaseAppScreen):
         model_profile_streaming = self._streaming_select_text(
             self.query_one("#settings-model-profile-streaming", Select).value
         )
-        if not self._provider_supports_openai_reasoning(provider):
-            model_profile_reasoning_effort = ""
-            model_profile_reasoning_summary = ""
-            model_profile_verbosity = ""
-        if not self._provider_supports_anthropic_thinking(provider):
-            model_profile_thinking_effort = ""
-            model_profile_thinking_budget_tokens = ""
-        return {
+        values = {
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
@@ -12788,6 +12806,10 @@ class SettingsScreen(BaseAppScreen):
             "model_profile_thinking_budget_tokens": model_profile_thinking_budget_tokens,
             "model_profile_streaming": model_profile_streaming,
         }
+        for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                values[draft_key] = ""
+        return values
 
     def _stage_provider_value(self, key: str, value: object) -> None:
         self._discard_openai_reconnect_review()
@@ -13348,7 +13370,9 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_current_credential_source(self, provider: str) -> str:
         from tldw_chatbook.Chat.provider_readiness import (
+            KEYLESS_PROVIDER_KEYS,
             configured_provider_credential_source,
+            resolve_provider_credential,
         )
 
         draft = self._provider_draft()
@@ -13357,12 +13381,20 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
-        if (
-            not credential_fields_dirty
-            and configured_provider_credential_source(self._provider_config(provider))
-            == "none"
-        ):
-            return "none"
+        provider_config = self._provider_config(provider)
+        configured_source = configured_provider_credential_source(provider_config)
+        if not credential_fields_dirty:
+            if configured_source == "none":
+                return "none"
+            # TASK-33001.13 / ADR-012 (2026-09-19): an untouched credential
+            # keeps whichever one resolves now. A stored key outranks the env
+            # var the template prefills, so it must not be saved as
+            # "environment" (which deletes the key).
+            _key, source, _env_var = resolve_provider_credential(
+                provider_config_key(provider), provider_config, environ=os.environ
+            )
+            if source is not None and source.startswith("config:"):
+                return "stored"
         if api_key_dirty:
             try:
                 if self.query_one("#settings-provider-api-key", Input).value.strip():
@@ -13380,9 +13412,15 @@ class SettingsScreen(BaseAppScreen):
             ).strip()
         if api_key_dirty:
             return "environment" if env_var else "none"
-        if "credential_env_var" in dirty and env_var:
-            return "environment"
-        if env_var:
+        # TASK-33001.7: the shipped template names an env var for keyless
+        # local servers too ("if you set one on the server"). On a legacy
+        # keyless section that untyped name is not a credential choice; the
+        # readiness fallback below counts it only when the variable holds a key.
+        if env_var and (
+            "credential_env_var" in dirty
+            or configured_source is not None
+            or provider_config_key(provider) not in KEYLESS_PROVIDER_KEYS
+        ):
             return "environment"
         if self._provider_api_key_value(provider):
             return "stored"
@@ -14008,8 +14046,9 @@ class SettingsScreen(BaseAppScreen):
             else {}
         )
         for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
-            if not self._model_profile_field_supported(provider, draft_key):
-                next_profile.pop(profile_key, None)
+            if not self._model_profile_field_supported(provider, draft_key, model):
+                # TASK-33001.2: the request never carries this field, so a
+                # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
             if value == "":
@@ -14148,7 +14187,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             for draft_key, value in input_values.items():
                 selector = f"#settings-{draft_key.replace('_', '-')}"
-                supported = self._model_profile_field_supported(provider, draft_key)
+                supported = self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
                 if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
                     try:
                         select = self.query_one(selector, Select)
@@ -14192,7 +14233,7 @@ class SettingsScreen(BaseAppScreen):
                         continue
                     widget.disabled = not supported
                     widget.placeholder = self._model_profile_input_placeholder(
-                        provider, draft_key
+                        provider, draft_key, model
                     )
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
@@ -14209,7 +14250,7 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_model_profile = False
         self._sync_provider_context_window_widget(provider, model)
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
 
     def _sync_provider_context_window_widget(self, provider: str, model: str) -> None:
         state = model_context_window_state(self._app_config_mapping(), provider, model)
@@ -14253,9 +14294,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue.append(value)
         context_window_input.value = value
 
-    def _refresh_generation_support_summary(self, provider: str) -> None:
+    def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
-        support_copy = self._provider_generation_support_copy(provider)
+        support_copy = self._provider_generation_support_copy(provider, model)
         try:
             summary = self.query_one("#settings-provider-generation-support", Static)
         except QueryError:
@@ -15105,8 +15146,16 @@ class SettingsScreen(BaseAppScreen):
                 # The app stopped; admitted writes still drain without UI access.
                 pass
 
-    def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
+    def _provider_readiness_test_report(
+        self, *, probes_when_passing: bool = False
+    ) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
+
+        Args:
+            probes_when_passing: The caller probes the endpoint when this
+                report passes. A passing report then leaves out the stored
+                evidence: the probe renders fresh evidence for the same facts,
+                and a stored copy would repeat them (TASK-33001.3).
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -15146,7 +15195,7 @@ class SettingsScreen(BaseAppScreen):
             if identity is not None
             else None
         )
-        if evidence is not None:
+        if evidence is not None and not (probes_when_passing and passed):
             detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
         return detail, summary, passed
 
@@ -15586,7 +15635,7 @@ class SettingsScreen(BaseAppScreen):
             reconnect.disabled = self._openai_reconnect_busy
         except QueryError:
             pass
-        self._refresh_generation_support_summary(provider)
+        self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._refresh_provider_field_guidance()
 
@@ -15867,7 +15916,11 @@ class SettingsScreen(BaseAppScreen):
         if field_id in model_profile_guidance:
             label, purpose, key, validation = model_profile_guidance[field_id]
             draft_key = field_id.removeprefix("settings-").replace("-", "_")
-            if not self._model_profile_field_supported(provider, draft_key):
+            if not self._model_profile_field_supported(
+                provider,
+                draft_key,
+                self._provider_setting_values_mapping().get("model"),
+            ):
                 return (
                     ("Focused setting", label),
                     (
@@ -15954,12 +16007,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _appearance_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
         field_id = self._active_settings_field_id
-        if field_id == "settings-appearance-theme":
+        if field_id == "settings-appearance-open-theme":
             return (
                 ("Focused setting", "Theme"),
-                ("Purpose", "Sets the launch/default app theme."),
-                ("Saved as", "general.default_theme"),
-                ("Validation", "choose a known theme or keep the loaded custom theme"),
+                ("Purpose", "Opens Settings ▸ Theme, where themes are chosen."),
+                ("Saved as", "general.default_theme (set by Use in Theme)"),
+                ("Changes", "take effect from the picker, not from Appearance Save"),
             )
         if field_id == "settings-appearance-palette-theme-limit":
             return (
@@ -16224,11 +16277,11 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 (
                     "Recovery",
-                    "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+                    "Revert undoes a Use or Try this session; Clone opens the editor, where Reset restores the saved palette; delete a theme file to remove it",
                 ),
                 (
                     "Boundary",
-                    "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
+                    "Use applies a theme and keeps it at launch; Try applies it for this session; Clone or New opens the editor",
                 ),
             )
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -17200,6 +17253,15 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_custom_endpoints_section()
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
+            model = str(values["model"])
+            # TASK-33001.2: a row the provider+model request does not carry is
+            # hidden and disabled (never a focus stop), as the gated rows were.
+            row_supported = {
+                draft_key: self._model_profile_field_supported(
+                    provider, draft_key, model
+                )
+                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS
+            }
             with Collapsible(
                 title="Generation defaults",
                 collapsed=self._generation_defaults_collapsed,
@@ -17225,28 +17287,46 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-compact-input",
                         placeholder="0.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_p"]
+                    ),
+                ):
                     yield Static("Top P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_p"]),
                         id="settings-model-profile-top-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_p"],
                         placeholder="0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-min-p-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_min_p"]
+                    ),
+                ):
                     yield Static("Min P", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_min_p"]),
                         id="settings-model-profile-min-p",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_min_p"],
                         placeholder="optional 0.0 - 1.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-top-k-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_top_k"]
+                    ),
+                ):
                     yield Static("Top K", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_k"]),
                         id="settings-model-profile-top-k",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_top_k"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
@@ -17261,16 +17341,27 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-seed-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_seed"]
+                    ),
+                ):
                     yield Static("Seed", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(values["model_profile_seed"]),
                         id="settings-model-profile-seed",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_seed"],
                         placeholder="optional whole number",
                         restrict=r"^[0-9]*$",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-presence-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_presence_penalty"]
+                    ),
+                ):
                     yield Static("Presence", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17278,9 +17369,15 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-presence-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_presence_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(
+                    id="settings-model-profile-frequency-penalty-row",
+                    classes=self._gated_profile_row_classes(
+                        row_supported["model_profile_frequency_penalty"]
+                    ),
+                ):
                     yield Static("Frequency", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
@@ -17288,11 +17385,12 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         id="settings-model-profile-frequency-penalty",
                         classes="settings-compact-input",
+                        disabled=not row_supported["model_profile_frequency_penalty"],
                         placeholder="-2.0 - 2.0",
                     )
                 # task-189: one summary line replaces per-row "Unavailable
                 # for <provider>" placeholders; unsupported rows are hidden.
-                support_copy = self._provider_generation_support_copy(provider)
+                support_copy = self._provider_generation_support_copy(provider, model)
                 support_summary = Static(
                     support_copy,
                     id="settings-provider-generation-support",
@@ -17305,10 +17403,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_effort",
-                        )
+                        row_supported["model_profile_reasoning_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17321,10 +17416,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-reasoning-summary-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_summary",
-                        )
+                        row_supported["model_profile_reasoning_summary"]
                     )
                     + " settings-select-row",
                 ):
@@ -17337,10 +17429,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-verbosity-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_verbosity",
-                        )
+                        row_supported["model_profile_verbosity"]
                     )
                     + " settings-select-row",
                 ):
@@ -17353,10 +17442,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-effort-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_effort",
-                        )
+                        row_supported["model_profile_thinking_effort"]
                     )
                     + " settings-select-row",
                 ):
@@ -17369,10 +17455,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(
                     id="settings-model-profile-thinking-budget-tokens-row",
                     classes=self._gated_profile_row_classes(
-                        self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        )
+                        row_supported["model_profile_thinking_budget_tokens"]
                     ),
                 ):
                     yield Static("Think budget", classes="settings-input-label")
@@ -17380,6 +17463,7 @@ class SettingsScreen(BaseAppScreen):
                         value=self._model_profile_input_value(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                             values["model_profile_thinking_budget_tokens"],
                         ),
                         id="settings-model-profile-thinking-budget-tokens",
@@ -17387,12 +17471,12 @@ class SettingsScreen(BaseAppScreen):
                         placeholder=self._model_profile_input_placeholder(
                             provider,
                             "model_profile_thinking_budget_tokens",
+                            model,
                         ),
                         restrict=r"^[0-9]*$",
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                        ),
+                        disabled=not row_supported[
+                            "model_profile_thinking_budget_tokens"
+                        ],
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static("Streaming", classes="settings-input-label")
@@ -21335,15 +21419,18 @@ class SettingsScreen(BaseAppScreen):
                     "Open the Theme category for full theme editing and deeper visual preview.",
                     classes="settings-detail-row",
                 )
-                with Horizontal(classes="settings-input-row settings-select-row"):
+                with Horizontal(classes="settings-input-row"):
                     yield Static("Theme", classes="settings-input-label")
-                    yield Select(
-                        self._appearance_theme_options(),
-                        value=str(values["default_theme"]),
-                        id="settings-appearance-theme",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
+                    yield Static(
+                        self._appearance_theme_summary(),
+                        id="settings-appearance-theme-summary",
+                        classes="settings-detail-row",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Open Theme",
+                        id="settings-appearance-open-theme",
+                        classes="theme-editor-action",
                     )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
@@ -21542,7 +21629,7 @@ class SettingsScreen(BaseAppScreen):
                     "Current summary", self._appearance_summary_text()
                 )
                 yield self._detail_row(
-                    "Runtime preview", "applies safe values for this session only"
+                    "Preview", "checks the draft; try themes in Settings ▸ Theme"
                 )
                 yield self._detail_row(
                     "Open Theme",
@@ -21557,7 +21644,7 @@ class SettingsScreen(BaseAppScreen):
                     yield Button(
                         "Preview",
                         id="settings-preview-appearance",
-                        tooltip="Apply runtime-safe Appearance values for this session only.",
+                        tooltip="Check the Appearance draft; nothing is applied or saved.",
                     )
                 yield Static(
                     self._appearance_result,
@@ -21566,7 +21653,7 @@ class SettingsScreen(BaseAppScreen):
                 )
         elif category is SettingsCategoryId.THEME:
             yield Static("Theme", classes="destination-section settings-column-title")
-            yield SettingsThemeEditor(id="settings-theme-editor")
+            yield ThemePane(id="settings-theme-pane")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static(
                 "Splash Screen", classes="destination-section settings-column-title"
@@ -22150,9 +22237,9 @@ class SettingsScreen(BaseAppScreen):
             # compact contract requires a painted recovery action
             # (test_compact_overview_keeps_a_painted_recovery_action).
             yield Button(
-                "Open Theme editor",
+                "Open Theme picker",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
+                tooltip="Open Settings ▸ Theme to pick, try, or clone a theme.",
             )
         # task-181 copy, task-1583 placement, task-1714 length: the full
         # reassurance paragraph reads once on Overview; everywhere else a
@@ -22164,7 +22251,7 @@ class SettingsScreen(BaseAppScreen):
             "server unless you run Manual sync yourself."
             if summary.category is SettingsCategoryId.OVERVIEW
             else (
-                "Local-only: Save stores a theme file; Set as launch default updates your config."
+                "Local-only: Save stores a theme file; Use updates your config."
                 if summary.category is SettingsCategoryId.THEME
                 else "Local-only: saves write your config file."
             ),
@@ -22312,9 +22399,9 @@ class SettingsScreen(BaseAppScreen):
                 "full theme editing, custom colors, and deeper preview",
             )
             yield Button(
-                "Open Theme editor",
+                "Open Theme picker",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
+                tooltip="Open Settings ▸ Theme to pick, try, or clone a theme.",
             )
         elif summary.category is SettingsCategoryId.THEME:
             yield Static(
@@ -22508,7 +22595,8 @@ class SettingsScreen(BaseAppScreen):
         # category composed its own inside the scrollable content, so the
         # persistence badge (the save-contract carrier) scrolled away mid-task
         # (RAG showed no State line at all in evidence).
-        yield self._render_category_state_banner(active_summary.category)
+        if active_summary.category is not SettingsCategoryId.THEME:
+            yield self._render_category_state_banner(active_summary.category)
         detail_body = detail_pane_container(id="settings-detail-pane-body")
         detail_body.add_class("h-fill")
         detail_body.styles.scrollbar_size_vertical = 1
@@ -22600,11 +22688,78 @@ class SettingsScreen(BaseAppScreen):
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
 
-    def _jk_category_navigation_blocked(self) -> bool:
-        """Guard the screen-wide j/k category bindings (task-1373).
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Settings pane (TASK-33001.4)."""
+        self._cycle_workbench_pane(1)
 
-        j/k are armed from any focus so power users can move between
-        categories without first focusing the rail, but they must never
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Settings pane."""
+        self._cycle_workbench_pane(-1)
+
+    def _cycle_workbench_pane(self, direction: int) -> None:
+        """Focus the next (1) or previous (-1) pane, after any pending swap.
+
+        Mid-switch the detail and inspector panes still hold the OUTGOING
+        category's widgets (the TASK-2831 window), and the swap ends by moving
+        focus itself, so a press aimed now is undone. It queues behind the
+        swap instead; ``app.call_later`` runs it after the swap's own focus
+        lands, because ``Widget.focus`` defers through that same queue.
+        """
+
+        def cycle() -> None:
+            focus_relative_workbench_pane(
+                self, self._workbench_focus_targets(), direction=direction
+            )
+
+        if self._category_pane_swap_pending:
+            self._after_category_panes(self.app.call_later, cycle)
+        else:
+            cycle()
+
+    def _workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
+        """F6 pane targets, rebuilt on every press.
+
+        The rail lands on the ACTIVE category row (the filter when a search
+        hides that row); each category pane lands on its first focusable
+        control. Both change with the category, so a static tuple would aim
+        at the previous category. A pane's scroll body sorts after its
+        controls: it is the target only for a pane with no control (a
+        read-only inspector), where focus still lets the keys scroll it.
+
+        Returns:
+            The rail, detail and inspector targets, in F6 order.
+        """
+        targets = [
+            WorkbenchPaneTarget(
+                "settings-category-pane",
+                (
+                    f"settings-category-{self.active_category}",
+                    "settings-category-search",
+                ),
+            )
+        ]
+        chain = self.focus_chain
+        for pane_id in ("settings-detail-pane", "settings-impact-pane"):
+            try:
+                pane = self.query_one(f"#{pane_id}")
+            except QueryError:
+                continue
+            focusable = [
+                widget for widget in chain if widget.id and pane in widget.ancestors
+            ]
+            focusable.sort(key=lambda widget: type(widget) is VerticalScroll)
+            targets.append(
+                WorkbenchPaneTarget(pane_id, tuple(widget.id for widget in focusable))
+            )
+        return tuple(targets)
+
+    def _jk_category_navigation_blocked(self) -> bool:
+        """Guard the j/k category bindings (task-1373, narrowed by task-32944).
+
+        j/k work without first focusing a category button -- from the rail
+        or with nothing focused (landing on the screen) -- but not from the
+        detail or inspector panes: there they yanked focus out of the Theme
+        editor's Tree, preset swatches and buttons. They must also never
         steal keys from text editing or option search: Input/TextArea
         consume printable keys before this screen's on_key fires (the
         isinstance check is belt-and-braces for widgets that do not), a
@@ -22615,7 +22770,15 @@ class SettingsScreen(BaseAppScreen):
         focused = self._focused_widget()
         if isinstance(focused, (Input, TextArea, Select)):
             return True
-        return any(select.expanded for select in self.query(Select))
+        if any(select.expanded for select in self.query(Select)):
+            return True
+        if focused is None:
+            return False
+        try:
+            rail = self.query_one("#settings-category-pane")
+        except QueryError:
+            return True
+        return rail not in getattr(focused, "ancestors_with_self", ())
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Apply destination-specific navigation context after cross-screen routing.
@@ -23905,9 +24068,141 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    async def confirm_navigation(self) -> bool:
+        """Save / Discard / Stay before leaving Settings with an edited theme.
+
+        TASK-32949: the app awaits this before every screen switch -- tab
+        bar, command palette and shortcuts all post ``NavigateToScreen`` to
+        ``TldwCli.handle_screen_navigation`` -- and Settings is not a
+        reusable route, so leaving drops the editor's unsaved palette. Same
+        prompt and outcomes as a category switch (TASK-32941).
+
+        Returns:
+            True to let navigation proceed; False to stay on Settings ▸ Theme
+            (Stay, a Save that was refused or waits on its overwrite
+            confirmation, or a theme leave prompt that is already open).
+        """
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return True
+        if not editor.is_modified:
+            return True
+        if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
+            # One prompt at a time: a category-leave (or earlier navigation)
+            # prompt is already asking about these edits; stay put.
+            return False
+        self._theme_leave_in_progress = True
+        try:
+            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        finally:
+            self._theme_leave_in_progress = False
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            editor.on_save_theme()
+            return not editor.is_modified
+        return True
+
+    async def confirm_quit(self) -> bool:
+        """Ask before quitting with unsaved theme edits (review follow-up).
+
+        ``TldwCli._confirm_and_quit`` consults ``confirm_quit``, not
+        ``confirm_navigation``; same prompt, same outcomes.
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        return await self.confirm_navigation()
+
+    def _theme_editor_shown(self) -> bool:
+        try:
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return False
+        return pane.current == "settings-theme-editor-view"
+
+    @on(Button.Pressed, "#settings-theme-back")
+    def handle_theme_back(self, event: Button.Pressed) -> None:
+        """Editor -> picker; unsaved edits get the Save/Discard/Stay prompt (TASK-32948)."""
+        event.stop()
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return
+        if not editor.is_modified:
+            pane.show_picker()
+            return
+        self.run_worker(
+            self._confirm_theme_back(pane, editor),
+            group="settings-theme-back",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _confirm_theme_back(
+        self, pane: ThemePane, editor: SettingsThemeEditor
+    ) -> None:
+        choice = await self.app.push_screen_wait(ThemeLeaveModal())
+        if choice == "cancel":
+            return
+        if choice == "save":
+            editor.on_save_theme()
+            if editor.is_modified:
+                return  # refused name or pending overwrite confirmation: stay
+        else:
+            editor.is_modified = False
+            self.theme_editor_modified = False
+            self._refresh_theme_modified_widgets()
+        pane.show_picker()
+
+    async def _confirm_theme_category_leave(
+        self,
+        category_value: str,
+        restore_focus: bool,
+    ) -> None:
+        """Save / Discard / Stay before an edited theme is remounted away (TASK-32941)."""
+
+        try:
+            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            if choice == "cancel":
+                return
+            if choice == "save":
+                try:
+                    editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+                except QueryError:
+                    return
+                editor.on_save_theme()
+                if editor.is_modified:
+                    # Save refused (bad name) or is waiting on its overwrite
+                    # confirmation: stay so the edit is not lost.
+                    return
+            self._theme_leave_bypass = True
+            self._select_category(category_value, restore_focus=restore_focus)
+        finally:
+            self._theme_leave_bypass = False
+            self._theme_leave_in_progress = False
+
     def _select_category(
         self, category_value: str, *, restore_focus: bool = False
     ) -> None:
+        if (
+            self.active_category == SettingsCategoryId.THEME.value
+            and category_value != SettingsCategoryId.THEME.value
+            and self.theme_editor_modified
+            and getattr(self, "is_mounted", False)
+            and not self._theme_leave_bypass
+        ):
+            if not self._theme_leave_in_progress:
+                self._theme_leave_in_progress = True
+                self.run_worker(
+                    self._confirm_theme_category_leave(category_value, restore_focus),
+                    group="settings-theme-category-leave",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+            return
         if (
             self.active_category == SettingsCategoryId.SPEECH_TTS.value
             and category_value != SettingsCategoryId.SPEECH_TTS.value
@@ -24021,6 +24316,8 @@ class SettingsScreen(BaseAppScreen):
         ):
             # TASK-31252: leaving Theme remounts the editor and drops the
             # in-progress edit, so the dirty displays must not outlive it.
+            # TASK-32941: reached only after the leave guard above resolved
+            # (Save or Discard) or on an unmounted screen.
             self.theme_editor_modified = False
             self._refresh_theme_modified_widgets()
         category_changed = category_value != self.active_category
@@ -24318,22 +24615,89 @@ class SettingsScreen(BaseAppScreen):
             NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
         )
 
+    @on(ThemePicker.RenameRequested)
+    def handle_theme_rename_requested(self, event: ThemePicker.RenameRequested) -> None:
+        """Prompt for the new name, then rename through the editor's file API."""
+        event.stop()
+        old = event.theme_id
+        self.app.push_screen(
+            RagProfileNameModal(
+                # R27 (7): [theme].name is hand-editable; x[/] must not crash.
+                title=f"Rename theme '{escape_markup(old)}'",
+                initial=old,
+                confirm_label="Rename",
+            ),
+            lambda new: self._handle_theme_rename_result(old, new),
+        )
+
+    def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
+        if not new or new == old:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return  # R38: the pane was torn down while the prompt was up
+        # The editor's ThemesChanged(highlight=new) refreshes the picker.
+        editor.rename_user_theme(old, new)
+
+    @on(ThemePicker.ImportRequested)
+    def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:
+        """Prompt for a theme file path, then import it through the editor."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
+            self._handle_theme_import_result,
+        )
+
+    def _handle_theme_import_result(self, source: str | None) -> None:
+        if not source:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        # R37: the editor's ThemesChanged(highlight=) refreshes the picker.
+        editor.import_theme(source)
+
+    @on(SettingsThemeEditor.SaveAsRequested)
+    def handle_theme_save_as_requested(
+        self, event: SettingsThemeEditor.SaveAsRequested
+    ) -> None:
+        """Prompt for the new name, then save the working palette under it."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(
+                title="Save theme as",
+                initial=f"{event.current_name}_copy",
+                confirm_label="Save",
+            ),
+            self._handle_theme_save_as_result,
+        )
+
+    def _handle_theme_save_as_result(self, new: str | None) -> None:
+        if not new:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        editor.save_as(new)
+
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(
         self, event: SettingsThemeEditor.LaunchDefaultChanged
     ) -> None:
-        """Rebase Appearance on an instant launch-theme save without losing edits."""
+        """Mirror the editor's launch-default save into the in-memory config.
+
+        The editor's Save-as-launch-default writes the file directly (not
+        through ``use_theme``), so the in-memory copy is updated here.
+        Appearance no longer drafts ``default_theme`` (TASK-32948).
+        """
         event.stop()
         app_config = self._app_config_update_target()
         general = dict(app_config.get("general", {}))
         general["default_theme"] = event.theme_name
         app_config["general"] = general
-        draft = self._appearance_draft()
-        if draft is not None and "default_theme" in draft.values:
-            was_dirty = "default_theme" in draft.dirty_keys
-            draft.originals["default_theme"] = event.theme_name
-            if not was_dirty:
-                draft.values["default_theme"] = event.theme_name
         self._refresh_category_button_label(SettingsCategoryId.APPEARANCE)
 
     @on(SettingsThemeEditor.ThemeModifiedStatus)
@@ -24450,15 +24814,27 @@ class SettingsScreen(BaseAppScreen):
         else:
             row.update(f"Customized prompts: {self._internal_prompts_customized_count}")
 
-    @on(Select.Changed, "#settings-appearance-theme")
-    def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
+    @on(Button.Pressed, "#settings-appearance-open-theme")
+    def handle_appearance_open_theme(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._syncing_appearance_defaults:
+        self._select_category(SettingsCategoryId.THEME.value, restore_focus=True)
+        # NOT call_after_refresh (see _after_category_panes's docstring): the
+        # category swap mounts the picker in a worker on the PANE's own
+        # message pump, which finishes after the screen's call_after_refresh
+        # queue -- the picker's own on_mount would already have highlighted
+        # the active theme by the time a screen-level callback ran, and
+        # silently overwrite this (spec §8: land on the launch default, not
+        # whatever's merely active right now).
+        self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _highlight_theme_launch_default(self) -> None:
+        from ...css.Themes.theme_catalog import current_launch_default
+
+        try:
+            picker = self.query_one(ThemePicker)
+        except QueryError:
             return
-        self._stage_appearance_value(
-            "default_theme", str(event.value or "textual-dark")
-        )
-        self._mark_appearance_settings_staged()
+        picker.refresh_catalog(highlight=current_launch_default())
 
     @on(Input.Changed, "#settings-appearance-palette-theme-limit")
     def handle_appearance_palette_theme_limit_changed(
@@ -29904,7 +30280,7 @@ class SettingsScreen(BaseAppScreen):
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
-                and self._model_profile_field_supported(provider, key)
+                and self._model_profile_field_supported(provider, key, model)
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )
@@ -30109,6 +30485,8 @@ class SettingsScreen(BaseAppScreen):
                             ),
                         ),
                         self._app_config_mapping(),
+                        # Settings' "stored" is always the key already saved.
+                        keep_stored_credential=True,
                     )
                 except ValueError:
                     self._provider_save_result = (
@@ -30798,8 +31176,11 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            detail, summary, passed = self._provider_readiness_test_report()
-            probe_base_url = self._provider_live_probe_base_url() if passed else ""
+            live_probe_url = self._provider_live_probe_base_url()
+            detail, summary, passed = self._provider_readiness_test_report(
+                probes_when_passing=bool(live_probe_url)
+            )
+            probe_base_url = live_probe_url if passed else ""
             if probe_base_url:
                 # task-191: readiness passed for a URL-based provider; run a
                 # short live probe in a worker and fold it into the toast.
@@ -30870,22 +31251,16 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
                 self.app.notify(validation.message, severity="error")
                 return
-            values = self._appearance_current_defaults()
-            preview_applied = False
-            try:
-                setattr(self.app_instance, "theme", str(values.default_theme))
-                preview_applied = True
-            except Exception:
-                preview_applied = False
+            # TASK-32948: the theme was the only runtime-applied value; it is
+            # now tried in Settings > Theme, so this is a validity check only.
             self._appearance_result = (
-                "Appearance preview applied for this session only."
-                if preview_applied
-                else "Appearance preview unavailable in this runtime; Save persists defaults."
+                "Appearance defaults are valid; Save persists them. "
+                "Try themes in Settings ▸ Theme."
             )
             self._set_static_text(
                 "#settings-appearance-save-result", self._appearance_result
             )
-            self.app.notify("Appearance preview complete.", severity="information")
+            self.app.notify("Appearance check complete.", severity="information")
             return
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 8: 't test category' previously fell all the
@@ -31136,7 +31511,14 @@ class SettingsScreen(BaseAppScreen):
         section_values: Mapping[str, object],
     ) -> None:
         if saved:
-            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            # Merge per section: the saved sections omit keys Appearance does
+            # not own (general.default_theme), which must survive in memory.
+            target = self._app_config_update_target()
+            for section, values in copy.deepcopy(dict(section_values)).items():
+                current = target.get(section)
+                target[section] = (
+                    {**current, **values} if isinstance(current, Mapping) else values
+                )
             self._signal_console_appearance_refresh()
             self._signal_library_reader_layout_refresh()
             self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
@@ -31956,12 +32338,7 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_character_expression_motion_help()
         self._syncing_appearance_defaults = True
         try:
-            try:
-                self.query_one("#settings-appearance-theme", Select).value = str(
-                    values["default_theme"]
-                )
-            except QueryError:
-                pass
+            self._refresh_appearance_theme_summary()
             try:
                 self.query_one(
                     "#settings-appearance-palette-theme-limit", Input
@@ -32122,6 +32499,13 @@ class SettingsScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
+        if event.key == "escape" and focused is None and self._theme_editor_shown():
+            # R26 / spec §6: with field focus already released (task-1560
+            # above), Esc leaves the editor exactly like "Back to themes".
+            self.query_one("#settings-theme-back", Button).press()
+            event.stop()
+            event.prevent_default()
+            return
         if event.key == "tab":
             if focused is None or getattr(focused, "has_class", lambda *_: False)(
                 "nav-button"

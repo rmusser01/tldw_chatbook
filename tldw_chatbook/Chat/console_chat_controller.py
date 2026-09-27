@@ -259,7 +259,6 @@ from tldw_chatbook.Chat.console_trace_redaction import (
 # off the UI-ready module census (ADR-097): task-31384 spends that slot on
 # `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
-    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
     build_default_console_session_settings,
     build_target_default_console_session_settings,
@@ -267,10 +266,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_console_model_value,
     normalized_console_model_profile_overrides,
 )
-from tldw_chatbook.Chat.console_provider_support import (
-    build_local_thinking_payload_fields,
-    resolve_console_provider_identity,
-)
+from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
@@ -503,11 +499,8 @@ from tldw_chatbook.Chat.thinking_blocks import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
-    anthropic_model_rejects_fixed_thinking_budget,
     is_vision_capable,
-    moonshot_model_supports_reasoning_effort,
     moonshot_model_returns_reasoning_content,
-    zai_model_supports_reasoning_effort,
 )
 
 if TYPE_CHECKING:
@@ -749,58 +742,6 @@ _CONSOLE_SETTINGS_FIELD_ORDER = (
     "thinking_budget_tokens",
     "streaming",
 )
-_CONSOLE_PROVIDER_SPECIFIC_SETTINGS_FIELDS = frozenset(
-    {
-        "reasoning_effort",
-        "reasoning_summary",
-        "verbosity",
-        "thinking_effort",
-        "thinking_budget_tokens",
-    }
-)
-_CONSOLE_DIRECT_PROVIDER_SETTINGS_FIELDS = {
-    "openai": frozenset({"reasoning_effort", "reasoning_summary", "verbosity"}),
-    "qwencloud": frozenset({"reasoning_effort"}),
-}
-_CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS = frozenset(
-    {
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local-llm",
-    }
-)
-
-
-def _supported_console_settings_fields(
-    provider: str,
-    model: str | None,
-) -> frozenset[str]:
-    """Return generation fields supported by one provider/model target."""
-
-    provider_key = provider_config_key(provider)
-    supported = set(
-        FULL_MODEL_DEFAULT_FIELDS - _CONSOLE_PROVIDER_SPECIFIC_SETTINGS_FIELDS
-    )
-    if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(model):
-        supported.add("reasoning_effort")
-    if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
-        supported.add("reasoning_effort")
-    supported.update(_CONSOLE_DIRECT_PROVIDER_SETTINGS_FIELDS.get(provider_key, ()))
-    if provider_key == "anthropic":
-        supported.add("thinking_effort")
-        if not anthropic_model_rejects_fixed_thinking_budget(model):
-            supported.add("thinking_budget_tokens")
-
-    identity = resolve_console_provider_identity(
-        provider_key,
-        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-    )
-    if build_local_thinking_payload_fields(identity.execution_key, "low", None):
-        supported.add("reasoning_effort")
-    if identity.execution_key in _CONSOLE_LOCAL_THINKING_BUDGET_EXECUTION_KEYS:
-        supported.add("thinking_budget_tokens")
-    return frozenset(supported)
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -2092,6 +2033,21 @@ def _continuation_restore_target_for_resolution(
     continuation from being replayed against a different endpoint than the
     one that produced it. The two writers simply have to agree, and the
     checkpoint's writer is the one that defines the format.
+
+    The provider field follows the same writer-agreement rule (ADR-179,
+    Qodo follow-up): checkpoints are pinned under the EXECUTION key
+    (engine records use their ``record.key`` -- "custom-hosted" for a
+    swapped custom-ep selection -- and moonshot/zai/deepseek spell theirs
+    identically), and ``ConsoleAgentBridge`` records targets from
+    ``resolution.execution_key`` VERBATIM. Building the target from
+    ``provider_config_key(resolution.provider)`` instead pinned the
+    IDENTITY spelling ("custom_ep:paid" for ``custom-ep:paid``), which no
+    checkpoint ever carries, so the durable resume/crash-recovery pre-gate
+    byte-compared a spelling that could never match. ``execution_key`` is
+    therefore preferred verbatim; only a resolution with an EMPTY
+    execution key (legacy doubles) falls back to the normalized
+    ``provider`` spelling, which is byte-identical to the old behavior for
+    every checkpoint-producing provider.
     """
     protocol = getattr(resolution, "continuation_protocol", None) or getattr(
         resolution, "api_mode", None
@@ -2105,8 +2061,14 @@ def _continuation_restore_target_for_resolution(
         or not model
     ):
         return None
+    execution_key = getattr(resolution, "execution_key", None)
+    provider_value = (
+        str(execution_key)
+        if isinstance(execution_key, str) and execution_key
+        else provider_config_key(str(getattr(resolution, "provider", "")))
+    )
     return ContinuationRestoreTarget(
-        provider=provider_config_key(str(getattr(resolution, "provider", ""))),
+        provider=provider_value,
         model=str(model),
         protocol=str(protocol),
         api_base_url=base_url,
@@ -13060,9 +13022,8 @@ class ConsoleChatController:
             )
         settings_base = source_settings if preserve_snapshot else target_defaults
 
-        supported_fields = _supported_console_settings_fields(
-            target_provider,
-            target_model,
+        supported_fields = supported_generation_fields(
+            target_provider_id, target_model, app_config
         )
         exposed_supported_fields = exposed_fields & supported_fields
         profile = normalized_console_model_profile_overrides(

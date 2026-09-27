@@ -8,15 +8,11 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select
 
 import tldw_chatbook.app as app_module
-from tldw_chatbook.app import LLMProviderProvider, TldwCli
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Navigation.pending_handoff_store import (
-    ConsoleProviderIntent,
-    HandoffChannel,
-)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -197,9 +193,10 @@ async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_cha
 
 
 @pytest.mark.asyncio
-async def test_real_console_consumes_typed_provider_intents_and_opens_real_picker(
+async def test_real_console_change_model_command_opens_real_picker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-33001.6: the palette reaches providers only through the model picker."""
     app = _production_app(monkeypatch)
     notifications: list[str] = []
 
@@ -219,74 +216,21 @@ async def test_real_console_consumes_typed_provider_intents_and_opens_real_picke
                 session_id,
                 replace(
                     original,
-                    provider="anthropic",
-                    model="claude-task-648",
-                    base_url="https://old-provider.invalid/v1",
+                    provider="openai",
+                    model="gpt-task-648",
                     system_prompt="PRESERVE_TASK_648_SYSTEM_PROMPT",
                     source="user",
                 ),
             )
 
-            app.pending_handoffs.stage(
-                HandoffChannel.CONSOLE_PROVIDER,
-                ConsoleProviderIntent(provider="OpenAI"),
-            )
-            assert screen.consume_pending_console_provider_intent() is True
-            applied = store.session_settings(session_id)
-            assert applied is not None
-            assert store.active_session_id == session_id
-            assert applied.provider == "openai"
-            assert applied.model == "gpt-task-648"
-            assert applied.base_url is None
-            assert applied.system_prompt == "PRESERVE_TASK_648_SYSTEM_PROMPT"
-            assert applied.source == "user"
-
-            app.pending_handoffs.stage(
-                HandoffChannel.CONSOLE_PROVIDER,
-                ConsoleProviderIntent(provider="Unavailable Provider"),
-            )
-            assert screen.consume_pending_console_provider_intent() is True
-            assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
-            assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROVIDER) is None
-            assert "configured provider" in notifications[-1].lower()
-            assert len(notifications[-1]) <= 200
-
-            app.pending_handoffs.stage(
-                HandoffChannel.CONSOLE_PROVIDER,
-                ConsoleProviderIntent(provider="Anthropic"),
-            )
-            real_replace = store.replace_session_settings
-            replace_attempts = 0
-
-            def fail_once(
-                target_session_id: str,
-                settings: ConsoleSessionSettings,
-            ):
-                nonlocal replace_attempts
-                replace_attempts += 1
-                if replace_attempts == 1:
-                    raise RuntimeError("PRIVATE_TRANSIENT_FAILURE")
-                return real_replace(target_session_id, settings)
-
-            monkeypatch.setattr(store, "replace_session_settings", fail_once)
-            assert screen.consume_pending_console_provider_intent() is False
-            assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
-            assert "PRIVATE_TRANSIENT_FAILURE" not in "\n".join(notifications)
-            assert screen.consume_pending_console_provider_intent() is True
-            retried = store.session_settings(session_id)
-            assert retried is not None
-            assert retried.provider == "anthropic"
-            assert retried.model == "claude-task-648"
-
-            command_provider = LLMProviderProvider(screen)
-            command_provider.handle_llm_command("OpenAI", "switch_OpenAI")
-            command_applied = store.session_settings(session_id)
-            assert command_applied is not None
-            assert command_applied.provider == "openai"
-            command_provider.handle_llm_command(None, "show_current")
-            assert notifications[-1] == "Current LLM provider: openai"
-
-            await screen.action_open_console_model_popover()
+            palette = ConsoleCommandProvider(screen, match_style=None)
+            hits = [hit async for hit in palette.search("change model")]
+            change_model = [
+                hit for hit in hits if str(hit.text) == "Console: Change model…"
+            ]
+            assert len(change_model) == 1
+            # The palette runs a selected command exactly like this.
+            app.call_later(change_model[0].command)
             popover = await _wait_for_screen(app, pilot, ConsoleModelPopover)
             search = await _wait_for_widget(
                 popover,
@@ -348,11 +292,10 @@ async def test_real_console_consumes_typed_provider_intents_and_opens_real_picke
 
 
 @pytest.mark.asyncio
-async def test_settings_save_preserves_user_session_then_away_command_hands_off(
+async def test_settings_save_preserves_user_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _production_app(monkeypatch)
-    notifications: list[str] = []
 
     try:
         async with app.run_test(size=(140, 48)) as pilot:
@@ -462,38 +405,5 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             assert restored.model == "gpt-task-648"
             assert restored.system_prompt == "PRESERVE_ACROSS_SETTINGS"
             assert restored.source == "user"
-
-            app.post_message(NavigateToScreen("settings"))
-            settings = await _wait_for_screen(app, pilot, SettingsScreen)
-            monkeypatch.setattr(
-                app,
-                "notify",
-                lambda message, *args, **kwargs: notifications.append(str(message)),
-            )
-            command_provider = LLMProviderProvider(settings)
-            command_provider.handle_llm_command(None, "show_current")
-            assert notifications[-1] == "Current LLM provider: anthropic"
-
-            command_provider.handle_llm_command("Anthropic", "switch_Anthropic")
-            assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
-            assert "next Console" in notifications[-1]
-
-            app.post_message(NavigateToScreen("chat"))
-            handed_off_chat = await _wait_for_screen(app, pilot, ChatScreen)
-            for _ in range(100):
-                handed_off_store = handed_off_chat._ensure_console_chat_store()
-                handed_off = handed_off_store.session_settings(session_id)
-                if not app.pending_handoffs.has_pending(
-                    HandoffChannel.CONSOLE_PROVIDER
-                ):
-                    break
-                await pilot.pause(0.01)
-            assert handed_off_store.active_session_id == session_id
-            assert handed_off is not None
-            assert handed_off.provider == "anthropic"
-            assert handed_off.model == "claude-task-648"
-            assert handed_off.system_prompt == "PRESERVE_ACROSS_SETTINGS"
-            assert handed_off.source == "user"
-            assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
     finally:
         await _close_production_app(app)

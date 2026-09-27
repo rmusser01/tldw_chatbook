@@ -2031,16 +2031,9 @@ HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY, "builtin:tldw_chatbo
 #:   exemption would silently skip a floor its production resolver
 #:   enforces.
 #:
-#: ``builtin:tldw_chatbook`` stays exempt here because every ``HubTool``
-#: the Hub catalog can ever produce for it carries ``tags=()``
-#: unconditionally (``hub_tool_catalog.builtin_tools_from_inventory`` never
-#: reads a tags field off the manifest) -- there is nothing this seam's
-#: collapse could ever floor for that key regardless. That invariant is
-#: guarded by a tripwire test
-#: (``test_builtin_tools_never_carry_risk_tags_even_when_offered_them`` in
-#: ``Tests/MCP/test_hub_tool_catalog.py``) that fails the day it stops
-#: being true -- at which point this exemption would need re-examining,
-#: not just this comment.
+#: Built-in MCP definitions remain hash-free. ADR-183 character writes have
+#: code-owned tags resolved through the live resolver even on the by-key path;
+#: every other built-in keeps its historical tag-free behavior.
 BY_KEY_HASH_FREE_SERVER_KEYS = frozenset({"builtin:tldw_chatbook"})
 
 #: Precedence floor for built-in tools: they inherit ``allow`` rather than
@@ -2497,23 +2490,10 @@ def resolve_effective_state_by_key(
       when resolved via ``resolve_effective_state()`` -- a cross-surface
       split in the audit trail.
 
-    High-risk-tag flooring has NO coverage on this path for keys in
-    ``BY_KEY_HASH_FREE_SERVER_KEYS``. This function has no ``HubTool.tags``
-    to check, and -- unlike every other server key -- the "any allow
-    downgrades to ask" rule above does not apply to them either, so an
-    inherited allow for one of those keys returns at full fidelity with
-    NOTHING between it and the caller: no hash check, no tag floor, no
-    ask-collapse. This is safe TODAY only because every ``HubTool`` the Hub
-    catalog can ever produce for ``"builtin:tldw_chatbook"`` carries
-    ``tags=()`` unconditionally (``hub_tool_catalog.builtin_tools_from_inventory``
-    never reads a tags field off the manifest) -- there is nothing for a
-    floor to ever catch, so the absence of one is a non-event rather than a
-    gap. If a future release ever gives a ``builtin:tldw_chatbook`` tool a
-    real risk tag, this collapse would start silently returning an
-    un-floored ``allow`` where a live-``HubTool`` resolve would ask; a
-    tripwire test in ``Tests/MCP/test_hub_tool_catalog.py`` fails the day
-    that happens, specifically to surface the regression here rather than
-    let it decay behind this comment.
+    ADR-183 character writes have trusted code-owned risk tags and delegate to
+    the catalog-backed resolver even without a catalog snapshot. This preserves
+    inherited-allow flooring and explicit overrides on both paths. Other
+    hash-free built-ins retain their existing tag-free behavior.
 
     For every server key NOT in ``BY_KEY_HASH_FREE_SERVER_KEYS``, flooring
     genuinely is redundant to check separately: the "any allow downgrades
@@ -2540,6 +2520,15 @@ def resolve_effective_state_by_key(
     Returns:
         The resolved ``EffectiveToolState``.
     """
+    from .builtin_tool_policy import BUILTIN_MCP_SERVER_KEY, builtin_tool_risk_tags
+
+    trusted_tags = builtin_tool_risk_tags(tool_name)
+    if server_key == BUILTIN_MCP_SERVER_KEY and trusted_tags:
+        return resolve_effective_state(
+            payload,
+            GatedToolRef(server_key, tool_name, "", None, trusted_tags),
+            profile_id=profile_id,
+        )
     lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
     if lifecycle_block is not None:
         return EffectiveToolState(state="deny", origin=lifecycle_block)

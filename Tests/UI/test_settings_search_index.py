@@ -77,6 +77,11 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         # "Use Official OpenAI" preset button: a one-shot action that fills
         # the adjacent (indexed) Base URL field -- an action, not a setting.
         ("speech-tts", "settings-speech-openai-official-preset"),
+        # TASK-32948 Task 7: the picker's theme-name filter box narrows the
+        # visible list; same pattern as internal-prompts-search /
+        # settings-provider-search above -- it filters content, it is not
+        # itself a persisted setting.
+        ("theme", "settings-theme-filter"),
     }
 )
 

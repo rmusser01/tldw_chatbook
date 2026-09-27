@@ -603,12 +603,16 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity(request) -
     bundle = _generated_css_text()
     # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
-        "#settings-theme-tree",
+        # TASK-32948 PR 2: the editor tree moved to the picker; its header replaces the pin.
+        "#settings-theme-editor-header",
         ".settings-theme-preview",
         ".settings-splash-gallery",
         "#settings-splash-card-list",
         "#settings-splash-preview-scroll",
         ".settings-splash-preview #splash-display",
+        # TASK-32948 Task 7: picker layout.
+        "#settings-theme-picker-columns",
+        "#settings-theme-list",
     )
 
     for selector in required_selectors:

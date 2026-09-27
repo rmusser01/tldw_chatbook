@@ -36,23 +36,6 @@ _PROVIDER_IDENTIFIER_PATTERN = re.compile(r"[a-z0-9][a-z0-9_]{0,127}")
 
 
 @dataclass(frozen=True, slots=True)
-class ConsoleProviderIntent:
-    """Memory-only request to select one normalized Console provider."""
-
-    provider: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.provider, str):
-            raise TypeError("Console provider must be text")
-        normalized = provider_config_key(self.provider)
-        if not normalized:
-            raise ValueError("Console provider must be non-empty")
-        if _PROVIDER_IDENTIFIER_PATTERN.fullmatch(normalized) is None:
-            raise ValueError("Console provider identifier is invalid")
-        object.__setattr__(self, "provider", normalized)
-
-
-@dataclass(frozen=True, slots=True)
 class ConsoleConversationResumeIntent:
     """Resume one exact local conversation; never a source-context payload."""
 
@@ -108,7 +91,6 @@ class HandoffChannel(StrEnum):
     CHAT = "chat"
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
-    CONSOLE_PROVIDER = "console_provider"
     #: PR3a-2 Task 4: a background sub-agent completion's deep link --
     #: staged by the fleet drain consumer while Console is not the active
     #: screen; the next Console mount claims it and switches to the
@@ -694,10 +676,6 @@ class PendingHandoffStore:
                 system_fingerprint=value.system_fingerprint,
                 created_monotonic=value.created_monotonic,
             )
-        if channel is HandoffChannel.CONSOLE_PROVIDER:
-            if not isinstance(value, ConsoleProviderIntent):
-                raise TypeError("Console provider handoff must be typed")
-            return ConsoleProviderIntent(provider=value.provider)
         if channel is HandoffChannel.CONSOLE_FLEET_COMPLETION:
             if not isinstance(value, ConsoleFleetCompletionTarget):
                 raise TypeError("Console fleet completion handoff must be typed")

@@ -204,3 +204,33 @@ def test_interview_passphrase_protector_rejects_directory_symlink(tmp_path) -> N
 
     with pytest.raises(ProfileLockedError, match="not private"):
         InterviewPassphraseKeyProtector(key_directory, lambda: "passphrase")
+
+
+# --- task-32902 (tier-2 review, slice S14 P3) --------------------------------
+
+
+def test_short_write_never_replaces_a_good_bundle(tmp_path, monkeypatch) -> None:
+    """``_write_private`` discarded ``os.write``'s return value. A short write
+    would have os.replace'd a truncated bundle over a good one, and
+    ``_deserialize_material`` rejects it -- every encrypted Personal Context
+    object then unreadable, permanently."""
+    bundle_path = tmp_path / "profile.keys"
+    protector = PassphraseProfileKeyProtector(bundle_path, lambda: "right")
+    created = protector.load_or_create("install-1")
+    good = bundle_path.read_bytes()
+
+    real_write = os.write
+
+    def short_write(fd: int, data: bytes) -> int:
+        return real_write(fd, data[:-1])
+
+    monkeypatch.setattr(key_protector_module.os, "write", short_write)
+    with pytest.raises(ProfileLockedError):
+        protector.replace("install-1", created)
+
+    monkeypatch.undo()
+    assert bundle_path.read_bytes() == good
+    assert (
+        PassphraseProfileKeyProtector(bundle_path, lambda: "right").load("install-1")
+        == created
+    )

@@ -103,6 +103,11 @@ class ConsoleCommandProvider(Provider):
                 "Browse saved prompts and insert one (/prompt)",
             ),
             (
+                "Console: Save draft to shelf…",
+                screen.action_save_console_prompt_draft,
+                "Save the unsent message without sending it",
+            ),
+            (
                 "Console: Edit system prompt",
                 screen.action_open_console_system_prompt_editor,
                 "Edit this session's system prompt (/system)",

@@ -1001,6 +1001,7 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
         "speed": float,
         "sample_text": str,
         "use_as_default": bool,
+        "preset": str,
     },
     STEP_RAG: {"embedding_model": str},
     STEP_SPEECH: {},

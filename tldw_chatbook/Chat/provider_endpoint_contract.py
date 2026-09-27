@@ -57,6 +57,12 @@ _PROVIDER_ALIASES = {
     "Custom OpenAI API 2": "custom_2",
     "custom-openai-api-2": "custom_2",
     "custom_openai_api_2": "custom_2",
+    # ADR-179 Phase 2 Task 6: the engine-driven custom-endpoint execution key
+    # is hyphenated (the registry ``record.key`` that continuation
+    # checkpoints and restore targets pin); accept it alongside the legacy
+    # custom spellings so its connection identity resolves.
+    "custom-hosted": "custom_hosted",
+    "Custom Hosted": "custom_hosted",
     "llama.cpp": "llama_cpp",
     "local llama.cpp": "local_llamacpp",
     "OpenRouter": "openrouter",

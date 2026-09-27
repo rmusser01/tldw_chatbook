@@ -8,6 +8,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from Tests.UI.app_factory import persist_seeded_config
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_console_native_chat_flow import (
     ConsoleNavigationHarness,
@@ -1017,6 +1018,9 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
     # DIFFERENT branch of `_console_provider_recovery_action` ("Set up
     # provider": chosen provider, missing key).
     app.app_config.setdefault("chat_defaults", {})["provider"] = ""
+    # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
+    # must be on disk too, not only in the in-memory snapshot.
+    persist_seeded_config(app, "chat_defaults")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:

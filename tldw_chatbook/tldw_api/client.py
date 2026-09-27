@@ -23,6 +23,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 #
@@ -1600,8 +1601,16 @@ class TLDWAPIClient:
                         try:
                             yield json.loads(line)
                         except json.JSONDecodeError:
-                            # Log or handle malformed JSON lines if necessary
-                            print(f"Warning: Could not decode JSON line: {line}")
+                            # print() here reached neither the loguru sinks
+                            # nor the in-app Logs window (Textual runs the
+                            # app under redirect_stdout), so dropped pages
+                            # were invisible. Tier-2 review, slice S06.
+                            logger.warning(
+                                "Could not decode JSON line from {} "
+                                "({} bytes); skipping it",
+                                endpoint,
+                                len(line),
+                            )
         except httpx.HTTPStatusError as e:
             _raise_api_error_from(e)
         except httpx.RequestError as e:

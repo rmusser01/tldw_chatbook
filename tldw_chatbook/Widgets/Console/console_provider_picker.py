@@ -25,12 +25,13 @@ from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     provider_config_key,
 )
+from tldw_chatbook.Widgets.model_search_picker import PickerSearchInput
 from tldw_chatbook.Widgets.status_line import set_status_line
 
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 
 
-class ConsoleProviderPickerInput(Input):
+class ConsoleProviderPickerInput(PickerSearchInput):
     """Input that lets the compound picker restore on Escape."""
 
     class EscapePressed(Message):
@@ -48,7 +49,15 @@ class ConsoleProviderPickerInput(Input):
 class ConsoleProviderPicker(Widget):
     """Controlled provider picker with grouped, in-memory search results."""
 
-    MAX_RESULTS = 30
+    #: Empty-query dropdown cap. Sized to clear the full built-in option
+    #: universe (33 settings provider keys + the trailing "New custom
+    #: endpoint…" sentinel, TASK-32919's four engine presets included) plus
+    #: a realistic handful of custom-endpoint entries; it guards against
+    #: pathologically large configured-provider floods, not layout (the
+    #: OptionList scrolls). Truncating below the offered universe would
+    #: silently hide providers -- custom-ep entries sort last and were the
+    #: first to fall off when the cap was 30.
+    MAX_RESULTS = 40
     _GROUP_ORDER = ("Cloud", "Local", "Custom", "Other")
 
     BUNDLED_CSS = """
@@ -406,7 +415,8 @@ class ConsoleProviderPicker(Widget):
         if self._preserve_committed_on_next_input_focus:
             self._preserve_committed_on_next_input_focus = False
             return
-        self._set_input_value("")
+        # TASK-33001.7: keep the committed provider painted; select_on_focus
+        # selects it, so the first keystroke replaces it.
         self._render_matches("")
 
     def on_descendant_blur(self, _event: events.DescendantBlur) -> None:
