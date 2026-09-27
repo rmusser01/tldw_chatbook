@@ -43,7 +43,9 @@ GitHub Actions YAML, `gh` CLI.
   `Tests/fixtures/summarization_diagnostic_review.json`. It is a review record; regenerating it
   would certify the whole current inventory as reviewed (lesson TASK-14651).
 - **Baseline red sets on `origin/dev` (2026-09-27).** A task must leave these identical, compared
-  by node-id set and not by count:
+  by node-id set and not by count. The set includes `ERROR` lines as well as `FAILED` ones, and
+  the pytest summary line must show no `error`: a collection or setup error can otherwise hide
+  behind an unchanged `FAILED` set (Qodo on #2848):
   - `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py`: 3 failures —
     `test_manifest_boundary_changes_only_summarization_owner_diagnostics`,
     `test_manifest_boundary_rejects_owned_digest_schema_changes`,
@@ -132,7 +134,7 @@ cd /private/tmp/ci-a && PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.ve
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
     Tests/Architecture/test_derived_artifact_checkers.py \
     Tests/Architecture/test_diagnostic_path_privacy.py \
-    -q -p no:randomly -p no:cacheprovider --tb=no 2>&1 | grep '^FAILED' | sed 's/ - .*//' | sort > /tmp/ci-a-baseline.txt; \
+    -q -p no:randomly -p no:cacheprovider --tb=no 2>&1 | grep -E '^(FAILED|ERROR)' | sed 's/ - .*//' | sort > /tmp/ci-a-baseline.txt; \
   cat /tmp/ci-a-baseline.txt
 ```
 
@@ -377,7 +379,7 @@ cd /private/tmp/ci-a && PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.ve
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
     Tests/Architecture/test_derived_artifact_checkers.py \
     Tests/Architecture/test_diagnostic_path_privacy.py \
-    -q -p no:randomly -p no:cacheprovider --tb=short 2>&1 | grep '^FAILED' | sed 's/ - .*//' | sort > /tmp/ci-a-after.txt; \
+    -q -p no:randomly -p no:cacheprovider --tb=short 2>&1 | grep -E '^(FAILED|ERROR)' | sed 's/ - .*//' | sort > /tmp/ci-a-after.txt; \
   echo "new failures:"; comm -13 /tmp/ci-a-baseline.txt /tmp/ci-a-after.txt; \
   echo "fixed:"; comm -23 /tmp/ci-a-baseline.txt /tmp/ci-a-after.txt
 ```
@@ -706,7 +708,7 @@ backlog-guard.yml (deleted 2026-09-27)".
 ```bash
 cd /private/tmp/ci-c && PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python && \
   out=$($PY -m pytest Tests/CI Tests/Packaging/test_python_runtime_floor.py -q -p no:randomly -p no:cacheprovider --tb=short 2>&1); \
-  echo "rc=$?"; echo "$out" | grep -E '^FAILED|[0-9]+ (passed|failed)' | tail -8
+  echo "rc=$?"; echo "$out" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed|error)' | tail -8
 ```
 
 Expected: rc=0 and 0 failed. If a failure also fails on `origin/dev`, record it as baseline and
@@ -779,7 +781,7 @@ matching tuple above, in the same order, one `- '<path>'` per line. Leave `branc
 cd /private/tmp/ci-c && uv venv -q -p 3.12 /private/tmp/ci-c-minvenv && \
   VIRTUAL_ENV=/private/tmp/ci-c-minvenv uv pip install -q -e . pytest pytest-asyncio pytest-timeout packaging && \
   out=$(/private/tmp/ci-c-minvenv/bin/python -m pytest Tests/UI/test_model_installed_view.py Tests/UI/test_llm_gguf_source_modes.py \
-    --timeout=180 -q -p no:randomly -p no:cacheprovider --tb=short 2>&1); echo "rc=$?"; echo "$out" | grep -E '^FAILED|[0-9]+ (passed|failed)' | tail -6
+    --timeout=180 -q -p no:randomly -p no:cacheprovider --tb=short 2>&1); echo "rc=$?"; echo "$out" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed|error)' | tail -6
 ```
 
 Expected: rc=0. If a file is not fully green, do **not** add it. Record its failing node ids in

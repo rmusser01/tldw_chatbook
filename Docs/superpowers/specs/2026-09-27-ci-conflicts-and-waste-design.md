@@ -319,8 +319,11 @@ Each step is its own PR, and each merges before the next is started:
   - a row edit fails with total deltas shown;
   - a schema-3 file is reported (negative control);
   - preflight rc=0;
-  - the sync-merge replay re-run on schema-4 files reproduces roughly 102 → 17, using the
-    committed `scripts/measure_sync_merge_conflicts.py`.
+  - the "102 → 17" figure is the one-off counterfactual replay recorded under Evidence, with
+    `summary` stripped from historical syncs. The committed `scripts/measure_sync_merge_conflicts.py`
+    measures the actual conflict rate of real syncs as they were recorded. It establishes the
+    pre-change baseline now, and measures the post-change rate (`--since <rollout date>`) at the
+    2-week review. It does not re-derive the counterfactual (Qodo on #2848).
 - **C:**
   - every pin listed in C1 and C2 updated, and `Tests/CI` passing on the minimal dependency set;
   - the census additions green;
