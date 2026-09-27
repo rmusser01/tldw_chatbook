@@ -6,10 +6,9 @@ name: Perf Guard
 # cache cliff) and nothing else, so it stays a usable merge signal even
 # while the big Tests workflow is red on all branches (TASK-18608).
 #
-# Standalone by design, like css-bundle-guard/backlog-guard: a PR that
-# makes a destination slower than the incident class, or that crosses the
-# LRU-64 stylesheet cliff, fails HERE first -- in minutes, not at the next
-# user report.
+# Standalone by design: a PR that makes a destination slower than the
+# incident class, or that crosses the LRU-64 stylesheet cliff, fails HERE
+# first -- in minutes, not at the next user report.
 
 on:
   pull_request:
@@ -40,8 +39,8 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
 
-# One run per workflow per ref (same rationale as css-bundle-guard: obsolete
-# runs must not queue up competing for scarce runners).
+# One run per workflow per ref (obsolete runs must not queue up competing
+# for scarce runners).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}

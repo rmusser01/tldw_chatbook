@@ -17,10 +17,10 @@ All three directories the CLI resolves an id in are scanned -- ``backlog/tasks``
 does not free its id. Scanning only ``backlog/tasks`` made TASK-2157 invisible
 here while ``backlog task 2157`` stayed ambiguous on dev.
 
-Extracted from the inline shell in ``.github/workflows/backlog-guard.yml``
-(TASK-19572) so that workflow and ``derived-artifacts.yml`` cannot drift apart.
-Stdlib-only: it runs with no dependency install, like the other derived-artifact
-checkers.
+Runs as part of the Derived Artifacts required job (``derived-artifacts.yml``);
+extracted from an inline shell script (TASK-19572) so the check has one copy
+instead of drifting between two. Stdlib-only: it runs with no dependency
+install, like the other derived-artifact checkers.
 """
 
 from __future__ import annotations
@@ -205,9 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     #      design (TASK-19572's own AC; see the docstring above and
     #      .github/workflows/derived-artifacts.yml), so importing it would
     #      quietly break that contract.
-    #   2. Neither CI workflow that runs this script ever passes --tasks-dir
-    #      (backlog-guard.yml and derived-artifacts.yml both invoke it bare),
-    #      so there is no CI-reachable, externally-controlled input here --
+    #   2. The only CI workflow that runs this script never passes --tasks-dir
+    #      (derived-artifacts.yml invokes it bare), so there is no
+    #      CI-reachable, externally-controlled input here --
     #      only a developer's own CLI argument, typed in their own shell,
     #      reading files they already have OS-level access to. There is no
     #      privilege boundary for a "traversal" to cross.
