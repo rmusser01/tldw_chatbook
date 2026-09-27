@@ -15,6 +15,85 @@
    value-identically from the raw literals; comments stay load-bearing. */
 
 
+/* TASK-32948: picker layout. The pane sits inside the VerticalScroll detail
+   body, so every container here must be height:auto with bounded children;
+   a 1fr child inside that scroll is the 07-19..09-17 clipping regression
+   (Vertical/Horizontal default to height:1fr -- see Textual's DEFAULT_CSS --
+   which collapses to zero height/width under an auto-height ancestor chain).
+   `#settings-theme-editor-view` already gets `height: auto` from
+   features/_settings.tcss (Task 5); not repeated here. */
+#settings-theme-pane,
+#settings-theme-picker,
+#settings-theme-picker-columns,
+#settings-theme-list-column,
+#settings-theme-card-column {
+    height: auto;
+}
+#settings-theme-list-column,
+#settings-theme-card-column {
+    width: 1fr;
+}
+#settings-theme-list {
+    height: auto;
+    min-height: $ds-size-8;
+    max-height: $ds-size-24;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
+    layout: vertical;
+}
+/* The highlighted row must not be carried by colour alone (PRODUCT.md
+   accessibility): bold as well as the highlight fill. Textual's OptionList
+   has no per-row cursor glyph slot; bold is the non-colour cue instead.
+   Component-class rules here need an ID (or the bare `OptionList` base
+   type, see _lists.tcss precedent) -- `ThemeOptionList > .option-list--
+   option-highlighted` (the subclass name) measured un-bolded: component
+   styles resolve against the declaring base type, not every subclass name
+   used as a CSS type-selector. */
+#settings-theme-list > .option-list--option-highlighted {
+    text-style: bold;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-list {
+    max-height: $ds-size-9;
+}
+/* Same stacking the editor's action row already gets under
+   `#settings-theme-card .settings-action-row` below -- the picker's chip row
+   lives under `#settings-theme-card-column` instead, so it needs its own
+   pair. Unconditional (not compact-scoped): `#settings-theme-card-column`
+   is only ever 1fr of the picker's width (half, once list-column takes the
+   other 1fr), so a horizontal 4-chip row overflows it even at 190x55 --
+   measured 66 cols of chips (Use 18 + Try/Clone/New 16 each) packed into a
+   54-col column, clipping New to a single visible column
+   (Region(x=145,w=16) against a Region(x=92,w=54) clip). Compact width
+   (<100 cols) just makes the same overflow worse, not a different bug. */
+#settings-theme-card-column .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+#settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+/* At compact width the preview shrinks to its two anchor rows (rail +
+   accent); a CSS-only alternative to a compose-time `compact` parameter on
+   ThemePreview (removed -- YAGNI, see theme_preview.py). */
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-success,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-warning,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-error {
+    display: none;
+}
+/* Measured at 80x24 (private_profile debug run): the detail-pane-body
+   viewport there is only 15 rows; with the border+margin still on, the
+   content after the list (card title/gap + preview + action chips) totals
+   12 rows, leaving only 3 rows of the list visible once the bottom-most
+   chip (New) is scrolled into view (viewport_height - after_list_total).
+   Dropping the compact preview's border and margin trims that block to 8,
+   giving the list 7 rows of headroom above the >=5 floor. */
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview {
+    border: none;
+    margin: $ds-space-0;
+}
+
 /* ===== Settings theme editor ===== */
 #settings-theme-tree {
     width: $ds-width-full;
