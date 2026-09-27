@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-08 18:01'
-updated_date: '2026-09-27 23:13'
+updated_date: '2026-09-27 23:28'
 labels:
   - mcp
   - tests
@@ -30,3 +30,20 @@ Root-cause fix (TASK-33115): `tldw_chatbook/Widgets/detach_safe_text_area.py` ad
 - [ ] #2 The mechanism is understood and documented: it is a detach race (a queued repaint reaching render_lines after Textual clears the widget's component styles on teardown), not a mount-order/COMPONENT_CLASSES-registration race as originally filed
 - [ ] #3 Tests/UI/test_mcp_workbench.py passes reliably across repeated Fast Lane runs with no intermittent text-area--gutter KeyError
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified mechanism (Textual 8.2.8): `Widget._message_loop_exit` runs `_detach()` before `_component_styles.clear()`. A screen repaint already queued when the widget detaches can still reach `TextArea.render_lines`, which calls `theme.apply_css` looking up `text-area--gutter` in the (now-cleared) `_component_styles` / `COMPONENT_CLASSES` mapping, raising `KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"`. This corrects the mechanism this task was originally filed against (a mount-order/COMPONENT_CLASSES-registration race) -- the real cause is a post-detach repaint race, confirmed by reading Textual's own teardown order and reproduced deterministically (see below), not inferred from the traceback alone.
+
+Fix (TASK-33115): `DetachSafeTextArea` in `tldw_chatbook/Widgets/detach_safe_text_area.py` subclasses `TextArea` and overrides only `render_lines`, returning blank `Strip`s when `self.is_attached` is False instead of falling into the theme lookup. All five `TextArea(` construction sites under `tldw_chatbook/UI/MCP_Modules/` (`mcp_schema_form.py`, `mcp_inspector.py`, `mcp_profile_form.py` x3) now use it; `query_one(..., TextArea)` and `@on(TextArea.Changed, ...)` call sites are unchanged, since the subclass still posts the same messages.
+
+Evidence:
+- `Tests/Widgets/test_detach_safe_text_area.py::test_stock_text_area_raises_after_detach` is a deterministic negative control: it mounts a stock `TextArea`, removes it, and calls `render_lines` directly -- it raises `KeyError` matching `text-area--gutter`, proving the race is real on this Textual pin (not just theorized).
+- `test_detach_safe_text_area_renders_blank_after_detach` confirms `DetachSafeTextArea` renders blank strips instead of raising in the same scenario.
+- `test_attached_detach_safe_text_area_renders_like_stock` confirms the guard changes nothing while the widget is attached (byte-for-byte same rendered lines as stock `TextArea`).
+- Full-suite comparison with the dev `.venv`: `Tests/UI/test_mcp_workbench.py` + `Tests/UI/test_mcp_tools_mode.py` was 408 passed / 0 failed / 0 errored on both this branch and an `origin/dev` base worktree -- identical (empty) FAILED/ERROR sets, no regressions.
+- The 10x10 before/after loop of `Tests/UI/test_mcp_workbench.py` on the fast-lane minimal venv was inconclusive: 0 `text-area--gutter` failures in 10 runs on both `origin/dev` (before) and the fix branch (after) -- it did not reproduce the timing-dependent flake in this run, so the deterministic negative-control test above is the evidence that carries this task, not the loop.
+
+See PR #2866 and TASK-33115 for the full change and additional detail. Status left as To Do for the controller to set Done after merge.
+<!-- SECTION:NOTES:END -->
