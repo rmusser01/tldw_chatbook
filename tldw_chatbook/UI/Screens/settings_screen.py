@@ -4274,16 +4274,6 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
 
-    def on_screen_suspend(self) -> None:
-        if not self.query(".personal-context-provenance"):
-            return
-        from ...Widgets.Settings_Widgets.personal_context_provenance import (
-            PersonalContextProvenanceDetails,
-        )
-
-        for detail in self.query(PersonalContextProvenanceDetails):
-            detail.suspend()
-
     def on_screen_resume(self) -> None:
         if self.query(".personal-context-provenance"):
             from ...Widgets.Settings_Widgets.personal_context_provenance import (
@@ -28453,6 +28443,13 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
+        if self.query(".personal-context-provenance"):
+            from ...Widgets.Settings_Widgets.personal_context_provenance import (
+                PersonalContextProvenanceDetails,
+            )
+
+            for detail in self.query(PersonalContextProvenanceDetails):
+                detail.suspend()
         if self.app.screen is not self._tool_profile_review_modal:
             self._tool_profile_review_intent = None
         self._discard_workspace_memory_confirmation(

@@ -22,6 +22,7 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -1806,8 +1807,9 @@ async def test_my_profile_f1_help_advertises_exact_working_category_actions() ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 35), (60, 24)])
+@private_profile_test
 async def test_production_settings_inspects_private_and_deleted_metadata(
-    tmp_path, size
+    tmp_path, size, request
 ):
     from Tests.UI.test_personal_context_provenance import rendered, until
     from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (

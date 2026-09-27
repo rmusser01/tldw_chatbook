@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_RUNTIME_GUIDANCE,
@@ -189,6 +190,8 @@ class _ExplainedProfileContextBuilder(_ProfileContextBuilder):
 
 def _real_preview_bridge() -> ConsoleAgentBridge:
     bridge = object.__new__(ConsoleAgentBridge)
+    bridge._db = SimpleNamespace(list_agent_definitions=lambda **_kwargs: [])
+    bridge._store = None
     bridge._registry = ToolCatalogRegistry()
     bridge._allowed_tools = ()
     bridge._skills_service = None
@@ -244,7 +247,9 @@ def _plan(
     return build_console_first_request_plan(**kwargs)
 
 
-def test_first_request_plan_builds_one_snapshot_and_pins_exact_block() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_plan_builds_one_snapshot_and_pins_exact_block(request) -> None:
     builder = _ProfileContextBuilder()
 
     plan = _plan(builder)
@@ -256,9 +261,11 @@ def test_first_request_plan_builds_one_snapshot_and_pins_exact_block() -> None:
     assert plan.config.personal_context_block == PROFILE_BLOCK
 
 
-def test_preview_bridge_returns_plain_snapshot_and_captures_diagnostic_sidecar() -> (
-    None
-):
+@pytest.mark.asyncio
+@private_profile_test
+def test_preview_bridge_returns_plain_snapshot_and_captures_diagnostic_sidecar(
+    request,
+) -> None:
     builder = _ExplainedProfileContextBuilder()
     captured = []
     bridge = _real_preview_bridge()
@@ -294,7 +301,11 @@ def test_preview_bridge_returns_plain_snapshot_and_captures_diagnostic_sidecar()
     assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in str(asdict(snapshot))
 
 
-def test_console_global_workspace_requests_only_global_profile_context() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_global_workspace_requests_only_global_profile_context(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
 
     _plan(builder, workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID)
@@ -302,7 +313,11 @@ def test_console_global_workspace_requests_only_global_profile_context() -> None
     assert builder.requests[0].active_workspace_id is None
 
 
-def test_first_request_profile_budget_reserves_disclosed_tool_protocol() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_profile_budget_reserves_disclosed_tool_protocol(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
 
     plan = _plan(builder)
@@ -321,7 +336,10 @@ def test_first_request_profile_budget_reserves_disclosed_tool_protocol() -> None
     assert builder.requests[0].available_input_tokens < naive_available
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
+    request,
     monkeypatch,
 ) -> None:
     class Coordinator:
@@ -364,7 +382,11 @@ def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
     assert any(CANVAS_RUNTIME_GUIDANCE in prompt for prompt in captured_system_prompts)
 
 
-def test_first_request_profile_budget_reserves_the_injected_skill_bundle() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_profile_budget_reserves_the_injected_skill_bundle(
+    request,
+) -> None:
     without_bundle = _ProfileContextBuilder()
     with_bundle = _ProfileContextBuilder()
 
@@ -377,7 +399,11 @@ def test_first_request_profile_budget_reserves_the_injected_skill_bundle() -> No
     )
 
 
-def test_preview_and_live_request_assembly_use_the_same_pinned_block(tmp_path) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_preview_and_live_request_assembly_use_the_same_pinned_block(
+    request, tmp_path
+) -> None:
     builder = _ProfileContextBuilder()
     plan = _plan(builder)
     service = AgentService(
@@ -397,7 +423,11 @@ def test_preview_and_live_request_assembly_use_the_same_pinned_block(tmp_path) -
     assert preview_request.messages[0]["content"].count(PROFILE_BLOCK) == 1
 
 
-def test_empty_profile_keeps_existing_system_content_byte_identical() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_empty_profile_keeps_existing_system_content_byte_identical(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
     builder.build_snapshot = lambda _request: ProfileContextSnapshot.empty()
 
@@ -408,7 +438,10 @@ def test_empty_profile_keeps_existing_system_content_byte_identical() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_agent_preview_does_not_build_or_display_profile(monkeypatch) -> None:
+@private_profile_test
+async def test_non_agent_preview_does_not_build_or_display_profile(
+    request, monkeypatch
+) -> None:
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
     controller = ConsoleChatController(
@@ -446,7 +479,9 @@ async def test_non_agent_preview_does_not_build_or_display_profile(monkeypatch) 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
+    request,
     monkeypatch,
 ) -> None:
     builder = _ProfileContextBuilder()
@@ -536,7 +571,9 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_collects_diagnostics_outside_snapshot_and_payload(
+    request,
     monkeypatch,
 ) -> None:
     builder = _ExplainedProfileContextBuilder()
@@ -598,8 +635,11 @@ async def test_agent_next_send_collects_diagnostics_outside_snapshot_and_payload
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_reserves_the_live_library_schemas(
-    monkeypatch, tmp_path,
+    request,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     builder = _ProfileContextBuilder()
     library_provider = LibraryToolProvider(SimpleNamespace())
@@ -699,9 +739,11 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     monkeypatch,
     tmp_path,
+    request,
 ) -> None:
     store = ConsoleChatStore()
     state = ProjectInstructionControlState(
@@ -714,10 +756,10 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
         ephemeral=True,
         project_instruction_state=state,
     )
+    from Tests.console_provider_doubles import provider_resolution
     from tldw_chatbook.Chat.console_chat_controller import (
         ProjectInstructionBindingSelection,
     )
-    from Tests.console_provider_doubles import provider_resolution
 
     selected = ProjectInstructionBindingSelection(
         binding=SimpleNamespace(binding_id="binding-1"),
@@ -765,7 +807,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_chat_controller.resolve_project_instruction_binding",
-        lambda _session, _registry: selected,
+        lambda _session, _registry, *, status_cache=None: selected,
     )
 
     await controller.build_context_snapshot(draft="question", session_id=session.id)
@@ -821,7 +863,10 @@ def _prepared_local_reasoning_rows(resolution, messages):
 
 
 @pytest.mark.parametrize("mode", ["off", "all", None])
-def test_profile_capacity_counts_the_dispatched_reasoning_projection(
+@pytest.mark.asyncio
+@private_profile_test
+async def test_profile_capacity_counts_the_dispatched_reasoning_projection(
+    request,
     tmp_path,
     monkeypatch,
     mode,
@@ -867,7 +912,9 @@ def test_profile_capacity_counts_the_dispatched_reasoning_projection(
         plan.schemas.active_schemas,
         plan.schemas.log_active,
     )
-    wire_rows = _prepared_local_reasoning_rows(resolution, list(request.messages))
+    wire_rows = await asyncio.to_thread(
+        _prepared_local_reasoning_rows, resolution, list(request.messages)
+    )
     assert any("reasoning_content" in row for row in wire_rows) is (mode != "off")
     assert builder.requests[0].available_input_tokens == (
         limit
@@ -925,7 +972,10 @@ def test_fenced_instruction_capacity_counts_the_dispatched_reasoning_projection(
     ) is (mode == "off")
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_first_request_omits_unsupported_only_profile(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Personal_Context.context_service import ProfileContextService

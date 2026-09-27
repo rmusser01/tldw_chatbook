@@ -627,6 +627,7 @@ async def test_library_unavailable_browse_owns_page_filter_and_retry(
         ordinary_calls = len(ordinary.calls)
         assert screen._pending_library_character_navigation is None
         assert screen._library_unavailable_browse_scope is not None
+        await _wait_for_selector(screen, pilot, "#library-conversations-next")
 
         screen.query_one("#library-conversations-next", Button).press()
         for _ in range(80):
