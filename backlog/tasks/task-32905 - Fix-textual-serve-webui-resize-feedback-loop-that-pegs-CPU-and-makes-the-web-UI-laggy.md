@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@robert'
 created_date: '2026-09-23 15:18'
-updated_date: '2026-09-23 15:25'
+updated_date: '2026-09-27 19:33'
 labels: []
 dependencies: []
 ---
@@ -32,21 +32,5 @@ Live measurement showed the served browser JS sends ~54 resize websocket message
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Investigation and fix implemented.
-
-Root cause (measured live, pre-fix): the first-byte patch hook fired the full resize handler on EVERY app output frame, sendSize() was unconditional inside every repaint, and the after-write hook scheduled an all-rows xterm refresh per write; the app answers every resize with output, so the loop never settled. Measured: ~54 resize websocket messages/second at pure idle, app child 60-100% CPU at idle (unattached WebDriver child: 0.4%), one click churned ~44k DOM nodes (WebGL/Canvas had been nulled by the patch, forcing the DOM renderer), startup floods 2-8MB of splash output through the same path.
-
-Fix (tldw_chatbook/Web_Server/serve.py, patch_textual_serve_viewport_js):
-- first-byte trigger now goes through _chatbookViewportFirstByte, a once-per-connection guard;
-- _chatbookViewportRepaint sends the resize only when fit() actually changed cols/rows (textual-serve's own onResize->sendSize remains the primary path; worst case one duplicate resize per real change, which the app treats idempotently);
-- after-write repaint is now a 250ms trailing debounce (self-heal after traffic pauses) instead of a per-write rAF full-screen refresh;
-- stopped nulling the WebGL/Canvas addons: upstream GPU renderers restored, while the resize repaint keeps clearTextureAtlas + full refresh (the remedy for the GPU-renderer resize staleness this patch family was built for).
-
-Tests: Tests/Web_Server/test_textual_web_viewport.py updated -- renderers preserved, first-byte once-guard, dimension-gated sendSize, debounced after-write (no per-write rAF). 17/17 pass; full Tests/Web_Server/ package 74 passed.
-
-Live verification (post-fix, same environment): idle websocket sends 0 messages in 8.2s (was 370 in 6.9s); app child 0.9-1.1% CPU at idle (was 60-100%); click DOM churn 0 nodes (was ~44k); a real viewport change sends a bounded burst of exactly 2 resizes per grid change (128x45 / 182x45 observed) with no re-ignition of the loop afterwards; rendering verified via canvas pixel sampling after resize (239 distinct colors, 25% lit) and websocket alive (-closed absent).
-
-Lesson recorded in backlog/docs/lessons-live-verification.md (measure both ends of the served websocket; per-message vs once-per-connection hook sites when patching minified bundles).
-
-Known remaining (separate tasks): served shell hardcodes the ws URL from public_url (default localhost), so accessing via 127.0.0.1 or an IP kills the websocket on the session cookie boundary; task-32904 tracks the broader app-side stall work (36 recorded event_loop_stall events, 250ms-2.4s).
+PR: https://github.com/rmusser01/tldw_chatbook/pull/2856 (against dev). Branch fix/task-32905-webui-resize-feedback-loop also carries the served-shell fixes: same-origin terminal websocket URL (127.0.0.1/LAN IP pages now connect), canvas session poll stops after a 404, textual.js served with a 1h public cache policy, and the TASK-32376 YAML quoting fix.
 <!-- SECTION:NOTES:END -->
