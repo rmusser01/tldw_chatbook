@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: feat/wizard-omnivoice-tts, 2026-09-26 (task-32958: OmniVoice as a fourth Voice service — live at 80×24 and 200×60: install through the consent dialog, a Whisper-checked local sample, saved as the default with a seed; Test and Hear now plays on a real first run for every service).
+> Verified against: fix/task-32959-summary-voice-line, 2026-09-27 (task-32959: the Summary gains a Voice line read back from the saved `[app_tts]` table). Previously: feat/wizard-omnivoice-tts, 2026-09-26 (task-32958: OmniVoice as a fourth Voice service).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 most steps can be skipped (Next moves on without configuring it; the one
@@ -77,7 +77,10 @@ The final summary shows a ✓/✗ line per area, read back from what was actuall
 saved — and if the connection check failed while you were setting up (a
 rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
-past the model step asks for an explicit "Continue anyway".
+past the model step asks for an explicit "Continue anyway". The Voice line names
+the saved service (for example "✓ Voice — OmniVoice (default voice)"), says
+when a voice was saved without being made the default, and reads "not set up
+(optional)" when you skipped the step.
 
 The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),
