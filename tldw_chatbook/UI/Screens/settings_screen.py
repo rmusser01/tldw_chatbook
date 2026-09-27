@@ -297,10 +297,6 @@ from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModa
 from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
-from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
-from ...Widgets.settings_web_search_panel import WebSearchSettingsPanel
-from .settings_advanced_config import AdvancedConfigSettings
-from ...Widgets.settings_advanced_config_panel import AdvancedConfigPanel
 from ...Widgets.settings_image_gen_panel import (
     ImageGenSettingsPanel,
     _key_source_line as _image_gen_key_source_line,
@@ -451,8 +447,10 @@ if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from .settings_advanced_config import AdvancedConfigSettings
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_network_defaults import SettingsNetworkTLS
+    from .settings_web_search import WebSearchSettings
 
 
 logger = logging.getLogger(__name__)
@@ -3575,15 +3573,23 @@ class SettingsScreen(BaseAppScreen):
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
 
         search_session = state.get("web_search_session")
-        if type(search_session) is WebSearchSettings:
-            self._web_search_settings = search_session
-            self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = search_session.draft
-            self._web_search_model()
+        if search_session is not None:
+            from .settings_web_search import WebSearchSettings
+
+            if type(search_session) is WebSearchSettings:
+                self._web_search_settings = search_session
+                self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = (
+                    search_session.draft
+                )
+                self._web_search_model()
 
         raw_session = state.get("raw_config_session")
-        if type(raw_session) is AdvancedConfigSettings:
-            self._advanced_config_settings = raw_session
-            self._raw_config_model()  # Rebind this live, memory-only session.
+        if raw_session is not None:
+            from .settings_advanced_config import AdvancedConfigSettings
+
+            if type(raw_session) is AdvancedConfigSettings:
+                self._advanced_config_settings = raw_session
+                self._raw_config_model()  # Rebind this live, memory-only session.
 
         snapshot = state.get("speech_tts_panel_draft")
         if type(snapshot) is SpeechTTSPanelDraftSnapshot:
@@ -4268,7 +4274,24 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
 
+    def on_screen_suspend(self) -> None:
+        if not self.query(".personal-context-provenance"):
+            return
+        from ...Widgets.Settings_Widgets.personal_context_provenance import (
+            PersonalContextProvenanceDetails,
+        )
+
+        for detail in self.query(PersonalContextProvenanceDetails):
+            detail.suspend()
+
     def on_screen_resume(self) -> None:
+        if self.query(".personal-context-provenance"):
+            from ...Widgets.Settings_Widgets.personal_context_provenance import (
+                PersonalContextProvenanceDetails,
+            )
+
+            for detail in self.query(PersonalContextProvenanceDetails):
+                self.call_after_refresh(detail.resume)
         # task-15475: consume the mount's one-shot token. On the first visit
         # this resume IS the mount's own and on_mount already queued the
         # refresh. Consumed, not latched: every later resume refreshes again,
@@ -9090,6 +9113,8 @@ class SettingsScreen(BaseAppScreen):
             )
         ).lower()
         if summary.category is SettingsCategoryId.WEB_SEARCH:
+            from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS
+
             secondary_haystack += " " + WEB_SEARCH_TERMS.lower()
         if query in secondary_haystack:
             return 2
@@ -11890,7 +11915,9 @@ class SettingsScreen(BaseAppScreen):
             return "Config reload: loaded"
         return "Config reload: failed - loaded config was not a table"
 
-    def _raw_config_model(self) -> AdvancedConfigSettings:
+    def _raw_config_model(self) -> "AdvancedConfigSettings":
+        from .settings_advanced_config import AdvancedConfigSettings
+
         if self._advanced_config_settings is None:
             self._advanced_config_settings = AdvancedConfigSettings(
                 self._raw_config_changed,
@@ -21496,7 +21523,9 @@ class SettingsScreen(BaseAppScreen):
                 timeout=6,
             )
 
-    def _web_search_model(self) -> WebSearchSettings:
+    def _web_search_model(self) -> "WebSearchSettings":
+        from .settings_web_search import WebSearchSettings
+
         if self._web_search_settings is None:
             category = SettingsCategoryId.WEB_SEARCH
             self._web_search_settings = WebSearchSettings(
@@ -21897,6 +21926,8 @@ class SettingsScreen(BaseAppScreen):
             )
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.WEB_SEARCH:
+            from ...Widgets.settings_web_search_panel import WebSearchSettingsPanel
+
             yield WebSearchSettingsPanel(
                 self._web_search_model(), id="settings-web-search-panel"
             )
@@ -22353,6 +22384,8 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Advanced Config", classes="destination-section settings-column-title"
             )
+            from ...Widgets.settings_advanced_config_panel import AdvancedConfigPanel
+
             yield AdvancedConfigPanel(
                 self._raw_config_model(),
                 ADVANCED_CONFIG_GUIDED_PATHS,
@@ -31369,6 +31402,8 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.WEB_SEARCH:
             self._web_search_model().capture_pending_input()
         if category is SettingsCategoryId.ADVANCED_CONFIG:
+            from ...Widgets.settings_advanced_config_panel import AdvancedConfigPanel
+
             self.query_one(AdvancedConfigPanel).request_replacement("revert")
             return
         if category is SettingsCategoryId.SPEECH_TTS:
@@ -31462,6 +31497,8 @@ class SettingsScreen(BaseAppScreen):
     def _revert_category(self, category: SettingsCategoryId) -> None:
         """Discard a dirty category's staged edits (post-confirmation)."""
         if category is SettingsCategoryId.WEB_SEARCH:
+            from ...Widgets.settings_web_search_panel import WebSearchSettingsPanel
+
             try:
                 panel = self.query_one(WebSearchSettingsPanel)
             except QueryError:

@@ -699,6 +699,13 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from ...Widgets.Console.console_next_send_selection import (
+        ConsoleNextSendSelectionResult,
+    )
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+        ConsoleConversationActivationResult,
+    )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
@@ -6309,7 +6316,9 @@ class ChatScreen(BaseAppScreen):
     def _console_inspector_next_send_factories(
         self, controller: Any, session_id: str
     ) -> tuple[
-        Callable[[], Awaitable[ConsoleContextSnapshot]],
+        Callable[
+            [], Awaitable["ConsoleContextSnapshot | ConsoleNextSendSelectionResult"]
+        ],
         Callable[[], int | None],
         int | None,
         bool,
@@ -6329,6 +6338,9 @@ class ChatScreen(BaseAppScreen):
         because the composer only reflects the ACTIVE session; see
         ``_captured_draft``.
         """
+        from ...Widgets.Console.console_next_send_selection import (
+            ConsoleNextSendSelectionResult,
+        )
 
         def _captured_draft() -> str:
             if controller.store.active_session_id == session_id:
@@ -6344,25 +6356,98 @@ class ChatScreen(BaseAppScreen):
             )
             return session.draft if session is not None else ""
 
-        async def _factory() -> ConsoleContextSnapshot:
-            current_draft = _captured_draft()
+        def _captured_attachments() -> tuple[MessageAttachment, ...]:
             pending = controller.store.pending_attachments(session_id)
-            current_attachments = tuple(
+            return tuple(
                 MessageAttachment(
-                    data=pending_attachment.data,
-                    mime_type=pending_attachment.mime_type or "image/png",
-                    display_name=pending_attachment.display_name,
+                    data=attachment.data,
+                    mime_type=attachment.mime_type or "image/png",
+                    display_name=attachment.display_name,
                     position=index,
                 )
-                for index, pending_attachment in enumerate(pending)
+                for index, attachment in enumerate(pending)
             )
-            current_staged_sources = controller.store.workspace_context.allowed_sources
 
-            return await controller.build_context_snapshot(
+        def _session_workspace() -> str | None:
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            return session.workspace_id if session is not None else None
+
+        async def _factory() -> (
+            "ConsoleContextSnapshot | ConsoleNextSendSelectionResult"
+        ):
+            current_draft = _captured_draft()
+            current_attachments = _captured_attachments()
+            current_staged_sources = tuple(
+                controller.store.workspace_context.allowed_sources
+            )
+            captured_turn_context = controller.resolve_turn_execution_context(
+                session_id
+            )
+            owner = (
+                controller.store.active_session_id,
+                _session_workspace(),
+                controller.store.workspace_context.active_workspace_id,
+                controller.store.conversation_context_epoch(session_id),
+                controller._lifecycle_revision_for(session_id),
+                captured_turn_context,
+            )
+            captured_selection: list[tuple[Any, Any, Any]] = []
+            snapshot = await controller.build_context_snapshot(
                 draft=current_draft,
                 attachments=current_attachments,
                 staged_sources=current_staged_sources,
                 session_id=session_id,
+                profile_selection_sink=lambda builder, request, explanation: (
+                    captured_selection.append((builder, request, explanation))
+                ),
+            )
+            # The preview planner owns exactly one profile build. If that
+            # contract changes, no callback can safely be paired with this
+            # snapshot by guessing which one was final.
+            if len(captured_selection) != 1:
+                return snapshot
+
+            def inputs_current() -> bool:
+                try:
+                    return (
+                        owner
+                        == (
+                            controller.store.active_session_id,
+                            _session_workspace(),
+                            controller.store.workspace_context.active_workspace_id,
+                            controller.store.conversation_context_epoch(session_id),
+                            controller._lifecycle_revision_for(session_id),
+                            controller.resolve_turn_execution_context(session_id),
+                        )
+                        and current_draft == _captured_draft()
+                        and current_attachments == _captured_attachments()
+                        and current_staged_sources
+                        == tuple(controller.store.workspace_context.allowed_sources)
+                    )
+                except Exception:  # noqa: BLE001 - stale inspection fails closed.
+                    return False
+
+            builder, request, explanation = captured_selection[0]
+
+            async def selection_current() -> bool:
+                if not inputs_current():
+                    return False
+                if not await controller.personal_context_selection_current(
+                    builder,
+                    request,
+                    explanation,
+                    provider_selection=captured_turn_context.provider_selection,
+                ):
+                    return False
+                return inputs_current()
+
+            return ConsoleNextSendSelectionResult(
+                snapshot,
+                explanation if inputs_current() else None,
+                selection_current,
             )
 
         def _estimate_factory() -> int | None:
@@ -12122,7 +12207,9 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         initial_tab: str,
-        snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
+        snapshot_factory: Callable[
+            [], Awaitable["ConsoleContextSnapshot | ConsoleNextSendSelectionResult"]
+        ],
         estimate_factory: Callable[[], int | None] | None = None,
         token_estimate: int | None = None,
         payload_estimate: Callable[[ConsoleContextSnapshot], int | None] | None = None,

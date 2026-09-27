@@ -5675,6 +5675,44 @@ StatCard:hover {
 
 
 
+.personal-context-provenance,
+#personal-context-deleted-metadata {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    border: none;
+    padding: $ds-space-0;
+    margin-bottom: $ds-space-stack;
+}
+
+.personal-context-provenance-content {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    color: $ds-text-primary;
+}
+
+.personal-context-provenance CollapsibleTitle,
+#personal-context-deleted-metadata CollapsibleTitle {
+    width: 100%;
+    min-width: 0;
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.personal-context-provenance CollapsibleTitle:hover,
+#personal-context-deleted-metadata CollapsibleTitle:hover {
+    color: $ds-hover-fg;
+    background: $ds-hover-bg;
+}
+
+.personal-context-provenance CollapsibleTitle:focus,
+#personal-context-deleted-metadata CollapsibleTitle:focus {
+    color: $ds-focus-fg;
+    background: $ds-focus-bg;
+    text-style: bold underline;
+}
+
 #personal-context-settings-panel {
     width: $ds-width-full;
     min-width: $ds-size-0;

@@ -20,8 +20,8 @@ from tldw_profile_core import (
     ProfileControls,
     ProfileManifest,
     ProfilePayload,
-    ProfileProvenance,
     ProfileProposal,
+    ProfileProvenance,
     ProfileRecord,
     ProfileScope,
     ProposalOperation,
@@ -49,7 +49,14 @@ from .runtime_policy import (
     ScopeRuntimePolicy,
     authority_allows,
 )
-
+from .settings_provenance import (
+    SettingsDeletedRecord,
+    SettingsProfileIdentity,
+    SettingsProvenanceResult,
+    SettingsProvenanceSubject,
+    project_provenance,
+    provenance_subject,
+)
 
 _UNSET_POLICY_VERSION = object()
 
@@ -110,6 +117,11 @@ class PersonalContextSettingsSnapshot:
     scopes: tuple[SettingsScopeSnapshot, ...] = field(default=(), repr=False)
     records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
     proposals: tuple[ProfileProposal, ...] = field(default=(), repr=False)
+    profile_identity: SettingsProfileIdentity | None = field(default=None, repr=False)
+    provenance_subjects: tuple[SettingsProvenanceSubject, ...] = field(
+        default=(), repr=False
+    )
+    deleted_records: tuple[SettingsDeletedRecord, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +135,7 @@ class AuthorizedProfileContextView:
     records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
     unsupported_records_present: bool = False
     conflicted_record_ids: tuple[str, ...] = ()
+    profile_id: str | None = field(default=None, repr=False)
 
 
 def _default_id(label: str) -> str:
@@ -153,6 +166,7 @@ class PersonalContextService:
         self._profile_present_hint = profile_present_hint
         self._destructive_lifecycle_lock = Lock()
         self._absent_storage_signature: tuple | None = None
+        self._settings_provenance_lock = Lock()
 
     @classmethod
     def locked(
@@ -160,7 +174,7 @@ class PersonalContextService:
         reason_code: str = "profile_locked",
         *,
         profile_present: bool = False,
-    ) -> "PersonalContextService":
+    ) -> PersonalContextService:
         return cls(
             None,
             locked_reason=reason_code,
@@ -315,6 +329,12 @@ class PersonalContextService:
         return ProfileProposalService(self, quota=quota)
 
     def status(self) -> ProfileOperationalStatus:
+        from .native_compatibility import (
+            ProfileCompatibilityError,
+            require_native_consumer,
+        )
+
+        require_native_consumer("service.status")
         if self._repository is None or self._locked_reason is not None:
             return ProfileOperationalStatus(
                 ProfileOperationalState.LOCKED,
@@ -340,7 +360,18 @@ class PersonalContextService:
                 "local_profile_removed",
             )
         try:
+            compatibility = self._repository.read_compatibility()
+            if compatibility is not None and compatibility.state != "legacy_v1":
+                raise ProfileCompatibilityError()
             manifest = self._repository.get_manifest()
+        except ProfileCompatibilityError:
+            return ProfileOperationalStatus(
+                ProfileOperationalState.LOCKED,
+                True,
+                True,
+                False,
+                ProfileCompatibilityError.reason_code,
+            )
         except ProfileLockedError:
             self._locked_reason = "profile_locked"
             self._profile_present_hint = True
@@ -355,6 +386,14 @@ class PersonalContextService:
             )
         try:
             policy = self._global_policy()
+        except ProfileCompatibilityError:
+            return ProfileOperationalStatus(
+                ProfileOperationalState.LOCKED,
+                True,
+                True,
+                False,
+                ProfileCompatibilityError.reason_code,
+            )
         except PersonalContextAuthorityError as exc:
             return ProfileOperationalStatus(
                 ProfileOperationalState.DISABLED,
@@ -415,7 +454,13 @@ class PersonalContextService:
         actor_type: str,
         actor_id: str | None,
         base_object_hash: str | None = None,
-    ) -> ProfileManifest | ProfileScope | ProfileRecord | ProfileProposal | Mapping[str, Any]:
+    ) -> (
+        ProfileManifest
+        | ProfileScope
+        | ProfileRecord
+        | ProfileProposal
+        | Mapping[str, Any]
+    ):
         """Apply one adapter-authenticated whole object without outbox echo."""
 
         del base_object_hash
@@ -488,7 +533,10 @@ class PersonalContextService:
                     and record.payload is None
                     and record.parent_version_id is not None
                 )
-                if record.parent_version_id != expected_version and not orphan_tombstone:
+                if (
+                    record.parent_version_id != expected_version
+                    and not orphan_tombstone
+                ):
                     raise ProfileConflictError("Personal Context record changed.")
                 if current_record is not None and (
                     current_record.state is RecordState.DELETED
@@ -539,17 +587,20 @@ class PersonalContextService:
             if domain == "personal_context.purge":
                 barrier = dict(value)
                 if (
-                    set(barrier)
-                    != {"schema_version", "profile_id", "purge_generation"}
+                    set(barrier) != {"schema_version", "profile_id", "purge_generation"}
                     or barrier.get("schema_version") != 1
                     or barrier.get("profile_id") != manifest.profile_id
                 ):
                     raise ProfileConflictError("Personal Context purge changed.")
                 if barrier.get("purge_generation") == manifest.purge_generation:
                     return barrier
-                raise ProfileConflictError("Personal Context purge requires rebootstrap.")
+                raise ProfileConflictError(
+                    "Personal Context purge requires rebootstrap."
+                )
         except ConcurrentProfileUpdateError as exc:
-            raise ProfileConflictError("Personal Context changed concurrently.") from exc
+            raise ProfileConflictError(
+                "Personal Context changed concurrently."
+            ) from exc
         raise ValueError("Unsupported Personal Context Sync domain.")
 
     def start_fresh_profile(self) -> ProfileManifest:
@@ -617,9 +668,7 @@ class PersonalContextService:
 
         return self._repo().apply_reviewed_link(**kwargs)
 
-    def acquire_first_link_freeze(
-        self, *, plan_id: str, snapshot_token: str
-    ) -> None:
+    def acquire_first_link_freeze(self, *, plan_id: str, snapshot_token: str) -> None:
         """Block normal mutations for one exact first-link review snapshot."""
 
         self._repo().acquire_first_link_freeze(
@@ -868,6 +917,7 @@ class PersonalContextService:
             or record.state is not RecordState.ACTIVE
             or record.payload is None
             or record.controls.agent_visibility is not AgentVisibility.AGENT_VISIBLE
+            or record.controls.sync_mode is not SyncMode.SYNCABLE
             or (record.expires_at is not None and record.expires_at <= self.clock())
             or record.record_id in view.conflicted_record_ids
             or (record.record_id, record.version_id) not in visible_versions
@@ -1510,6 +1560,10 @@ class PersonalContextService:
             ProfileOperationalState.LOCKED,
         }:
             return PersonalContextSettingsSnapshot(status=status)
+        manifest = self.get_manifest()
+        identity = SettingsProfileIdentity(
+            manifest.profile_id, manifest.purge_generation
+        )
         scopes = self.list_scopes()
         bindings = self.list_workspace_bindings()
         scope_policies = {
@@ -1535,22 +1589,114 @@ class PersonalContextService:
             )
             for scope in scopes
         )
+        all_records = tuple(self._repo().list_records())
         records = tuple(
-            record
-            for record in self._repo().list_records()
-            if record.state is not RecordState.DELETED
+            record for record in all_records if record.state is not RecordState.DELETED
         )
         proposals = tuple(
             proposal
             for proposal in self._list_profile_proposals()
             if proposal.state is ProposalState.PENDING
         )
+        if self._settings_profile_identity() != identity:
+            raise ProfileConflictError(
+                "Personal Context profile changed during Settings read."
+            )
         return PersonalContextSettingsSnapshot(
             status=status,
             scopes=scope_rows,
             records=records,
             proposals=proposals,
+            profile_identity=identity,
+            provenance_subjects=tuple(
+                provenance_subject(identity, value)
+                for value in (*all_records, *proposals)
+            ),
+            deleted_records=tuple(
+                SettingsDeletedRecord(
+                    provenance_subject(identity, record),
+                    record.scope_id,
+                    record.updated_at,
+                )
+                for record in all_records
+                if record.state is RecordState.DELETED
+            ),
         )
+
+    def _settings_profile_identity(self) -> SettingsProfileIdentity | None:
+        if self.status().state not in {
+            ProfileOperationalState.READY,
+            ProfileOperationalState.DISABLED,
+        }:
+            return None
+        manifest = self.get_manifest()
+        return SettingsProfileIdentity(manifest.profile_id, manifest.purge_generation)
+
+    def settings_provenance(
+        self, subject: SettingsProvenanceSubject
+    ) -> SettingsProvenanceResult:
+        """Inspect one Settings-owned current object, failing closed on stale reads.
+
+        Args:
+            subject: Selection captured by the owning Settings snapshot.
+
+        Returns:
+            Retained metadata or a content-free changed/unavailable result.
+        """
+        unavailable = SettingsProvenanceResult("unavailable")
+        changed = SettingsProvenanceResult("changed")
+        if not self._settings_provenance_lock.acquire(blocking=False):
+            return unavailable
+        try:
+            identity = self._settings_profile_identity()
+            if identity is None:
+                return unavailable
+            if identity != subject.profile:
+                return changed
+            repo = self._repo()
+            if subject.object_type == "record":
+                getter = repo.get_record
+            elif subject.object_type == "proposal":
+                getter = repo.get_proposal
+            else:
+                return unavailable
+            value = getter(subject.object_id)
+            if value is None:
+                return unavailable
+            if (
+                value.profile_id != identity.profile_id
+                or provenance_subject(identity, value) != subject
+            ):
+                return changed
+            current = getter(subject.object_id)
+            if (
+                current is None
+                or current.profile_id != identity.profile_id
+                or provenance_subject(identity, current) != subject
+            ):
+                return changed
+            if isinstance(current, ProfileProposal) and (
+                current.state is not ProposalState.PENDING
+                or current.expires_at <= self.clock()
+            ):
+                return changed
+            final_identity = self._settings_profile_identity()
+            if final_identity is None:
+                return unavailable
+            if final_identity != identity:
+                return changed
+            return SettingsProvenanceResult(
+                "available", project_provenance(subject, current)
+            )
+        except (
+            ProfileLockedError,
+            ProfileIntegrityError,
+            ProfileConflictError,
+            ValueError,
+        ):
+            return unavailable
+        finally:
+            self._settings_provenance_lock.release()
 
     def authorized_context_view(
         self,
@@ -1725,9 +1871,13 @@ class PersonalContextService:
             ),
             authority_revision=authority_revision,
             records=tuple(
-                record for record in records if record.scope_id in selected_scope_ids
+                record
+                for record in records
+                if record.scope_id in selected_scope_ids
+                and record.controls.sync_mode is SyncMode.SYNCABLE
             ),
             unsupported_records_present=bool(unsupported),
+            profile_id=manifest.profile_id,
         )
 
     def require_agent_authority(self, scope_id: str, required: AgentAuthority) -> None:

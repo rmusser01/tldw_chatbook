@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -242,22 +243,22 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
         LibraryScreen,
     )
 
-    screen = LibraryScreen.__new__(LibraryScreen)
+    screen = LibraryScreen(MagicMock())
+    # This timer-only unit has no active Textual App for the navigation callback.
+    screen._unavailable_navigation = SimpleNamespace(clear_character_return=Mock())
     # (wave-8 task 1, retargeted by task 3) The notes autosave timer is a
     # `LibraryNotesState` field, not a flat screen attribute -- the screen's
     # generated shim block was deleted in the notes cleanup PR, so
     # `setattr`/`getattr` on the old flat name would arm and assert a field
-    # the hook never reads. An `object.__new__`/`__new__` screen also skips
-    # `__init__`'s state construction, hence the explicit seed, exactly like
-    # the `_media_state`/`_prompts_state`/`_ingest_state` ones here.
+    # the hook never reads. Replace constructor-created state with clean values
+    # before arming this unit's recording timers.
     screen._notes_state = LibraryNotesState()
     notes_timer = _RecordingTimer()
     screen._notes_state.autosave_timer = notes_timer
     # (wave-7 task 1, retargeted by task 3) Every media name this test seeds
     # -- the two debounce timers, and three of the five settlement fields the
-    # focus-disarm helper resets -- lives on `_media_state`. An
-    # `object.__new__`/`__new__` screen skips `__init__`'s state
-    # construction, hence the explicit seed, exactly like the
+    # focus-disarm helper resets -- lives on `_media_state`. Fresh state
+    # isolates this unit's recording timers, like the
     # `_ingest_state`/`_prompts_state` seeds below.
     screen._media_state = LibraryMediaState()
     # (wave-6 task 3) The prompts search-debounce timer is a

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from tldw_profile_core import PreferencePayload
 
 from tldw_chatbook.Agents.profile_tool_provider import (
@@ -15,7 +17,6 @@ from tldw_chatbook.Personal_Context.proposal_service import ProfileProposalQuota
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
 from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 from tldw_chatbook.Personal_Context.service import PersonalContextService
-
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
@@ -199,10 +200,74 @@ def test_search_returns_only_canonical_agent_visible_active_records(
     assert "CANARY" not in result.content
 
 
+def test_search_matches_reordered_and_unicode_terms_but_not_metadata(tmp_path) -> None:
+    service, manifest, scope = _service(tmp_path)
+    visible = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="response.detail",
+            polarity="like",
+            value="concise replies Straße 東京",
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.READ_ONLY)
+
+    for query in ("replies concise", "strasse", "東京", "detail"):
+        result = provider.invoke("profile_search", {"query": query})
+        assert result.ok
+        assert [
+            row["record_id"] for row in json.loads(result.content)["data"]["records"]
+        ] == [visible.record_id]
+    for query in (
+        "settings_edit",
+        visible.record_id,
+        "source_hashes",
+        "schema_version",
+    ):
+        result = provider.invoke("profile_search", {"query": query})
+        assert result.ok
+        assert json.loads(result.content)["data"]["records"] == []
+
+
+def test_search_ranks_distinct_terms_subject_phrase_and_applies_limit(tmp_path) -> None:
+    service, manifest, scope = _service(tmp_path)
+
+    def add(subject: str, value: str):
+        return service.create_manual_record(
+            scope_id=scope.scope_id,
+            payload=PreferencePayload(subject=subject, polarity="like", value=value),
+            semantic_key={"namespace": "preference", "subject": subject},
+            controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        )
+
+    one = add("style.one", "concise")
+    no_phrase = add("style.two", "replies and concise")
+    phrase = add("style.three", "concise replies")
+    subject = add("concise", "replies")
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.READ_ONLY)
+
+    result = provider.invoke(
+        "profile_search", {"query": "concise replies", "limit": 20}
+    )
+    records = json.loads(result.content)["data"]["records"]
+    assert [row["record_id"] for row in records] == [
+        subject.record_id,
+        phrase.record_id,
+        no_phrase.record_id,
+        one.record_id,
+    ]
+    top = provider.invoke("profile_search", {"query": "concise replies", "limit": 1})
+    assert [row["record_id"] for row in json.loads(top.content)["data"]["records"]] == [
+        subject.record_id
+    ]
+
+
 def test_get_refuses_other_workspace_without_disclosing_the_record(
     tmp_path,
 ) -> None:
-    service, manifest, global_scope = _service(tmp_path)
+    service, manifest, _global_scope = _service(tmp_path)
     workspace = service.create_workspace_scope("workspace-1", "Project")
     other = service.create_workspace_scope("workspace-2", "Other")
     service.set_scope_authority(workspace.scope_id, "read_only")
@@ -264,7 +329,7 @@ def test_direct_update_requires_exact_message_and_case_sensitive_span(
             subject="response.detail", polarity="like", value="long"
         ),
         semantic_key={"namespace": "preference", "subject": "stable-key"},
-        controls={"sync_mode": "device_only", "agent_visibility": "agent_visible"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
     )
     provider = _bind_provider(service, manifest, scope, AgentAuthority.DIRECT_WRITE)
     arguments = {
@@ -304,7 +369,7 @@ def test_direct_update_requires_exact_message_and_case_sensitive_span(
     assert updated.semantic_key == current.semantic_key
     assert updated.provenance.source_references == ("message-1",)
     assert updated.provenance.source_hashes == (
-        hashlib.sha256("I prefer concise replies.".encode("utf-8")).hexdigest(),
+        hashlib.sha256(b"I prefer concise replies.").hexdigest(),
     )
     assert "I prefer concise replies." not in str(updated.provenance)
 
@@ -547,3 +612,198 @@ def test_failed_proposal_commit_releases_provider_quota_reservation(
     assert provider.invoke("profile_propose", arguments).error == "review_required"
     monkeypatch.setattr(service, "_commit_profile_proposal", original)
     assert provider.invoke("profile_propose", arguments).ok is True
+
+
+def test_device_only_reads_hide_content_and_preserve_manual_owner_access(
+    tmp_path, monkeypatch
+) -> None:
+    service, manifest, scope = _service(tmp_path)
+    allowed = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(subject="detail", polarity="like", value="concise"),
+        semantic_key={"namespace": "preference", "subject": "detail"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.READ_ONLY)
+    before_search = provider.invoke("profile_search", {"query": "detail", "limit": 1})
+    hidden = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="detail detail", polarity="like", value="DEVICE_CANARY detail"
+        ),
+        semantic_key={"namespace": "preference", "subject": "hidden-detail"},
+        controls={"sync_mode": "device_only", "agent_visibility": "agent_visible"},
+    )
+    owner_bytes = hidden.model_dump_json()
+    assert service.get_record(hidden.record_id).model_dump_json() == owner_bytes
+    assert hidden in service.list_records(scope_ids=(scope.scope_id,))
+    assert hidden in service.snapshot_for_export()[2]
+    view = service.authorized_context_view()
+    assert view.records == (allowed,)
+    assert (
+        provider.invoke("profile_search", {"query": "detail", "limit": 1})
+        == before_search
+    )
+    denied = provider.invoke("profile_get", {"record_id": hidden.record_id})
+    assert denied == provider.invoke("profile_get", {"record_id": "missing-record"})
+    assert denied.error == "permission_denied"
+    assert not denied.content
+    assert json.loads(
+        provider.invoke("profile_get", {"record_id": allowed.record_id}).content
+    )["data"]["record"] == allowed.model_dump(mode="json")
+
+    # Even an injected view cannot bypass the tool consumer's eligibility check.
+    original_view = service.authorized_context_view
+    monkeypatch.setattr(
+        service,
+        "authorized_context_view",
+        lambda **kwargs: replace(original_view(**kwargs), records=(allowed, hidden)),
+    )
+    assert (
+        provider.invoke("profile_search", {"query": "detail", "limit": 1})
+        == before_search
+    )
+    assert provider.invoke("profile_get", {"record_id": hidden.record_id}) == denied
+    assert json.loads(
+        provider.invoke("profile_search", {"query": "detail", "limit": 20}).content
+    )["data"]["records"] == [allowed.model_dump(mode="json")]
+    assert (
+        json.loads(
+            provider.invoke("profile_search", {"query": "DEVICE_CANARY"}).content
+        )["data"]["records"]
+        == []
+    )
+    assert service.get_record(hidden.record_id).model_dump_json() == owner_bytes
+    archived = service.archive_record(
+        hidden.record_id, expected_version_id=hidden.version_id
+    )
+    restored = service.restore_record(
+        hidden.record_id, expected_version_id=archived.version_id
+    )
+    assert restored.payload == hidden.payload
+    assert restored.controls == hidden.controls
+
+
+@pytest.mark.parametrize("operation", ["direct_update", "update", "archive", "promote"])
+def test_device_only_agent_targets_are_denied_without_mutation_or_proposal(
+    tmp_path, operation: str
+) -> None:
+    service, manifest, global_scope = _service(tmp_path)
+    scope = (
+        service.create_workspace_scope("workspace-1", "Project")
+        if operation == "promote"
+        else global_scope
+    )
+    hidden = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="detail", polarity="like", value="DEVICE_CANARY"
+        ),
+        semantic_key={"namespace": "preference", "subject": "detail"},
+        controls={"sync_mode": "device_only", "agent_visibility": "agent_visible"},
+    )
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.DIRECT_WRITE)
+    payload = {
+        "kind": "preference",
+        "subject": "detail",
+        "polarity": "like",
+        "value": "concise",
+    }
+    if operation == "direct_update":
+        tool = "profile_update"
+        args = {
+            "record_id": hidden.record_id,
+            "base_version_id": hidden.version_id,
+            "current_user_message_id": "message-1",
+            "evidence_span": "I prefer concise replies.",
+            "proposed_payload": payload,
+        }
+    elif operation == "promote":
+        tool = "profile_promote"
+        args = {
+            "source_record_id": hidden.record_id,
+            "base_version_id": hidden.version_id,
+        }
+    else:
+        tool = "profile_propose"
+        args = {
+            "operation": operation,
+            "target_record_id": hidden.record_id,
+            "base_version_id": hidden.version_id,
+        }
+        if operation == "update":
+            args["proposed_payload"] = payload
+    before = hidden.model_dump_json()
+    result = provider.invoke(tool, args)
+    assert result.ok is False
+    assert result.error == "review_required"
+    assert not result.content
+    assert service.get_record(hidden.record_id).model_dump_json() == before
+    assert service._list_profile_proposals() == ()
+    target_key = (
+        "record_id"
+        if operation == "direct_update"
+        else "source_record_id"
+        if operation == "promote"
+        else "target_record_id"
+    )
+    assert (
+        provider.invoke(
+            tool,
+            {
+                **args,
+                target_key: "missing-record",
+                "base_version_id": "missing-version",
+            },
+        )
+        == result
+    )
+
+    # The identical authorized production path must succeed for a syncable head.
+    allowed = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(subject="permitted", polarity="like", value="long"),
+        semantic_key={"namespace": "preference", "subject": "permitted"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    positive = provider.invoke(
+        tool,
+        {**args, target_key: allowed.record_id, "base_version_id": allowed.version_id},
+    )
+    assert positive.ok is True
+    assert json.loads(positive.content)["status"] == (
+        "applied" if operation == "direct_update" else "proposal_created"
+    )
+    assert service.get_record(hidden.record_id).model_dump_json() == before
+
+
+def test_device_only_duplicate_uses_generic_private_review_without_proposal(
+    tmp_path,
+) -> None:
+    service, manifest, scope = _service(tmp_path)
+    hidden = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="detail", polarity="like", value="DEVICE_CANARY"
+        ),
+        semantic_key={"namespace": "preference", "subject": "detail"},
+        controls={"sync_mode": "device_only", "agent_visibility": "agent_visible"},
+    )
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.PROPOSE)
+    result = provider.invoke(
+        "profile_propose",
+        {
+            "operation": "create",
+            "proposed_payload": {
+                "kind": "preference",
+                "subject": "detail",
+                "polarity": "like",
+                "value": "concise",
+            },
+        },
+    )
+    assert result.ok is False
+    assert result.error == "review_required"
+    assert not result.content
+    assert service.get_record(hidden.record_id) == hidden
+    assert service._list_profile_proposals() == ()

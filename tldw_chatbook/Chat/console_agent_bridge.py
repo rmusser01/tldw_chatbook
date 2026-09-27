@@ -36,7 +36,12 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSelectionExplanation,
+        ProfileContextService,
+        ProfileContextSnapshot,
+    )
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -5650,8 +5655,30 @@ class ConsoleAgentBridge:
         fork_chat_enabled: bool = False,
         new_chat_enabled: bool = False,
         profile_context_service: Any | None = None,
+        selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
+
+        if selection_sink is not None and profile_context_service is not None:
+            source = profile_context_service
+
+            class _PreviewSelectionBuilder:
+                def build_snapshot(self, request: ProfileContextRequest) -> ProfileContextSnapshot:
+                    explain = getattr(source, "build_explained_snapshot", None)
+                    if not callable(explain):
+                        return source.build_snapshot(request)
+                    result = explain(request)
+                    if result.explanation is not None:
+                        try:
+                            selection_sink(source, request, result.explanation)
+                        except Exception:  # noqa: BLE001, S110 - inspection cannot change the model block.
+                            pass
+                    return result.snapshot
+
+            profile_context_service = _PreviewSelectionBuilder()
 
         context: Mapping[str, Any] = {}
         if self._skills_service is not None:

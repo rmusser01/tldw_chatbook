@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,7 +15,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 from tldw_profile_core import (
     AgentVisibility,
     ConstraintPayload,
@@ -43,12 +44,16 @@ from ...Personal_Context.service import (
     ProfileOperationalState,
     RecordMutation,
 )
+from ...Personal_Context.settings_provenance import SettingsProvenanceSubject
 from ..confirmation_dialog import ConfirmationDialog
+from .personal_context_provenance import (
+    PersonalContextProvenanceDetails,
+    literal_metadata,
+)
 from .personal_context_review_modal import (
     PersonalContextProposalReviewModal,
     ProposalReviewResult,
 )
-
 
 _STATE_LABELS = {
     ProfileOperationalState.ABSENT: "Empty",
@@ -161,6 +166,7 @@ class PersonalContextSettingsPanel(Vertical):
     load_failed = reactive(False, recompose=True)
     editor_mode = reactive("", recompose=True)
     selected_record_id = reactive("", recompose=True)
+    selected_deleted_record_id = reactive("", recompose=True)
     selected_scope_id = reactive(_ALL_SCOPES, recompose=True)
     interview_mode = reactive("fixed", recompose=True)
 
@@ -184,26 +190,55 @@ class PersonalContextSettingsPanel(Vertical):
         self._interview_launcher = interview_launcher
         self._link_launcher = link_launcher
         self._load_generation = 0
+        self._proposal_review: PersonalContextProposalReviewModal | None = None
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
+
+    def on_unmount(self) -> None:
+        self._load_generation += 1
+        self._invalidate_provenance()
+
+    def _invalidate_provenance(self) -> None:
+        for detail in self.query(PersonalContextProvenanceDetails):
+            detail.invalidate()
+        review = getattr(self, "_proposal_review", None)
+        if review is not None:
+            review.invalidate_provenance()
+
+    def watch_selected_record_id(self) -> None:
+        self._invalidate_provenance()
+
+    def watch_selected_deleted_record_id(self) -> None:
+        self._invalidate_provenance()
+
+    def watch_selected_scope_id(self) -> None:
+        self._invalidate_provenance()
+
+    def _fresh_service(self, *, retry_locked: bool = False) -> PersonalContextService:
+        """Resolve the current owner off-thread, without changing the UI cache."""
+        if self._service_factory is not None:
+            return self._service_factory(retry_locked=retry_locked)
+        if self._service is None:
+            raise RuntimeError("Personal Context service is unavailable")
+        return self._service
 
     def load_records(self, *, retry_locked: bool = False) -> None:
         """Fetch one content snapshot without blocking Textual's event loop."""
 
         self._load_generation += 1
+        self._invalidate_provenance()
         self._load_records_in_worker(self._load_generation, retry_locked)
 
     @work(thread=True, exclusive=True, group="personal-context-settings-load")
     def _load_records_in_worker(self, generation: int, retry_locked: bool) -> None:
         try:
-            snapshot = self._require_service(
-                retry_locked=retry_locked
-            ).settings_snapshot()
+            service = self._fresh_service(retry_locked=retry_locked)
+            snapshot = service.settings_snapshot()
         except Exception:
             self.app.call_from_thread(self._apply_load_error, generation)
             return
-        self.app.call_from_thread(self._apply_snapshot, generation, snapshot)
+        self.app.call_from_thread(self._apply_snapshot, generation, snapshot, service)
 
     def _require_service(self, *, retry_locked: bool = False) -> PersonalContextService:
         if self._service is None:
@@ -224,10 +259,15 @@ class PersonalContextSettingsPanel(Vertical):
         self._refresh_settings_shortcuts()
 
     def _apply_snapshot(
-        self, generation: int, snapshot: PersonalContextSettingsSnapshot
+        self,
+        generation: int,
+        snapshot: PersonalContextSettingsSnapshot,
+        service: PersonalContextService | None = None,
     ) -> None:
         if generation != self._load_generation:
             return
+        if service is not None:
+            self._service = service
         self.load_failed = False
         self.snapshot = snapshot
         scope_ids = {scope.scope.scope_id for scope in snapshot.scopes}
@@ -235,7 +275,13 @@ class PersonalContextSettingsPanel(Vertical):
             self.selected_scope_id = _ALL_SCOPES
         visible_records = self._visible_records(snapshot)
         record_ids = {record.record_id for record in visible_records}
-        if self.selected_record_id not in record_ids:
+        if self.selected_deleted_record_id not in {
+            row.subject.object_id for row in self._visible_deleted_records()
+        }:
+            self.selected_deleted_record_id = ""
+        if self.selected_deleted_record_id:
+            self.selected_record_id = ""
+        elif self.selected_record_id not in record_ids:
             self.selected_record_id = (
                 visible_records[0].record_id if visible_records else ""
             )
@@ -421,6 +467,29 @@ class PersonalContextSettingsPanel(Vertical):
                         classes=classes,
                     )
 
+        deleted_records = self._visible_deleted_records()
+        if deleted_records:
+            with Collapsible(
+                title="Deleted record metadata",
+                id="personal-context-deleted-metadata",
+                collapsed=not bool(self.selected_deleted_record_id),
+            ):
+                for index, row in enumerate(deleted_records):
+                    yield Button(
+                        Text(
+                            f"Deleted · {literal_metadata(row.subject.object_id)} · Updated {row.updated_at.isoformat()}"
+                        ),
+                        id=f"personal-context-deleted-{index}",
+                        classes="personal-context-record-row",
+                    )
+        subject = self._provenance_subject(
+            "record", self.selected_record_id or self.selected_deleted_record_id
+        )
+        if subject is not None:
+            yield PersonalContextProvenanceDetails(
+                subject, self._fresh_service, reload_details=self.load_records
+            )
+
         if self.editor_mode:
             yield from self._compose_editor()
 
@@ -528,6 +597,30 @@ class PersonalContextSettingsPanel(Vertical):
                 row
                 for row in (self.snapshot.scopes if self.snapshot else ())
                 if row.scope.scope_id == scope_id
+            ),
+            None,
+        )
+
+    def _visible_deleted_records(self):
+        if self.snapshot is None:
+            return ()
+        return tuple(
+            row
+            for row in self.snapshot.deleted_records
+            if self.selected_scope_id == _ALL_SCOPES
+            or row.scope_id == self.selected_scope_id
+        )
+
+    def _provenance_subject(
+        self, object_type: str, object_id: str
+    ) -> SettingsProvenanceSubject | None:
+        return next(
+            (
+                subject
+                for subject in (
+                    self.snapshot.provenance_subjects if self.snapshot else ()
+                )
+                if subject.object_type == object_type and subject.object_id == object_id
             ),
             None,
         )
@@ -746,6 +839,14 @@ class PersonalContextSettingsPanel(Vertical):
             self._review_proposal_index(button_id)
         elif button_id.startswith("personal-context-record-"):
             self._select_record_index(button_id)
+        elif button_id.startswith("personal-context-deleted-"):
+            try:
+                row = self._visible_deleted_records()[int(button_id.rsplit("-", 1)[1])]
+            except (IndexError, ValueError):
+                return
+            self.editor_mode = ""
+            self.selected_record_id = ""
+            self.selected_deleted_record_id = row.subject.object_id
 
     def _proposal_label(self, proposal) -> str:
         payload = (
@@ -814,17 +915,23 @@ class PersonalContextSettingsPanel(Vertical):
                 severity="warning",
             )
             return
-        self.app.push_screen(
-            PersonalContextProposalReviewModal(
-                proposal_service,
-                proposal=proposal,
-                scope_label=scope_label,
-                target_record=self._proposal_target(proposal),
+        self._proposal_review = PersonalContextProposalReviewModal(
+            proposal_service,
+            proposal=proposal,
+            scope_label=scope_label,
+            target_record=self._proposal_target(proposal),
+            provenance_subject=self._provenance_subject(
+                "proposal", proposal.proposal_id
             ),
+            provenance_service_loader=self._fresh_service,
+        )
+        self.app.push_screen(
+            self._proposal_review,
             callback=self._proposal_review_finished,
         )
 
     def _proposal_review_finished(self, result: ProposalReviewResult | None) -> None:
+        self._proposal_review = None
         self.load_records()
         if result is None:
             return
@@ -838,6 +945,7 @@ class PersonalContextSettingsPanel(Vertical):
             return
         try:
             index = int(button_id.rsplit("-", 1)[1])
+            self.selected_deleted_record_id = ""
             self.selected_record_id = self._visible_records()[index].record_id
         except (IndexError, ValueError):
             return
@@ -1196,6 +1304,7 @@ class PersonalContextSettingsPanel(Vertical):
         close_editor: bool = False,
         reload_removed_on_failure: bool = False,
     ) -> None:
+        self._invalidate_provenance()
         self.run_worker(
             lambda: self._perform_mutation(
                 operation,

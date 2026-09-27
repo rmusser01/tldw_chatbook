@@ -31,11 +31,14 @@ from ...Personal_Context.interview_coordinator import (
 )
 from ...Personal_Context.interview_diff import InterviewDiff, InterviewDiffChange
 from ...Personal_Context.service import (
+    PersonalContextService,
     ProfileConflictError,
     ProfileKeyCollisionError,
 )
+from ...Personal_Context.settings_provenance import SettingsProvenanceSubject
 from ..modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.status_line import set_status_line
+from .personal_context_provenance import PersonalContextProvenanceDetails
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +79,8 @@ class PersonalContextProposalReviewModal(
         proposal: ProfileProposal,
         scope_label: str,
         target_record: ProfileRecord | None = None,
+        provenance_subject: SettingsProvenanceSubject | None = None,
+        provenance_service_loader: Callable[[], PersonalContextService] | None = None,
     ) -> None:
         super().__init__()
         self._proposal_service = proposal_service
@@ -85,6 +90,25 @@ class PersonalContextProposalReviewModal(
         self._busy = False
         self._outcome_unknown = False
         self._control_state: dict[int, bool] = {}
+        self._provenance_details = (
+            PersonalContextProvenanceDetails(
+                provenance_subject, provenance_service_loader
+            )
+            if provenance_subject is not None and provenance_service_loader is not None
+            else None
+        )
+
+    def invalidate_provenance(self) -> None:
+        if self._provenance_details is not None:
+            self._provenance_details.invalidate()
+
+    def on_screen_suspend(self) -> None:
+        if self._provenance_details is not None:
+            self._provenance_details.suspend()
+
+    def on_screen_resume(self) -> None:
+        if self._provenance_details is not None:
+            self.call_after_refresh(self._provenance_details.resume)
 
     def compose(self) -> ComposeResult:
         payload = self._payload()
@@ -165,6 +189,14 @@ class PersonalContextProposalReviewModal(
                             "by the proposal.",
                             classes="settings-inline-guidance",
                         )
+                if self._provenance_details is not None:
+                    yield self._provenance_details
+                else:
+                    yield Static(
+                        "Recorded provenance unavailable.",
+                        markup=False,
+                        classes="settings-inline-guidance",
+                    )
                 yield Static(
                     "",
                     id="personal-context-proposal-status",
@@ -285,6 +317,7 @@ class PersonalContextProposalReviewModal(
         *,
         edited_payload: ProfilePayload | None = None,
     ) -> None:
+        self.invalidate_provenance()
         self._set_busy(True)
         if state == "rejected":
             operation = partial(

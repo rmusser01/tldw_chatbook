@@ -230,9 +230,6 @@ from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
     NoteImportPhase,
 )
-from ...Library.library_notes_lasting_sync_state import (
-    LibraryNotesLastingSyncSnapshot,
-)
 from ...Library.library_notes_tree_paging import (
     LIBRARY_NOTES_TREE_PAGE_SIZE,
     NotesBranchKey,
@@ -279,9 +276,6 @@ from ...Library.library_prompts_state import (
     build_prompt_browse_list_state,
     coerce_prompt_editor_mode,
 )
-from ...Prompt_Management.prompt_batch_models import (
-    PromptBatchTarget,
-)
 from ...Library.library_skills_state import (
     SkillBrowseResult,
     SkillBrowseScope,
@@ -294,18 +288,11 @@ from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     compile_prompt_variables,
 )
-from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
-from ...Widgets.Prompts.prompt_block_editor_state import (
-    PromptBlockEditorState,
-)
 from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
-from ...Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
-)
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
@@ -487,9 +474,6 @@ from ...Widgets.Library.library_note_folder_dialog import (
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
-from ...Widgets.Library.library_notes_canvas import (
-    LibraryNotePresentationState,
-)
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
@@ -515,34 +499,14 @@ from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
     _retry_failure_reason,
 )
-from ..Library_Modules.library_media_trash_browse_controller import (
-    LibraryMediaTrashBrowseController,
-    MediaTrashMutationClaim,
-)
-from ..Library_Modules.library_collections_capture_controller import (
-    LibraryCollectionsCaptureController,
-)
-from ..Library_Modules.library_collections_state import LibraryCollectionsState
 from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
-from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_export_controller import LibraryExportController
-from ..Library_Modules.library_export_state import LibraryExportState
-from ..Library_Modules.library_ingest_state import LibraryIngestState
-from ..Library_Modules.library_media_state import (
-    LibraryMediaState,
-)
-from ..Library_Modules.library_notes_state import (
-    LibraryNotesState,
-)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
 )
-from ..Library_Modules.library_prompts_state import LibraryPromptsState
-from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
-from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -569,16 +533,36 @@ from .study_scope_models import (
 )
 
 if TYPE_CHECKING:
+    from ...Library.library_notes_lasting_sync_state import (
+        LibraryNotesLastingSyncSnapshot,
+    )
+
     # Type-only: the shared modal owns the runtime acquisition-plan import.
     from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
     from ...Notes.note_import_executor import NoteImportExecutor
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
+    from ...Prompt_Management.prompt_batch_models import (
+        PromptBatchTarget,
+    )
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
     )
+    from ...Widgets.Library.library_notes_canvas import (
+        LibraryNotePresentationState,
+    )
+    from ...Widgets.Library.prompt_delete_confirmation_modal import (
+        PromptDeleteDecision,
+    )
+    from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+    from ...Widgets.Prompts.prompt_block_editor_state import (
+        PromptBlockEditorState,
+    )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
+    from ..Library_Modules.library_media_trash_browse_controller import (
+        MediaTrashMutationClaim,
+    )
     from ..Library_Modules.library_unavailable_navigation import (
         _LibraryCharacterNavigationAdmission,
     )
@@ -592,6 +576,39 @@ else:
         )
 
         return Workspace(*args, **kwargs)
+
+
+def __getattr__(name: str) -> Any:
+    """Preserve historical Library type exports without importing them at startup."""
+    from importlib import import_module
+
+    modules = {
+        "LibraryCollectionsCaptureController": "..Library_Modules.library_collections_capture_controller",
+        "LibraryCollectionsState": "..Library_Modules.library_collections_state",
+        "LibraryConversationsState": "..Library_Modules.library_conversations_state",
+        "LibraryExportState": "..Library_Modules.library_export_state",
+        "LibraryIngestState": "..Library_Modules.library_ingest_state",
+        "LibraryMediaState": "..Library_Modules.library_media_state",
+        "LibraryMediaTrashBrowseController": "..Library_Modules.library_media_trash_browse_controller",
+        "LibraryNotePresentationState": "...Widgets.Library.library_notes_canvas",
+        "LibraryNotesLastingSyncSnapshot": "...Library.library_notes_lasting_sync_state",
+        "LibraryNotesState": "..Library_Modules.library_notes_state",
+        "LibraryPromptsState": "..Library_Modules.library_prompts_state",
+        "LibraryRagSearchState": "..Library_Modules.library_rag_search_state",
+        "LibrarySkillsState": "..Library_Modules.library_skills_state",
+        "MediaTrashMutationClaim": "..Library_Modules.library_media_trash_browse_controller",
+        "PromptBatchTarget": "...Prompt_Management.prompt_batch_models",
+        "PromptBlockEditor": "...Widgets.Prompts.prompt_block_editor",
+        "PromptBlockEditorState": "...Widgets.Prompts.prompt_block_editor_state",
+        "PromptDeleteDecision": "...Widgets.Library.prompt_delete_confirmation_modal",
+        "_LibraryDatabaseNoteSessionPort": "..Library_Modules.note_session_port",
+    }
+    module = modules.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module, __package__), name)
+    globals()[name] = value
+    return value
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -838,7 +855,6 @@ from ..Library_Modules.screen_support_types import (
     _LibraryNotesDeletedFolderReceipt,
     _ParakeetV2NoPendingReportError,
 )
-from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 from ..Library_Modules.canvas_sync import (
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
@@ -2311,38 +2327,60 @@ class LibraryScreen(BaseAppScreen):
             resolve_root_collision,
         )
         from ...Notes.note_import_receipts import NoteImportReceiptRepository
+        from ..Library_Modules.library_collections_capture_controller import (
+            LibraryCollectionsCaptureController,
+        )
         from ..Library_Modules.library_collections_controller import (
             LibraryCollectionsController,
         )
+        from ..Library_Modules.library_collections_state import LibraryCollectionsState
         from ..Library_Modules.library_conversation_reader_controller import (
             LibraryConversationReaderController,
         )
+        from ..Library_Modules.library_conversations_state import (
+            LibraryConversationsState,
+        )
+        from ..Library_Modules.library_export_state import LibraryExportState
         from ..Library_Modules.library_ingest_controller import (
             LibraryIngestController,
         )
+        from ..Library_Modules.library_ingest_state import LibraryIngestState
         from ..Library_Modules.library_media_controller import (
             LibraryMediaController,
         )
+        from ..Library_Modules.library_media_state import (
+            LibraryMediaState,
+        )
+        from ..Library_Modules.library_media_trash_browse_controller import (
+            LibraryMediaTrashBrowseController,
+        )
         from ..Library_Modules.library_note_import_controller import (
             LibraryNoteImportController,
+        )
+        from ..Library_Modules.library_notes_controller import (
+            LibraryNotesController,
+        )
+        from ..Library_Modules.library_notes_state import (
+            LibraryNotesState,
         )
         from ..Library_Modules.library_notes_sync_controller import (
             InertLastingSyncRuntime,
             LibraryNotesSyncController,
         )
-        from ..Library_Modules.library_notes_controller import (
-            LibraryNotesController,
-        )
         from ..Library_Modules.library_prompts_controller import (
             LibraryPromptsController,
         )
+        from ..Library_Modules.library_prompts_state import LibraryPromptsState
         from ..Library_Modules.library_rag_search_controller import (
             LibraryRagSearchController,
         )
+        from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
         from ..Library_Modules.library_skill_import_controller import (
             ensure_library_skill_import_coordinator,
         )
         from ..Library_Modules.library_skills_controller import LibrarySkillsController
+        from ..Library_Modules.library_skills_state import LibrarySkillsState
+        from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)

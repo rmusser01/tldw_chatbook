@@ -515,6 +515,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
     from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
     from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSelectionExplanation,
         ProfileContextService,
         ProfileContextSnapshot,
     )
@@ -21092,6 +21094,10 @@ class ConsoleChatController:
         staged_sources: Iterable[ConsoleStagedSource] | None = None,
         *,
         session_id: str | None = None,
+        profile_selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ConsoleContextSnapshot:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
@@ -21260,6 +21266,11 @@ class ConsoleChatController:
                     turn_configuration=turn_context,
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
+                    **(
+                        {"profile_selection_sink": profile_selection_sink}
+                        if profile_selection_sink is not None
+                        else {}
+                    ),
                 )
             if personal_context_snapshot.serialized_block:
                 provider_messages = copy.deepcopy(provider_messages)
@@ -21551,6 +21562,51 @@ class ConsoleChatController:
 
         return ProfileContextService(resolved) if resolved is not None else None
 
+    async def personal_context_selection_current(
+        self,
+        builder: ProfileContextService,
+        request: ProfileContextRequest,
+        explanation: ProfileContextSelectionExplanation,
+        *,
+        provider_selection: ConsoleProviderSelection,
+    ) -> bool:
+        """Recheck the exact preview builder and current app-owned profile."""
+
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                provider_selection
+            )
+            if not getattr(resolution, "ready", True):
+                return False
+            model = str(
+                getattr(resolution, "model", "")
+                or provider_selection.explicit_model
+                or provider_selection.configured_model
+                or ""
+            )
+            provider = str(
+                getattr(resolution, "execution_key", "")
+                or getattr(resolution, "provider", "")
+                or "agent"
+            )
+            if (model, provider) != (request.model, request.provider):
+                return False
+            current_service = await self._personal_context_service()
+        except Exception:  # noqa: BLE001 - stale inspection fails closed.
+            return False
+        if current_service is None or current_service is not builder._service:
+            return False
+        if not await asyncio.to_thread(
+            builder.explanation_is_current, explanation, request
+        ):
+            return False
+        try:
+            # The app may replace its service while the read-only validation
+            # runs in a worker. Compare again at the final await boundary.
+            return await self._personal_context_service() is builder._service
+        except Exception:  # noqa: BLE001 - stale inspection fails closed.
+            return False
+
     async def _build_personal_context_snapshot(
         self,
         session: ConsoleChatSession | None,
@@ -21560,6 +21616,10 @@ class ConsoleChatController:
         turn_configuration: Any | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        profile_selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ProfileContextSnapshot:
         """Ask the agent planner for one fully reserved Next Send snapshot."""
 
@@ -21702,8 +21762,7 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 - uncertain budget fails closed
             return _empty_profile_context_snapshot()
         try:
-            return await asyncio.to_thread(
-                build_preview,
+            preview_args = dict(  # noqa: C408 - preserve the existing keyword call shape.
                 session_id=session.id,
                 workspace_id=session.workspace_id,
                 ephemeral=session.ephemeral,
@@ -21744,6 +21803,9 @@ class ConsoleChatController:
                 ),
                 profile_context_service=builder,
             )
+            if profile_selection_sink is not None:
+                preview_args["selection_sink"] = profile_selection_sink
+            return await asyncio.to_thread(build_preview, **preview_args)
         except Exception:  # noqa: BLE001 - personalization never blocks preview
             return _empty_profile_context_snapshot()
 

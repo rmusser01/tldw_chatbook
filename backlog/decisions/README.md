@@ -129,6 +129,15 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-172](172-library-artifacts-browse-and-navigation.md) | Accepted; implementation pending | Browse reports and registered Chatbooks in Library while retaining kept-copy identity, source ownership, app-owned sharing, and the linked ZIP-pack manager. |
 | [ADR-184](184-local-console-prompt-draft-shelf.md) | Accepted | Store explicitly managed unsent Console drafts in a capped, local-only shelf inside the Prompts database and promote them through existing Prompt and collection contracts. |
 
+| [ADR-182](182-personal-context-memory-evolution.md) | Accepted | Evolve memory through existing owners, starting with an offline baseline, truthful provenance and selection inspection, and measured local retrieval. |
+| [ADR-185](185-versioned-profile-evidence-and-temporal-claims.md) | Accepted (design only) | Bind future V2 Personal Context evidence to exact source authority/version/span and distinguish support, approval and temporal claim changes. |
+| [ADR-186](186-dependency-aware-personal-context-forgetting.md) | Accepted (design only) | Fence future forgetting across existing owners with source suppression, durable recovery and honest peer acknowledgements. |
+| [ADR-187](187-personal-context-provider-disclosure-authority.md) | Accepted (design only) | Separate restrictive model audiences from Sync and agent authority using qualified destination/purpose-bound local grants. |
+| [ADR-188](188-opt-in-proposal-only-memory-consolidation.md) | Accepted (design only) | Bound opt-in new-source consolidation to canonical proposals, exact foreground review and native disclosure/budget/recovery owners. |
+| [ADR-189](189-reviewed-memory-feedback-and-repair-ownership.md) | Accepted (design only) | Route explicit corrections and repair through canonical profiles and foreground Notes/lessons, with bounded non-authorizing guidance. |
+| [ADR-192](192-personal-context-v2-canonical-data-contract.md) | Accepted (design only) | Freeze inactive V2 aggregates, complete digest/attribution rules and restrictive disclosure without enabling native consumers. |
+| [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

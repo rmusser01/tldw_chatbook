@@ -80,6 +80,10 @@ The following constraints make that decision operational:
   record lifecycle states; conflicted context uses the last mutually
   acknowledged version or omits the record.
 - Privacy is expressed per record. `device_only` records never leave Chatbook.
+  [ADR-187](187-personal-context-provider-disclosure-authority.md) accepts the
+  future model-disclosure amendment and qualified on-device/export boundaries;
+  its deny migration and runtime enforcement remain unimplemented and gated.
+  Current Sync controls alone do not establish that future model-egress promise.
   `user_only` records may synchronize for the user but are excluded from every
   agent-facing path. Runtime enablement and `read_only`, `propose`, or
   `direct_write` agent grants are peer-local and never synchronize.

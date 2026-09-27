@@ -13,7 +13,7 @@ import copy
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -22,12 +22,16 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
+    Label,
     LoadingIndicator,
     Static,
     TabbedContent,
@@ -71,6 +75,12 @@ from .console_inspector_presentation import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextSelectionExplanation,
+    )
+    from tldw_chatbook.Widgets.Console.console_next_send_selection import (
+        ConsoleNextSendSelectionResult,
+    )
 else:
     TraceViewerProfile = Any
 
@@ -103,6 +113,13 @@ SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
 # should not be trusted to stay that way forever) can't produce this tab's
 # "Failed to refresh context." toast or clear ITS spinner.
 _NEXT_SEND_WORKER_GROUP = "console-inspector-next-send"
+
+
+def _selection_now() -> datetime:
+    """Clock seam for one-shot eligibility expiry."""
+
+    return datetime.now(UTC)
+
 
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
@@ -143,7 +160,9 @@ class InspectorTurn:
 
 
 ExchangesLoader = Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]
-SnapshotFactory = Callable[[], Awaitable[ConsoleContextSnapshot]]
+SnapshotFactory = Callable[
+    [], Awaitable["ConsoleContextSnapshot | ConsoleNextSendSelectionResult"]
+]
 
 
 class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
@@ -192,6 +211,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     #console-inspector-next-send-loading.loading { display: block; }
     #console-inspector-next-send-tabs { height: 1fr; }
     #console-inspector-next-send-actions { height: auto; }
+    .inspector-selection-body { max-height: $ds-size-8; }
+    .console-inspector-selection-row {
+        width: 100%; height: auto; text-wrap: wrap;
+    }
     """
 
     # Deliberate divergence from a literal "dismiss" action name (this
@@ -433,6 +456,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._initial_tab = initial_tab or TAB_NEXT_SEND
         self._exchange_capture_by_call_key: dict[str, tuple[ExchangeCapture, bool]] = {}
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
+        self._selection_generation = 0
+        self._selection_explanation: ProfileContextSelectionExplanation | None = None
+        self._selection_attempted = False
+        self._selection_timer = None
+        self._selection_suspended = False
 
     def _capture_revision_is_current(self) -> bool:
         """Return whether cached captures still belong to the open revision."""
@@ -524,6 +552,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         )
                         yield ConsoleInspectorDetailPane(
                             id="console-inspector-context-detail"
+                        )
+                        yield VerticalScroll(
+                            id="console-inspector-selection-body",
+                            classes="inspector-selection-body h-auto",
                         )
                         with Horizontal(id="console-inspector-next-send-actions"):
                             yield Checkbox(
@@ -915,8 +947,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._snapshot_generation += 1
         self._disclosure_generation += 1
         self._detail_generation += 1
+        self._selection_generation += 1
+        self._clear_selection(render=False)
 
     def on_screen_resume(self) -> None:
+        self._selection_suspended = False
         self._target_authority_is_current()
 
     def _target_authority_is_current(self) -> bool:
@@ -928,6 +963,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return True
         if not self._target_invalid:
             self._target_invalid = True
+            self._selection_generation += 1
+            self._clear_selection(render=False)
+            for body in self.query("#console-inspector-selection-body"):
+                body.remove_children()
             self._snapshot_generation += 1
             self._disclosure_generation += 1
             self._snapshot_ready = False
@@ -944,6 +983,48 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 if button.id != CLOSE_BUTTON_ID:
                     button.disabled = True
         return False
+
+    def on_screen_suspend(self) -> None:
+        """Discard disposable selection data while another screen covers us."""
+
+        self._selection_suspended = True
+        self._snapshot_generation += 1
+        self._selection_generation += 1
+        self._clear_selection()
+        self.next_send_loading = False
+
+    def _clear_selection(
+        self, *, unavailable: bool = False, render: bool = True
+    ) -> None:
+        timer = self._selection_timer
+        self._selection_timer = None
+        if timer is not None:
+            timer.stop()
+        self._selection_explanation = None
+        self._selection_attempted = unavailable
+        if render and self.is_mounted:
+            try:
+                self._update_view()
+            except NoMatches:
+                pass
+
+    def _arm_selection_expiry(self, generation: int) -> None:
+        explanation = self._selection_explanation
+        if explanation is None or explanation.valid_until is None:
+            return
+        seconds = max(0.0, (explanation.valid_until - _selection_now()).total_seconds())
+
+        def expire() -> None:
+            if (
+                generation == self._selection_generation
+                and self._selection_explanation is explanation
+            ):
+                if _selection_now() < explanation.valid_until:
+                    self._arm_selection_expiry(generation)
+                else:
+                    self._clear_selection(unavailable=True)
+
+        self._selection_timer = self.set_timer(seconds, expire)
 
     def _capture_policy_text(self) -> str:
         bindings = self._capture_policy_bindings
@@ -1392,6 +1473,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         )
         header.update(header_text)
 
+        selection_body = self.query_one(
+            "#console-inspector-selection-body", VerticalScroll
+        )
+        selection_body.remove_children()
+        selection = self._build_selection_widget()
+        if selection is not None:
+            selection_body.mount(selection)
+
         pane = self.query_one(
             "#console-inspector-context-detail", ConsoleInspectorDetailPane
         )
@@ -1411,6 +1500,70 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             pane.select(key, open_detail=pane.detail_open)
         else:
             pane.clear_detail(self._snapshot_status)
+
+    @staticmethod
+    def _selection_identifier(value: str) -> str:
+        """Show an imported ID literally within a predictable cell budget."""
+
+        bounded = value[:64] + ("…" if len(value) > 64 else "")
+        return json.dumps(bounded, ensure_ascii=True)
+
+    def _build_selection_widget(self) -> Collapsible | None:
+        if not self._selection_attempted:
+            return None
+        explanation = self._selection_explanation
+        state = explanation.state if explanation is not None else "unavailable"
+        state_copy = {
+            "empty": "No eligible Personal Context records for this preview.",
+            "insufficient_budget": "Insufficient budget for an eligible whole record.",
+            "disabled": "Personal Context is disabled.",
+            "locked": "Personal Context is locked.",
+            "unavailable": "Selection explanation unavailable. Refresh to try again.",
+        }
+        body: list[Widget] = []
+        if state in state_copy:
+            body.append(
+                Label(
+                    state_copy[state],
+                    markup=False,
+                    classes="console-inspector-selection-row",
+                )
+            )
+        if state in {"available", "insufficient_budget"} and explanation is not None:
+            groups = {
+                0: "Workspace correction or constraint",
+                1: "Workspace keyed record",
+                2: "Correction or constraint",
+                3: "Relevant preference or working context",
+                4: "Other eligible record",
+            }
+            dispositions = {
+                "selected": "Selected",
+                "workspace_override": "Workspace override",
+                "byte_budget": "Byte budget",
+                "token_budget": "Token budget",
+            }
+            for row in explanation.rows:
+                disposition = dispositions.get(row.disposition, "Unavailable")
+                group = (
+                    f" · group {row.priority_group}: {groups[row.priority_group]}"
+                    if row.priority_group in groups
+                    else ""
+                )
+                body.append(
+                    Label(
+                        f"{disposition}{group} · "
+                        f"{self._selection_identifier(row.record_id)}",
+                        markup=False,
+                        classes="console-inspector-selection-row",
+                    )
+                )
+        return Collapsible(
+            *body,
+            title=Content.from_text("Personal Context selection", markup=False),
+            collapsed=True,
+            classes="console-inspector-personal-context-selection",
+        )
 
     def _format_next_send_text(self) -> str:
         return self._json_block(self.snapshot.next_send_payload)
@@ -1462,28 +1615,42 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return
         self._snapshot_generation += 1
         generation = self._snapshot_generation
+        from .console_next_send_selection import ConsoleNextSendSelectionResult
+
+        self._selection_generation += 1
+        self._clear_selection()
         self.next_send_loading = True
         self._snapshot_status = (
             "Refreshing preview…" if self._snapshot_ready else "Preparing preview…"
         )
         try:
-            new_snapshot = await self._snapshot_factory()
+            result = await self._snapshot_factory()
             if (
                 generation != self._snapshot_generation
+                or self._selection_suspended
                 or not self.is_mounted
+                or self.app.screen is not self
                 or not self._target_authority_is_current()
             ):
                 return
+            selection_attempted = isinstance(result, ConsoleNextSendSelectionResult)
+            new_snapshot = result.snapshot if selection_attempted else result
             # Project-instruction state refreshed BEFORE the snapshot
             # assignment below too (task-18300, same rule as the token
             # estimate's own comment right below): ``_update_view`` reads
             # ``self._project_instruction_state`` synchronously off
             # ``watch_snapshot``, so assigning the snapshot first would
             # sync the panel against the STALE state for one refresh.
+            project_state = self._project_instruction_state
             if self._project_instruction_state_factory is not None:
-                self._project_instruction_state = (
-                    await self._project_instruction_state_factory()
-                )
+                project_state = await self._project_instruction_state_factory()
+            if (
+                generation != self._snapshot_generation
+                or self._selection_suspended
+                or not self.is_mounted
+                or self.app.screen is not self
+            ):
+                return
             # Estimate refreshed BEFORE the snapshot assignment below
             # (task-10 review finding 6): ``self.snapshot = ...`` is a
             # reactive that triggers ``watch_snapshot`` -> ``_update_view``
@@ -1506,6 +1673,29 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     self._token_estimate = None
             elif self._estimate_factory is not None:
                 self._token_estimate = self._estimate_factory()
+            selection = None
+            if selection_attempted:
+                try:
+                    if await result.is_current():
+                        selection = result.explanation
+                except Exception:  # noqa: BLE001, S110 - diagnostic failure is content-free.
+                    pass
+            if (
+                generation != self._snapshot_generation
+                or self._selection_suspended
+                or not self.is_mounted
+                or self.app.screen is not self
+                or not self._target_authority_is_current()
+            ):
+                return
+            if (
+                selection is not None
+                and selection.valid_until is not None
+                and _selection_now() >= selection.valid_until
+            ):
+                selection = None
+            self._selection_attempted = selection_attempted
+            self._selection_explanation = selection
             if (
                 generation != self._snapshot_generation
                 or not self._target_authority_is_current()
@@ -1516,6 +1706,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 if self._context_budget_provider is not None
                 else (None, None)
             )
+            self._project_instruction_state = project_state
             self._snapshot_ready = True
             self._snapshot_status = (
                 "Prepared now · refresh after changing the draft or settings"
@@ -1524,6 +1715,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 self._update_view()
             else:
                 self.snapshot = new_snapshot
+            self._arm_selection_expiry(self._selection_generation)
             self.call_after_refresh(self._focus_initial_control)
         except Exception:  # noqa: BLE001 - injected authority/loaders fail closed
             if self._target_authority_is_current():
@@ -1537,7 +1729,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     "Could not prepare context. Refresh to retry.", severity="error"
                 )
         finally:
-            self.next_send_loading = False
+            if generation == self._snapshot_generation:
+                self.next_send_loading = False
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Surface a Next Send snapshot-load failure and clear its spinner.

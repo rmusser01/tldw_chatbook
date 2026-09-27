@@ -32,11 +32,14 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import uuid
 from pathlib import Path
 
 import pytest
 
+from Tests.DB.fixtures.chachanotes_v54 import genuine_v54_database
+from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -176,26 +179,70 @@ def test_hard_deleting_a_message_removes_its_body_from_sync_log(db: CharactersRA
             "content": f"hard {needle}",
         }
     )
-    with db.transaction() as conn:
-        conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+    assert _sync_log_hits(db, needle)
+    with db.transaction(immediate=True) as conn:
+        SemanticRevisionCoordinator(db).mutate_message(
+            conn,
+            message_id=message_id,
+            creation_reason="hard_delete",
+            hard_delete=True,
+        )
 
+    assert (
+        db.get_connection()
+        .execute("SELECT 1 FROM messages WHERE id = ?", (message_id,))
+        .fetchone()
+        is None
+    )
     assert _sync_log_hits(db, needle) == []
     assert _entries(db, "messages", message_id) == []
 
 
 def test_hard_deleting_a_conversation_cascades_the_purge_to_its_messages(
+    tmp_path: Path,
+):
+    """A migrated pre-ledger message still receives the FK retention purge."""
+    path = tmp_path / "legacy-cascade.db"
+    needle = "ordinary pre-v55 body"
+    with genuine_v54_database(path) as historical:
+        row = historical.execute_query(
+            "SELECT id, conversation_id FROM messages WHERE content = ?", (needle,)
+        ).fetchone()
+        assert row is not None
+        message_id, conversation_id = row["id"], row["conversation_id"]
+
+    database = CharactersRAGDB(path, "legacy-cascade-test")
+    try:
+        assert _sync_log_hits(database, needle)
+        assert (
+            database.execute_query(
+                "SELECT 1 FROM console_trace_semantic_revisions WHERE live_message_id = ?",
+                (message_id,),
+            ).fetchone()
+            is None
+        )
+        with database.transaction() as conn:
+            conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+
+        assert (
+            database.execute_query(
+                "SELECT 1 FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            is None
+        )
+        assert database.get_conversation_by_id(conversation_id) is None
+        assert _sync_log_hits(database, needle) == []
+        assert _entries(database, "messages", message_id) == []
+    finally:
+        database.close_connection()
+
+
+def test_hard_deleting_a_conversation_with_tracked_messages_requires_authorization(
     db: CharactersRAGDB,
 ):
-    """The FK cascade fires the child trigger -- verified, not assumed.
-
-    ``messages.conversation_id`` is ``ON DELETE CASCADE``, and SQLite fires the
-    child table's AFTER DELETE trigger for a foreign-key action (``PRAGMA
-    recursive_triggers`` is 0 here and governs recursion, not this). Without
-    that, a hard conversation delete would leave every message body in
-    ``sync_log`` with no row left to reach it from.
-    """
+    """A raw FK cascade cannot bypass the current semantic deletion guard."""
     needle = _needle()
-    conversation_id = db.add_conversation({"title": "cascade", "character_id": 1})
+    conversation_id = db.add_conversation({"title": "tracked cascade"})
     message_id = db.add_message(
         {
             "conversation_id": conversation_id,
@@ -203,13 +250,17 @@ def test_hard_deleting_a_conversation_cascades_the_purge_to_its_messages(
             "content": f"cascade {needle}",
         }
     )
-    with db.transaction() as conn:
+    before = _sync_log_hits(db, needle)
+    assert before
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="semantic mutation authorization"),
+        db.transaction() as conn,
+    ):
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
-    assert db.execute_query(
-        "SELECT COUNT(*) FROM messages WHERE id = ?", (message_id,)
-    ).fetchone()[0] == 0
-    assert _sync_log_hits(db, needle) == []
+    assert db.get_conversation_by_id(conversation_id) is not None
+    assert db.get_message_by_id(message_id)["content"] == f"cascade {needle}"
+    assert _sync_log_hits(db, needle) == before
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +758,11 @@ def test_latest_only_retention_is_independent_of_trigger_firing_order(
                     (dictionary_id,),
                 )
             return [
-                (row["operation"], row["version"], "secret-body" in (row["payload"] or ""))
+                (
+                    row["operation"],
+                    row["version"],
+                    "secret-body" in (row["payload"] or ""),
+                )
                 for row in database.execute_query(
                     "SELECT operation, version, payload FROM sync_log "
                     "WHERE entity = 'chat_dictionaries' ORDER BY change_id"
