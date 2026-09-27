@@ -44,6 +44,16 @@ The same day, the owner also enabled:
 
 The rules for when agents may use `--auto` are in `CLAUDE.md`, under "Merging into `dev`".
 
+**`Nightly Deep` disabled (2026-09-27, owner decision).** It was disabled with
+`gh workflow disable nightly-deep.yml`, and its state is `disabled_manually`. This changes no file,
+so `nightly-deep.yml` and its contract tests are untouched.
+
+- **Why:** 0 of 8 complete runs, while using about 22% of the account's runner-minutes and 64% of
+  its macOS minutes.
+- **Restoring it:** `gh workflow enable nightly-deep.yml`, once CI throughput sub-project 3 makes
+  a run able to finish and report. The ADR-103 amendment for this cadence change ships in that
+  spec's rollout step 3.
+
 ## Standing state (as of 2026-09-12; strict superseded above)
 
 - **Required approving reviews: 0.** Set to 0 by the owner on 2026-09-12
