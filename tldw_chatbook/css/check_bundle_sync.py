@@ -12,7 +12,8 @@ Run locally or in CI:  ``python tldw_chatbook/css/check_bundle_sync.py``
 Exits 0 when in sync, 1 (with ``::error::`` annotations) when drifted.
 
 Stdlib-only and imported as a sibling module, so it runs without installing the
-app's dependencies (matching the standalone backlog-guard workflow).
+app's dependencies -- part of the Derived Artifacts required job
+(``derived-artifacts.yml``).
 """
 
 import contextlib

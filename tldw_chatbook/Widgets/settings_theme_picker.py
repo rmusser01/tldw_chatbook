@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -29,6 +30,7 @@ from ..css.Themes.theme_catalog import (
     build_catalog,
     current_launch_default,
     display_name,
+    launch_default_restorable,
     revert_theme,
     use_theme,
     use_theme_toast,
@@ -36,7 +38,12 @@ from ..css.Themes.theme_catalog import (
 )
 from ..css.Themes.themes import printable
 from ..Utils.input_validation import escape_markup
-from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
+from .settings_theme_editor import (
+    THEME_STACK_BELOW,
+    THEMES_UNAVAILABLE_LABEL,
+    SettingsThemeEditor,
+    theme_stack_width,
+)
 from .theme_preview import ThemePreview
 
 _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
@@ -217,7 +224,15 @@ class ThemePicker(Vertical):
     def _sync_revert_chip(self) -> None:
         revert = self.query_one("#settings-theme-revert", Button)
         change = self._revert
-        revert.display = change is not None
+        restores_launch = change is not None and change.persisted and launch_default_restorable(self.app, change)
+        # TASK-33061: no chip when reverting would change nothing -- the
+        # target is already active and the launch default would stay as is.
+        # The pending change is kept: a later Try/Use merges into it.
+        revert.display = change is not None and (
+            change.previous_active != str(self.app.theme)
+            or (restores_launch and change.previous_launch_default != current_launch_default())
+        )
+        self.query_one("#settings-theme-revert-row").display = revert.display
         if change is None:
             return
         # Button labels parse markup; theme names are untrusted file text (R28),
@@ -225,8 +240,11 @@ class ThemePicker(Vertical):
         label = f"Revert to {escape_markup(printable(display_name(change.previous_active)))}"
         # Only worth naming the launch default too when it persisted AND
         # disagrees with the active theme it's reverting to -- otherwise
-        # they're the same theme and the parenthetical is noise.
-        if change.persisted and change.previous_active != change.previous_launch_default:
+        # they're the same theme and the parenthetical is noise. A missing
+        # launch default is never written back, so say it stays put.
+        if change.persisted and not restores_launch:
+            label = f"{label} (launch unchanged)"
+        elif restores_launch and change.previous_active != change.previous_launch_default:
             label = f"{label} (launch: {escape_markup(printable(display_name(change.previous_launch_default)))})"
         revert.label = label
 
@@ -243,18 +261,23 @@ class ThemePicker(Vertical):
                 yield Static("", id="settings-theme-card-title", classes="destination-section", markup=False)
                 yield Static("", id="settings-theme-card-error", classes="settings-help-copy", markup=False)
                 yield ThemePreview("settings-theme-picker-preview", id="settings-theme-picker-preview")
-                with Horizontal(classes="settings-action-row"):
+                # TASK-33064: three action groups -- switching (Use, Try,
+                # then Revert on its own row: its label names up to two
+                # themes), creation, and your-theme file actions.
+                with Horizontal(classes="settings-action-row theme-action-group"):
                     yield Button("Use this theme", id="settings-theme-use", variant="primary", classes="theme-editor-action")
                     yield Button("Try", id="settings-theme-try", classes="theme-editor-action")
+                with Horizontal(id="settings-theme-revert-row", classes="settings-action-row"):
+                    yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
+                with Horizontal(classes="settings-action-row theme-action-group"):
                     yield Button("Clone", id="settings-theme-picker-clone", classes="theme-editor-action")
                     yield Button("New", id="settings-theme-picker-new", classes="theme-editor-action")
                     yield Button("Import…", id="settings-theme-picker-import", classes="theme-editor-action")
-                    yield Button("Revert", id="settings-theme-revert", classes="theme-editor-action")
-                with Horizontal(classes="settings-action-row"):
+                with Horizontal(id="settings-theme-yours-actions", classes="settings-action-row theme-action-group"):
                     yield Button("Edit", id="settings-theme-picker-edit", classes="theme-editor-action")
                     yield Button("Rename", id="settings-theme-picker-rename", classes="theme-editor-action")
-                    yield Button("Delete", id="settings-theme-picker-delete", variant="error", classes="theme-editor-action")
                     yield Button("Export", id="settings-theme-picker-export", classes="theme-editor-action")
+                    yield Button("Delete", id="settings-theme-picker-delete", variant="error", classes="theme-editor-action")
                 with Horizontal(id="settings-theme-export-result", classes="settings-action-row"):
                     yield Static(
                         "", id="settings-theme-export-path", classes="settings-help-copy", markup=False
@@ -425,6 +448,8 @@ class ThemePicker(Vertical):
         new.disabled = error is not None
         new.tooltip = unreadable_tip
         is_yours = entry is not None and entry.origin == "yours"
+        # The group row too, or its top margin leaves a gap under Import.
+        self.query_one("#settings-theme-yours-actions").display = is_yours
         tooltip = None if self.files_available else THEMES_UNAVAILABLE_LABEL
         import_button = self.query_one("#settings-theme-picker-import", Button)
         import_button.disabled = not self.files_available
@@ -647,6 +672,13 @@ class ThemePicker(Vertical):
             self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
+        if change.previous_active.startswith("custom_"):
+            # Review I-1/P6: an editor Try's custom_* registration is never a
+            # row; Revert targets the listed theme behind it, else the launch
+            # default -- never a theme the picker cannot show.
+            base = change.previous_active[len("custom_") :]
+            listed = base if base in self.app.available_themes else change.previous_launch_default
+            change = replace(change, previous_active=listed)
         self._revert = change if self._revert is None else self._revert.merge(change)
         self._sync_revert_chip()
         if not persist:
@@ -667,6 +699,38 @@ class ThemePane(ContentSwitcher):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(initial="settings-theme-picker", **kwargs)
+        self.add_class("-picker")  # `initial` bypasses watch_current
+
+    # TASK-33064: own-width layout switches (the workbench's compact class
+    # only fires at <=100 terminal cols; 101-180 squeezed the columns).
+    # Below THEME_STACK_BELOW (shared with the editor, review M-2) the list
+    # and card stack; below _NARROW_CARD_BELOW card cols the chips stack too
+    # (four chips need ~48).
+    _NARROW_CARD_BELOW = 48
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Stack the card under the list, and narrow its chips, by body width.
+
+        Args:
+            event: The resize event (the width is re-measured on the body).
+        """
+        width = theme_stack_width(self)
+        stacked = width < THEME_STACK_BELOW
+        self.set_class(stacked, "-stacked")
+        card_width = width if stacked else width // 2
+        self.set_class(card_width < self._NARROW_CARD_BELOW, "-narrow-card")
+
+    def watch_current(self, old: str | None, new: str | None) -> None:
+        """Size the pane for the view being switched to.
+
+        Args:
+            old: The id of the view being left.
+            new: The id of the view being shown.
+        """
+        super().watch_current(old, new)
+        # TASK-33064: the picker fills the detail pane (CSS `-picker`); the
+        # taller editor keeps the auto height so the pane body scrolls it.
+        self.set_class(new == "settings-theme-picker", "-picker")
 
     def compose(self) -> ComposeResult:
         # The editor is composed first so the picker's first refresh_catalog
@@ -691,6 +755,7 @@ class ThemePane(ContentSwitcher):
         return set(files), unreadable
 
     def show_picker(self) -> None:
+        self._editor().discard_try()  # review I-1: every Back undoes an unsaved Try
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
         picker.refresh_catalog()

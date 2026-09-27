@@ -608,7 +608,11 @@ shipped** / **overrides textual** when one of your saved themes shadows a
 built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/textual") and a live swatch preview — without
-touching the app you're actually using. If the configured launch default no
+touching the app you're actually using. The list takes all the height the
+detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
+highlighted row is filled in the theme's primary text colour as well as bold.
+When the picker is narrower than 100 columns (a mid-width terminal), the card
+moves below the list instead of squeezing both. If the configured launch default no
 longer exists (its file was deleted or renamed outside the app), a notice
 appears above the list — "Launch default missing: \<id\> — Use any theme to
 fix it" — the same wording Appearance's summary row uses; using any theme
@@ -625,6 +629,7 @@ When the highlighted theme is one of **yours**, three more keys work: **e** —
 **Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
 and **Delete** — remove it. These three, plus **Export**, have no effect on a
 shipped or Textual theme (Clone or New it first to make your own copy).
+While the list has focus the footer lists these keys; **F1** lists them too.
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
 match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
@@ -638,7 +643,12 @@ return to the new name instead, and deleting that theme drops the Revert
 button, so it never targets a theme that no longer exists. When a persisted Use captures a moment where the active theme
 and the launch default already disagreed (e.g. an earlier Try left the
 active theme unsaved), the label also names the launch default: "Revert to
-\<theme\> (launch: \<launch theme\>)". Toasts name what happened: Try says
+\<theme\> (launch: \<launch theme\>)". If that earlier launch default is no
+longer a registered theme (the "Launch default missing" case), Revert does not
+write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
+the saved launch default stays as it is. The Revert button hides whenever
+pressing it would change nothing — its theme is already the one running and
+the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
 "Trying \<name\> for this
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and
@@ -650,9 +660,13 @@ toast, so the command palette's "Switch to \<theme\>" command — which also
 persists like Use — shows the exact same wording, cache-refresh warning
 included.
 
-**Your themes** get a second row of chips beneath Use/Try/Clone/New/Revert —
-**Edit**, **Rename**, **Delete** and **Export** — visible only when the
-highlighted theme is one of yours (a shipped or Textual theme shows neither
+The card's buttons come in three groups, a blank row apart: switching —
+**Use this theme** and **Try**, with **Revert** under them when it applies;
+creating — **Clone**, **New** and **Import…**; and, for **your themes** only,
+**Edit**, **Rename**, **Export** and **Delete**. Each group is one row when the
+card is at least 48 columns wide; on a narrower card (always at compact
+width) every button takes its own full-width row. The your-theme group is
+visible only when the highlighted theme is one of yours (a shipped or Textual theme shows neither
 the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
 group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
@@ -747,7 +761,8 @@ the colour and its hex; an invalid value marks the box and the swatch reads
 "Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in the
 **Presets fill** box (Primary by default), by click or by focusing a swatch
 and pressing Enter or Space. The **Live Preview** is a Console-shaped stub
-that repaints as you type. A theme cloned from a shipped one keeps that
+that repaints as you type; on a wide window it sits beside the palette so
+your edits show without scrolling (narrow windows stack it below). A theme cloned from a shipped one keeps that
 theme's extra readability colours (muted text, footer keys, input selection)
 through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base
@@ -760,7 +775,15 @@ Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard*
 Settings category while the editor is open, or leave Settings altogether
 (the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
-Changing only the **Name** box counts as an unsaved edit.
+Changing only the **Name** box counts as an unsaved edit. The editor's
+**Try** lasts only while you're in the editor: leaving it any way but
+**Save** — **Back** with nothing unsaved, **Discard**, a category switch or
+leaving Settings — puts back the theme that was running when you opened
+the editor (unless you switched themes elsewhere since, e.g. from the
+command palette; that choice stays). After **Save** or **Save as…**, the
+saved theme is the one applied, under its saved name.
+While the editor has unsaved edits, the rail shows **Theme \***, and the Scope
+Inspector's header and its "Unsaved theme changes" row both say so.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
@@ -1170,7 +1193,8 @@ section (its save contract, scope, runtime owner, whether writes are allowed,
 boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
-only while on RAG. Every category has a non-empty help body; one without
+only while on RAG and Theme's list keys (Enter, t, c, n, i, e, r, Del) listed
+for Theme. Every category has a non-empty help body; one without
 category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:
@@ -1531,3 +1555,11 @@ for a named endpoint (`custom-ep:<slug>`) now hide the rows that endpoint's
 family request drops, as Console does (an ollama-family endpoint hides Min
 P); pinned by a real-rebase comparison test. Not driven live. The rest of
 this page's content unchanged from the prior stamp.*
+
+*Verified against `fix/theme-crit3-lane-b` (off dev @ ae8cb2783c) — 2026-09-27
+(TASK-33061/33064/33065): Theme ▸ Revert with a missing launch default,
+the hidden no-op Revert, the full-height list and grouped card buttons
+(measured in-process at 211x44, 235x52, 150x40, 120x36 and 80x24), and the
+highlighted-row fill (measured from painted cells under textual-dark,
+textual-light, gruvbox_dark and solarized_light). Pinned by pilot tests,
+not driven live.*

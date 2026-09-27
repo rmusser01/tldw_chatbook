@@ -5,9 +5,10 @@ files that share an id; `backlog` CLI lookups then resolve ambiguously.
 This has happened repeatedly -- ids 152+, 196-203, 246-256, `task-3401`
 (TASK-13158), and most recently a batch of seven (TASK-19573).
 
-`.github/workflows/backlog-guard.yml` already fails on this, but only
-*after* a push: the collision costs a CI cycle and a PR round-trip to
-discover, and the workflow's output is the only place it is visible.
+The Derived Artifacts required job (`derived-artifacts.yml`; formerly also
+enforced by backlog-guard.yml, deleted 2026-09-27) already fails on this,
+but only *after* a push: the collision costs a CI cycle and a PR round-trip
+to discover, and the workflow's output is the only place it is visible.
 TASK-19573 shipped its renumbering with this AC open:
 
     "A **local** gate exists -- a pytest that fails on duplicate ids -- so
