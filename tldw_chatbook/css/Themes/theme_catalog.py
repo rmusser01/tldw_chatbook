@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -143,10 +143,25 @@ class ThemeChange:
     previous_active: str
     previous_launch_default: str
     persisted: bool
+    # Whether the in-process config caches were refreshed after a persisted
+    # write (ConfigMutationResult.caches_reloaded). True by default: a Try
+    # (persist=False) never attempts a reload, so there is nothing to fail.
+    caches_reloaded: bool = True
 
     def merge(self, later: ThemeChange) -> ThemeChange:
-        """Chain a later change after this one; Revert goes back to the first."""
-        return ThemeChange(self.previous_active, self.previous_launch_default, self.persisted or later.persisted)
+        """Chain a later change after this one; Revert goes back to the first.
+
+        ``persisted`` is OR'd: if either leg actually wrote to disk, the
+        chain owns a persisted state that Revert must undo. ``caches_reloaded``
+        is AND'd the other way -- a failed reload in either leg must still
+        surface, even if a later leg's reload happened to succeed.
+        """
+        return ThemeChange(
+            self.previous_active,
+            self.previous_launch_default,
+            self.persisted or later.persisted,
+            self.caches_reloaded and later.caches_reloaded,
+        )
 
 
 def current_launch_default() -> str:
@@ -161,17 +176,50 @@ def _apply_config_mutation(mutation: dict) -> Any:
     return apply_settings_mutation_to_cli_config(mutation)
 
 
-def _persist_launch_default(app: Any, name: str) -> bool:
+def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
+    """Write the launch default; return ``(file_replaced, caches_reloaded)``."""
     result = _apply_config_mutation({"general": {"default_theme": name}})
-    if not getattr(result, "file_replaced", False):
-        return False
+    file_replaced = bool(getattr(result, "file_replaced", False))
+    caches_reloaded = bool(getattr(result, "caches_reloaded", False))
+    if not file_replaced:
+        return False, caches_reloaded
     # The in-memory copy Settings reads (was handle_theme_launch_default_changed).
     config = getattr(app, "app_config", None)
     if isinstance(config, dict):
         general = dict(config.get("general", {}))
         general["default_theme"] = name
         config["general"] = general
-    return True
+    return True, caches_reloaded
+
+
+def persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
+    """Make ``name`` the launch default without touching the running theme.
+
+    Spec §7 step 4: renaming a non-active launch default only rewrites config.
+    Returns ``(file_replaced, caches_reloaded)``.
+    """
+    return _persist_launch_default(app, name)
+
+
+def retarget_pending_revert(app: Any, old: str, new: str | None) -> None:
+    """Keep the session's pending Revert off a renamed (``new``) or deleted
+    (``new is None``) theme, so Revert never targets a missing theme."""
+    change: ThemeChange | None = getattr(app, "theme_revert_change", None)
+    if change is None:
+        return
+    names = (old, f"custom_{old}")
+    if change.previous_active not in names and change.previous_launch_default not in names:
+        return
+    if new is None:
+        app.theme_revert_change = None
+        return
+    app.theme_revert_change = replace(
+        change,
+        previous_active=new if change.previous_active in names else change.previous_active,
+        previous_launch_default=(
+            new if change.previous_launch_default in names else change.previous_launch_default
+        ),
+    )
 
 
 def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
@@ -183,15 +231,44 @@ def use_theme(app: Any, name: str, *, persist: bool) -> ThemeChange:
     previous_active = str(app.theme)
     previous_launch = current_launch_default()
     app.theme = name
-    persisted = _persist_launch_default(app, name) if persist else False
-    return ThemeChange(previous_active, previous_launch, persisted)
+    if persist:
+        persisted, caches_reloaded = _persist_launch_default(app, name)
+    else:
+        persisted, caches_reloaded = False, True
+    return ThemeChange(previous_active, previous_launch, persisted, caches_reloaded)
+
+
+def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
+    """Toast text + severity for a persisted (Use, not Try) theme switch.
+
+    Fix round 1 (TASK-32948 Task 5): the palette (``ThemeProvider.switch_
+    theme``) and the picker (``ThemePicker._switch``) both apply a
+    persisted switch through ``use_theme`` and must show the identical
+    toast for it (spec §4: one code path, one toast) -- including the
+    cache-refresh-failed warning, which the picker was missing. Callers
+    keep their own separate wording for a Try (``persist=False``); this
+    only covers the Use branch both of them share.
+    """
+    if not change.persisted:
+        return (
+            f"{display_name(name)} applied; the launch default was not saved",
+            "warning",
+        )
+    message = f"{display_name(name)} is now your theme (was: {display_name(change.previous_active)})"
+    if change.caches_reloaded:
+        return message, "information"
+    return (
+        f"{message}; configuration refresh failed — reopen Settings to refresh",
+        "warning",
+    )
 
 
 def revert_theme(app: Any, change: ThemeChange) -> bool:
     """Undo ``change``; False when the launch default could not be restored."""
     app.theme = change.previous_active
     if change.persisted:
-        return _persist_launch_default(app, change.previous_launch_default)
+        persisted, _caches_reloaded = _persist_launch_default(app, change.previous_launch_default)
+        return persisted
     return True
 
 

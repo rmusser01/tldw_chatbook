@@ -289,7 +289,7 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
-from ...Widgets.settings_theme_picker import ThemePane
+from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
@@ -23972,6 +23972,13 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
+    def _theme_editor_shown(self) -> bool:
+        try:
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return False
+        return pane.current == "settings-theme-editor-view"
+
     @on(Button.Pressed, "#settings-theme-back")
     def handle_theme_back(self, event: Button.Pressed) -> None:
         """Editor -> picker; unsaved edits get the Save/Discard/Stay prompt (TASK-32948)."""
@@ -24465,6 +24472,51 @@ class SettingsScreen(BaseAppScreen):
             NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
         )
 
+    @on(ThemePicker.RenameRequested)
+    def handle_theme_rename_requested(self, event: ThemePicker.RenameRequested) -> None:
+        """Prompt for the new name, then rename through the editor's file API."""
+        event.stop()
+        old = event.theme_id
+        self.app.push_screen(
+            RagProfileNameModal(
+                # R27 (7): [theme].name is hand-editable; x[/] must not crash.
+                title=f"Rename theme '{escape_markup(old)}'",
+                initial=old,
+                confirm_label="Rename",
+            ),
+            lambda new: self._handle_theme_rename_result(old, new),
+        )
+
+    def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
+        if not new or new == old:
+            return
+        if self.query_one("#settings-theme-editor", SettingsThemeEditor).rename_user_theme(old, new):
+            self.query_one(ThemePicker).refresh_catalog(highlight=new)
+
+    @on(SettingsThemeEditor.SaveAsRequested)
+    def handle_theme_save_as_requested(
+        self, event: SettingsThemeEditor.SaveAsRequested
+    ) -> None:
+        """Prompt for the new name, then save the working palette under it."""
+        event.stop()
+        self.app.push_screen(
+            RagProfileNameModal(
+                title="Save theme as",
+                initial=f"{event.current_name}_copy",
+                confirm_label="Save",
+            ),
+            self._handle_theme_save_as_result,
+        )
+
+    def _handle_theme_save_as_result(self, new: str | None) -> None:
+        if not new:
+            return
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return
+        editor.save_as(new)
+
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(
         self, event: SettingsThemeEditor.LaunchDefaultChanged
@@ -24600,6 +24652,23 @@ class SettingsScreen(BaseAppScreen):
     def handle_appearance_open_theme(self, event: Button.Pressed) -> None:
         event.stop()
         self._select_category(SettingsCategoryId.THEME.value, restore_focus=True)
+        # NOT call_after_refresh (see _after_category_panes's docstring): the
+        # category swap mounts the picker in a worker on the PANE's own
+        # message pump, which finishes after the screen's call_after_refresh
+        # queue -- the picker's own on_mount would already have highlighted
+        # the active theme by the time a screen-level callback ran, and
+        # silently overwrite this (spec §8: land on the launch default, not
+        # whatever's merely active right now).
+        self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _highlight_theme_launch_default(self) -> None:
+        from ...css.Themes.theme_catalog import current_launch_default
+
+        try:
+            picker = self.query_one(ThemePicker)
+        except QueryError:
+            return
+        picker.refresh_catalog(highlight=current_launch_default())
 
     @on(Input.Changed, "#settings-appearance-palette-theme-limit")
     def handle_appearance_palette_theme_limit_changed(
@@ -32259,6 +32328,13 @@ class SettingsScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
+        if event.key == "escape" and focused is None and self._theme_editor_shown():
+            # R26 / spec §6: with field focus already released (task-1560
+            # above), Esc leaves the editor exactly like "Back to themes".
+            self.query_one("#settings-theme-back", Button).press()
+            event.stop()
+            event.prevent_default()
+            return
         if event.key == "tab":
             if focused is None or getattr(focused, "has_class", lambda *_: False)(
                 "nav-button"

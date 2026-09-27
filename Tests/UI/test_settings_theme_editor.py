@@ -6,7 +6,7 @@ from Tests.private_profile import is_private_profile_child, private_profile_test
 from tldw_chatbook.config import ConfigMutationResult
 
 from textual.app import App, ComposeResult
-from textual.widgets import Checkbox, Input, Tree
+from textual.widgets import Checkbox, Input
 
 from Tests.UI.test_destination_shells import _build_test_app
 from Tests.textual_test_harness import IsolatedWidgetTestApp
@@ -143,24 +143,6 @@ async def test_settings_theme_editor_user_edit_still_marks_modified(request):
         assert editor.is_modified is True
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_theme_tree_has_empty_state_guidance(request):
-    """The collapsed Themes tree left a large blank region (rescore P3);
-    a hint under it explains what the tree is for and how to start."""
-    app = _build_test_app()
-    editor = SettingsThemeEditor()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.app.mount(editor)
-        await pilot.pause()
-        from textual.widgets import Static
-
-        hint = editor.query_one("#settings-theme-tree-hint", Static)
-        text = str(hint.renderable)
-        assert "New" in text and "theme" in text.lower()
-
-
-
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -237,8 +219,7 @@ async def test_settings_theme_editor_delete_blocks_builtin_themes(request, tmp_p
 
         for theme_name in ("textual-dark", "textual-light"):
             app.notify.reset_mock()
-            editor.current_theme_name = theme_name
-            editor.on_delete_theme()
+            editor.request_delete(theme_name)
             await pilot.pause()
 
             message = app.notify.call_args.args[0]
@@ -258,8 +239,7 @@ async def test_settings_theme_editor_delete_blocks_shipped_themes(request, tmp_p
         await pilot.pause()
 
         shipped_name = next(t.name for t in ALL_THEMES if hasattr(t, "name"))
-        editor.current_theme_name = shipped_name
-        editor.on_delete_theme()
+        editor.request_delete(shipped_name)
         await pilot.pause()
 
         message = app.notify.call_args.args[0]
@@ -278,14 +258,6 @@ def _write_user_theme(themes_dir, theme_name: str):
     return theme_file
 
 
-def _user_theme_labels(editor: SettingsThemeEditor) -> set[str]:
-    tree = editor.query_one("#settings-theme-tree", Tree)
-    for node in tree.root.children:
-        if str(node.label) == "Your themes":
-            return {str(child.label) for child in node.children}
-    return set()
-
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_path):
@@ -297,12 +269,11 @@ async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_pa
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        # The tree picked the file up on mount, so the delete also exercises
-        # the tree-removal branch.
-        assert "my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in editor.list_user_theme_names()
 
+        # Loaded in the editor, so the delete also resets the editor.
         editor.current_theme_name = "my_custom_theme"
-        editor.on_delete_theme()
+        editor.request_delete("my_custom_theme")
         await pilot.pause()
 
         # Confirmation dialog is up and NOTHING was deleted yet.
@@ -315,17 +286,17 @@ async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_pa
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert theme_file.exists()
-        assert "my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in editor.list_user_theme_names()
 
         # Re-invoke and confirm: only now is the file unlinked.
-        editor.on_delete_theme()
+        editor.request_delete("my_custom_theme")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         await pilot.click("#confirm-button")
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert "my_custom_theme" not in _user_theme_labels(editor)
+        assert "my_custom_theme" not in editor.list_user_theme_names()
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == "Deleted theme 'my_custom_theme'"
@@ -346,10 +317,10 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        assert shipped_name in _user_theme_labels(editor)
+        assert shipped_name in editor.list_user_theme_names()
 
         editor.current_theme_name = shipped_name
-        editor.on_delete_theme()
+        editor.request_delete(shipped_name)
         await pilot.pause()
 
         # Same confirmation guard as any user file: nothing is deleted
@@ -360,7 +331,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert shipped_name not in _user_theme_labels(editor)
+        assert shipped_name not in editor.list_user_theme_names()
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == f"Deleted theme '{shipped_name}'"
@@ -377,8 +348,7 @@ async def test_settings_theme_editor_delete_missing_custom_theme_warns(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        editor.current_theme_name = "never_saved_theme"
-        editor.on_delete_theme()
+        editor.request_delete("never_saved_theme")
         await pilot.pause()
 
         message = app.notify.call_args.args[0]
@@ -400,7 +370,7 @@ async def test_settings_theme_editor_apply_hint_announces_instant_apply(request)
         from textual.widgets import Static
 
         hint = editor.query_one("#settings-theme-apply-hint", Static)
-        # TASK-32948: "Apply previews" (Use in the picker is what persists).
+        # TASK-32948: "Try previews" (Use in the picker is what persists).
         assert "previews this palette now - no Save needed" in str(hint.renderable)
 
 
@@ -557,7 +527,8 @@ async def test_settings_theme_editor_new_confirms_before_discarding_edits(
 async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(
     request, tmp_path
 ):
-    """TASK-31251: New -> rename -> Apply/Save/Reset/Delete all use the typed name."""
+    """TASK-31251: New -> rename -> Try/Save/Reset use the typed name; the
+    picker's Delete (request_delete) then finds the file saved under it."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
@@ -583,7 +554,7 @@ async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(
         await pilot.pause()
         assert name_input.value == "ocean"
 
-        editor.on_delete_theme()
+        editor.request_delete("ocean")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert "ocean" in app.screen.message
@@ -629,7 +600,7 @@ async def test_settings_theme_editor_delete_keeps_app_theme(request, tmp_path):
         app.theme = "textual-light"
         editor.load_user_theme("my_custom_theme")
         await pilot.pause()
-        editor.on_delete_theme()
+        editor.request_delete("my_custom_theme")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -771,27 +742,6 @@ async def test_settings_theme_editor_tabbing_does_not_move_preset_target(
         assert editor.color_inputs["error"].value == before_error
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(
-    request, tmp_path
-):
-    """TASK-31256: own themes first and open; the 58 shipped themes collapsed."""
-    editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
-    _write_user_theme(tmp_path, "ocean")
-    app = _isolated_editor_app(editor)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        editor._populate_theme_tree()
-        tree = editor.query_one("#settings-theme-tree", Tree)
-        labels = [str(node.label) for node in tree.root.children]
-        assert labels == ["Your themes", "Built-in", "Shipped themes"]
-        assert tree.root.is_expanded
-        assert tree.root.children[0].is_expanded
-        assert not tree.root.children[2].is_expanded
-        assert [str(c.label) for c in tree.root.children[0].children] == ["ocean"]
-
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -867,20 +817,22 @@ async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(
 async def test_settings_theme_editor_export_confirms_before_overwriting(
     request, tmp_path, monkeypatch
 ):
-    """TASK-31258: Export onto an existing file asks first."""
+    """TASK-31258: Export onto an existing file asks first (driven through
+    export_theme, which the picker's Export calls)."""
     from pathlib import Path
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     downloads = tmp_path / "Downloads"
     downloads.mkdir()
-    existing = downloads / "textual-dark_theme.toml"
+    existing = downloads / "ocean_theme.toml"
     existing.write_text("old", encoding="utf-8")
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.on_export_theme()
+        editor.export_theme("ocean")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert app.screen.confirm_label == "Overwrite"
@@ -976,8 +928,9 @@ async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(
 async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_using_stale_name(
     request, tmp_path
 ):
-    """Qodo #6: an emptied Name box must not let Apply/Export/Delete
-    act on the previously loaded name."""
+    """Qodo #6: an emptied Name box must not let Try/Reset act on the
+    previously loaded name (Delete/Export now take an explicit name from the
+    picker, so they cannot read a stale Name box)."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     _write_user_theme(tmp_path, "ocean")
@@ -992,8 +945,7 @@ async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_usin
 
         for handler in (
             editor.on_apply_theme,
-            editor.on_export_theme,
-            editor.on_delete_theme,
+            editor.on_reset_theme,
         ):
             app.notify.reset_mock()
             handler()
@@ -1074,7 +1026,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
 
         editor.load_user_theme("ocean")
         await pilot.pause()
-        editor.on_delete_theme()
+        editor.request_delete("ocean")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1083,7 +1035,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
 
         editor.load_user_theme(shipped.name)
         await pilot.pause()
-        editor.on_delete_theme()
+        editor.request_delete(shipped.name)
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1173,7 +1125,8 @@ async def test_settings_theme_editor_survives_backup_recovery_pause(
     request, tmp_path, monkeypatch
 ):
     """TASK-32942: a RecoveryRequired from the raw theme-directory scope must
-    not crash the editor; the tree says the files are unavailable."""
+    not crash the editor; listing raises it for the picker's pause row
+    (test_picker_lists_via_editor_scope / test_pause_row_disables_file_actions)."""
     from contextlib import contextmanager
 
     from tldw_chatbook.Backup_Recovery import raw_participants
@@ -1192,47 +1145,12 @@ async def test_settings_theme_editor_survives_backup_recovery_pause(
         for _ in range(3):
             await pilot.pause()
         assert editor.is_mounted
-        labels = _user_theme_labels(editor)
-        assert any("backup/recovery" in label for label in labels)
+        with pytest.raises(RecoveryRequired):
+            editor.list_user_theme_names()
 
 
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_settings_theme_editor_tree_lists_every_textual_builtin(request, tmp_path):
-    """task-32945: Built-in lists all of Textual's themes, not just two."""
-    from textual.theme import BUILTIN_THEMES
-
-    editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
-    app = _isolated_editor_app(editor)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        editor._populate_theme_tree()
-        tree = editor.query_one("#settings-theme-tree", Tree)
-        builtin = next(n for n in tree.root.children if str(n.label) == "Built-in")
-        assert [str(c.label) for c in builtin.children] == list(BUILTIN_THEMES)
-
-
-@pytest.mark.asyncio
-@private_profile_test
-async def test_settings_theme_editor_empty_your_themes_says_none_yet(request, tmp_path):
-    """task-32945: an empty 'Your themes' node says so; selecting it is inert."""
-    editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
-    app = _isolated_editor_app(editor)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        editor._populate_theme_tree()
-        tree = editor.query_one("#settings-theme-tree", Tree)
-        user_node = tree.root.children[0]
-        assert [str(c.label) for c in user_node.children] == ["(none yet)"]
-        name_before = editor.current_theme_name
-        tree.select_node(user_node.children[0])
-        await pilot.pause()
-        assert editor.current_theme_name == name_before
-        assert editor.is_modified is False
 
 
 @pytest.mark.asyncio
@@ -1372,7 +1290,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_builtin_restores
         editor.on_save_theme()
         await pilot.pause()
         assert (tmp_path / "nord.toml").exists()
-        editor.on_delete_theme()
+        editor.request_delete("nord")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1382,26 +1300,103 @@ async def test_settings_theme_editor_delete_user_file_shadowing_builtin_restores
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_theme_editor_your_themes_placeholder_tracks_save_and_delete(
+async def test_settings_theme_editor_saved_theme_listing_tracks_save_and_delete(
     request, tmp_path
 ):
-    """Review #5: the "(none yet)" leaf goes when the first theme is saved and
-    comes back when the last one is deleted."""
+    """Review #5, re-owned: the listing the picker renders ("(none yet)" when
+    empty, test_empty_your_themes_says_none_yet) gains a theme on Save and
+    loses it on Delete."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor._populate_theme_tree()
-        assert _user_theme_labels(editor) == {"(none yet)"}
+        assert editor.list_user_theme_names() == set()
         editor.query_one("#settings-theme-name", Input).value = "mine"
         editor.current_theme_name = "mine"
         await pilot.pause()
         editor.on_save_theme()
         await pilot.pause()
-        assert _user_theme_labels(editor) == {"mine"}
-        editor.on_delete_theme()
+        assert editor.list_user_theme_names() == {"mine"}
+        editor.request_delete("mine")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
-        assert _user_theme_labels(editor) == {"(none yet)"}
+        assert editor.list_user_theme_names() == set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_save_as_confirms_overwrite_and_keeps_source(
+    request, tmp_path
+):
+    """TASK-32948: Save as onto an existing file asks first; either way the
+    theme the editor was loaded from is never written."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    source = _write_user_theme(tmp_path, "ocean")
+    target = _write_user_theme(tmp_path, "sea")
+    source_bytes, target_bytes = source.read_bytes(), target.read_bytes()
+    saved = []
+    original = editor.post_message
+
+    def record(message):
+        if isinstance(message, SettingsThemeEditor.Saved):
+            saved.append(message.theme_name)
+        return original(message)
+
+    editor.post_message = record
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.save_as("sea")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert target.read_bytes() == target_bytes and saved == []
+
+        editor.save_as("sea")
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert "#123456" in target.read_text(encoding="utf-8")
+        assert source.read_bytes() == source_bytes
+        assert saved == ["sea"]
+        assert editor.current_theme_name == "sea"
+        assert editor.query_one("#settings-theme-name", Input).value == "sea"
+        assert editor.is_modified is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_theme_editor_save_as_own_name_still_confirms(request, tmp_path):
+    """R21: Save as confirms whenever name.toml exists -- even the loaded
+    theme's own name; plain Save of the loaded theme stays an update."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    source = _write_user_theme(tmp_path, "ocean")
+    source_bytes = source.read_bytes()
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.save_as("ocean")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert source.read_bytes() == source_bytes
+
+        editor.on_save_theme()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "#123456" in source.read_text(encoding="utf-8")

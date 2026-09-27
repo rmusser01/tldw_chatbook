@@ -5380,7 +5380,9 @@ async def test_settings_jk_category_navigation_is_rail_scoped(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_jk_leaves_theme_editor_focus_alone(request):
-    """task-32944: j/k on the theme Tree or a preset swatch stays in the editor."""
+    """task-32944: j/k on an editor control or a preset swatch stays in the
+    editor (TASK-32948 PR 2: the theme Tree moved to the picker; the Dark
+    checkbox stands in as the non-text control)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5391,7 +5393,7 @@ async def test_settings_jk_leaves_theme_editor_focus_alone(request):
         for _ in range(6):
             await pilot.pause()
         editor = await open_theme_editor(host, pilot)
-        for selector in ("#settings-theme-tree", ".color-preset-swatch"):
+        for selector in ("#settings-theme-dark-mode", ".color-preset-swatch"):
             target = editor.query(selector).first()
             target.focus()
             await pilot.pause()
@@ -11785,7 +11787,7 @@ async def test_theme_user_edit_does_not_remount_editor():
         for _ in range(6):
             await pilot.pause()
         editor = await open_theme_editor(host, pilot)
-        # Clone marks the editor modified; start clean so the edit is the signal.
+        # Clone opens clean (TASK-32948 PR 2); kept so the edit is the only signal.
         editor.is_modified = False
         for _ in range(6):
             await pilot.pause()
