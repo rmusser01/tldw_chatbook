@@ -93,15 +93,19 @@ def _scalar_problem(value: str) -> str | None:
     return None
 
 
-def _closes_on_a_continuation_line(lines: list[str], start: int, stop: int, quote: str) -> bool:
+def _closes_on_a_continuation_line(
+    lines: list[str], start: int, stop: int, quote: str
+) -> bool:
     """Whether a wrapped quoted scalar closes before the next key.
 
-    YAML lets a quoted scalar run across indented continuation lines, which is
-    how the backlog writers emit a long title. Judging only the first line would
-    report every wrapped title as unterminated.
+    YAML lets a quoted scalar run across continuation lines. Its closing quote
+    can stand alone without indentation, as in TASK-32495's updated date.
+    Judging only the first line would report valid values as unterminated.
     """
     for index in range(start, stop):
         line = lines[index]
+        if line.strip() == quote:
+            return True
         if line[:1] not in (" ", "\t"):
             return False
         if line.strip().endswith(quote):
@@ -265,7 +269,9 @@ def main(argv: list[str] | None = None) -> int:
 
     task_dirs = tuple(args.tasks_dirs) if args.tasks_dirs else TASK_DIRS
     if not any(task_dir.is_dir() for task_dir in task_dirs):
-        print(f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}")
+        print(
+            f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}"
+        )
         return 1
 
     unreadable = unreadable_task_files(*task_dirs)

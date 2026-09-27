@@ -656,7 +656,10 @@ def test_a_bare_at_sign_in_a_list_is_caught(tmp_path):
     unreadable = backlog_files.unreadable_task_files(tasks)
 
     assert list(unreadable) == [(tasks / "task-5 - Reserved.md").resolve().as_posix()]
-    assert "reserved character" in unreadable[(tasks / "task-5 - Reserved.md").resolve().as_posix()][0]
+    assert (
+        "reserved character"
+        in unreadable[(tasks / "task-5 - Reserved.md").resolve().as_posix()][0]
+    )
 
 
 def test_readable_task_file_shapes_are_not_flagged(tmp_path):
@@ -673,6 +676,26 @@ def test_readable_task_file_shapes_are_not_flagged(tmp_path):
     assert backlog_files.main(["--tasks-dir", str(tasks)]) == 0
 
 
+def test_quoted_scalar_can_close_on_an_unindented_quote_line(tmp_path):
+    """A standalone closing quote is valid YAML and must not fail CI."""
+    tasks = tmp_path / "tasks"
+    _task_file(
+        tasks,
+        "task-10 - Wrapped date.md",
+        """---
+id: TASK-10
+title: Fine
+updated_date: '2026-09-12 01:00
+'
+---
+
+Body.
+""",
+    )
+
+    assert backlog_files.unreadable_task_files(tasks) == {}
+
+
 def test_a_file_that_is_not_utf8_is_reported_not_raised(tmp_path):
     """A decode error must name the file, not fail the required check with a traceback."""
     tasks = tmp_path / "tasks"
@@ -682,14 +705,18 @@ def test_a_file_that_is_not_utf8_is_reported_not_raised(tmp_path):
     unreadable = backlog_files.unreadable_task_files(tasks)
 
     assert list(unreadable) == [(tasks / "task-9 - Bad.md").resolve().as_posix()]
-    assert "codec can't decode" in unreadable[(tasks / "task-9 - Bad.md").resolve().as_posix()][0]
+    assert (
+        "codec can't decode"
+        in unreadable[(tasks / "task-9 - Bad.md").resolve().as_posix()][0]
+    )
     assert backlog_files.main(["--tasks-dir", str(tasks)]) == 1
 
 
 def test_task_file_scope_is_every_bucket_the_cli_resolves():
     """The readability check must cover the same buckets as the id check."""
     assert {
-        path.relative_to(backlog_files.REPO_ROOT).as_posix() for path in backlog_files.TASK_DIRS
+        path.relative_to(backlog_files.REPO_ROOT).as_posix()
+        for path in backlog_files.TASK_DIRS
     } == {"backlog/tasks", "backlog/completed", "backlog/archive/tasks"}
 
 
