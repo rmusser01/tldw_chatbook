@@ -7465,12 +7465,35 @@ class ConsoleTranscript(VerticalScroll):
         detail_widgets: list[Widget] = []
         action_signature: list[tuple] = []
         detail_signature: list[tuple] = []
+        if presentation.call_id:
+            detail = (
+                f"Arguments\n{presentation.arguments or 'Not retained'}\n\nResult\n"
+                + (
+                    activity.tool_output_full
+                    or (
+                        (presentation.result_preview or "Completed — no output")
+                        if presentation.result_preview is not None
+                        else "Waiting for result…"
+                    )
+                )
+            )
+            detail_widgets.append(
+                Static(
+                    Content(detail),
+                    id=f"console-tool-detail-{activity.id}",
+                    classes="console-tool-detail",
+                    markup=False,
+                )
+            )
+            detail_signature.append(("tool-detail", activity.id, detail))
         for owned_row in owned_rows:
             if owned_row.kind in {"actions", "action-help"}:
                 action_widgets.append(self._build_row_widget(owned_row, track=False))
                 action_signature.append(owned_row.signature)
                 continue
             if owned_row.kind == "message":
+                if presentation.call_id:
+                    continue
                 if owned_row.message is not None and owned_row.message.content.strip():
                     detail_widgets.append(
                         self._build_message_widget(
@@ -7525,6 +7548,9 @@ class ConsoleTranscript(VerticalScroll):
                 activity.raw_cli_presentation
                 if isinstance(activity, ConsoleChatMessage)
                 else None
+            ),
+            tool_presentation=(
+                components.presentation if components.presentation.call_id else None
             ),
         )
         disclosure._console_action_signature = components.action_signature
@@ -7617,8 +7643,12 @@ class ConsoleTranscript(VerticalScroll):
             ):
                 current_detail = tuple(disclosure.detail_stack.children)
                 if (
-                    isinstance(activity, ConsoleThinkingActivityRef)
-                    and len(current_detail) == len(components.detail_widgets) == 1
+                    (
+                        isinstance(activity, ConsoleThinkingActivityRef)
+                        or bool(components.presentation.call_id)
+                    )
+                    and current_detail
+                    and components.detail_widgets
                     and isinstance(current_detail[0], Static)
                     and isinstance(components.detail_widgets[0], Static)
                 ):
@@ -7626,6 +7656,17 @@ class ConsoleTranscript(VerticalScroll):
                     # empty frame between deltas. Static.update also reflows
                     # the retained body as its wrapped text grows.
                     current_detail[0].update(components.detail_widgets[0].content)
+                    previous_signature = disclosure._console_detail_signature
+                    if previous_signature[1:] != components.detail_signature[1:]:
+                        for child in current_detail[1:]:
+                            self._cancel_selection_if_row_removed(child)
+                        await disclosure.detail_stack.remove_children(
+                            current_detail[1:]
+                        )
+                        if components.detail_widgets[1:]:
+                            await disclosure.detail_stack.mount(
+                                *components.detail_widgets[1:]
+                            )
                 else:
                     self._cancel_selection_if_row_removed(disclosure.detail_stack)
                     await disclosure.replace_detail_widgets(components.detail_widgets)
@@ -7641,6 +7682,9 @@ class ConsoleTranscript(VerticalScroll):
                     activity.raw_cli_presentation
                     if isinstance(activity, ConsoleChatMessage)
                     else None
+                ),
+                tool_presentation=(
+                    components.presentation if components.presentation.call_id else None
                 ),
             )
 

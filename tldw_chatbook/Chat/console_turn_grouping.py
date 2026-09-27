@@ -198,7 +198,14 @@ def group_console_transcript_messages(
         if (
             assistant is not None
             and message.role == ConsoleMessageRole.TOOL
-            and message.raw_cli_presentation is None
+            and (
+                message.raw_cli_presentation is None
+                or (
+                    message.raw_cli_presentation.caller == "model"
+                    and message.activity_presentation is not None
+                    and bool(message.activity_presentation.call_id)
+                )
+            )
         ):
             activities.append(message)
             continue

@@ -14940,23 +14940,37 @@ class ConsoleChatController:
         # mount, the advisory permission summary fired INSIDE the human-wait
         # mark, decision stamping on cancel/timeout, and finishing-phase
         # retention at teardown.
-        self._interrupt_host.run_round(
-            "approval",
-            round_id,
-            payload,
-            round_state,
-            session_id=session_id,
-            owning_session_id=owning_session_id,
-            deadline=deadline,
-            is_parked=is_parked,
-            announce_detached=_announce_if_detached,
-            human_wait_run_id=owning_run_id,
-            on_cancelled=_on_cancelled,
-            on_timeout=_on_timeout,
-            before_wait=lambda: self._maybe_fire_permission_summary(payload),
-            on_teardown=_on_teardown,
-            on_outcome=_on_outcome,
-        )
+        activity_bridge = getattr(self, "_agent_bridge", None)
+        project_wait = getattr(activity_bridge, "set_tool_approval_pending", None)
+
+        def project_tool_wait(pending: bool) -> None:
+            if callable(project_wait):
+                try:
+                    project_wait(owning_session_id, owning_run_id, unique_keys, pending)
+                except Exception:  # noqa: BLE001 — display cannot interrupt approval
+                    logger.warning("Console tool approval display could not be updated")
+
+        project_tool_wait(True)
+        try:
+            self._interrupt_host.run_round(
+                "approval",
+                round_id,
+                payload,
+                round_state,
+                session_id=session_id,
+                owning_session_id=owning_session_id,
+                deadline=deadline,
+                is_parked=is_parked,
+                announce_detached=_announce_if_detached,
+                human_wait_run_id=owning_run_id,
+                on_cancelled=_on_cancelled,
+                on_timeout=_on_timeout,
+                before_wait=lambda: self._maybe_fire_permission_summary(payload),
+                on_teardown=_on_teardown,
+                on_outcome=_on_outcome,
+            )
+        finally:
+            project_tool_wait(False)
         verdicts_out = ApprovalDecisions(
             result.get("map") or {key: "deny" for key in unique_keys}
         )

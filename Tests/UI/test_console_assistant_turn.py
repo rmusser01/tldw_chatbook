@@ -654,3 +654,173 @@ async def test_success_status_rest_contrast_in_every_shipped_theme() -> None:
             f"success status contrast is {ratio:.3f}:1 under {theme_name}; "
             f"all results={results}"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
+@pytest.mark.parametrize("with_diff", [False, True])
+@pytest.mark.bootstrap_profile
+async def test_live_tool_preview_and_expanded_body_update_without_remount(
+    terminal_size, with_diff
+):
+    """Catch unbounded wrapped previews and disappearing focused live details."""
+    from dataclasses import replace
+
+    app = StyledTranscriptHarness()
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", id="live-answer"
+    )
+    presentation = ConsoleActivityPresentation(
+        "tool",
+        "fs_read",
+        "running",
+        call_id="read-1",
+        arguments='{"path": "README.md"}',
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="⚙ fs_read",
+        id="live-call",
+        activity_presentation=presentation,
+    )
+    async with app.run_test(size=terminal_size) as pilot:
+        transcript = app.transcript
+        transcript.set_messages([assistant, tool], session_id="first")
+        await transcript.refresh_messages()
+        transcript.toggle_tool_output(tool.id)
+        await pilot.pause()
+        disclosure = transcript.query_one("#console-activity-disclosure-live-call")
+        body = disclosure.query_one("#console-tool-detail-live-call", Static)
+        assert "Arguments" in body.content.plain and "README.md" in body.content.plain
+        disclosure.header.focus()
+        output = "First result line\n" + "long output " * 90 + "\nLast result line"
+        tool = replace(
+            tool,
+            content="⚙ fs_read → " + output,
+            tool_output_full=output,
+            tool_diff=("README.md", "before\n", "after\n") if with_diff else None,
+            activity_presentation=replace(
+                presentation,
+                status="success",
+                result_preview=output,
+                elapsed_seconds=0.2,
+            ),
+        )
+        transcript.set_messages([assistant, tool], session_id="first")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert (
+            transcript.query_one("#console-activity-disclosure-live-call") is disclosure
+        )
+        assert disclosure.query_one("#console-tool-detail-live-call") is body
+        assert app.focused is disclosure.header
+        assert "Last result line" in body.content.plain
+        await pilot.press("enter")
+        await pilot.pause()
+        preview = disclosure.query_one("#console-tool-preview-live-call", Static)
+        assert preview.display and preview.region.height <= 3
+        strips = app.screen._compositor.render_strips()
+        painted = "\n".join(
+            strips[y].text for y in range(preview.region.y, preview.region.bottom)
+        )
+        assert "First result line" in painted
+        assert "more" in painted
+        assert preview.region.right <= transcript.content_region.right
+        assert not disclosure.detail_stack.display
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_model_shell_takeover_keeps_disclosure_and_live_details(tmp_path):
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_raw_shell_progress import _bridge, _call_step
+    from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    bridge, store, session_id = _bridge(tmp_path)
+    store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="I will run that."
+    )
+    activity = ConsoleToolActivity(store, session_id)
+    bridge._tool_activity_runs["run"] = activity
+    step = _call_step(tmp_path, "call", "printf alpha")
+    activity.observe(replace(step, kind="tool_proposed"), 1)
+    marker_id = store.messages_for_session(session_id)[-1].id
+    app = StyledTranscriptHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.transcript
+        transcript.set_messages(
+            store.messages_for_session(session_id), session_id=session_id
+        )
+        await transcript.refresh_messages()
+        transcript.toggle_tool_output(marker_id)
+        await pilot.pause()
+        disclosure = transcript.query_one(f"#console-activity-disclosure-{marker_id}")
+        body = disclosure.query_one(f"#console-tool-detail-{marker_id}", Static)
+        disclosure.header.focus()
+        assert bridge._project_raw_shell_step(
+            session_id, "run", step, AGENT_KIND_PRIMARY
+        )
+        store.update_tool_marker(
+            session_id, marker_id, tool_output_full="shell /bin/bash\nstdout: alpha"
+        )
+        transcript.set_messages(
+            store.messages_for_session(session_id), session_id=session_id
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert (
+            transcript.query_one(f"#console-activity-disclosure-{marker_id}")
+            is disclosure
+        )
+        assert disclosure.query_one(f"#console-tool-detail-{marker_id}") is body
+        assert "stdout: alpha" in body.content.plain
+        assert app.focused is disclosure.header
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_live_tool_completion_does_not_pull_reader_out_of_history():
+    from dataclasses import replace
+
+    history = [
+        ConsoleChatMessage(
+            role=role,
+            content=f"Earlier {index}\n" * 3,
+            id=f"history-{index}-{role.value}",
+        )
+        for index in range(12)
+        for role in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT)
+    ]
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="Working", id="active"
+    )
+    activity = ConsoleActivityPresentation("tool", "fs_read", "running", call_id="read")
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="⚙ fs_read",
+        id="active-tool",
+        activity_presentation=activity,
+    )
+    app = StyledTranscriptHarness()
+    async with app.run_test(size=(100, 24)) as pilot:
+        transcript = app.transcript
+        transcript.set_messages([*history, assistant, tool], session_id="history")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        transcript.scroll_home(animate=False)
+        await pilot.pause()
+        assert transcript.max_scroll_y > 0
+        before = transcript.scroll_y
+        tool = replace(
+            tool,
+            content="⚙ fs_read → Finished",
+            activity_presentation=replace(
+                activity, status="success", result_preview="Finished\n" * 10
+            ),
+        )
+        transcript.set_messages([*history, assistant, tool], session_id="history")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert transcript.scroll_y == before == 0

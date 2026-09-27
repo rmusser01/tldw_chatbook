@@ -806,11 +806,26 @@ def _resume_tool_messages(
     ]
 
 
+def _durable_activity_presentation(presentation):
+    """Compare replay facts separately from live-only arguments, identity and timing."""
+    return (
+        ConsoleActivityPresentation(
+            presentation.kind, presentation.label, presentation.status
+        )
+        if presentation is not None
+        else None
+    )
+
+
 def _activity_marker_signature(
     messages: list[ConsoleChatMessage],
 ) -> list[tuple[str, ConsoleActivityPresentation | None, str | None]]:
     return [
-        (message.content, message.activity_presentation, message.tool_output_full)
+        (
+            message.content,
+            _durable_activity_presentation(message.activity_presentation),
+            message.tool_output_full,
+        )
         for message in messages
     ]
 
@@ -3411,6 +3426,7 @@ def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_
     assert store.get_message(aid).content == "Unchanged."
 
 
+@pytest.mark.bootstrap_profile
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -3432,13 +3448,15 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     assert spawn_markers
     assert [marker.activity_presentation.kind for marker in live_markers] == [
-        "spawn",
         "tool",
+        "spawn",
     ]
     assert not any(
         marker.activity_presentation.kind == "planning" for marker in live_markers
     )
-    live_signature = _activity_marker_signature(live_markers)
+    # Live calls now appear before the child spawn receipt. Old replay keeps
+    # its receipt/result ordering; compare the corresponding retained facts.
+    live_signature = _activity_marker_signature([live_markers[1], live_markers[0]])
     resumed_signature = _activity_marker_signature(resumed_markers)
     assert live_signature[:1] == resumed_signature[:1]
     assert [item[1:] for item in live_signature] == [
@@ -3998,6 +4016,7 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     tmp_path,
 ):
@@ -4030,9 +4049,9 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
     ]
-    assert [m.activity_presentation for m in live_markers] == [
-        m.activity_presentation for m in resumed_markers
-    ]
+    assert [
+        _durable_activity_presentation(m.activity_presentation) for m in live_markers
+    ] == [m.activity_presentation for m in resumed_markers]
 
 
 @pytest.mark.parametrize(
@@ -4042,6 +4061,7 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     tmp_path, content: str
 ) -> None:
@@ -4070,7 +4090,9 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     assert tool_step.tool_outcome == "success"
     assert persisted_step["tool_outcome"] == "success"
     assert live[-1].activity_presentation.status == "success"
-    assert resumed[-1].activity_presentation == live[-1].activity_presentation
+    assert resumed[-1].activity_presentation == _durable_activity_presentation(
+        live[-1].activity_presentation
+    )
     if content.startswith("tool call denied"):
         assert "***REDACTED***" in resumed[-1].content
         assert resumed[-1].tool_output_full is None
@@ -4412,6 +4434,7 @@ def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequen
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
+@pytest.mark.bootstrap_profile
 def test_planning_live_resume_marker_order_content_and_presentation_parity(
     tmp_path,
 ) -> None:
@@ -4448,7 +4471,8 @@ def test_planning_live_resume_marker_order_content_and_presentation_parity(
         message.content for message in live
     ]
     assert [message.activity_presentation for message in resumed] == [
-        message.activity_presentation for message in live
+        _durable_activity_presentation(message.activity_presentation)
+        for message in live
     ]
     assert [message.tool_output_full for message in resumed] == [
         message.tool_output_full for message in live
@@ -7053,6 +7077,7 @@ def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     assert any("mcp__srv_a__search" in row.content for row in tool_rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     """`review_tool_calls=` must reach AgentService/the loop -- a batch
     verdict other than "proceed" skips dispatch and becomes the tool
@@ -7095,7 +7120,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     # copy, so the marker names the user, not a policy.
     assert live[1].activity_presentation.status == "denied"
     assert [row.activity_presentation for row in resumed] == [
-        row.activity_presentation for row in live
+        _durable_activity_presentation(row.activity_presentation) for row in live
     ]
     assert resumed[0].content == live[0].content
     assert "***REDACTED***" in resumed[1].content
@@ -11965,3 +11990,145 @@ def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeyp
         assert all(url.startswith("http://saved-server:8080") for url in requests)
     finally:
         asyncio.run(client.aclose())
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_rows_exist_before_review_and_settle_in_place(tmp_path):
+    """Catch late-only markers, name-based pairing, and fake approval waits."""
+    calls = _native_calls("collision_tool", {"path": "first.txt"}, "first")
+    second = _native_calls("collision_tool", {"path": "second.txt"}, "second")
+    batch = ProviderToolCalls(tool_calls=calls.tool_calls + second.tool_calls)
+    bridge, db, store, session, aid = _bridge(tmp_path, [[batch], ["Finished."]])
+    observed = {}
+
+    def review(calls, run_id):
+        rows = [
+            m
+            for m in _tool_messages(store, session.id)
+            if m.activity_presentation.kind == "tool"
+        ]
+        assert len(rows) == 2, "both calls must be visible before permission review"
+        assert [m.activity_presentation.status for m in rows] == ["queued", "queued"]
+        observed.update({m.activity_presentation.call_id: m.id for m in rows})
+        bridge.set_tool_approval_pending(session.id, run_id, ["second"], True)
+        rows = [
+            m
+            for m in _tool_messages(store, session.id)
+            if m.activity_presentation.kind == "tool"
+        ]
+        assert [m.activity_presentation.status for m in rows] == [
+            "queued",
+            "awaiting_approval",
+        ]
+        bridge.set_tool_approval_pending(session.id, run_id, ["second"], False)
+        return {"second": CONTROLLER_USER_DENIED_REFUSAL}
+
+    class Provider(_ResultMCPProvider):
+        def invoke(self, tool_id, args):
+            rows = [
+                m
+                for m in _tool_messages(store, session.id)
+                if m.activity_presentation.kind == "tool"
+            ]
+            assert rows[0].id == observed["first"]
+            assert rows[0].activity_presentation.status == "running"
+            assert "first.txt" in rows[0].activity_presentation.arguments
+            return super().invoke(tool_id, args)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=_native_resolution(),
+        mcp_provider=Provider(ToolResult(ok=True, content="one\ntwo\nthree\nfour")),
+        review_tool_calls=review,
+    )
+    assert outcome.status == "done"
+    assert set(observed) == {"first", "second"}, "calls were not visible before review"
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert [m.id for m in rows] == [observed["first"], observed["second"]]
+    assert [m.activity_presentation.status for m in rows] == ["success", "denied"]
+    assert rows[0].activity_presentation.result_preview == "one\ntwo\nthree\nfour"
+    assert rows[0].activity_presentation.elapsed_seconds is not None
+    proposals = [
+        s for s in db.list_runs("conv-1")[0]["steps"] if s["kind"] == "tool_proposed"
+    ]
+    assert all(not s.get("args") for s in proposals), (
+        "live arguments must not widen durable capture"
+    )
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_reused_provider_id_retains_every_round(tmp_path):
+    """Some compatible providers synthesize call_0 afresh in each response."""
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path,
+        [
+            [_native_calls("collision_tool", {"path": "first.txt"}, "")],
+            [_native_calls("collision_tool", {"path": "second.txt"}, "")],
+            ["Finished."],
+        ],
+    )
+    provider = _ResultMCPProvider(ToolResult(ok=True, content="read"))
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=_native_resolution(),
+        mcp_provider=provider,
+    )
+    assert outcome.status == "done"
+    assert len(provider.invoke_calls) == 2
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert len(rows) == 2, "a new model round must retain its own call and result"
+    assert "first.txt" in rows[0].activity_presentation.arguments
+    assert "second.txt" in rows[1].activity_presentation.arguments
+    assert rows[0].id != rows[1].id
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_discovery_keeps_existing_capture_exclusion(tmp_path):
+    """Showing a previously quiet call must not add a durable trajectory."""
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path,
+        [
+            [_fence("find_tools", {"query": "calculator"})],
+            ["Finished."],
+        ],
+    )
+    assert _run(bridge, store, session, aid).status == "done"
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert len(rows) == 1 and rows[0].activity_presentation.status == "success"
+    assert not store._pending_trajectory_tool_rows
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_display_cleanup_failure_does_not_fail_run_or_leak_ownership(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    def broken_finish(self, cancelled):
+        raise RuntimeError("display unavailable")
+
+    monkeypatch.setattr(ConsoleToolActivity, "finish", broken_finish)
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["Finished."]]
+    )
+    assert _run(bridge, store, session, aid).status == "done"
+    assert not bridge._tool_activity_runs
+    assert not bridge._fleet_services

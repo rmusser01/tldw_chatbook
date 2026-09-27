@@ -257,3 +257,47 @@ def test_provider_forwards_stream_and_settlement_with_run_and_call_identity(
     ]
     assert isinstance(forwarded[0][2], RawCliStreamEvent)
     assert isinstance(forwarded[1][2], RawCliResult)
+
+
+def test_model_shell_adopts_its_queued_marker_before_execution(tmp_path):
+    """A shell approval/proposal row must not duplicate the raw execution row."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    bridge, store, session_id = _bridge(tmp_path)
+    activity = ConsoleToolActivity(store, session_id)
+    bridge._tool_activity_runs["run-1"] = activity
+    step = _call_step(tmp_path, "call-a", "printf alpha")
+    activity.observe(replace(step, kind="tool_proposed"), None)
+    rows = _tool_markers(store, session_id)
+    assert len(rows) == 1
+    original_id = rows[0].id
+    activity.approval(["call-a"], True)
+    assert (
+        _tool_markers(store, session_id)[0].activity_presentation.status
+        == "awaiting_approval"
+    )
+    activity.approval(["call-a"], False)
+    assert bridge._project_raw_shell_step(session_id, "run-1", step, AGENT_KIND_PRIMARY)
+    assert [m.id for m in _tool_markers(store, session_id)] == [original_id]
+    assert (
+        _tool_markers(store, session_id)[0].raw_cli_presentation.command
+        == "printf alpha"
+    )
+    bridge.raw_shell_progress_sink(
+        "run-1", "call-a", _raw_result(tmp_path, "call-a", "final-alpha")
+    )
+    assert bridge._project_raw_shell_step(
+        session_id,
+        "run-1",
+        replace(
+            step, kind=STEP_TOOL_RESULT, result="final-alpha", tool_outcome="success"
+        ),
+        AGENT_KIND_PRIMARY,
+    )
+    activity.finish(False)
+    marker = _tool_markers(store, session_id)[0]
+    assert marker.id == original_id
+    assert marker.raw_cli_presentation.lifecycle_state == "exited"
+    assert "final-alpha" in marker.activity_presentation.result_preview

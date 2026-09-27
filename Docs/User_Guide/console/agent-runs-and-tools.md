@@ -103,11 +103,27 @@ when the call finishes. Missing usage and an explicit provider count of zero
 show no segment. Live counts do not include a price estimate and are separate
 from the completed run's budget-token accounting.
 
-**In the transcript** — inline `Tool` rows appear between your message and the
-reply:
+**In the transcript** — each complete primary tool call appears inside its
+Assistant turn as soon as the model proposes it. The same row changes from
+**Queued** to **Awaiting approval** when a decision is actually pending, then
+**Running** with elapsed execution time. Completion shows the outcome and a
+short result preview immediately, without waiting for the assistant's final
+answer. Denied, failed, timed-out, and stopped calls remain visible.
 
-- `⚙ toolname → result preview` — a tool call and a preview of its result,
-  truncated with an `… (+N chars)` suffix past the display cap.
+The collapsed preview takes at most three wrapped lines, including an omission
+hint when needed. Click the row, or focus it and press **Enter** or **Space**, to
+expand **Arguments** and **Result** together. Details stay open as the call
+finishes; existing full-output and file-diff actions remain available. **Review
+approval** takes you to the existing approval card. Calls with the same tool
+name keep separate rows.
+
+Arguments and timing are live-session details; reopened runs show the facts
+already retained by the existing capture policy. Output chunks from ordinary
+tools are not streamed in this version. Raw shell commands keep their existing
+process status and live output details.
+
+Other activity rows include:
+
 - `⤷ spawned sub-agent: …` — the agent delegated work to a sub-agent.
 - `⚠ …` — an error summary.
 

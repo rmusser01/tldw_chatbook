@@ -285,6 +285,10 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
+    "queued",
+    "running",
+    "awaiting_approval",
+    "timed_out",
     "success",
     "blocked",
     "denied",
@@ -325,6 +329,10 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
 )
 CONSOLE_ACTIVITY_STATUSES = frozenset(
     {
+        "queued",
+        "running",
+        "awaiting_approval",
+        "timed_out",
         "success",
         "blocked",
         "denied",
@@ -353,6 +361,8 @@ CONSOLE_ACTIVITY_REFUSAL_STATUSES = frozenset(
 #: the card the user had answered a second earlier. Only statuses whose
 #: identifier is not already the right word need an entry here.
 _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
+    "awaiting_approval": "Awaiting approval",
+    "timed_out": "Timed out",
     "denied": "denied by you",
     "blocked_off": "blocked (Off)",
     "blocked_kill_switch": "blocked (kill switch)",
@@ -705,6 +715,11 @@ class ConsoleActivityPresentation:
     kind: ConsoleActivityKind
     label: str
     status: ConsoleActivityStatus
+    call_id: str = ""
+    arguments: str = ""
+    result_preview: str | None = None
+    started_at_monotonic: float | None = None
+    elapsed_seconds: float | None = None
 
     def __post_init__(self) -> None:
         """Reject unbounded labels and values outside the public vocabulary."""
@@ -722,6 +737,8 @@ class ConsoleActivityPresentation:
             )
         if self.status not in CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
+        if len(self.call_id) > 512 or len(self.arguments) > 16000:
+            raise ValueError("tool activity fields exceed display bounds")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,102 @@
+"""Run ownership and interruption regressions for the ephemeral tool display."""
+
+import pytest
+
+from tldw_chatbook.Agents.agent_models import AgentStep
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_chat_models import ConsoleActivityPresentation
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+
+@pytest.mark.parametrize("cancelled, expected", [(True, "stopped"), (False, "failed")])
+def test_unresolved_rows_settle_and_ignore_late_events(cancelled, expected):
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    proposed = AgentStep(
+        index=1, kind="tool_proposed", tool_name="fs_read", call_id="read"
+    )
+    activity.observe(proposed, 1)
+    activity.observe(
+        AgentStep(index=1, kind="tool_execution_started", call_id="read"), 1
+    )
+    activity.finish(cancelled)
+    row = store.messages_for_session(session.id)[-1]
+    assert row.activity_presentation.status == expected
+    assert row.activity_presentation.started_at_monotonic is None
+    assert row.activity_presentation.elapsed_seconds is not None
+    assert "before a result" in row.activity_presentation.result_preview
+    activity.observe(proposed, 1)
+    activity.approval(["read"], True)
+    assert not activity.complete(
+        AgentStep(
+            index=1,
+            kind="tool_result",
+            tool_name="fs_read",
+            call_id="read",
+            result="late",
+        ),
+        ConsoleActivityPresentation("tool", "fs_read", "success"),
+        "⚙ fs_read → late",
+        None,
+        record_trajectory=True,
+    )
+    assert store.messages_for_session(session.id)[-1] == row
+    assert not store._pending_trajectory_tool_rows
+
+
+def test_approval_projection_is_scoped_to_run_session_and_call():
+    store = ConsoleChatStore()
+    first = store.ensure_session()
+    second = store.create_session()
+    bridge = ConsoleAgentBridge(agent_runs_db=None, store=store, provider_gateway=None)
+    activity = ConsoleToolActivity(store, first.id)
+    bridge._tool_activity_runs["run-a"] = activity
+    activity.observe(
+        AgentStep(index=1, kind="tool_proposed", tool_name="read", call_id="call-a"), 1
+    )
+    bridge.set_tool_approval_pending(second.id, "run-a", ["call-a"], True)
+    bridge.set_tool_approval_pending(first.id, "wrong-run", ["call-a"], True)
+    bridge.set_tool_approval_pending(first.id, "run-a", ["wrong-call"], True)
+    assert (
+        store.messages_for_session(first.id)[-1].activity_presentation.status
+        == "queued"
+    )
+    bridge.set_tool_approval_pending(first.id, "run-a", ["call-a"], True)
+    assert (
+        store.messages_for_session(first.id)[-1].activity_presentation.status
+        == "awaiting_approval"
+    )
+    assert not store.messages_for_session(second.id)
+
+
+@pytest.mark.parametrize(
+    "outcome, status",
+    [("timeout", "timed_out"), ("cancelled", "stopped"), ("failure", "failed")],
+)
+def test_terminal_status_uses_execution_outcome_and_keeps_marker_id(outcome, status):
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    activity.observe(
+        AgentStep(index=1, kind="tool_proposed", tool_name="read", call_id="call"), 1
+    )
+    marker_id = store.messages_for_session(session.id)[-1].id
+    assert activity.complete(
+        AgentStep(
+            index=1,
+            kind="tool_result",
+            tool_name="read",
+            call_id="call",
+            result="failed",
+            tool_outcome=outcome,
+        ),
+        ConsoleActivityPresentation("tool", "read", "failed"),
+        "⚙ read → failed",
+        None,
+        record_trajectory=True,
+    )
+    activity.finish(False)
+    row = store.messages_for_session(session.id)[-1]
+    assert row.id == marker_id and row.activity_presentation.status == status
