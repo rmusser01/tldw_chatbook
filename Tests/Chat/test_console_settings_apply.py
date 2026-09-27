@@ -943,6 +943,45 @@ def test_rebase_onto_a_named_endpoint_uses_its_family_request(
     )
 
 
+@pytest.mark.parametrize("family", ["ollama", "llama_cpp", "openai_compatible"])
+def test_settings_model_default_rows_decide_a_named_endpoint_like_the_rebase(
+    family,
+) -> None:
+    """Final-review M1 (parent TASK-33001 AC#2): Settings' model-default rows
+    ask the same registry-aware decision as the Console rebase, so an
+    ollama-family endpoint hides Min P in both instead of only in Console."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    app_config = _registry_entry_config()
+    app_config["custom_endpoints"]["gpu-box"]["family"] = family
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-test")),
+        provider="custom-ep:gpu-box",
+        model="model-a",
+        app_config=app_config,
+    )
+    screen = SimpleNamespace(_app_config_mapping=lambda: app_config)
+    row_fields = set(PROVIDER_MODEL_PROFILE_FIELD_KEYS.values())
+    settings_fields = {
+        field
+        for draft_key, field in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+        if SettingsScreen._model_profile_field_supported(
+            screen, "custom-ep:gpu-box", draft_key, "model-a"
+        )
+    }
+
+    assert settings_fields & FULL_MODEL_DEFAULT_FIELDS == (
+        {field.name for field in rebased.field_drafts} & row_fields
+    )
+    if family == "ollama":
+        assert "min_p" not in settings_fields
+
+
 def test_remember_model_draft_keeps_registry_entry_provider_identity() -> None:
     """CE-001: remembered drafts key on the dashed registry id so the rebase
     target match and the popover's carried-source lookup agree with the

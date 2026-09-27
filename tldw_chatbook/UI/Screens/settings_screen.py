@@ -12606,19 +12606,22 @@ class SettingsScreen(BaseAppScreen):
             return GLM_REASONING_EFFORT_SELECT_OPTIONS
         return REASONING_EFFORT_SELECT_OPTIONS
 
-    @staticmethod
     def _model_profile_field_supported(
-        provider: object, draft_key: str, model: object
+        self, provider: object, draft_key: str, model: object
     ) -> bool:
         """Whether the provider+model request carries this model-default row.
 
         TASK-33001.2: a thin draft-key adapter over the one field-support
-        decision (``supported_generation_fields``) the Console shares.
+        decision (``supported_generation_fields``) the Console shares. The
+        config carries the ADR-146 registry, so a ``custom-ep`` id is decided
+        as its entry's family, as the Console rebase decides it.
         """
         return PROVIDER_MODEL_PROFILE_FIELD_KEYS[
             draft_key
         ] in supported_generation_fields(
-            str(provider or ""), str(model or "").strip() or None
+            str(provider or ""),
+            str(model or "").strip() or None,
+            self._app_config_mapping(),
         )
 
     def _unsupported_model_profile_placeholder(self, provider: object) -> str:

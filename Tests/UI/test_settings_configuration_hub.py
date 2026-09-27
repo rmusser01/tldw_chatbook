@@ -4513,6 +4513,7 @@ def test_settings_model_profile_rows_ask_the_request_field_decision(provider, mo
     )
 
     screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
     expected = supported_generation_fields(provider, model)
 
     assert {
@@ -4527,6 +4528,7 @@ def test_settings_generation_summary_names_every_hidden_row():
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
     screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
 
     assert screen._provider_generation_support_copy(
         "anthropic", "claude-sonnet-4-5"
@@ -4555,6 +4557,7 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
     )
 
     screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = None  # no app config, so no endpoint registry
     saved = {
         "claude-sonnet-4-5": {
             "temperature": 0.8,
