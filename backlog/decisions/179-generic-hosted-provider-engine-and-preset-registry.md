@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-23
-Related Task: [TASK-33009](../tasks/task-33009%20-%20Generic-hosted-provider-engine-Phase-1-registry-engine-Databricks.md)
+Related Task: [TASK-33010](../tasks/task-33010%20-%20Generic-hosted-provider-engine-Phase-1-registry-engine-Databricks.md)
 Related Spec: [Generic hosted provider engine and presets design](../../Docs/superpowers/specs/2026-09-23-generic-hosted-provider-engine-and-presets-design.md)
 Related Plan: [Generic hosted provider engine Phase 1 implementation plan](../../Docs/superpowers/plans/2026-09-23-generic-hosted-provider-engine-phase1.md)
 

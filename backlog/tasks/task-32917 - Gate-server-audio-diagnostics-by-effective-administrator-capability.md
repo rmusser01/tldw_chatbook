@@ -4,7 +4,7 @@ title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
 created_date: 2026-09-23 20:15
-updated_date: 2026-09-27 15:33
+updated_date: 2026-09-27 16:24
 labels: []
 dependencies: []
 references:
@@ -32,6 +32,7 @@ Match Chatbook connected-mode audio diagnostics to the server administrator auth
 <!-- SECTION:PLAN:BEGIN -->
 Docs/superpowers/plans/2026-09-23-server-audio-diagnostic-admin-parity.md
 Final latest-dev qualification: reproduce the existing from_config client-factory bootstrap failure on dev 74965f694; align that one real-config test with the existing bootstrap_profile fixture contract, keeping its assertions intact; rerun all four affected test modules without exclusions, security/style and artifact guards; obtain read-only review; push the approved task-ID repair and rebase with exact force-with-lease; require fresh checks and Qodo review before merge.
+Qualify rebase onto c041b6d81 after SSH PR2838 merged. All ten prior PR patches remain identical with no source overlap. SSH's landed task occupies33009, so continue the previously approved task-renumber exception by moving this PR's provider record from33009 to the currently free33010 and updating ADR179's link, preserving all task content and recording provenance. Run all four affected modules without exclusions, official inventory/Backlog guards, style/compile/Bandit; publish with exact lease d7122c6122d91c6febd766110dcabc9800edce48, then wait for fresh required checks and Qodo.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -62,6 +63,8 @@ Inventory red/green complete: official --write changed only owner_files and task
 2026-09-27 integration approval: the requester explicitly approved the manual task-renumbering exception. TASK-32917 remains the older audio diagnostic task; the younger provider-engine task moves to free ID TASK-33009 and ADR-179's inbound task link is updated. Status, ownership, acceptance criteria and implementation notes of the provider task are preserved, with provenance recorded. Continue PR #2822 on latest dev and require fresh CI before merge.
 Baseline evidence 2026-09-27: test_server_audio_services_service_from_config_returns_provider_backed_service fails unchanged on latest dev 74965f694 with RecoveryRequired(raw_source_selection_changed), via build_client -> TLS trust -> real config read after the global per-test config redirect. Tests/conftest.py explicitly supports a per-node bootstrap_profile marker for real config consumers. Qualify this test under that existing isolated bootstrap fixture rather than excluding it. Production configuration/recovery guards remain intact.
 Final local qualification on dev 74965f694: approved TASK-32917/TASK-33009 collision repair preserves provider task content and updates ADR-179. All nine prior patches survive rebase identically. Inventory checker passes (600 owners, 1362 TASK-492, 56 TASK-31551, 7550 TASK-494, 14 sinks); task guard passes 4436 files. The unchanged from_config failure reproduced on dev; applying the existing bootstrap_profile marker to its real TLS/config consumer preserves all assertions and yields 26 passed across the four affected modules with no exclusions. Ruff lint/format on five small files, changed-module compileall, diff check and touched-source Bandit pass (zero findings). Both server dependencies are merged. Final-head remote CI/Qodo and merge confirmation remain pending.
+2026-09-27 16:19 integration: all checks including required Derived Artifacts passed on d7122c612; Qodo reviewed that exact head with zero bugs/rule violations/cross-repo conflicts and zero unresolved threads, and independent review found no issues. Live dev advanced to c041b6d81 (SSH workspace bindings PR2838). Clean rebase preserves all ten patches identically; no overlapping paths. The landed SSH task claims33009, reproducing an ID collision with the provider record renamed in this PR. Continue the requester's approved manual-renumber exception by moving only that unmerged provider record to free33010, updating its ADR179 inbound link and appending provenance. Older audio32917 and landed SSH33009 remain intact.
+SSH-base qualification complete on c041b6d81: all ten previously reviewed patches are identical after rebase, with no changed PR source/tests. Continued approved provider-task repair now uses TASK33010 because the landed SSH record claims33009; original provider content remains byte-identical except ID and appended provenance, and ADR179's decoded link resolves to the renamed record. 26 tests pass across all four targeted modules with no exclusions; task guard passes4437files; inventory reproduces603owners/1395TASK492/56TASK31551/7545TASK494/14sinks unchanged from upstream. Ruff lint/format on five small files, changed-module compileall, diff checks and Bandit pass with zero findings. Exact lease for publishing is d7122c6122d91c6febd766110dcabc9800edce48. Fresh final-head CI/Qodo and GitHub merge confirmation remain required.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

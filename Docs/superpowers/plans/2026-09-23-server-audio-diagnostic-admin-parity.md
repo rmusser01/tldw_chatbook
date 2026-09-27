@@ -69,3 +69,20 @@ no exclusions**. Ruff lint/format on the five touched small service/schema/test
 files, compileall on changed modules, diff checks and touched-source Bandit pass
 (zero findings). Server dependencies #2968 and #3002 are merged. Final-head CI,
 Qodo review and GitHub merge confirmation remain required.
+
+2026-09-27 SSH-base integration: all final-head checks passed on `d7122c612`,
+with zero Qodo findings or unresolved discussions and a clean independent
+review. Live dev advanced to `c041b6d81` when SSH workspace bindings landed.
+The rebase preserves all ten patches identically; there are no overlapping
+paths or changes to this PR's source/tests. The landed SSH task claims
+TASK-33009, so the previously approved manual repair now moves the unmerged
+provider record to free TASK-33010 instead. Its content is preserved except
+identity and appended provenance; ADR-179's task link follows the new ID.
+Audio TASK-32917 and landed SSH TASK-33009 retain their identities.
+
+All four targeted modules pass again: **26 passed, no exclusions**. The official
+task guard passes 4437 files. The unchanged upstream diagnostic inventory
+reproduces with 603 owners, 1395 TASK-492 calls, 56 TASK-31551 calls,
+7545 TASK-494 calls and 14 sink files. Ruff lint/format, changed-module
+compileall, diff checks and touched-source Bandit pass (zero findings).
+Fresh remote CI and Qodo must qualify the new head before merge.
