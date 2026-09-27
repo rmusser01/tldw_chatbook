@@ -27,7 +27,7 @@
 - **Tests:** pilot tests that touch theme files or build Settings use `@private_profile_test`. Their theme files go in `config._get_effective_config_path().parent / "themes"`. Hub tests without the decorator that fail with `RecoveryRequired` are CI-only.
 - **CSS:** ADR-161 tokens only. Never end a selector with a bare `Button`. Run `./build_css.sh`, then commit the bundle.
 - **Notices never contain full theme-directory paths (R16).** The one exception is Export's destination, which spec §7 says to show.
-- **Theme names are untrusted text.** They come from file contents. Every place a name is rendered with markup parsing on (`notify`, `Static` with markup, `Button` labels, modal titles) must escape it with `tldw_chatbook.Utils.input_validation.escape_markup`, or use `markup=False` where the widget supports it.
+- **Theme names are untrusted text.** They come from file contents. Every place a name is rendered with markup parsing on (`notify`, `Static` with markup, `Button` labels, modal titles) must escape it with `tldw_chatbook.Utils.input_validation.escape_markup`, or use `markup=False` where the widget supports it. Escaping does not remove terminal control characters, so names are also refused at validation time unless `str.isprintable()` (`theme_from_file_data`, Import), and any other file-derived text goes through `themes.printable()` before it is rendered or logged (R28/R41).
 - **Commits:** a Co-Authored-By trailer naming the model that wrote the commit.
 - **Before the PR:** preflight rc 0 (checked directly), and ruff reports no new findings.
 
@@ -39,7 +39,7 @@
    - not valid TOML;
    - no `[colors].primary`;
    - a colour that is not a valid colour;
-   - a `[theme].name` that is not a valid filename or contains `[` markup;
+   - a `[theme].name` that is not a valid filename, contains `[` markup, or contains control characters (ESC, CR, …);
    - a `[variables]` value with CSS injection.
 
    Each is refused with a specific message; nothing is written and nothing raises. Pinned in Task 2.
@@ -90,8 +90,9 @@ Commit: `feat(theme): unreadable theme files are listed with their error and can
 
 **Interfaces:**
 - `SettingsThemeEditor.import_theme(source: str) -> None`.
-  1. **Validate the path.** Strip whitespace and surrounding quotes, since a terminal drop can paste a quoted path. Expand `~`. Validate with `tldw_chatbook.Utils.path_validation.validate_browsing_path` (it must be absolute, contain no NUL, and be absolute after expansion). The suffix must be `.toml` (case-insensitive). The file must exist, be a regular file, and be at most **64 KB** (`stat().st_size`).
-  2. **Read and check the contents.** Read it (plain read: a user file, not an app-owned one) and `toml.loads` it. The name is `[theme].name`, or the source stem; it must pass `validate_filename`. Every `[colors]` value must parse with `textual.color.Color.parse`. Build the theme with `theme_from_file_data(...)`, which applies `sanitize_theme_variables`; catch `TypeError`/`ValueError`/`AttributeError`. On any failure, `notify(<specific reason, no source path>, severity="error")` and return, having written nothing.
+  1. **Validate the path.** Strip whitespace and surrounding quotes, since a terminal drop can paste a quoted path. Expand `~`. Validate with `tldw_chatbook.Utils.path_validation.validate_browsing_path` (it must be absolute, contain no NUL, and be absolute after expansion). The suffix must be `.toml` (case-insensitive).
+     *Superseded by R34 (as shipped):* never check a path and then read it separately. Open the file ONCE with `os.open(path, O_RDONLY | O_NONBLOCK)`, `os.fstat` that descriptor (it must be a regular file of at most **64 KB**), read at most 64 KB + 1 bytes through the same descriptor, and refuse the file if it grew past the limit. A FIFO or a file swapped in after validation then cannot block the UI or feed unchecked data.
+  2. **Read and check the contents.** `toml.loads` the bytes read above. The name is `[theme].name`, or the source stem; it must pass `validate_filename` and `str.isprintable()`. *Superseded by R41 (as shipped):* every `[colors]` value must be an exact `#RGB`, `#RRGGBB` or `#RRGGBBAA` hex string (`themes.is_hex_colour`), not anything `Color.parse` accepts. Build the theme with `theme_from_file_data(...)`, which applies `sanitize_theme_variables`; catch `TypeError`/`ValueError`/`AttributeError`. On any failure, `notify(<specific reason, no source path>, severity="error")` and return, having written nothing.
 
      Reason texts:
      - "Import needs a .toml file"
