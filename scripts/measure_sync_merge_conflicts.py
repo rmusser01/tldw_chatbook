@@ -9,6 +9,8 @@ brought `dev` in) found in the last N first-parent merges of `origin/dev`, with
 Caveat: `git merge-tree` honours the LOCAL `.gitattributes` merge drivers, while
 GitHub's server-side merge does not, so a local `merge=` attribute would make the
 rate look better than GitHub sees it.
+
+A git error on any sync aborts the run: a silently skipped merge would understate the rate.
 """
 
 from __future__ import annotations
@@ -37,8 +39,12 @@ def _sync_merges(first_parent_merges: int) -> list[str]:
 
 def _conflicted_files(sync: str) -> list[str] | None:
     result = _git("merge-tree", "--write-tree", "--name-only", f"{sync}^1", f"{sync}^2")
-    if result.returncode != 1:
+    if result.returncode == 0:
         return None
+    if result.returncode != 1:
+        raise RuntimeError(
+            f"git merge-tree failed for {sync} (exit {result.returncode}): {result.stderr.strip()}"
+        )
     lines = result.stdout.splitlines()[1:]
     return [
         line for line in lines
