@@ -139,6 +139,10 @@ class _FakeApp:
             raise InvalidThemeError(value)
         self._theme = value
 
+    @property
+    def available_themes(self):
+        return {name: object() for name in self._known}
+
 
 @pytest.fixture
 def writes(monkeypatch):
@@ -243,6 +247,16 @@ def test_revert_reports_whether_the_launch_default_was_restored(writes, monkeypa
     monkeypatch.setattr(tc, "_apply_config_mutation", lambda m: SimpleNamespace(file_replaced=False, caches_reloaded=False))
     assert tc.revert_theme(app, change)[0] is False
     assert app.theme == "textual-dark"
+
+
+def test_revert_never_writes_a_missing_launch_default_back(writes):
+    # TASK-33061: started with a launch default that is not a registered
+    # theme; reverting a Use must not resurrect it in config.
+    app = _FakeApp()
+    change = tc.ThemeChange("textual-dark", "ghost_theme", True)
+    app.theme = "nord"
+    assert tc.revert_theme(app, change) == (True, True)
+    assert app.theme == "textual-dark" and writes == []
 
 
 def test_revert_of_try_writes_nothing(writes):

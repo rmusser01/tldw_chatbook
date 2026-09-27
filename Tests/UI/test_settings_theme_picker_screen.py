@@ -347,7 +347,8 @@ def _visible(host, widget):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-@pytest.mark.parametrize("size", [(80, 24), (190, 55)])
+# TASK-33064: 120x36 and 150x40 are the own-width stacked layout (list over card).
+@pytest.mark.parametrize("size", [(80, 24), (120, 36), (150, 40), (190, 55)])
 @private_profile_test
 async def test_every_picker_control_is_reachable(request, theme, size):
     host = _host()
@@ -1704,3 +1705,53 @@ async def test_f1_help_lists_the_picker_keys_and_no_apply_button(request):
         assert "theme list has focus" in notes
         assert "Apply" not in notes
         assert "Use/Try switch themes; the editor's Save stores a theme file" in notes
+
+
+# TASK-33064 (critique #3 #5): at full-screen sizes the list fills the
+# detail pane (it was capped at 24 rows, leaving a 14-19 row band) and the
+# card's actions sit in three groups -- switching, creation, your theme --
+# each laid out as one horizontal row.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@private_profile_test
+async def test_picker_fills_the_full_screen_canvas_and_groups_actions(request, size):
+    from textual.widgets import Button
+
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=size) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("t")  # Try "mine": arms Revert
+        await pilot.pause(0.2)
+        screen = host.screen
+        body = screen.query_one("#settings-detail-pane-body")
+        lst = screen.query_one("#settings-theme-list")
+        assert lst.region.bottom >= body.content_region.bottom - 1, (
+            f"empty band under the list at {size}: list ends {lst.region.bottom}, pane {body.content_region.bottom}"
+        )
+        groups = (
+            ("#settings-theme-use", "#settings-theme-try"),
+            ("#settings-theme-picker-clone", "#settings-theme-picker-new", "#settings-theme-picker-import"),
+            (
+                "#settings-theme-picker-edit",
+                "#settings-theme-picker-rename",
+                "#settings-theme-picker-export",
+                "#settings-theme-picker-delete",
+            ),
+        )
+        rows = []
+        for group in groups:
+            ys = {screen.query_one(sel, Button).region.y for sel in group}
+            assert len(ys) == 1, f"{group} not on one row at {size}: {ys}"
+            xs = [screen.query_one(sel, Button).region.x for sel in group]
+            assert xs == sorted(xs), group
+            rows.append(ys.pop())
+        revert = screen.query_one("#settings-theme-revert", Button)
+        assert revert.display
+        # Revert belongs to the switching group: right under Use/Try, above creation.
+        assert rows[0] < revert.region.y < rows[1]
+        assert rows == sorted(rows)
+        # Every control is on screen without scrolling.
+        for selector in PICKER_CONTROLS + YOURS_ONLY_CONTROLS + ("#settings-theme-revert",):
+            region = _visible(host, screen.query_one(selector))
+            assert region.height > 0 and region.width > 0, f"{selector} clipped at {size}"

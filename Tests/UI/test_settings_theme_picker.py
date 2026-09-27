@@ -388,6 +388,57 @@ async def test_revert_label_names_the_launch_default_when_it_differs(request, co
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_revert_leaves_a_missing_launch_default_alone(request, config_writes):
+    # TASK-33061: the app started on a launch default that is not a
+    # registered theme. Reverting a Use restores the active theme but must
+    # not write the broken name back (the "Launch default missing" notice
+    # would return), and the chip says the launch default stays put.
+    tc._apply_config_mutation({"general": {"default_theme": "ghost_theme"}})
+    config_writes.clear()
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()
+        await pilot.pause()
+        revert = picker.query_one("#settings-theme-revert", Button)
+        assert str(revert.label) == f"Revert to {tc.display_name('textual-dark')} (launch unchanged)"
+        revert.press()
+        await pilot.pause()
+        assert app.theme == "textual-dark"
+        assert config_writes == [{"general": {"default_theme": "apricot"}}]  # the Use only
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_chip_hides_when_it_would_change_nothing(request, config_writes):
+    # TASK-33061: a pending Revert whose target is already active (and whose
+    # launch default already matches) would do nothing -- no chip.
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        revert = picker.query_one("#settings-theme-revert", Button)
+        picker.highlighted_id = "nord"
+        picker.try_highlighted()
+        await pilot.pause()
+        assert revert.display
+        app.theme = "textual-dark"  # e.g. the palette puts the original back
+        await pilot.pause()
+        assert not revert.display
+        picker.highlighted_id = "apricot"
+        picker.use_highlighted()  # persisted: launch default -> apricot
+        await pilot.pause()
+        assert revert.display
+        app.theme = "textual-dark"  # active matches, launch default still differs
+        await pilot.pause()
+        assert revert.display
+        tc._apply_config_mutation({"general": {"default_theme": "textual-dark"}})
+        picker.refresh_catalog(rescan=False)
+        await pilot.pause()
+        assert not revert.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_revert_label_stays_plain_for_a_try_even_when_launch_differs(request, config_writes):
     # A Try never persists, so the chip never needs the launch-default
     # qualifier even when active and launch disagree.
@@ -898,5 +949,7 @@ async def test_revert_label_strips_control_characters_from_the_launch_default(
         picker.use_highlighted()
         await pilot.pause()
         label = str(picker.query_one("#settings-theme-revert", Button).label)
-        assert "(launch: Gone?]52;C;Ea==?)" in label, label
+        # TASK-33061: a launch default that is no registered theme is never
+        # written back, so the chip no longer names it at all.
+        assert label.endswith("(launch unchanged)"), label
         assert label.isprintable(), repr(label)
