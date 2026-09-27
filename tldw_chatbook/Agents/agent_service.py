@@ -2760,6 +2760,10 @@ class AgentService:
                 else None
             ),
             excluded_dirs=getattr(candidate, "excluded_dirs", frozenset()),
+            # Task 19: a remote candidate's executor-backed IO rides into
+            # the snapshot so the run-local activation ledger resolves
+            # nested scopes through the same reader.
+            remote_io=getattr(candidate, "remote_io", None),
         )
 
     def build_project_instruction_request(

@@ -5,13 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal
+from typing import Any, Literal
 
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     directory_identity_from_stat,
@@ -70,12 +72,18 @@ class StartupInstructionCandidate:
     """Securely pinned, byte-admitted startup resolver result."""
 
     binding_id: str
-    binding_root: Path = field(repr=False)
+    binding_root: "Path | RemoteRoot" = field(repr=False)
     locator_fingerprint: str = field(repr=False)
     dispatch_started_wall_ns: int = field(repr=False)
     source: InstructionSource | None
     outcomes: tuple[InstructionOutcome, ...]
     excluded_dirs: frozenset[Path] = field(default=frozenset(), repr=False)
+    #: Task 19: the executor-backed IO that produced a REMOTE candidate.
+    #: Rides along (never compared, never rendered) so the run-local
+    #: activation ledger resolves nested scopes through the same reader.
+    remote_io: "RemoteInstructionIO | None" = field(
+        default=None, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +99,7 @@ class InstructionSnapshot:
     """Immutable project-instruction state for one Console dispatch."""
 
     binding_id: str
-    binding_root: Path = field(repr=False)
+    binding_root: "Path | RemoteRoot" = field(repr=False)
     locator_fingerprint: str = field(repr=False)
     dispatch_started_wall_ns: int = field(repr=False)
     startup_source: InstructionSource | None
@@ -100,6 +108,11 @@ class InstructionSnapshot:
     warning_codes: tuple[str, ...]
     startup_source_metadata: InstructionSourceMetadata | None = None
     excluded_dirs: frozenset[Path] = field(default=frozenset(), repr=False)
+    #: Task 19: the executor-backed IO for a REMOTE binding root; the
+    #: activation ledger builds its nested resolver from this slot.
+    remote_io: "RemoteInstructionIO | None" = field(
+        default=None, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +224,22 @@ def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
 class ProjectInstructionResolver:
     """Resolve only the selected binding root's effective instruction file."""
 
+    #: Class-level default so subclasses that override ``__init__``
+    #: without chaining (test doubles do) keep local-IO behavior.
+    _remote_io: "RemoteInstructionIO | None" = None
+
+    def __init__(self, remote_io: "RemoteInstructionIO | None" = None) -> None:
+        """Configure the resolver's IO strategy.
+
+        Args:
+            remote_io: Task 19's executor-backed IO for REMOTE binding
+                roots. ``None`` (the default) keeps the laptop-fd
+                behavior byte-identical: every pre-Task-19 call site
+                constructs ``ProjectInstructionResolver()`` and only
+                ever passes laptop ``Path`` roots.
+        """
+        self._remote_io = remote_io
+
     def snapshot_promotion_target(
         self,
         *,
@@ -234,6 +263,12 @@ class ProjectInstructionResolver:
         """
         if not binding_id or not locator_fingerprint or activation_revision < 0:
             raise InstructionPromotionSnapshotError("authority_unavailable")
+        if isinstance(binding_root, RemoteRoot):
+            # Task 19 boundary: promotion (model-PROPOSED instruction
+            # files) stays local-only in v1 — its fd-verified before/
+            # after chain capture has no remote analogue yet. Refusing
+            # fail-closed is safe: nothing was promoted, nothing changes.
+            raise InstructionPromotionSnapshotError("ineligible_target")
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         root, expected_ancestors = _canonical_binding_root(binding_root)
@@ -343,30 +378,31 @@ class ProjectInstructionResolver:
         if max_bytes < 0:
             raise ValueError("max_bytes must be non-negative")
 
-        root, expected_ancestors = _canonical_binding_root(binding_root)
+        root, expected_ancestors = self._canonical_root(binding_root)
         if expected_ancestors is None:
             return StartupInstructionCandidate(
                 binding_id=binding_id,
-                binding_root=root,
+                binding_root=(
+                    binding_root if isinstance(binding_root, RemoteRoot) else root
+                ),
                 locator_fingerprint=locator_fingerprint,
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 source=None,
                 outcomes=(InstructionOutcome(".", ".", "resolution_failed"),),
                 excluded_dirs=excluded_dirs,
+                remote_io=self._remote_io,
             )
 
         def read(filename: str, kind: InstructionKind) -> _ReadResult:
-            # Workspace-excluded candidates are skipped exactly like missing
-            # files: never lstat'ed, opened, or admitted.
-            if path_is_excluded(root / filename, excluded_dirs):
-                return _ReadResult(fallback_condition=_FallbackCondition("absent"))
-            return _read_candidate(
+            return self._read_admitted(
                 root=root,
                 filename=filename,
                 kind=kind,
                 max_bytes=max_bytes,
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 expected_ancestors=expected_ancestors,
+                excluded_dirs=excluded_dirs,
+                remote=isinstance(binding_root, RemoteRoot),
             )
 
         override = read("AGENTS.override.md", "override")
@@ -379,12 +415,15 @@ class ProjectInstructionResolver:
 
         return StartupInstructionCandidate(
             binding_id=binding_id,
-            binding_root=root,
+            binding_root=(
+                binding_root if isinstance(binding_root, RemoteRoot) else root
+            ),
             locator_fingerprint=locator_fingerprint,
             dispatch_started_wall_ns=dispatch_started_wall_ns,
             source=result.source,
             outcomes=(result.outcome,) if result.outcome else (),
             excluded_dirs=excluded_dirs,
+            remote_io=self._remote_io,
         )
 
     def resolve_targets(
@@ -431,7 +470,7 @@ class ProjectInstructionResolver:
             raise ValueError("max_bytes must be non-negative")
         if admission_bytes is not None and admission_bytes < 0:
             raise ValueError("admission_bytes must be non-negative")
-        root, expected_root = _canonical_binding_root(binding_root)
+        root, expected_root = self._canonical_root(binding_root)
         if pinned_by_canonical_path and expected_binding_identity is None:
             expected_root = None
         if expected_binding_identity is not None and (
@@ -447,10 +486,27 @@ class ProjectInstructionResolver:
 
         directories: set[Path] = set()
         outcomes: list[InstructionOutcome] = []
+        remote = self._remote_io is not None and isinstance(binding_root, RemoteRoot)
         for target in targets:
             lexical = _safe_absolute(target)
+            if remote and lexical is not None:
+                # The provider's lexical mapping joins targets onto the
+                # descriptor's root spelling; translate into the pinned
+                # canonical space (a server-side-symlinked locator is the
+                # one case they differ).
+                lexical = self._remote_io.remap_target(root, lexical)
             if lexical is None or not lexical.is_relative_to(root):
                 outcomes.append(InstructionOutcome(".", ".", "resolution_failed"))
+                continue
+            if remote:
+                # Remote walk: worker stats replace per-component laptop
+                # lstat (see RemoteInstructionIO.walk_component_chain for
+                # the documented weaker-granularity analogue).
+                failure = self._remote_io.walk_component_chain(
+                    root, lexical, excluded_dirs, directories
+                )
+                if failure is not None:
+                    outcomes.append(failure)
                 continue
             current = root
             for part in lexical.relative_to(root).parts:
@@ -496,6 +552,7 @@ class ProjectInstructionResolver:
                 pinned_by_canonical_path=pinned_by_canonical_path,
                 expected_binding_ancestors=expected_root,
                 excluded_dirs=excluded_dirs,
+                remote_io=self._remote_io if remote else None,
             )
             if result.source is not None:
                 found.append((result.source, was_pinned))
@@ -544,6 +601,72 @@ class ProjectInstructionResolver:
                     ),
                 )
             ),
+        )
+
+    # -- Task 19: IO-strategy dispatch -------------------------------------
+
+    def _canonical_root(
+        self, binding_root: "Path | RemoteRoot"
+    ) -> tuple[Path, tuple[tuple[int, int, int], ...] | None]:
+        """Canonical binding root via the configured IO strategy.
+
+        Local roots keep ``_canonical_binding_root`` verbatim. A
+        :class:`~tldw_chatbook.Tools.remote_root_types.RemoteRoot` without
+        a remote IO strategy fails CLOSED (``None`` ancestors) instead of
+        touching the laptop's filesystem with a remote path.
+        """
+        if isinstance(binding_root, RemoteRoot):
+            if self._remote_io is None:
+                return Path(str(binding_root.root)), None
+            return self._remote_io.canonical_root(binding_root)
+        return _canonical_binding_root(binding_root)
+
+    def _read_admitted(
+        self,
+        *,
+        root: Path,
+        filename: str,
+        kind: InstructionKind,
+        max_bytes: int,
+        dispatch_started_wall_ns: int,
+        expected_ancestors: tuple[tuple[int, int, int], ...],
+        relative_path: str | None = None,
+        scope: str = ".",
+        excluded_dirs: frozenset[Path] = frozenset(),
+        remote: bool = False,
+    ) -> _ReadResult:
+        """Read one candidate through the configured IO strategy.
+
+        The LOCAL branch is the pre-Task-19 read verbatim (exclusion
+        check + fd-pinned read). The REMOTE branch (``remote`` — set for
+        :class:`RemoteRoot` dispatches) routes through the executor-backed
+        reader, which applies the same exclusion and admission rules
+        worker-side (see ``RemoteInstructionIO``).
+        """
+        if remote and self._remote_io is not None:
+            return self._remote_io.read_candidate(
+                root=root,
+                filename=filename,
+                kind=kind,
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=dispatch_started_wall_ns,
+                relative_path=relative_path,
+                scope=scope,
+                excluded_dirs=excluded_dirs,
+            )
+        # Workspace-excluded candidates are skipped exactly like missing
+        # files: never lstat'ed, opened, or admitted.
+        if path_is_excluded(root / filename, excluded_dirs):
+            return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+        return _read_candidate(
+            root=root,
+            filename=filename,
+            kind=kind,
+            max_bytes=max_bytes,
+            dispatch_started_wall_ns=dispatch_started_wall_ns,
+            expected_ancestors=expected_ancestors,
+            relative_path=relative_path,
+            scope=scope,
         )
 
 
@@ -752,17 +875,31 @@ def _canonical_binding_root(
         return lexical, None
 
 
-def capture_binding_root_identity(binding_root: Path) -> BindingRootIdentity:
+def capture_binding_root_identity(
+    binding_root: "Path | RemoteRoot",
+    *,
+    remote_io: "RemoteInstructionIO | None" = None,
+) -> BindingRootIdentity:
     """Capture the selected root and ancestor identities for one dispatch.
 
     Args:
-        binding_root: Canonical selected workspace root to pin.
+        binding_root: Canonical selected workspace root to pin. A
+            :class:`~tldw_chatbook.Tools.remote_root_types.RemoteRoot`
+            requires ``remote_io``; its identity is the WORKER-REPORTED
+            ping chain (the remote analogue of the laptop ancestor
+            capture). A remote root without a reader fails closed.
+        remote_io: Task 19's executor-backed IO for remote roots.
 
     Returns:
         The lexical root plus its fail-closed ancestor identity chain. An
         unavailable chain is represented inside the returned value and makes
         later resolution ineligible.
     """
+    if isinstance(binding_root, RemoteRoot):
+        if remote_io is None:
+            return BindingRootIdentity(Path(str(binding_root.root)), None)
+        root, ancestors = remote_io.canonical_root(binding_root)
+        return BindingRootIdentity(root, ancestors)
     root, ancestors = _canonical_binding_root(binding_root)
     return BindingRootIdentity(root, ancestors)
 
@@ -885,29 +1022,48 @@ def _resolve_nested_directory(
     pinned_by_canonical_path: Mapping[Path, InstructionSource],
     expected_binding_ancestors: tuple[tuple[int, int, int], ...],
     excluded_dirs: frozenset[Path] = frozenset(),
+    remote_io: "RemoteInstructionIO | None" = None,
 ) -> tuple[_ReadResult, bool]:
     scope = directory.relative_to(root).as_posix()
     override_path = directory / "AGENTS.override.md"
     standard_path = directory / "AGENTS.md"
     # Workspace-excluded candidate files are skipped exactly like missing
     # ones: never lstat'ed, opened, or admitted -- the sibling candidate in
-    # the same directory still resolves normally.
-    override_excluded = path_is_excluded(override_path, excluded_dirs)
-    standard_excluded = path_is_excluded(standard_path, excluded_dirs)
-    try:
-        expected_ancestors = _capture_ancestor_identities(directory)
-        depth = len(directory.relative_to(root).parts)
-        if expected_ancestors[depth:] != expected_binding_ancestors:
-            raise _UnsafeMetadata
-    except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
-        return (
-            _ReadResult(
-                outcome=InstructionOutcome(
-                    f"{scope}/AGENTS.md", scope, "resolution_failed"
-                )
-            ),
-            False,
+    # the same directory still resolves normally. Remote entries are the
+    # Task 17 raw RELATIVE paths and match lexically against the
+    # candidates' root-relative form.
+    if remote_io is not None:
+        override_excluded = remote_io.candidate_is_excluded(
+            directory, "AGENTS.override.md", excluded_dirs
         )
+        standard_excluded = remote_io.candidate_is_excluded(
+            directory, "AGENTS.md", excluded_dirs
+        )
+    else:
+        override_excluded = path_is_excluded(override_path, excluded_dirs)
+        standard_excluded = path_is_excluded(standard_path, excluded_dirs)
+    if remote_io is None:
+        try:
+            expected_ancestors = _capture_ancestor_identities(directory)
+            depth = len(directory.relative_to(root).parts)
+            if expected_ancestors[depth:] != expected_binding_ancestors:
+                raise _UnsafeMetadata
+        except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
+            return (
+                _ReadResult(
+                    outcome=InstructionOutcome(
+                        f"{scope}/AGENTS.md", scope, "resolution_failed"
+                    )
+                ),
+                False,
+            )
+    else:
+        # Remote: per-directory (st_dev, st_ino) identities would need a
+        # new wire op. The pinged ROOT chain above plus the worker's
+        # per-call root pin (every stat/read below re-validates the whole
+        # chain server-side before touching the filesystem) are the
+        # documented weaker-granularity analogue.
+        expected_ancestors = expected_binding_ancestors
     pinned_path = override_path
     pinned = None if override_excluded else pinned_by_canonical_path.get(pinned_path)
     if pinned is None:
@@ -921,10 +1077,12 @@ def _resolve_nested_directory(
                 pinned_path=pinned_path,
                 source=pinned,
             )
-            if (
+            if remote_io is None and (
                 not valid
                 or _capture_ancestor_identities(directory) != expected_ancestors
             ):
+                raise _UnsafeMetadata
+            if remote_io is not None and not valid:
                 raise _UnsafeMetadata
         except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
             return (
@@ -945,6 +1103,16 @@ def _resolve_nested_directory(
         # files: never lstat'ed, opened, or admitted.
         if excluded:
             return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+        if remote_io is not None:
+            return remote_io.read_candidate(
+                root=directory,
+                filename=filename,
+                kind=kind,
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=dispatch_started_wall_ns,
+                relative_path=relative_path,
+                scope=scope,
+            )
         return _read_candidate(
             root=directory,
             filename=filename,
@@ -1094,3 +1262,513 @@ def _is_reparse(value: object) -> bool:
         return bool(int(attributes) & int(_REPARSE_POINT))
     except Exception as error:
         raise _UnsafeMetadata from error
+
+
+# ---------------------------------------------------------------------------
+# Task 19 (Phase 4b): executor-backed IO for remote binding roots
+# ---------------------------------------------------------------------------
+
+#: One rendered fs_read line: ``<1-based line number>\t<content>``.
+_NUMBERED_LINE_PATTERN = re.compile(r"\A([0-9]+)\t(.*)\Z", re.DOTALL)
+
+#: Worker render markers (see the bundle's ``_read_relative_file``).
+_TRUNCATION_MARKER = "… [truncated]"
+_EMPTY_FILE_NOTICE = "(empty file)"
+_PAST_END_PREFIX = "(offset "
+
+#: Hard ceiling on fs_read pages per candidate: each page renders at most
+#: ``MAX_READ_CHARS`` (32 KiB) of content, so this bounds a runaway pager
+#: far above the 1 MiB resolver byte ceiling before failing closed.
+_MAX_FS_READ_PAGES = 1024
+
+
+class _RemoteOpFailure(Exception):
+    """One executor operation failure, with its typed wire code."""
+
+    def __init__(self, code: str, text: str) -> None:
+        self.code = str(code)
+        self.text = str(text)
+        super().__init__(self.text)
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteRead:
+    """Classified outcome of one remote candidate read."""
+
+    kind: Literal["ok", "absent", "omitted", "invalid", "failed"]
+    body: str = ""
+    digest: str = ""
+    size: int = -1
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteStat:
+    """Parsed ``stat_path`` view of one remote path."""
+
+    kind: Literal["file", "directory", "other"]
+    size: int
+    modified_ns: int
+
+
+def remote_path_is_excluded(
+    relative_posix: str, excluded: frozenset[Path]
+) -> bool:
+    """Lexical deny-side exclusion match for one ROOT-RELATIVE remote path.
+
+    Remote exclusion entries (Task 17) are the binding's RAW relative
+    paths — the remote owns the filesystem, so there is nothing to
+    resolve on the laptop. Matching mirrors ``path_is_excluded``'s
+    component-wise CASEFOLDED prefix compare (deny-side only; folding may
+    over-refuse, never under-refuse).
+    """
+    if not excluded:
+        return False
+    parts = tuple(
+        part.casefold() for part in PurePosixPath(relative_posix).parts
+    )
+    for entry in excluded:
+        if entry.is_absolute() or ".." in entry.parts:
+            continue
+        entry_parts = tuple(part.casefold() for part in entry.parts)
+        if not entry_parts:
+            # An exclusion of "." covers the whole binding root.
+            return True
+        if parts[: len(entry_parts)] == entry_parts:
+            return True
+    return False
+
+
+class RemoteInstructionIO:
+    """IO strategy that reads instruction candidates over the executor.
+
+    LOCAL analogue (what this class replaces for remote roots, per
+    ADR-068/069 and the spec section "AGENTS.md from remote"):
+
+    * fd-pinned no-follow read + before/after identity re-checks
+      → the WORKER-SIDE PIN: every dispatched op re-validates the pinged
+      root identity chain server-side before touching the filesystem,
+      and ``fs_read``'s CAS stamps (sha256 + size over the RAW bytes) are
+      computed from ONE worker-side read, so the rendered body and its
+      raw-byte identity are never a torn pair. A post-read ``stat_path``
+      cross-checks size and freshness.
+    * ancestor identity capture per directory
+      → the ping chain pins the ROOT and its ancestors; per-subdirectory
+      ``(st_dev, st_ino)`` identities would need a new wire op, so the
+      reader uses the root chain + the candidate's own stat — a
+      deliberately WEAKER granularity, bounded by worker confinement
+      (every read stays inside the pinned root) and by the per-call root
+      pin (a swapped root refuses every later op).
+
+    Documented divergences from the local fd reader (all fail-safe or
+    content-preserving directions, none of which weaken the untrusted-
+    content posture — remote AGENTS.md never gains trust):
+
+    * ``fs_read`` renders LINE-NUMBERED text: the admitted body is the
+      reconstruction (line numbers stripped). ``\r\n`` and exotic line
+      separators normalize to ``\n``; a UTF-8 BOM is stripped like the
+      local ``utf-8-sig`` decode. ``byte_count``/``digest`` cover the
+      ADMITTED body (self-consistent for the ledger, receipts and pinned
+      re-validation); the worker-reported raw stamps pin change
+      detection during the read itself.
+    * Worker decode is lenient (U+FFFD replacement) where the local
+      reader refuses invalid UTF-8; the binary (NUL) sniff still refuses
+      binary files with ``invalid``. Unreadable-in-any-form candidates
+      surface as content-free outcomes exactly like the local reader.
+    * A symlinked candidate escaping the root is refused by worker
+      containment as ``file not found`` (absent → fallback may proceed),
+      where the local reader records ``invalid`` (fallback suppressed).
+      Either way only worker-confined content is ever admitted.
+    * The stale check compares the REMOTE file's ``mtime_ns`` (worker
+      stat) against the LAPTOP dispatch clock, so host clock skew of
+      ±N seconds shifts the cutoff by the same N — a bounded, benign
+      divergence of the local same-clock comparison.
+
+    Any executor failure — transport, pin, protocol — is source-closed
+    (``resolution_failed``): per ADR-069's prep-failure posture an
+    unreachable remote yields a content-free warning and the dispatch
+    proceeds. NOTHING in this class raises past the resolver.
+    """
+
+    __slots__ = (
+        "_ancestors",
+        "_binding_id",
+        "_descriptor_root",
+        "_executor",
+        "_payload",
+        "_root",
+    )
+
+    def __init__(self, executor: Any, *, binding_id: str = "") -> None:
+        """Bind one workspace executor.
+
+        Args:
+            executor: Duck-typed executor with ``ping()`` and
+                ``execute(tool, args, *, intent)`` — both the loopback
+                ``RemoteWorkspaceToolExecutor`` (dict results) and the
+                controller's dispatch adapter (str results) are accepted.
+            binding_id: Content-free diagnostics label.
+        """
+        self._executor = executor
+        self._binding_id = str(binding_id)
+        self._root: Path | None = None
+        self._descriptor_root: Path | None = None
+        self._ancestors: tuple[tuple[int, int, int], ...] | None = None
+        self._payload: Mapping[str, Any] | None = None
+
+    # -- identity -----------------------------------------------------------
+
+    @property
+    def executor(self) -> Any:
+        """The bound executor (test/diagnostics read-only access)."""
+        return self._executor
+
+    def ping_payload(self) -> Mapping[str, Any]:
+        """The cached ping payload, capturing it on first use."""
+        if self._payload is None:
+            self._payload = self._executor.ping()
+        return self._payload
+
+    def canonical_root(
+        self, descriptor: RemoteRoot
+    ) -> tuple[Path, tuple[tuple[int, int, int], ...] | None]:
+        """Pin the remote root's canonical path and ancestor chain (ping).
+
+        Success is cached for the reader's lifetime: the per-op worker
+        root pin is the LIVE re-validation between calls (a retargeted
+        root refuses every later op), so re-pinging per call would only
+        add a round trip. Failure is NOT cached — the next resolution
+        re-attempts exactly like the local per-call capture.
+        """
+        if self._root is None:
+            try:
+                chain = self.ping_payload()["identity_chain"]
+                ancestors = tuple(
+                    (int(entry[1]), int(entry[2]), int(entry[3]))
+                    for entry in chain
+                )
+                canonical = Path(str(chain[0][0]))
+            except Exception:  # noqa: BLE001 - any ping failure is closed
+                self._descriptor_root = Path(str(descriptor.root))
+                return self._descriptor_root, None
+            self._root = canonical
+            self._ancestors = ancestors
+            # The descriptor's own spelling (e.g. a server-side symlinked
+            # locator the ping resolved past): targets produced by the
+            # provider's lexical path mapping live in THIS space, and the
+            # worker resolves every arg against the pinned root anyway,
+            # so both spellings map to the same root-relative suffix.
+            self._descriptor_root = Path(str(descriptor.root))
+        return self._root, self._ancestors
+
+    # -- relative-path helpers ----------------------------------------------
+
+    def remap_target(self, canonical: Path, lexical: Path) -> Path | None:
+        """Translate one target path into the canonical root's space.
+
+        The provider's lexical path mapping joins targets onto the
+        DESCRIPTOR's spelling; the worker's ping may have resolved past
+        a server-side symlink to a different canonical root. Both
+        spellings share the same root-relative suffix (the worker
+        resolves every arg against the pinned root), so a target under
+        the descriptor maps to ``canonical / suffix``. Anything else is
+        foreign: ``None`` (fail closed).
+        """
+        if lexical.is_relative_to(canonical):
+            return lexical
+        if self._descriptor_root is not None:
+            try:
+                return canonical / lexical.relative_to(self._descriptor_root)
+            except ValueError:
+                return None
+        return None
+
+    def _relative(self, directory: Path) -> str:
+        """Root-relative POSIX form of one opaque directory path."""
+        if self._root is None or directory == self._root:
+            return ""
+        try:
+            relative = directory.relative_to(self._root)
+        except ValueError:
+            return ""
+        return relative.as_posix()
+
+    def candidate_rel(self, directory: Path, filename: str) -> str:
+        """The worker-facing root-relative candidate path."""
+        directory_rel = self._relative(directory)
+        return f"{directory_rel}/{filename}" if directory_rel else filename
+
+    def candidate_is_excluded(
+        self, directory: Path, filename: str, excluded: frozenset[Path]
+    ) -> bool:
+        """Lexical exclusion check for one remote candidate."""
+        return remote_path_is_excluded(
+            self.candidate_rel(directory, filename), excluded
+        )
+
+    # -- reads ---------------------------------------------------------------
+
+    def read_candidate(
+        self,
+        *,
+        root: Path,
+        filename: str,
+        kind: InstructionKind,
+        max_bytes: int,
+        dispatch_started_wall_ns: int,
+        relative_path: str | None = None,
+        scope: str = ".",
+        excluded_dirs: frozenset[Path] = frozenset(),
+    ) -> _ReadResult:
+        """Read one candidate file through the executor (see class doc)."""
+        candidate_rel = self.candidate_rel(root, filename)
+        displayed_path = relative_path or filename
+
+        def outcome(code: InstructionOutcomeCode) -> InstructionOutcome:
+            return InstructionOutcome(displayed_path, scope, code)
+
+        if remote_path_is_excluded(candidate_rel, excluded_dirs):
+            return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+
+        read = self._fs_read_all(candidate_rel, max_bytes=max_bytes)
+        if read.kind == "absent":
+            return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+        if read.kind == "omitted":
+            return _ReadResult(outcome=outcome("omitted_byte_budget"))
+        if read.kind == "invalid":
+            return _ReadResult(outcome=outcome("invalid"))
+        if read.kind == "failed":
+            return _ReadResult(outcome=outcome("resolution_failed"))
+
+        stated = self._stat(candidate_rel)
+        if not isinstance(stated, _RemoteStat):
+            # Readable a moment ago, unstattable now: treat as changed
+            # under us (the local reader's post-read lstat failure
+            # analogue) — never as absent.
+            return _ReadResult(outcome=outcome("resolution_failed"))
+        if stated.kind != "file":
+            return _ReadResult(outcome=outcome("invalid"))
+        if stated.size != read.size:
+            return _ReadResult(outcome=outcome("resolution_failed"))
+        if stated.modified_ns > dispatch_started_wall_ns:
+            return _ReadResult(outcome=outcome("stale"))
+        if read.size > max_bytes:
+            return _ReadResult(outcome=outcome("omitted_byte_budget"))
+
+        body = read.body.removeprefix("\ufeff")
+        encoded = body.encode("utf-8", errors="strict")
+        if len(encoded) > max_bytes:
+            return _ReadResult(outcome=outcome("omitted_byte_budget"))
+        if not body.strip():
+            return _ReadResult(
+                fallback_condition=_FallbackCondition(
+                    "empty",
+                    file_identity=(
+                        stated.modified_ns,
+                        stated.size,
+                        0,
+                        0,
+                        0,
+                    ),
+                    digest=read.digest,
+                )
+            )
+        return _ReadResult(
+            source=InstructionSource(
+                canonical_path=root / filename,
+                relative_path=displayed_path,
+                scope=scope,
+                kind=kind,
+                body=body,
+                byte_count=len(encoded),
+                digest=hashlib.sha256(encoded).hexdigest(),
+            )
+        )
+
+    # -- directory walk -------------------------------------------------------
+
+    def walk_component_chain(
+        self,
+        root: Path,
+        lexical: Path,
+        excluded_dirs: frozenset[Path],
+        directories: set[Path],
+    ) -> InstructionOutcome | None:
+        """Walk one target's directory chain via worker stats.
+
+        Adds every EXISTING directory component to ``directories``.
+        Returns ``None`` on benign stops (missing or excluded scope —
+        mirroring the local walk's silent ``FileNotFoundError`` break) or
+        a content-free ``resolution_failed`` outcome when a component is
+        refused. Documented weaker granularity: a symlinked directory
+        pointing INSIDE the root is followed (worker parity for fs ops);
+        one escaping the root makes every read under it refuse, so no
+        out-of-root content can activate.
+        """
+        current = root
+        for part in lexical.relative_to(root).parts:
+            current = current / part
+            component_rel = self._relative(current)
+            if remote_path_is_excluded(component_rel, excluded_dirs):
+                return None
+            stated = self._stat(component_rel)
+            if not isinstance(stated, _RemoteStat):
+                # Missing and unstatable are indistinguishable through
+                # stat_path; the walk treats both as a nonexistent scope
+                # (no activation, never wrong activation).
+                return None
+            if stated.kind != "directory":
+                return InstructionOutcome(
+                    f"{component_rel}/AGENTS.md",
+                    component_rel,
+                    "resolution_failed",
+                )
+            directories.add(current)
+        return None
+
+    # -- executor plumbing -----------------------------------------------------
+
+    def _execute(self, tool: str, args: dict[str, Any]) -> str:
+        """Dispatch one read op; normalize the result to its text form."""
+        try:
+            result = self._executor.execute(tool, args, intent="read")
+        except Exception as error:  # noqa: BLE001 - any failure is closed
+            code = str(getattr(error, "code", "") or "resolution_failed")
+            raise _RemoteOpFailure(code, str(error)) from None
+        if isinstance(result, Mapping):
+            result = result.get("result")
+        if not isinstance(result, str):
+            raise _RemoteOpFailure("protocol_failure", "missing result text")
+        return result
+
+    def _fs_read_all(self, candidate_rel: str, *, max_bytes: int) -> _RemoteRead:
+        """Read one candidate fully, paging past the render cap."""
+        from tldw_chatbook.Tools.remote_workspace_executor import (
+            split_fs_read_result,
+        )
+
+        collected: list[str] = []
+        offset = 1
+        for _page in range(_MAX_FS_READ_PAGES):
+            try:
+                result = self._execute(
+                    "fs_read", {"path": candidate_rel, "offset": offset}
+                )
+            except _RemoteOpFailure as failure:
+                return self._classify_read_failure(failure)
+            split = split_fs_read_result(result)
+            if split is None:
+                return _RemoteRead("failed")
+            body_text, digest, size = split
+            if size > max_bytes:
+                # The worker stamp reports the RAW size: cap before any
+                # further paging (byte budget precedes reconstruction).
+                return _RemoteRead("omitted", digest=digest, size=size)
+            if body_text == _EMPTY_FILE_NOTICE:
+                return _RemoteRead("ok", body="", digest=digest, size=size)
+            page_offset = offset
+            page = _parse_fs_read_page(body_text, expected_start=offset)
+            if page is None:
+                return _RemoteRead("failed")
+            page_lines, next_number, truncated, past_end = page
+            collected.extend(page_lines)
+            if past_end or not truncated:
+                return _RemoteRead(
+                    "ok", body="\n".join(collected), digest=digest, size=size
+                )
+            # Truncation may have cut the render MID-LINE: the trailing
+            # fragment (unparseable) was never collected, but the LAST
+            # parseable line can also be content-cut with its number
+            # intact — drop it too and resume from its line number.
+            if page_lines:
+                collected.pop()
+                offset = next_number - 1
+            else:
+                offset = next_number
+            if offset <= page_offset:
+                # No forward progress (a single line too long for the
+                # worker's render cap): the candidate is unrenderable —
+                # fail closed instead of looping.
+                return _RemoteRead("omitted")
+        return _RemoteRead("omitted")
+
+    @staticmethod
+    def _classify_read_failure(failure: _RemoteOpFailure) -> _RemoteRead:
+        """Map one typed fs_read refusal onto the local outcome codes."""
+        if failure.code == "tool_failure":
+            if failure.text.startswith("file not found"):
+                return _RemoteRead("absent")
+            if "too large to read" in failure.text:
+                return _RemoteRead("omitted")
+            if "appears to be binary" in failure.text:
+                return _RemoteRead("invalid")
+        return _RemoteRead("failed")
+
+    def _stat(self, candidate_rel: str) -> _RemoteStat | None:
+        """Stat one remote path; ``None`` when unstatably absent/refused."""
+        try:
+            result = self._execute("stat_path", {"path": candidate_rel})
+        except _RemoteOpFailure:
+            return None
+        fields: dict[str, str] = {}
+        for line in result.split("\n"):
+            key, separator, value = line.partition(": ")
+            if separator:
+                fields[key] = value
+        try:
+            kind = fields["type"]
+            if kind not in ("file", "directory", "other"):
+                return None
+            return _RemoteStat(
+                kind=kind,  # type: ignore[arg-type]
+                size=int(fields["size"]),
+                modified_ns=int(fields["modified_ns"]),
+            )
+        except (KeyError, ValueError):
+            return None
+
+
+def _parse_fs_read_page(
+    body_text: str, *, expected_start: int
+) -> tuple[list[str], int, bool, bool] | None:
+    """Parse one rendered fs_read page.
+
+    Returns ``(lines, next_line_number, truncated, past_end)``, or
+    ``None`` on a contract violation (a line that is neither numbered-
+    with-sequential-index nor a recognized marker — fail closed). The
+    render cap can cut a page MID-LINE, leaving a trailing fragment that
+    is not a full numbered line; such a fragment is tolerated ONLY
+    directly before the truncation marker and dropped — the pager
+    re-reads from ``next_line_number``. A file line whose CONTENT is
+    literally ``… [truncated]`` forces re-paging that converges to the
+    page cap and then fails closed: omission, never wrong content.
+    """
+    lines: list[str] = []
+    expected = expected_start
+    truncated = False
+    past_end = False
+    raw = body_text.split("\n") if body_text else []
+    index = 0
+    while index < len(raw):
+        line = raw[index]
+        if line == _TRUNCATION_MARKER:
+            truncated = True
+            index += 1
+            continue
+        if line.startswith(_PAST_END_PREFIX) and line.endswith(")"):
+            past_end = True
+            index += 1
+            continue
+        match = _NUMBERED_LINE_PATTERN.match(line)
+        if match is not None and int(match.group(1)) == expected:
+            lines.append(match.group(2))
+            expected += 1
+            index += 1
+            continue
+        if index + 1 < len(raw) and raw[index + 1] == _TRUNCATION_MARKER:
+            # The mid-line fragment the cap cut: drop it, resume from
+            # its (implicit) line number on the next page.
+            truncated = True
+            index += 2
+            continue
+        return None
+    return lines, expected, truncated, past_end
