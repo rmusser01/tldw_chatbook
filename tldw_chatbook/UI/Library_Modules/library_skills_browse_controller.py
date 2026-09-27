@@ -284,6 +284,9 @@ class LibrarySkillsBrowseController:
             sort=scope.sort,
             limit=scope.page_size,
             offset=offset,
+            # TASK-32954: the Library lists disabled built-ins so they can be
+            # turned back on; model-facing listings never pass this.
+            include_disabled_builtins=True,
             isolate_in_worker=True,
         )
 
