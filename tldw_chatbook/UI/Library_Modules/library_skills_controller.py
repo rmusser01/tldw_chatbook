@@ -396,6 +396,7 @@ from ...Widgets.Library import (
     skill_user_invocable_label,
 )
 from .canvas_sync import _sync_library_canvas
+from .library_skills_builtin_controller import LibrarySkillsBuiltinController
 from .library_skills_state import LibrarySkillsState, skill_state_shim_attr
 from .screen_constants import (
     LIBRARY_SKILLS_READER_PROFILE,
@@ -575,6 +576,7 @@ class LibrarySkillsController:
         self._request_library_skills_browse_fn = request_library_skills_browse
         self._reset_library_skill_editor_state_fn = reset_library_skill_editor_state
         self._start_library_skills_import_fn = start_library_skills_import
+        self.builtin = LibrarySkillsBuiltinController(self)  # TASK-32954, R14
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -1035,6 +1037,8 @@ class LibrarySkillsController:
             "detail_notice": "",
             "detail_retryable": False,
         }
+        if self._library_skills_view == "preview":  # TASK-32954: read-only built-in
+            return self.builtin.preview_work_pane_values(values)
         if self._library_skills_view == "editor":
             editor_state = self._library_skill_editor_state
             if editor_state is None:
@@ -2847,6 +2851,8 @@ class LibrarySkillsController:
         """
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
+            return
+        if await self.builtin.open_preview_if_builtin_only(skill_name):  # TASK-32954
             return
         self._reset_library_skill_editor_state()
         self._selected_skill_name = skill_name
