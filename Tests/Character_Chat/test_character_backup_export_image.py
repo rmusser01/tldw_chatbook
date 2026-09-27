@@ -26,8 +26,8 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     import_character_card_from_json_string,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.UI.Tools_Settings_Window import (
-    _serialize_character_cards_for_backup,
+from tldw_chatbook.Backup_Recovery.settings_backup_helpers import (
+    serialize_character_cards_for_backup,
 )
 
 pytestmark = pytest.mark.integration
@@ -67,7 +67,7 @@ def backup_rows(db_instance):
 
 
 def _exported_by_name(rows):
-    exported = json.loads(_serialize_character_cards_for_backup(rows))
+    exported = json.loads(serialize_character_cards_for_backup(rows))
     return {card["name"]: card for card in exported}
 
 
@@ -77,7 +77,7 @@ def test_backup_export_of_image_bearing_cards_is_valid_json(backup_rows):
         "fixture must actually contain an image BLOB row"
     )
 
-    json_str = _serialize_character_cards_for_backup(backup_rows)
+    json_str = serialize_character_cards_for_backup(backup_rows)
 
     by_name = {card["name"]: card for card in json.loads(json_str)}
     card = by_name["Image Bearer"]
