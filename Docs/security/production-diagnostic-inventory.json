@@ -4075,8 +4075,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "3ccec0a0a977d9e069c8",
+      "call_count": 3,
+      "diagnostic_digest": "3f7cb86a448880db0151",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/settings_theme_picker.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11417,14 +11417,6 @@
       "reason": "not Chatbook-owned; persistent filtering is tested separately"
     }
   ],
-  "schema_version": 3,
-  "scope": "tldw_chatbook/**/*.py",
-  "summary": {
-    "owner_files": 606,
-    "path_privacy_candidate_calls": 693,
-    "persistent_sink_files": 14,
-    "task_31551_calls": 56,
-    "task_492_calls": 1397,
-    "task_494_calls": 7549
-  }
+  "schema_version": 4,
+  "scope": "tldw_chatbook/**/*.py"
 }

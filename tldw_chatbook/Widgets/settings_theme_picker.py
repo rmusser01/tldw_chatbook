@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -39,6 +40,9 @@ from .settings_theme_editor import THEMES_UNAVAILABLE_LABEL, SettingsThemeEditor
 from .theme_preview import ThemePreview
 
 _GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
+THEMES_LOADING_LABEL = "Loading your themes…"
+# TASK-32957: one exclusive group per picker for the off-thread folder scan.
+_SCAN_GROUP = "settings-theme-scan"
 
 
 def _row(entry: ThemeEntry) -> Text:
@@ -189,6 +193,15 @@ class ThemePicker(Vertical):
         self._list_themes = list_themes or (lambda: (user_theme_names(get_user_themes_dir()), {}))
         # TASK-32948 Task 3: the last Export's full path, for Copy path.
         self._export_path: Path | None = None
+        # TASK-32957: the folder scan runs in a thread worker. Only the newest
+        # scan may land (a stale one never overwrites a newer listing), a
+        # caller's highlight waits for it, and until the first one lands
+        # YOUR THEMES shows a loading row. The pending highlight is
+        # (requested id, the highlight when requested): a user move in
+        # between wins over it (Qodo 4116061873).
+        self._scan_generation = 0
+        self._pending_highlight: tuple[str, str | None] | None = None
+        self._scanned = False
 
     # The pending Revert lives on the app, not this widget: the pane is
     # recomposed on every category switch, and spec §5 keeps Revert for the
@@ -263,25 +276,68 @@ class ThemePicker(Vertical):
             rescan: False reuses the last good listing of the themes folder.
                 A theme switch (Use, Try, Revert, the palette) only moves
                 the active/launch markers, and the backup-scoped scan costs
-                ~6 ms per file on the UI thread (Qodo 4107495860). While the
-                files are paused it rescans anyway, to notice the resume.
+                ~6 ms per file (Qodo 4107495860). While the files are paused
+                it rescans anyway, to notice the resume.
+
+        A rescan runs in a thread worker (TASK-32957); the last good listing
+        stays up meanwhile and ``highlight`` is applied when it lands.
         """
         if not rescan and self.files_available:
-            user_names, unreadable = self._last_user_names, self._last_unreadable
-            self._rebuild(user_names, unreadable, highlight)
+            if highlight is not None:
+                self._pending_highlight = None  # a newer, explicit highlight
+            self._rebuild(self._last_user_names, self._last_unreadable, highlight)
             return
+        self._scan_generation += 1
+        if not self._scanned:
+            # First open: show the registered themes now, a loading row for yours.
+            self._rebuild(self._last_user_names, self._last_unreadable, highlight)
+        if highlight is not None:
+            self._pending_highlight = (highlight, self.highlighted_id)
+        generation = self._scan_generation
+        self.run_worker(
+            lambda: self._scan(generation),
+            thread=True,
+            exclusive=True,
+            group=_SCAN_GROUP,
+            exit_on_error=False,
+        )
+
+    def _scan(self, generation: int) -> None:
+        """Worker thread: list the themes folder, then apply on the UI thread."""
         try:
-            user_names, unreadable = self._list_themes()
-            self.files_available = True
-            self._last_user_names, self._last_unreadable = user_names, unreadable
+            outcome: tuple[str, set[str], Mapping[str, str]] = ("ok", *self._list_themes())
         except RecoveryRequired:
-            user_names, unreadable = self._last_user_names, self._last_unreadable
-            self.files_available = False
+            outcome = ("paused", set(), {})
         except OSError as exc:
             # R27 (6): an unreadable themes dir reads as "no user themes".
-            logger.warning(f"Could not list saved themes: {exc.strerror or type(exc).__name__}")
-            user_names, unreadable = set(), {}
+            logger.warning(f"Could not list saved themes (scan {generation}): {exc.strerror or type(exc).__name__}")
+            outcome = ("oserror", set(), {})
+        except Exception as exc:  # noqa: BLE001 - never leave "Loading" up for good
+            # Qodo 4116061876/4116061867: the frames, not str(exc) -- the
+            # message may carry the themes path (R16).
+            frames = "".join(traceback.format_tb(exc.__traceback__))
+            logger.error(f"Saved-theme listing failed (scan {generation}): {type(exc).__name__}\n{frames}")
+            outcome = ("failed", set(), {})
+        self.app.call_from_thread(self._apply_scan, generation, outcome)
+
+    def _apply_scan(self, generation: int, outcome: tuple[str, set[str], Mapping[str, str]]) -> None:
+        """UI thread: land one scan unless a newer one has started since."""
+        if generation != self._scan_generation or not self.is_attached:
+            return
+        status, user_names, unreadable = outcome
+        self._scanned = True
+        if status in ("paused", "failed"):
+            # A failed scan is not "no user themes" (R27 (6) is OSError only):
+            # keep the last good listing and the current availability.
+            user_names, unreadable = self._last_user_names, self._last_unreadable
+            if status == "paused":
+                self.files_available = False
+        else:
             self.files_available = True
+            if status == "ok":
+                self._last_user_names, self._last_unreadable = user_names, unreadable
+        pending, self._pending_highlight = self._pending_highlight, None
+        highlight = pending[0] if pending is not None and pending[1] == self.highlighted_id else None
         self._rebuild(user_names, unreadable, highlight)
 
     def _rebuild(
@@ -318,6 +374,8 @@ class ThemePicker(Vertical):
             if origin == "yours":
                 if not self.files_available:
                     placeholder = THEMES_UNAVAILABLE_LABEL
+                elif not self._scanned:
+                    placeholder = THEMES_LOADING_LABEL
                 elif not group and not query:
                     placeholder = "(none yet)"  # task-32945, spec §9
             if not group and placeholder is None:
@@ -337,6 +395,10 @@ class ThemePicker(Vertical):
         target = highlight if highlight in ids else (ids[0] if ids else None)
         if target is not None:
             lst.highlighted = lst.get_option_index(target)
+        pending = self._pending_highlight
+        if pending is not None and pending[1] == self.highlighted_id:
+            # A re-render's move is not the user's: the request still stands.
+            self._pending_highlight = (pending[0], target)
         self._show(target)
 
     def _show(self, theme_id: str | None) -> None:
@@ -612,14 +674,17 @@ class ThemePane(ContentSwitcher):
         with Vertical(id="settings-theme-editor-view"):
             with Horizontal(classes="settings-action-row"):
                 yield Button("Back to themes", id="settings-theme-back", classes="theme-editor-action")
-            yield SettingsThemeEditor(id="settings-theme-editor")
+            # Held directly: the picker's listing runs on a worker thread,
+            # which must not query the DOM (TASK-32957).
+            self._theme_editor = SettingsThemeEditor(id="settings-theme-editor")
+            yield self._theme_editor
         yield ThemePicker(
             list_themes=self._editor_listing,
             id="settings-theme-picker",
         )
 
     def _editor(self) -> SettingsThemeEditor:
-        return self.query_one(SettingsThemeEditor)
+        return self._theme_editor
 
     def _editor_listing(self) -> tuple[set[str], dict[str, str]]:
         files, unreadable = self._editor().user_theme_listing()

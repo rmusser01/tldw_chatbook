@@ -654,7 +654,11 @@ included.
 **Edit**, **Rename**, **Delete** and **Export** — visible only when the
 highlighted theme is one of yours (a shipped or Textual theme shows neither
 the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
-group shows a disabled "(none yet)" row instead. **Edit** opens the full
+group shows a disabled "(none yet)" row instead. The themes folder is read in
+the background: the first time the picker opens, YOUR THEMES shows a disabled
+"Loading your themes…" row until the read finishes, and after a file action
+or Back from the editor the previous list stays up until the new one arrives.
+**Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
 ("Rename theme '\<old\>'"); a name already in use answers "Name taken:
