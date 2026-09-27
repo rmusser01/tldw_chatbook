@@ -38,6 +38,7 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.theme_editor_helpers import open_theme_editor
 from Tests.UI.test_console_session_settings import (
     _assert_public_value_equal,
     _assert_schema_key_absent,
@@ -575,12 +576,12 @@ def test_inspector_guidance_covers_every_settings_category():
 
 @pytest.mark.asyncio
 async def test_theme_category_opens_without_crashing():
-    """Selecting the Theme category mounts its editor without crashing compose.
+    """Selecting the Theme category mounts its picker without crashing compose.
 
-    The editor widget mounting is the regression signal: the original bug
-    raised KeyError inside compose, so a crash would leave the editor unmounted
-    and time this wait out. Editor content is verified in
-    test_settings_theme_editor.py.
+    The pane mounting is the regression signal: the original bug raised
+    KeyError inside compose, so a crash would leave it unmounted and time this
+    wait out. TASK-32948 (spec D1): Theme opens on the picker, the editor sits
+    behind Clone/New. Editor content is verified in test_settings_theme_editor.py.
     """
     app = _build_test_app()
     host = ConversationReturnSettingsHarness(app)
@@ -589,7 +590,8 @@ async def test_theme_category_opens_without_crashing():
         screen = _active_destination_screen(host)
         # Poll rather than a fixed settle: selecting a category triggers a
         # recompose whose mount lands at a load-dependent moment.
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        await _wait_for_selector(screen, pilot, "#settings-theme-picker", timeout=8.0)
+        assert screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
 
 
 @pytest.mark.asyncio
@@ -1962,10 +1964,9 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         assert "Theme owns: full theme editing" in text
         assert "Save targets: general, web_server, appearance, and library" in text
         assert "Open Theme" in text
-        assert (
-            screen.query_one("#settings-appearance-theme", Select).value
-            == "textual-dark"
-        )
+        # TASK-32948: the theme is a read-only row; the picker owns choosing.
+        assert not screen.query("#settings-appearance-theme")
+        assert screen.query("#settings-appearance-theme-summary")
         assert (
             screen.query_one("#settings-appearance-palette-theme-limit", Input).value
             == "1"
@@ -2035,7 +2036,8 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
 
     assert saved
-    assert saved[-1]["general"]["default_theme"] == "textual-dark"
+    # Spec §8 (TASK-32948): Appearance never writes the launch default.
+    assert "default_theme" not in saved[-1]["general"]
     assert saved[-1]["general"]["palette_theme_limit"] == 5
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
@@ -2481,7 +2483,8 @@ async def test_settings_appearance_revert_restores_loaded_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_preview_updates_runtime_without_saving(monkeypatch):
+async def test_settings_appearance_preview_checks_draft_without_theme_or_save(monkeypatch):
+    """TASK-32948: Preview no longer sets app.theme (the picker's Try does)."""
     app = _build_test_app()
     app.app_config["general"] = {"default_theme": "textual-dark"}
     app.theme = "textual-dark"
@@ -2498,18 +2501,18 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
-        theme = screen.query_one("#settings-appearance-theme", Select)
-        theme.value = "textual-light"
-        screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
+        density = screen.query_one("#settings-appearance-density", Select)
+        density.value = "compact"
+        screen.handle_appearance_density_changed(Select.Changed(density, density.value))
 
         screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
         await pilot.pause()
         await pilot.click("#settings-preview-appearance")
         text = _visible_text(screen)
 
-        assert app.theme == "textual-light"
+        assert app.theme == "textual-dark"
         assert saved == []
-        assert "Appearance preview applied for this session only." in text
+        assert "Appearance defaults are valid; Save persists them." in text
         assert "Unsaved" in text
 
 
@@ -2547,14 +2550,6 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
         '@work(exclusive=True, group="settings-save-appearance", thread=True)\n'
         "    def _settings_save_appearance_worker"
     ) in source
-
-
-def test_settings_appearance_theme_options_use_specific_import_fallback():
-    source = inspect.getsource(SettingsScreen._appearance_theme_options)
-
-    assert "from tldw_chatbook.css.Themes.themes import ALL_THEMES" in source
-    assert "except (ImportError, ModuleNotFoundError):" in source
-    assert "except Exception:" not in source
 
 
 def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path):
@@ -5395,7 +5390,7 @@ async def test_settings_jk_leaves_theme_editor_focus_alone(request):
         await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
+        editor = await open_theme_editor(host, pilot)
         for selector in ("#settings-theme-tree", ".color-preset-swatch"):
             target = editor.query(selector).first()
             target.focus()
@@ -5491,7 +5486,7 @@ async def test_settings_jk_never_steals_keys_from_select(request):
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
-        theme_select = screen.query_one("#settings-appearance-theme", Select)
+        theme_select = screen.query_one("#settings-appearance-density", Select)
         theme_select.focus()
         await pilot.pause()
 
@@ -11789,7 +11784,12 @@ async def test_theme_user_edit_does_not_remount_editor():
         await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
-        editor = screen.query_one("#settings-theme-editor")
+        editor = await open_theme_editor(host, pilot)
+        # Clone marks the editor modified; start clean so the edit is the signal.
+        editor.is_modified = False
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is False
         target = editor.query_one("#settings-theme-color-primary", Input)
         target.value = "#123456"
         for _ in range(6):
@@ -12111,7 +12111,6 @@ def test_state_banner_leads_with_persistence_badge():
         SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
         SettingsCategoryId.WORKSPACES: "Applies immediately",
-        SettingsCategoryId.THEME: "Managed in editor",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
         SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
         SettingsCategoryId.ARTIFACTS: "Read-only here",
@@ -12283,6 +12282,11 @@ async def test_every_category_renders_the_state_banner():
             # categories used to compose a second in-card copy on top of
             # the pinned one, doubling the save-contract line.
             banners = screen.query(".settings-state-banner")
+            if summary.category is SettingsCategoryId.THEME:
+                # TASK-32948: Theme opens on the picker, whose Use/Try/Revert
+                # carry their own save contract -- no pinned banner there.
+                assert len(banners) == 0, [str(b.renderable) for b in banners]
+                continue
             assert len(banners) == 1, (
                 summary.category,
                 [str(b.renderable) for b in banners],
@@ -12991,48 +12995,11 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
         assert model.state.validated_revision is None
 
 
-def test_settings_appearance_theme_options_include_registered_user_themes(
-    tmp_path, monkeypatch
-):
-    """TASK-31250: themes registered with the app (saved user themes) are offered.
-
-    task-32945: "(saved)" only when a file exists in the user themes dir;
-    Textual's own built-ins say "(Textual)" instead.
-    """
-    import types
-
-    from tldw_chatbook.UI.Screens import settings_screen as settings_module
-
-    (tmp_path / "ocean.toml").write_text('[theme]\nname = "ocean"\n', encoding="utf-8")
-    monkeypatch.setattr(settings_module, "_theme_save_target", lambda: tmp_path)
-    stub = types.SimpleNamespace(
-        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
-        app_instance=types.SimpleNamespace(
-            available_themes={
-                "textual-dark": object(),
-                "ocean": object(),
-                "catppuccin-macchiato": object(),
-                "solarized-light": object(),
-                "registered-elsewhere": object(),
-            }
-        ),
-    )
-    options = SettingsScreen._appearance_theme_options(stub)
-    assert ("Ocean (saved)", "ocean") in options
-    assert ("Catppuccin Macchiato (Textual)", "catppuccin-macchiato") in options
-    assert ("Solarized Light (Textual)", "solarized-light") in options
-    assert ("Registered Elsewhere", "registered-elsewhere") in options
-    assert not any("(saved)" in label for label, value in options if value != "ocean")
-    labels = [label for label, _value in options]
-    assert len(labels) == len(set(labels))
-    assert [value for _label, value in options].count("textual-dark") == 1
-
-
 async def _dirty_theme_editor(screen, pilot):
     await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
     for _ in range(6):
         await pilot.pause()
-    editor = screen.query_one("#settings-theme-editor")
+    editor = await open_theme_editor(pilot.app, pilot)
     editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
     for _ in range(6):
         await pilot.pause()
@@ -13089,7 +13056,7 @@ async def test_theme_leave_with_unsaved_edits_discard_clears_the_dirty_flag(requ
         assert screen.theme_editor_modified is False
 
         screen._select_category(SettingsCategoryId.THEME.value)
-        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        await _wait_for_selector(screen, pilot, "#settings-theme-picker", timeout=8.0)
         for _ in range(6):
             await pilot.pause()
         note = screen.query_one("#settings-theme-unsaved-note", Static)
@@ -13130,20 +13097,3 @@ def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
     inside = Path.home() / ".config" / "tldw_cli" / "themes"
     assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
     assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
-
-
-def test_settings_appearance_theme_options_skip_runtime_only_custom_themes():
-    """PR #2375 review #8: Apply registers an unsaved palette as custom_<name>; it
-    exists only for this process and must not be offered as a launch default."""
-    import types
-
-    stub = types.SimpleNamespace(
-        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
-        app_instance=types.SimpleNamespace(
-            available_themes={"textual-dark": object(), "ocean": object(), "custom_ocean": object()}
-        ),
-    )
-    options = SettingsScreen._appearance_theme_options(stub)
-    values = [value for _label, value in options]
-    assert "ocean" in values
-    assert "custom_ocean" not in values

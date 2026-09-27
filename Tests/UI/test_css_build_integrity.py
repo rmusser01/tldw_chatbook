@@ -609,6 +609,9 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity(request) -
         "#settings-splash-card-list",
         "#settings-splash-preview-scroll",
         ".settings-splash-preview #splash-display",
+        # TASK-32948 Task 7: picker layout.
+        "#settings-theme-picker-columns",
+        "#settings-theme-list",
     )
 
     for selector in required_selectors:
