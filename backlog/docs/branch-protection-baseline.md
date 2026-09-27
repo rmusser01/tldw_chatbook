@@ -31,6 +31,19 @@ The cost is serialization: every merge makes the other ready PRs stale, so
 they must re-sync and re-pass before merging. Merge the instant the required
 check is green on a head that contains the current `dev`.
 
+The same day, the owner also enabled:
+
+- **Repo `allow_update_branch=true`**, so `gh pr update-branch` re-syncs a behind PR without
+  a local rebase.
+- **Repo `allow_auto_merge=true`.** An opted-in PR still has to pass every protection above.
+- **`dev` "Require conversation resolution before merging": true.** This is the guard that
+  makes auto-merge safe: nothing merges, auto or manual, while a Qodo or other review thread is
+  unresolved. That enforces the owner's per-PR step "address all Qodo comments" server-side.
+  When enabled, 7 open PRs had unresolved Qodo threads (#2026, #2059, #2196, #2427, #2595,
+  #2838, #2841).
+
+The rules for when agents may use `--auto` are in `CLAUDE.md`, under "Merging into `dev`".
+
 ## Standing state (as of 2026-09-12; strict superseded above)
 
 - **Required approving reviews: 0.** Set to 0 by the owner on 2026-09-12
