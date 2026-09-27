@@ -956,7 +956,12 @@ async def test_focusing_click_selects_committed_model_so_typing_replaces_it():
         await pilot.press("c", "l")
         assert search_input.value == "cl"
 
-        # A second click on the focused field still places the caret.
-        await pilot.click("#model-search-picker-input", offset=(3, 1))
+        # A second click on the focused field places the caret AT the click
+        # point (Input._on_mouse_down), not merely somewhere empty: typing
+        # left the caret at the end, so the click must land inside the text.
+        clicked_index = 1
+        assert 0 < clicked_index < len(search_input.value)
+        click_x = search_input.gutter.left + clicked_index
+        await pilot.click("#model-search-picker-input", offset=(click_x, 1))
         await pilot.pause()
-        assert search_input.selection.is_empty
+        assert search_input.selection == Selection.cursor(clicked_index)

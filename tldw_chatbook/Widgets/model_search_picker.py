@@ -67,6 +67,9 @@ class PickerSearchInput(Input):
         self._select_on_focusing_click = False
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        # No super() call on purpose: Textual's dispatch walks the MRO and runs
+        # Input._on_mouse_down itself, so a click in an already-focused field
+        # still places the caret; super() would run it a second time.
         if self._select_on_focusing_click:
             self._select_on_focusing_click = False
             self.select_all()

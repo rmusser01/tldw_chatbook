@@ -1273,6 +1273,20 @@ def resolve_effective_chat_configuration(
     ``chat_defaults.model`` belongs to ``chat_defaults.provider`` (ADR-006):
     an explicit provider that is not canonically that provider falls through
     to its own configured model, never the global default model.
+
+    Args:
+        app_config: The live app configuration snapshot. Read only; never
+            mutated.
+        provider: An explicit provider override (e.g. the session's current
+            selection), or ``None`` to use ``chat_defaults.provider``.
+        model: An explicit model override, or ``None`` to fall back to
+            ``chat_defaults.model`` (only when the provider owns it) and then
+            the provider's own configured model.
+
+    Returns:
+        The effective configuration: the canonical provider id, the resolved
+        model (``None`` when nothing is configured), the provider's base URL,
+        and ``model_source`` naming which layer supplied the model.
     """
     # Lazy import: custom_endpoint_registry imports this module (see
     # _canonical_chat_provider_id).
