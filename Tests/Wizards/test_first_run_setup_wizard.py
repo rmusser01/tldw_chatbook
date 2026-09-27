@@ -9999,6 +9999,33 @@ async def test_summary_step_renders_rows_from_read_back():
 
 
 @pytest.mark.asyncio
+async def test_summary_step_reads_back_the_saved_voice():
+    """TASK-32959: the Summary names the saved Voice service."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {"app_tts": {"default_provider": "omnivoice"}},
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await app.workers.wait_for_complete()
+        rendered = str(step.query_one("#setup-summary-rows", Static).render())
+        assert "✓ Voice — OmniVoice (default voice)" in rendered
+
+
+@pytest.mark.asyncio
 async def test_summary_default_speech_check_skips_service_construction_when_store_root_absent(
     monkeypatch, tmp_path
 ):

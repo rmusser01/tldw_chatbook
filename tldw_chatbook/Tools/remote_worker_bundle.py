@@ -782,8 +782,16 @@ def _debug(message: str) -> None:
     site is a rare resolution-failure path, so the import cost lands only
     when a diagnostic is actually emitted — the same laziness rule the
     ``config``/Skills/RAG imports throughout this module already follow.
+
+    Inside the remote worker bundle loguru does not exist (the import is a
+    stub that raises ImportError), so the diagnostic is dropped there --
+    raising would turn one unresolvable directory entry into a failed
+    ``fs_list`` instead of a skipped entry.
     """
-    raise ImportError("'loguru' (importing logger) is not available inside the remote worker bundle")
+    try:
+        raise ImportError("'loguru' (importing logger) is not available inside the remote worker bundle")
+    except ImportError:
+        return
     logger.debug(message)
 _SENSITIVE_DIRS = ('~/.ssh', '~/.aws', '~/.gnupg', '~/.config/gcloud', '~/.docker', '~/.kube', '~/.local/share/keyrings', '~/.config/gh')
 _SENSITIVE_FILE_NAMES = frozenset((name.casefold() for name in ('.netrc', '_netrc', '.git-credentials', '.npmrc', '.pypirc', 'credentials', 'credentials.toml')))
@@ -2823,7 +2831,7 @@ def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[
         if not resolved.is_relative_to(resolved_workspace):
             return False
         return not _is_relative_sensitive_path(resolved.relative_to(resolved_workspace), exclusions, is_directory=is_directory)
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return False
 
 def _workspace_relative_path(path: Path, workspace: Path) -> Path:
@@ -4806,4 +4814,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("2c8f19576daac7b81049362ba73e9c5b752494e6ab813dd6151ad9de289eaec8")
+BUNDLE_SHA256 = _enter_worker_exchange("d8c434197e9794cfb381863a246c50e8821cd2a8eeb5930763b9b0a7f7c33580")

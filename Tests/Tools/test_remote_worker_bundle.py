@@ -432,3 +432,63 @@ def test_fs_write_cas_falls_back_to_fcntl_when_portalocker_absent(
         assert "wrote 7 characters" in result
         assert target.read_bytes() == b"settled"
         assert all(h.closed for h in opened_handles)
+
+
+#: Bundle functions whose stubbed imports MAY raise ImportError unhandled:
+#: laptop-config denylist builders, reached only when a caller supplies no
+#: sensitive context (the worker always supplies the remote one) or via
+#: git_*, which the parent refuses for remote bindings. Raising there fails
+#: closed. Anything else must catch the stub's ImportError.
+_STUB_RAISE_ALLOWED = frozenset(
+    {
+        "_sensitive_db_paths",
+        "_sensitive_single_file_paths",
+        "_sensitive_skill_trust_dir",
+        "_direct_child_rule_container_dirs",
+        "resolve_sensitive_context",
+    }
+)
+
+
+def test_stubbed_imports_are_handled_outside_the_laptop_only_allowlist() -> None:
+    """A stubbed third-party/app import inside a routine worker path (e.g. a
+    diagnostic helper) turns into a worker_failure on the remote host."""
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+
+    def enclosing_function(node: ast.AST) -> str:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node.name
+        return "<module>"
+
+    def handled(node: ast.AST) -> bool:
+        while node in parents:
+            parent = parents[node]
+            if isinstance(parent, ast.Try) and node in parent.body:
+                for handler in parent.handlers:
+                    if handler.type is None:
+                        return True
+                    kinds = (
+                        handler.type.elts
+                        if isinstance(handler.type, ast.Tuple)
+                        else [handler.type]
+                    )
+                    names = {getattr(kind, "id", "") for kind in kinds}
+                    if names & {"ImportError", "ModuleNotFoundError", "Exception"}:
+                        return True
+            node = parent
+        return False
+
+    unhandled = {
+        enclosing_function(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and getattr(node.exc.func, "id", "") == "ImportError"
+        and not handled(node)
+    }
+    assert unhandled <= _STUB_RAISE_ALLOWED, sorted(unhandled - _STUB_RAISE_ALLOWED)

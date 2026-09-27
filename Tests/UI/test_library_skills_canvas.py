@@ -409,8 +409,8 @@ async def test_skills_list_renders_trust_header_setup():
         # thing the task added had no integration coverage at all (Qodo
         # review of PR #2599, item 2).
         assert str(header.renderable) == (
-            'Skill trust isn\'t set up, so every skill reads "needs review" — '
-            "set it up to review and use skills."
+            'Skill trust isn\'t set up, so every skill you added reads "needs review" '
+            "— built-in skills don't need it. Set it up to review and use yours."
         )
         action = pilot.app.query_one("#library-skills-trust-action", Button)
         assert action.trust_action == "setup"

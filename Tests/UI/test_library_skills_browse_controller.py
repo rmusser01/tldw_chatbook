@@ -80,6 +80,8 @@ async def test_controller_calls_explicit_local_page_and_exposes_exact_pager():
             "sort": "status",
             "limit": 20,
             "offset": 20,
+            # TASK-32954: the Library lists disabled built-ins (only here).
+            "include_disabled_builtins": True,
         }
     ]
     assert controller.pager.range_copy == "21-25 of 25"
