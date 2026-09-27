@@ -59,9 +59,6 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
 )
-from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
-    resolve_hosted_engine_request,
-)
 from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
 from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
 from tldw_chatbook.Utils.input_validation import validate_url
@@ -296,6 +293,12 @@ class LocalLLMProviderCatalogService:
             # so a URL spelled ``base_url``/``api_base``/``api_url``/
             # ``endpoint`` discovers against the same endpoint readiness
             # accepted and the send path pins.
+            # Deferred: this service is resident at UI-ready via app.py,
+            # and the engine must stay off that path (ADR-097 ratchet).
+            from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+                resolve_hosted_engine_request,
+            )
+
             resolution = resolve_hosted_engine_request(
                 RECORDS_BY_KEY[provider_key],
                 explicit_base_url=self._explicit_endpoint_for_engine(

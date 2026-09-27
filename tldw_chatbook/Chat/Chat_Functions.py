@@ -24,7 +24,7 @@ import re
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal, Mapping
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple, Union
 
 #
 # 3rd-party Libraries
@@ -78,9 +78,6 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_mlx_lm,
 )
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
-from tldw_chatbook.LLM_Calls.hosted_provider_engine import (  # noqa: E402
-    build_hosted_chat_handler,
-)
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
     CEREBRAS,
@@ -128,6 +125,41 @@ class ResponseFormat(BaseModel):
 
 
 # 1. Dispatch table for handler functions
+class _LazyHostedChatHandler:
+    """Engine-driven dispatch entry that imports the engine on first use.
+
+    ``hosted_provider_engine`` stays off this module's import scope so it is
+    not resident at UI-ready (ADR-097 ``MAX_TLDW_MODULES_AT_UI_READY``
+    ratchet). Calls, ``inspect.signature`` and attribute reads (e.g.
+    ``__name__`` in the dispatch debug log) all resolve the real handler.
+    """
+
+    __slots__ = ("_record", "_handler")
+
+    def __init__(self, record: Any) -> None:
+        self._record = record
+        self._handler: Callable[..., Any] | None = None
+
+    def _resolve(self) -> Callable[..., Any]:
+        if self._handler is None:
+            from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+                build_hosted_chat_handler,
+            )
+
+            self._handler = build_hosted_chat_handler(self._record)
+        return self._handler
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._resolve()(*args, **kwargs)
+
+    @property
+    def __signature__(self) -> inspect.Signature:
+        return inspect.signature(self._resolve())
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+
 API_CALL_HANDLERS = {
     "openai": chat_with_openai,
     "anthropic": chat_with_anthropic,
@@ -142,15 +174,15 @@ API_CALL_HANDLERS = {
     "moonshot": chat_with_moonshot,
     "zai": chat_with_zai,
     "qwencloud": chat_with_qwencloud,
-    "databricks": build_hosted_chat_handler(DATABRICKS),
-    "together": build_hosted_chat_handler(TOGETHER),
-    "fireworks": build_hosted_chat_handler(FIREWORKS),
-    "cerebras": build_hosted_chat_handler(CEREBRAS),
+    "databricks": _LazyHostedChatHandler(DATABRICKS),
+    "together": _LazyHostedChatHandler(TOGETHER),
+    "fireworks": _LazyHostedChatHandler(FIREWORKS),
+    "cerebras": _LazyHostedChatHandler(CEREBRAS),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
     # named legacy slots above stay untouched (kill-switch fallback).
-    "custom-hosted": build_hosted_chat_handler(CUSTOM_HOSTED),
+    "custom-hosted": _LazyHostedChatHandler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,

@@ -165,9 +165,6 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatTurn,
     ReasoningDisposition,
 )
-from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
-    HostedPresetFinishPolicy,
-)
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import (
@@ -182,6 +179,11 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    # Imported lazily in resolve_finish_policy: keeping the engine off the
+    # module scope keeps it out of the UI-ready census (ADR-097 ratchet).
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedPresetFinishPolicy,
+    )
     from tldw_chatbook.Chat.console_context_window import (
         ContextWindowCache,
         ContextWindowResolution,
@@ -257,7 +259,7 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
     }
 )
 _FinishPolicy = (
-    type[MoonshotFinishPolicy] | type[ZAIFinishPolicy] | HostedPresetFinishPolicy
+    "type[MoonshotFinishPolicy] | type[ZAIFinishPolicy] | HostedPresetFinishPolicy"
 )
 _RESOLVED_FINISH_POLICIES: dict[str, _FinishPolicy] = {}
 
@@ -286,6 +288,10 @@ def resolve_finish_policy(key: str) -> _FinishPolicy | None:
         record = RECORDS_BY_KEY.get(key)
         if record is None or not record.engine_driven:
             return None
+        from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+            HostedPresetFinishPolicy,
+        )
+
         policy = HostedPresetFinishPolicy(record)
     _RESOLVED_FINISH_POLICIES[key] = policy
     return policy
