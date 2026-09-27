@@ -26,13 +26,6 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.Tools.remote_binding_locator import (
-    RemoteLocatorError,
-    canonical_fingerprint,
-    canonicalize_locator,
-    locator_string,
-    parse_remote_locator,
-)
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -415,6 +408,13 @@ def _validate_ssh_overlap(
     Raises WorkspaceRegistryServiceError on duplicate or nesting in
     either direction.
     """
+    # Deferred (ADR-097 boot ratchet): the registry loads at UI-ready, the
+    # SSH locator module only when an SSH binding is added or checked.
+    from tldw_chatbook.Tools.remote_binding_locator import (
+        RemoteLocatorError,
+        parse_remote_locator,
+    )
+
     for binding in existing_bindings:
         if _ssh_canonical_identity(binding.metadata) != identity:
             continue
@@ -2795,6 +2795,14 @@ class LocalWorkspaceRegistryService:
                 binding on the same canonical identity.
             WorkspaceNotFound: If the workspace does not exist.
         """
+        from tldw_chatbook.Tools.remote_binding_locator import (
+            RemoteLocatorError,
+            canonical_fingerprint,
+            canonicalize_locator,
+            locator_string,
+            parse_remote_locator,
+        )
+
         try:
             loc = parse_remote_locator(raw_locator)
         except RemoteLocatorError as exc:
