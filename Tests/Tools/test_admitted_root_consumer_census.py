@@ -27,6 +27,9 @@ _RECEIVER_MARKERS = ("authority", "selection", "admitted")
 
 #: "path::function" -> number of ``.root`` reads, as of TASK-33009 follow-ups.
 _PINNED: dict[str, int] = {
+    # Agent worktrees are local git checkouts (git_* is refused on remote
+    # bindings), read through the ``source = self._worktree_repo_authority`` alias.
+    "tldw_chatbook/Agents/agent_service.py::_admit_agent_worktree": 3,
     "tldw_chatbook/Agents/agent_worktree_recovery.py::_authority": 2,
     "tldw_chatbook/Agents/agent_worktree_recovery.py::_metadata": 1,
     "tldw_chatbook/Agents/agent_worktree_recovery.py::_snapshot": 1,
@@ -56,46 +59,91 @@ _PINNED: dict[str, int] = {
 }
 
 
+def _terminal_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _holds_root(name: str | None) -> bool:
+    return bool(name) and any(marker in name for marker in _RECEIVER_MARKERS)
+
+
+def _function_aliases(function: ast.AST) -> set[str]:
+    """Local names bound straight from a root holder (``source = authority``)."""
+    aliases: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if _holds_root(_terminal_name(value)):
+            aliases.update(t.id for t in targets if isinstance(t, ast.Name))
+    return aliases
+
+
+def _census_of_source(text: str, relative: str) -> collections.Counter[str]:
+    hits: collections.Counter[str] = collections.Counter()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(text)
+    scopes: list[tuple[str, set[str]]] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.AST) -> None:
+            scopes.append((node.name, _function_aliases(node)))  # type: ignore[attr-defined]
+            self.generic_visit(node)
+            scopes.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if node.attr == "root":
+                base = _terminal_name(node.value)
+                aliases = scopes[-1][1] if scopes else set()
+                if _holds_root(base) or (
+                    isinstance(node.value, ast.Name) and node.value.id in aliases
+                ):
+                    where = scopes[-1][0] if scopes else "<module>"
+                    hits[f"{relative}::{where}"] += 1
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return hits
+
+
 def _census() -> collections.Counter[str]:
     hits: collections.Counter[str] = collections.Counter()
     root = _PACKAGE.parent
     for source in sorted(_PACKAGE.rglob("*.py")):
         if source.name == "remote_worker_bundle.py":
             continue  # generated copy of modules scanned at their source
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(source.read_text(encoding="utf-8"))
         relative = source.relative_to(root).as_posix()
-        functions: list[str] = []
-
-        class _Visitor(ast.NodeVisitor):
-            def visit_FunctionDef(self, node: ast.AST) -> None:
-                functions.append(node.name)  # type: ignore[attr-defined]
-                self.generic_visit(node)
-                functions.pop()
-
-            visit_AsyncFunctionDef = visit_FunctionDef
-
-            def visit_Attribute(self, node: ast.Attribute) -> None:
-                if node.attr == "root":
-                    value = node.value
-                    base = (
-                        value.id
-                        if isinstance(value, ast.Name)
-                        else value.attr
-                        if isinstance(value, ast.Attribute)
-                        else None
-                    )
-                    if base and any(marker in base for marker in _RECEIVER_MARKERS):
-                        where = functions[-1] if functions else "<module>"
-                        hits[f"{relative}::{where}"] += 1
-                self.generic_visit(node)
-
-        _Visitor().visit(tree)
+        hits.update(_census_of_source(source.read_text(encoding="utf-8"), relative))
     return hits
 
 
+def test_census_follows_simple_aliases() -> None:
+    """``source = self._authority`` then ``source.root`` counts as a read."""
+    text = (
+        "def admit(self):\n"
+        "    source = self._worktree_repo_authority\n"
+        "    return source.root, other.root\n"
+    )
+    assert _census_of_source(text, "m.py") == {"m.py::admit": 1}
+
+
 def test_admitted_root_read_sites_match_the_reviewed_census() -> None:
+    """Every function reading an admitted root's ``.root`` is pinned.
+
+    A new or increased site fails with guidance: handle ``RemoteRoot``
+    (``is_remote`` / ``local_root_path``) or prove the value is local, then
+    update ``_PINNED``. A shrunk or moved site fails so the pin stays exact.
+    """
     current = _census()
     grown = {
         site: count
