@@ -1,5 +1,5 @@
 ---
-id: TASK-32917
+id: TASK-33009
 title: 'Generic hosted provider engine Phase 1: registry + engine + Databricks'
 status: In Progress
 assignee:
@@ -38,3 +38,7 @@ ADR: backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md
 <!-- SECTION:NOTES:BEGIN -->
 Phase 1 implementation complete (Tasks 1-14, 27 commits). LIVE GATE PENDING: maintainer has no Databricks instance available (2026-09-24). Run when workspace access exists: DATABRICKS_TOKEN+DATABRICKS_HOST .venv/bin/python -m pytest -q Tests/Chat/test_live_databricks_api.py -s — settles spec O-1 (listing route), captures response envelope for allowances, confirms native-tools flag. AC 'live-verified' intentionally unchecked; do not mark Done until it runs.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-32917 to TASK-33009 during PR #2822 integration with the requester's explicit exception approval. The audio diagnostic task was created on 2026-09-23 at 20:15; this provider-engine task was created on 2026-09-24 at 01:01. The older task keeps the ID under the TASK-19601 collision policy. Only task identity and the ADR-179 inbound link change; provider implementation and task status, criteria, notes and ownership remain intact.

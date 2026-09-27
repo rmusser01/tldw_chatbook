@@ -3,13 +3,13 @@ id: TASK-32917
 title: Gate server audio diagnostics by effective administrator capability
 status: In Progress
 assignee: []
-created_date: '2026-09-23 20:15'
-updated_date: '2026-09-27 06:38'
+created_date: 2026-09-23 20:15
+updated_date: 2026-09-27 15:24
 labels: []
 dependencies: []
 references:
-  - backlog/decisions/178-server-audio-diagnostic-admin-boundary.md
-  - 'https://github.com/rmusser01/tldw_server/pull/2968'
+- backlog/decisions/178-server-audio-diagnostic-admin-boundary.md
+- https://github.com/rmusser01/tldw_server/pull/2968
 priority: high
 ---
 
@@ -35,7 +35,7 @@ Docs/superpowers/plans/2026-09-23-server-audio-diagnostic-admin-parity.md
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 PR: https://github.com/rmusser01/tldw_chatbook/pull/2822. Targeted service/scope tests: 15 passed, 1 existing from_config bootstrap failure excluded; Ruff/compileall/diff checks passed.
 
 Qodo wildcard review resolved by server can_run_audio_diagnostics capability. Revised targeted tests: 22 passed, 1 unrelated from_config bootstrap test deselected; Ruff/format/compileall/diff checks passed on touched small files. Older servers without this capability defer to protected diagnostic endpoints.
@@ -59,8 +59,8 @@ Inventory red/green complete: official --write changed only owner_files and task
 2026-09-27: all checks, including required Derived Artifacts, passed on `00c587ef51`, but dev advanced through tier-2 P2c and OmniVoice wizard merges to `38084b68c`. Rebased cleanly; all eight prior patches are identical by range-diff. The upstream generated inventory is preserved unchanged. The focused service/scope/capability run passed 21 cases with one known unrelated from_config bootstrap test deselected. No Python source changed; prior touched-source Bandit remains applicable. The official inventory checker passes with 597 owners, 7548 TASK-494 calls and 14 sink files. Diff check passes. Fresh required CI must qualify this latest-dev head before merge.
 
 2026-09-27 second integration: all checks and required Derived Artifacts passed on 805c20ec5, but dev advanced through the tier-2 security merge to 906b6e253. Rebased cleanly; all eight prior patches are identical by range-diff. The upstream generated inventory remains unchanged; the official checker passes with 597 owners, 7543 TASK-494 calls and 14 sink files. The focused service/scope/capability run passed 21 cases with one known unrelated from_config bootstrap test deselected. Diff check passes. No PR Python source changed; prior touched-source Bandit remains applicable. Fresh required CI must qualify this latest-dev head before merge.
-<!-- SECTION:NOTES:END -->
-
+2026-09-27 integration approval: the requester explicitly approved the manual task-renumbering exception. TASK-32917 remains the older audio diagnostic task; the younger provider-engine task moves to free ID TASK-33009 and ADR-179's inbound task link is updated. Status, ownership, acceptance criteria and implementation notes of the provider task are preserved, with provenance recorded. Continue PR #2822 on latest dev and require fresh CI before merge.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
