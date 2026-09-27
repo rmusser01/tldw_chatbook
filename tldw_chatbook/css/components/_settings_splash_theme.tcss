@@ -195,6 +195,24 @@
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
+/* TASK-33066: palette and live preview side by side (the picker's list +
+   card idiom), stacked again when the editor is narrower than
+   SettingsThemeEditor.TWO_COLUMN_MIN_WIDTH (`-stacked`, set on resize).
+   height:auto throughout -- this sits in the detail pane's scroll (see the
+   TASK-32948 note above). */
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
+}
+
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
    the palette being edited (see SettingsThemeEditor._refresh_preview), so it
    follows every keystroke instead of the applied app theme. */

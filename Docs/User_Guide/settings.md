@@ -757,7 +757,8 @@ the colour and its hex; an invalid value marks the box and the swatch reads
 "Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in the
 **Presets fill** box (Primary by default), by click or by focusing a swatch
 and pressing Enter or Space. The **Live Preview** is a Console-shaped stub
-that repaints as you type. A theme cloned from a shipped one keeps that
+that repaints as you type; on a wide window it sits beside the palette so
+your edits show without scrolling (narrow windows stack it below). A theme cloned from a shipped one keeps that
 theme's extra readability colours (muted text, footer keys, input selection)
 through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base

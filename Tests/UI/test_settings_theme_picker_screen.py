@@ -1755,3 +1755,42 @@ async def test_picker_fills_the_full_screen_canvas_and_groups_actions(request, s
         for selector in PICKER_CONTROLS + YOURS_ONLY_CONTROLS + ("#settings-theme-revert",):
             region = _visible(host, screen.query_one(selector))
             assert region.height > 0 and region.width > 0, f"{selector} clipped at {size}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@private_profile_test
+async def test_editor_preview_is_visible_beside_the_palette_at_full_screen(request, size):
+    """TASK-33066: editing Primary must show in the preview without scrolling."""
+    from Tests.UI.theme_editor_helpers import open_theme_editor
+
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        await _category(host, pilot, "Theme")
+        await open_theme_editor(host, pilot)
+        await pilot.pause(0.1)
+        primary = host.screen.query_one("#settings-theme-color-primary")
+        preview = host.screen.query_one("#settings-theme-preview")
+        assert _visible(host, primary).height > 0, f"Primary off-screen at {size}"
+        shown = _visible(host, preview)
+        assert shown.height == preview.outer_size.height, (
+            f"preview {shown.height}/{preview.outer_size.height} rows visible at {size}"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_editor_stacks_the_preview_when_too_narrow_for_two_columns(request):
+    """TASK-33066: a 120-col terminal is not compact but gives a ~52-col
+    editor; side by side the colour inputs collapsed to 3 cols there."""
+    from Tests.UI.theme_editor_helpers import open_theme_editor
+
+    host = _host()
+    async with host.run_test(size=(120, 36)) as pilot:
+        await _category(host, pilot, "Theme")
+        await open_theme_editor(host, pilot)
+        await pilot.pause(0.1)
+        primary = host.screen.query_one("#settings-theme-color-primary")
+        preview = host.screen.query_one("#settings-theme-preview")
+        assert primary.region.width >= 10
+        assert preview.region.y > primary.region.y  # stacked below, not beside
