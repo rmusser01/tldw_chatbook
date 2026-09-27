@@ -69,6 +69,11 @@ class MCPTools:
     #: update_character refuses to replace a long field that was never read in
     #: full. None (switch off, or the in-process runtime) applies no guard.
     character_read_guard: Any = None
+    #: TASK-32955: the standalone server sets the default profile's runtime
+    #: source loader, so its character writes refuse in server mode. None (the
+    #: in-process runtime) skips the check: the default profile's source is not
+    #: the calling Console session's, so it would misjudge either direction.
+    runtime_source_loader: Any = None
 
     def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize tools with database connections."""
@@ -465,7 +470,8 @@ class MCPTools:
 
         try:
             # TASK-32955: character editing is local-only, as in the Console.
-            if card_tools.load_runtime_source() == "server":
+            loader = self.runtime_source_loader
+            if loader is not None and loader() == "server":
                 return {"error_code": "unsupported", "error": card_tools.SERVER_REFUSAL}
             service = LocalCharacterPersonaService(self.chachanotes_db)
             if character_id is None:

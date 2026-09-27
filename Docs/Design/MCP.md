@@ -305,8 +305,8 @@ The roster includes each card's optimistic-lock `version`. ADR-183 adds
 They delegate text/JSON authoring to `LocalCharacterPersonaService` and return
 id/name/version receipts or structured errors. Code-owned mutation tags are
 enforced with and without a catalog snapshot; standalone writes require a fresh
-operator grant from the shared permission store. Both refuse while the
-runtime source is `server`. When `expose_character_tools` publishes
+operator grant from the shared permission store. In the standalone server
+both refuse while the default profile's runtime source is `server`. When `expose_character_tools` publishes
 `character_get`, the standalone `update_character` also refuses to replace a
 field longer than one `character_get` card page until this server process has
 read it in full (`read_full_field_first`). See

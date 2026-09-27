@@ -513,7 +513,11 @@ class TldwMCPServer:
         from .resources import MCPResources
         from .prompts import MCPPrompts
 
+        from ..Tools.character_tool_service import load_runtime_source
+
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
+        # No Console session here: the default profile's source decides.
+        self.tools.runtime_source_loader = load_runtime_source
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 

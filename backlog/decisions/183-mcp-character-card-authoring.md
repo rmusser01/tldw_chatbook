@@ -61,10 +61,15 @@ Hub. Its calls keep the gates above (the Hub's gated action, or the Console's
 approval card, which an explicit tool-level Allow skips), and the Console's own
 `character_save` keeps its per-session guard.
 
-In both runtimes `create_character` and `update_character` return
+The standalone server's `create_character` and `update_character` return
 `error_code: "unsupported"` with the Console's local-only message while the
 default profile's runtime source is `server`; the external reads return the
-same refusal. A failing runtime-source read fails the write closed.
+same refusal. A failing runtime-source read fails the write closed. The
+in-process runtime does not apply this check: its caller may be a Console
+session whose backend differs from the default profile's source, so that
+source would refuse a local session and admit a server-backed one. Making
+in-process writes follow the calling session's backend needs that backend
+carried through the Hub execution path and is left to a follow-up.
 
 ## Alternatives
 

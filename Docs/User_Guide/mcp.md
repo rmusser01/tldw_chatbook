@@ -147,8 +147,8 @@ version, so read again after each saved edit. With `expose_character_tools`
 off there is no external read tool to satisfy the guard, so it does not apply
 and `update_character` works as described above for every field.
 
-While Chatbook's runtime source is `server`, `create_character` and
-`update_character` return `error_code: "unsupported"` and the reads return
+While Chatbook's runtime source is `server`, the standalone server's
+`create_character` and `update_character` return `error_code: "unsupported"` and the reads return
 `status: "unsupported"`, with the Console's message: character editing is
 local-only.
 

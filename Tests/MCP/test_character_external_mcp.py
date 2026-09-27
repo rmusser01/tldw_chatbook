@@ -353,3 +353,76 @@ async def test_writes_need_an_explicit_tool_grant(env, name):
 
     env.store.set_tool_state(BUILTIN_MCP_SERVER_KEY, name, "allow")  # control
     assert "error_code" not in await _call(server, name, arguments)
+
+
+# -- Qodo #2863: in-process writes follow the caller, not the default profile --
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["local", "server"])
+async def test_in_process_writes_ignore_the_default_profile_source(env, source):
+    """The default profile's source is not the calling Console session's."""
+    from tldw_chatbook.MCP.tools import MCPTools
+
+    _pin_source(env, source)
+    tools = MCPTools(env.db, None)
+    created = await tools.create_character("Grace")
+    assert created.get("version") == 1, created
+    updated = await tools.update_character(created["id"], 1, {"scenario": "x"})
+    assert updated.get("version") == 2, updated
+
+
+# -- Qodo #2863: the wire validates arguments against the published schema --
+
+
+@pytest.mark.asyncio
+async def test_wire_rejects_arguments_outside_the_published_schema(env):
+    from Tests.MCP.test_mcp_unified_stdio import (
+        CURRENT_VERSION,
+        _one_response,
+        _open_session,
+        _request,
+    )
+
+    env.settings[("mcp", "expose_character_tools")] = True
+    character_id = _card(env, description="A patient tutor")
+    server = _serve(env)
+    await _allow_reads(env, server)
+    calls = []
+    for handler in ("search", "get"):
+        original = server.mcp._local_tool_handlers[f"character_{handler}"]
+
+        def spy(arguments, _original=original):
+            calls.append(arguments)
+            return _original(arguments)
+
+        server.mcp._local_tool_handlers[f"character_{handler}"] = spy
+    session = await _open_session(server.mcp, CURRENT_VERSION)
+    try:
+
+        async def call(name, arguments):
+            return _one_response(
+                await session.request(
+                    _request(
+                        CURRENT_VERSION,
+                        name,
+                        "tools/call",
+                        {"name": name, "arguments": arguments},
+                    )
+                )
+            )
+
+        for name, arguments in (
+            ("character_get", {"id": str(character_id)}),
+            ("character_get", {"id": 0}),
+            ("character_search", {"query": "x" * 201}),
+            ("character_search", {"limit": 26}),
+        ):
+            response = await call(name, arguments)
+            assert response["error"]["code"] == -32602, (name, arguments, response)
+        assert calls == []  # rejected before any handler ran
+        ok = await call("character_get", {"id": character_id})  # control
+        assert "error" not in ok and not ok["result"].get("isError"), ok
+        assert calls == [{"id": character_id}]
+    finally:
+        await session.close()

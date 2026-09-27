@@ -167,11 +167,22 @@ def _card_truncates(text: str) -> bool:
 def first_unread_long_field(
     guard: CharacterReadGuard, card: Mapping[str, Any], fields: Iterable[str]
 ) -> str | None:
-    """The first field to change that ``character_get`` truncates and this
-    session has not read in full at the card's current version, else None.
+    """Find a long field this session would overwrite without having read it.
 
     Shared by ``character_save`` and ADR-183's external ``update_character``
     (TASK-32955), so both apply the same threshold and coverage rule.
+
+    Args:
+        guard: The session's record of fully read fields.
+        card: The current card; its ``id`` and ``version`` key the guard.
+        fields: Names of the fields the write would replace. Names outside
+            ``EDITABLE_FIELDS`` are ignored, since ``character_get`` cannot
+            read them.
+
+    Returns:
+        The first field that the whole-card ``character_get`` view truncates
+        and that the guard has not recorded as read in full at this version,
+        or None when the write may proceed.
     """
     character_id, version = int(card["id"]), int(card["version"])
     for field in fields:
@@ -182,6 +193,14 @@ def first_unread_long_field(
 
 
 def read_full_field_first_message(field: str) -> str:
+    """The ``read_full_field_first`` refusal text shared by Console and MCP.
+
+    Args:
+        field: The long field that must be read in full first.
+
+    Returns:
+        The user-facing instruction naming ``field`` and ``character_get``.
+    """
     return f"Read the full '{field}' field with character_get before changing it."
 
 
