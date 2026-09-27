@@ -1,0 +1,48 @@
+== before: real profile
+194e7c5b82f2ccce3b88eff815838f9a70be6275  /Users/macbook-dev/.config/tldw_cli/config.toml
+mtime=1790431296
+Bob default_user scratch temp tldw_chatbook_subscriptions.db x 
+2026-09-27T16:00:22-0700
+(first launch redirected stderr, where Textual renders; killed and relaunched without the redirect)
+== live process
+window=211x44 pane=211x44 pane_pid=94973 cmd=python3.12
+94973 94972 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app
+n/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/model-config-p2
+HOME=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/home
+XDG_CONFIG_HOME=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/home/.config
+XDG_DATA_HOME=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/data
+TLDW_CONFIG_PATH=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/config/config.toml
+PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/model-config-p2
+window=235x52 pane=235x52 pane_pid=94973
+== after: real profile
+194e7c5b82f2ccce3b88eff815838f9a70be6275  /Users/macbook-dev/.config/tldw_cli/config.toml
+mtime=1790431296
+Bob default_user scratch temp tldw_chatbook_subscriptions.db x 
+(find -newer scratch lock file: list above, empty = nothing in the real profile changed since launch)
+2026-09-27T16:03:36-0700
+== scratch profile written by the run
+/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/appdata:
+verify_t33002_6f1
+
+/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t33002-6f1/config:
+config.toml
+config.toml.lock
+runtime_policy.json
+ui_state.toml
+console-behavior-reasoning-replay-override-211x44.txt lines=44 maxw=211
+console-behavior-reasoning-replay-override-235x52.txt lines=52 maxw=235
+console-behavior-reasoning-replay-override-collapsed-211x44.txt lines=44 maxw=211
+pm-f1-help-recovery-211x44.txt lines=44 maxw=211
+pm-generation-defaults-fallbacks-211x44.txt lines=44 maxw=211
+pm-inspector-boundary-recovery-211x44.txt lines=44 maxw=211
+pm-inspector-validation-211x44.txt lines=44 maxw=211
+pm-sampling-route-211x44.txt lines=44 maxw=211
+== SHA-1 of the fresh captures vs the committed task-6 captures (b31ceb696b)
+032d0ea08dac fresh / cc2bd67eceec committed  console-behavior-reasoning-replay-override-211x44.txt
+aa69015aef21 fresh / 46ae756b4104 committed  console-behavior-reasoning-replay-override-235x52.txt
+415af2e70c41 fresh / (new) committed  console-behavior-reasoning-replay-override-collapsed-211x44.txt
+9fdb1be2e12b fresh / 9fdb1be2e12b committed  pm-f1-help-recovery-211x44.txt
+0c95bc05b289 fresh / 0c95bc05b289 committed  pm-generation-defaults-fallbacks-211x44.txt
+5b9f08b1a5b1 fresh / 5b9f08b1a5b1 committed  pm-inspector-boundary-recovery-211x44.txt
+f44bac8eae17 fresh / f44bac8eae17 committed  pm-inspector-validation-211x44.txt
+ef7a3df46c64 fresh / ef7a3df46c64 committed  pm-sampling-route-211x44.txt
