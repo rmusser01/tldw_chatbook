@@ -1144,9 +1144,13 @@ def test_build_inventory_projects_schema_v3_path_candidates(
 
     inventory = diagnostic_inventory.build_inventory()
 
-    assert inventory["schema_version"] == 3
+    assert inventory["schema_version"] == 4
+    assert "summary" not in inventory
     assert inventory["path_privacy_rules"]["candidate_status"] == ("legacy_unreviewed")
-    assert inventory["summary"]["path_privacy_candidate_calls"] == 1
+    assert (
+        diagnostic_inventory.inventory_summary(inventory)["path_privacy_candidate_calls"]
+        == 1
+    )
     assert inventory["path_privacy_candidates"] == [
         {
             "path": "tldw_chatbook/sample.py",
@@ -3452,7 +3456,8 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
     assert [row["path"] for row in inventory["persistent_sink_topology"]] == [
         "tldw_chatbook/venv/owner.py"
     ]
-    assert inventory["summary"] == {
+    assert "summary" not in inventory
+    assert diagnostic_inventory.inventory_summary(inventory) == {
         "owner_files": 1,
         "persistent_sink_files": 1,
         "task_492_calls": 0,

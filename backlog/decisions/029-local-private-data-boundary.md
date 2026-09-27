@@ -227,3 +227,18 @@ end of the line, which removed approved phase and failure fields. The new
 spelling carries exactly the same random value through send and refresh events.
 Credential redaction, metadata admission, retention and excluded data are
 unchanged; no log record receives a redaction exemption.
+
+## Amendment (2026-09-27): the diagnostic inventory stores rows only
+
+`Docs/security/production-diagnostic-inventory.json` (schema 4) no longer stores the
+`summary` totals. `scripts/check_persistent_diagnostic_inventory.py` derives them from
+the rows (`inventory_summary()`) for its reports.
+
+The review guarantee is unchanged. Every added, removed, reworded or re-levelled
+diagnostic is still a per-file row that changes in the PR diff, and the required check
+still fails on any drift.
+
+Why: the six totals changed with any logger edit, so any two PRs touching diagnostics
+edited the same lines. 102 of 127 real two-sided sync merges (2026-09-19..26)
+conflicted. Replayed without the totals, 17 did, and those 17 are genuine same-file
+overlaps. See `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
