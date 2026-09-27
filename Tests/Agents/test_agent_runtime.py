@@ -143,6 +143,10 @@ def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history(
     deps.call_model = call_model
     deps.on_record = lambda kind, payload: records.append((kind, payload)) or None
     deps.project_tool_record = project
+    display_steps = []
+    trace_steps = []
+    deps.on_tool_activity = display_steps.append
+    deps.on_trace_step = trace_steps.append
     # The registry, rather than the provider, authoritatively identifies this
     # hook as opt-in.  The loop uses that distinction to protect model steps.
     deps.has_tool_record_projection = lambda _call: True
@@ -168,6 +172,13 @@ def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history(
         for step in out.steps
     )
     assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
+    proposals = [step for step in display_steps if step.kind == "tool_proposed"]
+    assert proposals and all(step.args == {"audience": "display"} for step in proposals)
+    assert all(not step.args for step in trace_steps if step.kind == "tool_proposed")
+    assert all(
+        raw_argument not in str(step) and raw_result not in str(step)
+        for step in display_steps
+    )
 
     from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge

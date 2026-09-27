@@ -18058,6 +18058,8 @@ class ChatScreen(BaseAppScreen):
                     _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
+                    getattr(message, "activity_presentation", None),
+                    getattr(message, "raw_cli_presentation", None),
                 )
             )
         return (

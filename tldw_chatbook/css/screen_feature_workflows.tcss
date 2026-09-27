@@ -206,6 +206,7 @@ $ds-widgets-skeleton-title-share: 60%;
 $ds-messages-scroll-cap: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 $ds-console-frame: #6f7782;
+$ds-tool-preview-max-height: 3;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
