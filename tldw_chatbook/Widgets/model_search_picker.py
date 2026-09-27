@@ -572,7 +572,13 @@ class ModelSearchPicker(Widget):
                 model_ids.append(model_id)
         return model_ids
 
-    def _render_catalog_status(self) -> None:
+    def _render_catalog_status(self, matched: int | None = None) -> None:
+        """Set the status line; catalog-health warnings outrank the cap note.
+
+        Args:
+            matched: Rows that matched the filter when the MAX_RESULTS cap cut
+                the list short; replaces only the plain "N models" line.
+        """
         if self._custom_mode:
             if self.is_mounted:
                 custom_value = self.query_one(
@@ -620,6 +626,12 @@ class ModelSearchPicker(Widget):
         ):
             self._set_status(
                 f"Live catalog unavailable. Showing {_count(len(model_ids), 'configured model')}."
+            )
+            return
+        if matched is not None:
+            self._set_status(
+                f"Showing {len(self._matches)} of {matched} matching models. "
+                "Type to narrow the list."
             )
             return
         self._set_status(
@@ -687,13 +699,10 @@ class ModelSearchPicker(Widget):
             and not self._load_errors.get(provider_config_key(self._provider), False)
         ):
             self._set_status("No matching models. Clear the filter or use Custom ID.")
-        elif matched > len(self._matches):
-            self._set_status(
-                f"Showing {len(self._matches)} of {matched} matching models. "
-                "Type to narrow the list."
-            )
         else:
-            self._render_catalog_status()
+            self._render_catalog_status(
+                matched if matched > len(self._matches) else None
+            )
 
     def _render_provenance_matches(
         self,

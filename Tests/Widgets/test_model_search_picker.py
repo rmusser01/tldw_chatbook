@@ -831,6 +831,59 @@ async def test_truncated_results_say_how_many_matched_and_that_typing_narrows():
         assert _status_text(app) == f"{cap + 5} models available. Type to filter."
 
 
+_OVER_CAP_IDS = [f"vendor/m{index:02d}" for index in range(ModelSearchPicker.MAX_RESULTS + 5)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured", "entries", "current", "discovered", "expected"),
+    [
+        (
+            ["retired-model"],
+            _entries("OpenRouter", _OVER_CAP_IDS),
+            "retired-model",
+            (),
+            "Current model is not in the latest catalog. Choose another or keep it.",
+        ),
+        (
+            # The catalog service failed; an endpoint probe's overlay still
+            # fills the list past the cap.
+            [],
+            RuntimeError("catalog offline"),
+            None,
+            _OVER_CAP_IDS,
+            "Catalog unavailable. Use a configured model or Custom ID.",
+        ),
+        (
+            _OVER_CAP_IDS,
+            (),
+            _OVER_CAP_IDS[0],
+            (),
+            f"Live catalog unavailable. Showing {len(_OVER_CAP_IDS)} configured models.",
+        ),
+    ],
+    ids=["current-unlisted", "load-error", "saved-only"],
+)
+async def test_catalog_health_warning_outranks_the_result_cap_note_on_focus(
+    configured, entries, current, discovered, expected
+):
+    """Final-review I2: focus opens the capped full list, but on a catalog
+    larger than the cap the health warning must still show; the cap note
+    only replaces the plain "N models available" line."""
+    app = PickerTestApp({"OpenRouter": configured}, entries, current_model=current)
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        if discovered:
+            picker.set_discovered_models("OpenRouter", discovered)
+        assert _status_text(app) == expected
+        picker.focus_input()
+        await pilot.pause()
+
+        assert len(_result_prompts(_results(app))) == ModelSearchPicker.MAX_RESULTS
+        assert _status_text(app) == expected
+
+
 @pytest.mark.asyncio
 async def test_truncated_provenance_results_say_how_many_matched():
     """The grouped (provenance) list obeys the same cap and says so."""
