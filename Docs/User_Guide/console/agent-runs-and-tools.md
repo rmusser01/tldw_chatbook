@@ -1897,8 +1897,12 @@ Three tools do the work:
 **Every save asks for approval.** The card shows create or update, the
 character's name, which fields change and their sizes, and the avatar action
 — never the field text itself; you already read the draft in the chat. The
-two read tools use your normal permission level (Ask by default, so each read
-also shows a card).
+save keeps asking even if you set it to Allow, and its card offers only
+**Approve once** and **Deny** — no "This session" or "Always", so the next
+save asks again. The two read tools use your
+normal permission level (Ask by default, so each read also shows a card); to
+stop that, set `character_search` and `character_get` to **Allow** in
+**MCP ▸ Permissions** (local tools group).
 
 **Avatars.** The assistant can generate an avatar with your configured Image
 Generation backend (the card notes that paid backends may cost money), use an

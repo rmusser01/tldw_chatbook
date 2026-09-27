@@ -53,12 +53,15 @@ def test_digest_pin_matches_shipped_files():
     assert bs.verify_builtin_skill(NAME) is None
 
 
-def test_skill_text_names_the_registered_tools_and_no_hub_allow_advice():
+def test_skill_text_names_the_registered_tools_and_the_hub_allow_advice_once():
+    # TASK-32956: the hub now lists the character rows, so the skill tells
+    # the user -- once -- that the two reads can be set to Allow.
     text = (bs.builtin_skill_dir(NAME) / "SKILL.md").read_text(encoding="utf-8")
     for tool in ("character_search", "character_get", "character_save"):
         assert f"`{tool}`" in text
-    assert "## Permissions" not in text
-    assert "MCP hub" not in text
+    assert text.count("MCP hub") == 1
+    advice = " ".join(text.split("## Permissions", 1)[1].split("##", 1)[0].split())
+    assert "tell them once" in advice and "set those two read tools to Allow" in advice
 
 
 def test_builtin_in_context_without_trust(tmp_path):

@@ -12,6 +12,12 @@ Use this skill when the user wants a new character card or wants to change an
 existing one. You have three tools: `character_search`, `character_get`,
 `character_save`. Saving always shows the user an approval card.
 
+## Permissions
+
+The first time `character_search` or `character_get` asks the user for
+approval, tell them once that they can set those two read tools to Allow in
+the MCP hub (Permissions) so reads stop asking. Saving still asks every time.
+
 ## Creating a character
 
 1. Ask at most five short questions, one at a time, skipping any the user has

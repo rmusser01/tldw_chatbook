@@ -169,6 +169,35 @@ class HubLocalProviderHandle:
         self.resolver.close()
 
 
+def hub_character_service() -> Any:
+    """A never-callable character service, so the Hub lists the character rows.
+
+    TASK-32956: the ``character_*`` specs register only when a service is
+    supplied (the Console supplies a per-session one). The Hub needs the rows
+    for per-tool permissions but never runs them -- they are ``CONSOLE_ONLY``,
+    so the shared-descriptor filter drops them from every executable
+    projection -- and every handler here fails closed. The ``[tools]
+    character_tools_enabled`` gate still decides whether the rows exist.
+
+    Returns:
+        A ``CharacterToolService`` for Hub inspection only: its service loader
+        always raises, so no handler built from it can read or write a card.
+    """
+    from tldw_chatbook.Tools.character_tool_service import (
+        CharacterReadGuard,
+        CharacterToolService,
+    )
+
+    def _unavailable() -> Any:
+        raise RuntimeError("local character service unavailable")
+
+    return CharacterToolService(
+        service_loader=_unavailable,
+        runtime_source_loader=lambda: "local",
+        read_guard=CharacterReadGuard(),
+    )
+
+
 def _build_hub_local_provider_handle(
     workspace_root: Path,
     *,
@@ -204,6 +233,7 @@ def _build_hub_local_provider_handle(
             authority.canonical_root,
             workspace_executor=workspace_executor,
             watchlists_service=watchlists_service,
+            character_service=hub_character_service(),
         )
         if dispatch_guard is not None:
             guarded_specs = []
