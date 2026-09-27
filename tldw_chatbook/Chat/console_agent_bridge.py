@@ -212,6 +212,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
+from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+)
 from tldw_chatbook.Chat.console_thinking_capture import (
     ThinkingCapture,
     consume_call_thinking,
@@ -3421,9 +3424,15 @@ class _StreamingModelAdapter:
         # the raw slug and reuses this resolution (qodo PR-2651 High).
         # Plain providers leave ``selected_provider`` empty and fall through
         # to the historical execution_key/provider chain unchanged.
+        parent_selected_provider = str(
+            getattr(self._resolution, "selected_provider", "") or ""
+        )
+        parent_execution_key = str(
+            getattr(self._resolution, "execution_key", "") or ""
+        )
         parent_endpoint = (
-            getattr(self._resolution, "selected_provider", "")
-            or getattr(self._resolution, "execution_key", "")
+            parent_selected_provider
+            or parent_execution_key
             or getattr(self._resolution, "provider", "")
             or ""
         )
@@ -3433,7 +3442,24 @@ class _StreamingModelAdapter:
         # construction.
         if requested_endpoint == "agent":
             requested_endpoint = ""
-        rerouted = bool(requested_endpoint) and requested_endpoint != parent_endpoint
+        # Fourth spelling seam (ADR-179 Qodo follow-up): the bridge-level
+        # send names the parent's OWN flattened execution key (the first
+        # request plan puts ``execution_key`` on every run-turn call), which
+        # for a swapped custom-ep selection is an execution-ONLY spelling
+        # ("custom-hosted" under "custom-ep:<slug>") that no caller could
+        # have selected as a standalone target -- re-resolving it as a
+        # provider id fails "Unknown provider". The resolution's
+        # selected_provider<->execution_key pairing is therefore same-target
+        # ONLY for spellings Console cannot select independently; a family
+        # key that IS selectable ("llama_cpp" under "custom-ep:qwen-local")
+        # keeps qodo PR-2651 High's reroute protection.
+        same_target = requested_endpoint == parent_endpoint or (
+            bool(parent_selected_provider)
+            and requested_endpoint == parent_execution_key
+            and requested_endpoint
+            not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+        )
+        rerouted = bool(requested_endpoint) and not same_target
 
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools

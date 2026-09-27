@@ -60,7 +60,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: path -> max line count. LOWER these when a module shrinks. Never raise
 #: them to silence a failure — see the module docstring.
 _BUDGETS: dict[str, int] = {
-    "tldw_chatbook/app.py": 21415,
+    "tldw_chatbook/app.py": 21176,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,

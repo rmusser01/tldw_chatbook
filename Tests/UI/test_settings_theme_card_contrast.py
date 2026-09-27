@@ -15,11 +15,14 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
+from Tests.UI.theme_editor_helpers import open_theme_editor
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 THEMES = ("textual-dark", "textual-light", "gruvbox_dark", "solarized_light")
-FILLED = ("apply", "save", "reset", "delete")
-PLAIN = ("new", "clone", "export", "generate", "set-default")
+# TASK-32948 PR 2: New/Clone/Delete/Export moved to the picker; the editor
+# card keeps Try (id `apply`), Save, Save as, Reset and Generate.
+FILLED = ("apply", "save", "reset")
+PLAIN = ("save-as", "generate")
 
 
 def _host():
@@ -85,9 +88,41 @@ def _edges(host, widget):
 async def _open_theme_card(pilot, host, theme):
     host.theme = theme
     await _category(host, pilot, "Theme")
+    editor = await open_theme_editor(host, pilot)
     host.set_focus(None)
     await pilot.pause(0.2)
-    return host.screen.query_one("#settings-theme-editor")
+    return editor
+
+
+async def _open_theme_picker(pilot, host, theme):
+    """Land on the picker (Theme's default view; no Clone needed)."""
+    host.theme = theme
+    await _category(host, pilot, "Theme")
+    host.set_focus(None)
+    await pilot.pause(0.2)
+    return host.screen.query_one("#settings-theme-picker")
+
+
+async def _open_theme_picker_with_a_user_theme(pilot, host, theme):
+    """Land on the picker with a saved (yours-only) theme highlighted, so
+    the Edit/Rename/Delete/Export row is visible (TASK-32948 PR 2 Task 6,
+    R19/R23)."""
+    from textual.theme import Theme as TextualTheme
+
+    from tldw_chatbook import config
+
+    themes_dir = config._get_effective_config_path().parent / "themes"
+    themes_dir.mkdir(exist_ok=True)
+    (themes_dir / "mine.toml").write_text(
+        '[theme]\nname = "mine"\ndark = true\n[colors]\nprimary = "#0099FF"\n',
+        encoding="utf-8",
+    )
+    host.register_theme(TextualTheme(name="mine", primary="#0099FF", dark=True))
+    picker = await _open_theme_picker(pilot, host, theme)
+    lst = picker.query_one("#settings-theme-list")
+    lst.highlighted = lst.get_option_index("mine")
+    await pilot.pause(0.1)
+    return picker
 
 
 async def _show(pilot, widget):
@@ -121,6 +156,143 @@ async def test_theme_card_button_labels_and_boundaries(theme, request):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", THEMES)
 @private_profile_test
+async def test_theme_picker_use_and_try_chips_meet_contrast(theme, request):
+    """TASK-32948 Task 7: the picker's own chips reuse `.theme-editor-action`
+    (TASK-32947's contrast rules), measured on the picker card, not the
+    editor's."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        use_button = picker.query_one("#settings-theme-use", Button)
+        await _show(pilot, use_button)
+        fg, bg = _label_colors(host, use_button)
+        assert _contrast(fg, bg) >= 4.5, (
+            f"{theme}/use label {_contrast(fg, bg):.2f}:1 ({fg} on {bg})"
+        )
+
+        try_button = picker.query_one("#settings-theme-try", Button)
+        await _show(pilot, try_button)
+        card = _card_bg(host, try_button)
+        for _, char, style in _edges(host, try_button):
+            assert char.strip() and _contrast(style.color, card) >= 3.0, (
+                f"{theme}/try edge {char!r} {style.color} on card {card}"
+            )
+
+        # The highlighted list row must not be carried by colour alone: bold
+        # on its alphanumeric cells is the non-colour cue (Textual's
+        # OptionList has no per-row cursor glyph slot to hold a `>`).
+        #
+        # DEVIATION from the brief's formula (`lst.region.y + (lst.highlighted
+        # - lst.scroll_offset.y)`): `lst.highlighted` is an OPTION index, but
+        # `scroll_offset.y` is a LINE offset, and group headers render a
+        # divider line of their own (`option._divider`, textual's
+        # OptionList._get_option_render) -- so the two only agree with zero
+        # dividers above the highlighted row. Measured directly: at the
+        # catalog's default highlight ("Textual Dark", scrolled into view),
+        # the formula pointed at dy=21 (a plain, unhighlighted "Solarized
+        # Light" row) while the real highlighted row painted at dy=22.
+        # Locating the row by its own text is robust to the divider count.
+        lst = picker.query_one("#settings-theme-list")
+        await _show(pilot, lst)
+        highlighted_text = lst.get_option_at_index(lst.highlighted).prompt.plain
+        needle = highlighted_text.split("  ")[0].strip()
+        row_cells = None
+        for dy in range(lst.region.height):
+            row_region = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
+            cells = list(_cells(host, row_region))
+            if needle and needle in "".join(c for _, c, _ in cells):
+                row_cells = cells
+                break
+        assert row_cells is not None, f"{theme}: highlighted row {needle!r} not visible"
+        alnum_cells = [(char, style) for _, char, style in row_cells if char.isalnum()]
+        assert alnum_cells, f"{theme}: no painted glyph on the highlighted row"
+        for char, style in alnum_cells:
+            assert style.bold, f"{theme}: highlighted row cell {char!r} is not bold"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
+async def test_picker_delete_chip_meets_contrast_at_rest_and_focus(theme, request):
+    """TASK-32948 PR 2 Task 6 (R19/R23): the picker's yours-only Delete chip
+    (`#settings-theme-picker-delete`, visible only once a user theme is
+    highlighted) must clear the 4.5:1 label floor both at rest and focused,
+    and focus must keep the error hue, not the generic neutral inversion
+    `.settings-action-row Button:focus` gives every other chip (the gap
+    TASK-32947 found for the editor's own Delete, before Task 4 removed it
+    from the editor card and moved it to the picker)."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker_with_a_user_theme(pilot, host, theme)
+        delete_button = picker.query_one("#settings-theme-picker-delete", Button)
+        await _show(pilot, delete_button)
+
+        rest_fg, rest_bg = _label_colors(host, delete_button)
+        assert _contrast(rest_fg, rest_bg) >= 4.5, (
+            f"{theme}/delete rest {_contrast(rest_fg, rest_bg):.2f}:1 ({rest_fg} on {rest_bg})"
+        )
+
+        delete_button.focus()
+        await pilot.pause(0.1)
+        focus_fg, focus_bg = _label_colors(host, delete_button)
+        assert _contrast(focus_fg, focus_bg) >= 4.5, (
+            f"{theme}/delete focused {_contrast(focus_fg, focus_bg):.2f}:1"
+        )
+        # Focus is a strong state change (inversion), not a neutral wash.
+        assert _contrast(focus_bg, rest_bg) >= 3.0, (
+            f"{theme}/delete focus shift {_contrast(focus_bg, rest_bg):.2f}:1"
+        )
+        # The error hue survives focus: one of the focused fg/bg pair is
+        # still the rest-state error colour (fg or bg, inversion swaps them).
+        assert {rest_fg, rest_bg} & {focus_fg, focus_bg}, (
+            f"{theme}/delete lost its error hue on focus"
+        )
+        host.set_focus(None)
+        await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
+async def test_picker_use_chip_meets_contrast_at_rest_and_focus(theme, request):
+    """R24 (extends R19/R23): the picker's Use chip (`#settings-theme-use`,
+    variant primary) is the same defect class as the Delete chip above --
+    `#settings-theme-card-column` only had a colour-keeping `-error:focus`
+    rule, so a focused Use chip still fell back to the generic neutral
+    `.settings-action-row Button:focus`."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        use_button = picker.query_one("#settings-theme-use", Button)
+        await _show(pilot, use_button)
+
+        rest_fg, rest_bg = _label_colors(host, use_button)
+        assert _contrast(rest_fg, rest_bg) >= 4.5, (
+            f"{theme}/use rest {_contrast(rest_fg, rest_bg):.2f}:1 ({rest_fg} on {rest_bg})"
+        )
+
+        use_button.focus()
+        await pilot.pause(0.1)
+        focus_fg, focus_bg = _label_colors(host, use_button)
+        assert _contrast(focus_fg, focus_bg) >= 4.5, (
+            f"{theme}/use focused {_contrast(focus_fg, focus_bg):.2f}:1"
+        )
+        # Focus is a strong state change (inversion), not a neutral wash.
+        assert _contrast(focus_bg, rest_bg) >= 3.0, (
+            f"{theme}/use focus shift {_contrast(focus_bg, rest_bg):.2f}:1"
+        )
+        # The primary hue survives focus: one of the focused fg/bg pair is
+        # still the rest-state primary colour (fg or bg, inversion swaps them).
+        assert {rest_fg, rest_bg} & {focus_fg, focus_bg}, (
+            f"{theme}/use lost its primary hue on focus"
+        )
+        host.set_focus(None)
+        await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@private_profile_test
 async def test_focused_theme_buttons_keep_variant_meaning(theme, request):
     host = _host()
     async with host.run_test(size=(190, 55)) as pilot:
@@ -140,7 +312,7 @@ async def test_focused_theme_buttons_keep_variant_meaning(theme, request):
                 f"{theme}/{name} focus shift {_contrast(bg, rest_bg):.2f}:1"
             )
             if name in FILLED:
-                # Apply/Save/Reset/Delete keep their variant hue on focus.
+                # Try/Save/Reset keep their variant hue on focus.
                 assert {rest_fg, rest_bg} & {fg, bg}, f"{theme}/{name} lost its hue"
             host.set_focus(None)
             await pilot.pause(0.05)

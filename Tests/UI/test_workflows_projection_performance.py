@@ -108,7 +108,9 @@ def test_editor_field_values_and_summaries_use_prepared_projection(monkeypatch):
         == "Text"
     )
     assert editor._step_summary(0, "action") == ""
-    assert editor._step_summary(0, "execution") == " · retry unset / timeout unsets"
+    # task-32902: this pinned the defect -- the "s" unit was appended to the
+    # "unset" placeholder, rendering "timeout unsets" in the editor.
+    assert editor._step_summary(0, "execution") == " · retry unset / timeout unset"
     assert calls == [], "Display reads must not parse the complete raw document"
 
 

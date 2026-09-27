@@ -107,6 +107,7 @@ _CANONICAL_PROVIDER_KEYS = frozenset(
         "cohere",
         "custom",
         "custom_2",
+        "databricks",
         "deepseek",
         "google",
         "groq",
@@ -158,6 +159,7 @@ _ALIASES = {
     "custom_openai_2": "custom_2",
     "custom-openai-api-2": "custom_2",
     "custom_openai_api_2": "custom_2",
+    "Databricks": "databricks",
     "DeepSeek": "deepseek",
     "Google": "google",
     "Groq": "groq",
@@ -798,6 +800,7 @@ def build_provider_setup_mutation(
     app_config: object,
     *,
     preserve_credentials: bool = False,
+    keep_stored_credential: bool = False,
 ) -> ProviderSetupMutation:
     """Build one provider-owned sparse mutation without performing I/O.
 
@@ -806,6 +809,9 @@ def build_provider_setup_mutation(
         app_config: Existing provider configuration.
         preserve_credentials: Leave API-key fields and their routing untouched
             for an unchanged Anthropic subscription selection only.
+        keep_stored_credential: For a "stored" draft with no new value, leave
+            the existing stored key in place verbatim (neither re-set nor
+            revalidated); it must still resolve as a usable key.
     """
 
     if type(draft) is not ProviderSetupDraft:
@@ -819,7 +825,10 @@ def build_provider_setup_mutation(
 
     provider_section = f"api_settings.{_configured_section_key(app_config, ownership)}"
     provider_settings = _provider_settings(app_config, ownership)
-    if type(preserve_credentials) is not bool:
+    if (
+        type(preserve_credentials) is not bool
+        or type(keep_stored_credential) is not bool
+    ):
         raise ValueError("Credential preservation is invalid.")
     if preserve_credentials:
         from ..LLM_Calls.anthropic_subscription import anthropic_auth_source
@@ -881,12 +890,19 @@ def build_provider_setup_mutation(
         deletes.setdefault(provider_section, []).append(environment_key)
         saved_credential_source = "stored"
     elif credential_source == "stored":
-        stored_value = credential_value or _existing_credential_value(
-            provider_settings.get(stored_key)
-        )
-        if not stored_value:
-            raise ValueError("Credential setup is invalid.")
-        provider_values[stored_key] = stored_value
+        existing_value = provider_settings.get(stored_key)
+        if keep_stored_credential and not credential_value:
+            # TASK-33001.13 (Qodo #2847): an untouched key stays as written, so
+            # a key the resolver accepts never fails a model-only save.
+            if not is_valid_provider_api_key(existing_value):
+                raise ValueError("Credential setup is invalid.")
+        else:
+            stored_value = credential_value or _existing_credential_value(
+                existing_value
+            )
+            if not stored_value:
+                raise ValueError("Credential setup is invalid.")
+            provider_values[stored_key] = stored_value
         deletes.setdefault(provider_section, []).append(environment_key)
     elif credential_source == "environment":
         env_var = credential_env_var or _existing_environment_name(
@@ -1733,7 +1749,8 @@ def _validate_provider_setup_mutation(
             or _existing_environment_name(environment_name) != environment_name
         ):
             raise error
-    if stored_is_set and environment_is_deleted and not environment_is_set:
+    # "stored" either re-sets the key or leaves it in place (never deletes it).
+    if environment_is_deleted and not environment_is_set and not stored_is_deleted:
         desired_source: CredentialSource = "stored"
     elif environment_is_set and stored_is_deleted and not stored_is_set:
         desired_source = "environment"

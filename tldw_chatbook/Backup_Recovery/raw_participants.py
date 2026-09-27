@@ -305,6 +305,8 @@ class _State:
     descriptors: set = field(default_factory=set)
     created_files: dict = field(default_factory=dict)
     observed_files: dict = field(default_factory=dict)
+    # theme_directory only: members refused as non-regular, never observed.
+    rejected_files: dict = field(default_factory=dict)
     temporaries: dict = field(default_factory=dict)
     temporary: Path | None = None
     backup: Path | None = None

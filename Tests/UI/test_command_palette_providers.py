@@ -9,6 +9,7 @@
 #
 # Imports
 import time
+from types import SimpleNamespace
 
 from Tests.private_profile import private_profile_test
 
@@ -34,7 +35,6 @@ try:
     from tldw_chatbook.app import (
         ThemeProvider,
         TabNavigationProvider,
-        LLMProviderProvider,
         QuickActionsProvider,
         SettingsProvider,
         CharacterProvider,
@@ -78,7 +78,6 @@ except ImportError as e:
 
     ThemeProvider = DummyProvider
     TabNavigationProvider = DummyProvider
-    LLMProviderProvider = DummyProvider
     QuickActionsProvider = DummyProvider
     SettingsProvider = DummyProvider
     CharacterProvider = DummyProvider
@@ -260,14 +259,46 @@ class TestThemeProvider:
 
     def test_switch_theme_success(self, theme_provider):
         """Test successful theme switching."""
-        with patch("tldw_chatbook.config.save_setting_to_cli_config") as mock_save:
+        with (
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog._apply_config_mutation"
+            ) as mock_apply,
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog.current_launch_default",
+                return_value="textual-dark",
+            ),
+        ):
+            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=True)
             theme_provider.switch_theme("test-theme")
 
             assert theme_provider.app.theme == "test-theme"
             theme_provider.app.notify.assert_called_once_with(
-                "Theme changed to test-theme", severity="information"
+                "Test Theme is now your theme (was: Textual Dark)", severity="information"
             )
-            mock_save.assert_called_once_with("general", "default_theme", "test-theme")
+            mock_apply.assert_called_once_with({"general": {"default_theme": "test-theme"}})
+
+    def test_switch_theme_persisted_but_cache_reload_failed(self, theme_provider):
+        """Palette toast parity (TASK-32948): a failed cache refresh after a
+        persisted switch gets its own warning, same wording as elsewhere in
+        Settings ("configuration refresh failed -- reopen Settings...")."""
+        with (
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog._apply_config_mutation"
+            ) as mock_apply,
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog.current_launch_default",
+                return_value="textual-dark",
+            ),
+        ):
+            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=False)
+            theme_provider.switch_theme("test-theme")
+
+            assert theme_provider.app.theme == "test-theme"
+            theme_provider.app.notify.assert_called_once_with(
+                "Test Theme is now your theme (was: Textual Dark); configuration "
+                "refresh failed — reopen Settings to refresh",
+                severity="warning",
+            )
 
     def test_switch_theme_failure(self, theme_provider):
         """Test theme switching with error handling."""
@@ -1081,6 +1112,24 @@ class TestCommandPaletteIntegration:
                 assert hasattr(hit, "help"), "Hit should have help attribute"
 
     @pytest.mark.asyncio
+    async def test_palette_offers_no_llm_provider_management_entries(self, mock_app):
+        """TASK-33001.6: providers are switched in the model picker, not here."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        texts = []
+        for provider_class in ALL_PROVIDERS:
+            provider = provider_class(screen=mock_screen)
+            matcher = MagicMock()
+            matcher.match = MagicMock(return_value=1.0)
+            matcher.highlight = MagicMock(side_effect=lambda x: x)
+            provider.matcher = MagicMock(return_value=matcher)
+            texts += [str(hit.text) async for hit in provider.discover() if isinstance(hit, Hit)]
+            for query in ("llm provider", "switch to", "current provider"):
+                texts += [str(hit.text) async for hit in provider.search(query)]
+
+        assert [text for text in texts if "LLM Provider Management" in text] == []
+
+    @pytest.mark.asyncio
     async def test_search_consistency_across_providers(self, mock_app):
         """Test that search behaves consistently across providers."""
         mock_screen = MagicMock()
@@ -1247,3 +1296,24 @@ def assert_hit_contains_text(hits: List[Hit], expected_text: str):
 
 
 # End of test_command_palette_providers.py
+
+
+@requires_imports
+@pytest.mark.asyncio
+async def test_palette_theme_hit_shows_a_markup_name_literally():
+    """R28: a saved theme named ``x[/]`` must not raise MarkupError in the
+    palette (its display and help both parse markup)."""
+    from textual.content import Content
+    from textual.fuzzy import Matcher
+
+    app = MagicMock()
+    app.available_themes = {"x[/]": object()}
+    screen = MagicMock()
+    screen.app = app
+    provider = ThemeProvider(screen=screen)
+    provider.matcher = lambda query: Matcher(query)
+    hits = [hit async for hit in provider.search("theme")]
+    shown = [hit for hit in hits if "X[/]" in str(getattr(hit.match_display, "plain", hit.match_display))]
+    assert shown
+    for hit in shown:
+        assert Content.from_markup(hit.help).plain == "Change theme to x[/]"

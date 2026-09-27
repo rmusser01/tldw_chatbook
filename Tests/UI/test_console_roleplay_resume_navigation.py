@@ -12,7 +12,7 @@ from textual.worker import Worker, WorkerState
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_workspace_controller import _conversation_tree_payload
@@ -145,6 +145,9 @@ def _configure_ready_console(app: object) -> None:
             "model": "local-model",
         }
     }
+    # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
+    # must be on disk too, not only in the in-memory snapshot.
+    persist_seeded_config(app, "chat_defaults", "api_settings.llama_cpp")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
 
@@ -269,10 +272,6 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         async def prompt_insert() -> None:
             record("prompt-insert")
 
-        def provider_intent() -> bool:
-            record("provider-intent")
-            return True
-
         async def fleet_completion() -> None:
             record("fleet-completion")
 
@@ -316,7 +315,6 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         screen._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = roleplay_repair
         screen._consume_pending_console_prompt_insert = prompt_insert
-        screen.consume_pending_console_provider_intent = provider_intent
         screen._fleet.consume_pending_console_fleet_completion = fleet_completion
         screen._workspace.open_console_workspace_conversation = opener
         screen._sync_native_console_chat_ui = native_sync
@@ -342,7 +340,6 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         "chat-handoff",
         "roleplay-repair",
         "prompt-insert",
-        "provider-intent",
         "fleet-completion",
     }
     assert not competing.intersection(name for delay, name in timers if delay == 0.15)
@@ -358,7 +355,6 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         "chat-handoff",
         "roleplay-repair",
         "prompt-insert",
-        "provider-intent",
         "fleet-completion",
         "resume-selected-conversation",
         "final-presentation-focus",
@@ -517,7 +513,6 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
         screen._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
         screen._consume_pending_console_prompt_insert = prompt_insert
-        screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
         screen._sync_native_console_chat_ui = intermediate_native_sync
@@ -615,7 +610,6 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
             lifecycle_events,
             "prompt-insert",
         )
-        screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
         screen._sync_native_console_chat_ui = intermediate_native_sync
@@ -707,7 +701,6 @@ async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
         screen._consume_pending_chat_handoff = chat_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
         screen._consume_pending_console_prompt_insert = _async_spy([], "prompt")
-        screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
 
@@ -778,7 +771,6 @@ async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
     screen._stage_handoff_as_console_live_work = lambda _payload: None
     screen._consume_pending_console_roleplay_repair = lambda: False
     screen._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
-    screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,
     )
@@ -820,7 +812,6 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
     )
     screen._consume_pending_console_roleplay_repair = lambda: False
     screen._consume_pending_console_prompt_insert = _async_spy([], "prompt")
-    screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,
     )
@@ -892,7 +883,6 @@ async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount() -
         screen._consume_pending_chat_handoff = pending_handoff
         screen._consume_pending_console_roleplay_repair = lambda: False
         screen._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
-        screen.consume_pending_console_provider_intent = lambda: False
         screen._fleet.consume_pending_console_fleet_completion = lambda: False
         screen._workspace.open_console_workspace_conversation = opener
         screen.set_timer = recording_set_timer
@@ -1035,7 +1025,6 @@ async def test_mounted_no_resume_keeps_ordinary_startup_sync_timers_and_focus() 
         (0.15, "_consume_pending_chat_handoff"),
         (0.15, "_consume_pending_console_roleplay_repair"),
         (0.15, "_consume_pending_console_prompt_insert"),
-        (0.15, "consume_pending_console_provider_intent"),
         (0.15, "consume_pending_console_fleet_completion"),
         (0.2, "restore_focus"),
     }

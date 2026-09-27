@@ -452,7 +452,8 @@ def build_field_search_index() -> None:
                 ("settings-console-remote-images-toggle", "Remote images"),
             ),
             SettingsCategoryId.APPEARANCE: (
-                ("settings-appearance-theme", "Theme"),
+                # TASK-32948: read-only row; its button opens the picker.
+                ("settings-appearance-open-theme", "Theme"),
                 ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
                 ("settings-appearance-font-size", "Web font size (px)"),
                 ("settings-appearance-density", "Density"),
@@ -650,6 +651,8 @@ def build_field_search_index() -> None:
                 ("settings-splash-animation-speed", "Animation speed"),
             ),
             SettingsCategoryId.THEME: (
+                # TASK-32948: searching "theme" lands on the picker list.
+                ("settings-theme-list", "Theme"),
                 ("settings-theme-name", "Theme name"),
                 ("settings-theme-dark-mode", "Dark theme"),
                 ("settings-theme-color-primary", "Primary color"),

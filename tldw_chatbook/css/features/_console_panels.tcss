@@ -1930,8 +1930,8 @@ ChatScreen.-focus #console-workbench-header {
 }
 
 #console-prompts-source {
-    width: $ds-size-18;
-    min-width: $ds-size-14;
+    width: $ds-size-22;
+    min-width: $ds-size-18;
     height: $ds-size-3;
     border: none;
     border-left: solid $ds-grid-line;

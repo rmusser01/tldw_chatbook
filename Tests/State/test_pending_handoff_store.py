@@ -17,9 +17,9 @@ from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
     AudioCppModelLibraryRequest,
     AudioCppModelLibraryResult,
 )
+from tldw_chatbook.UI.Navigation import pending_handoff_store
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
-    ConsoleProviderIntent,
     HandoffChannel,
     HandoffClaim,
     HandoffReleaseRecovery,
@@ -1227,108 +1227,10 @@ def test_acp_console_launch_uses_canonical_session_record_id() -> None:
     assert launch.payload["target_id"] == "local:acp_session:session-1"
 
 
-def test_provider_intent_is_normalized_and_contains_only_provider_identity() -> None:
-    intent = ConsoleProviderIntent(provider="  Custom-OpenAI API  ")
-
-    assert intent.provider == "custom_openai_api"
-    assert [field.name for field in fields(intent)] == ["provider"]
-    assert repr(intent) == "ConsoleProviderIntent(provider='custom_openai_api')"
-
-
-@pytest.mark.parametrize("provider", ["", " \t "])
-def test_provider_intent_rejects_blank_identity(provider: str) -> None:
-    with pytest.raises(ValueError, match="provider"):
-        ConsoleProviderIntent(provider=provider)
-
-
-@pytest.mark.parametrize("provider", ["../private", "provider!", "éxample", "a" * 129])
-def test_provider_intent_rejects_invalid_identity(provider: str) -> None:
-    with pytest.raises(ValueError, match="provider"):
-        ConsoleProviderIntent(provider=provider)
-
-
-@pytest.mark.parametrize("provider", [None, 42])
-def test_provider_intent_rejects_non_text_identity(provider: object) -> None:
-    with pytest.raises(TypeError, match="provider"):
-        ConsoleProviderIntent(provider=provider)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        {"provider": "openai", "api_key": "PRIVATE_API_KEY"},
-        "openai",
-    ],
-)
-def test_provider_channel_rejects_untyped_values(value: object) -> None:
-    store = PendingHandoffStore()
-
-    with pytest.raises(HandoffValueError):
-        store.stage(HandoffChannel.CONSOLE_PROVIDER, value)
-
-
-def test_provider_channel_replaces_pending_intent_while_claim_is_in_flight() -> None:
-    store = PendingHandoffStore()
-    first_revision = store.stage(
-        HandoffChannel.CONSOLE_PROVIDER,
-        ConsoleProviderIntent(provider="OpenAI"),
-    )
-    first_claim = store.claim(HandoffChannel.CONSOLE_PROVIDER)
-    second_revision = store.stage(
-        HandoffChannel.CONSOLE_PROVIDER,
-        ConsoleProviderIntent(provider="Anthropic"),
-    )
-
-    assert first_claim is not None
-    assert first_claim.revision == first_revision
-    assert first_claim.value == ConsoleProviderIntent(provider="openai")
-    assert second_revision > first_revision
-    assert store.acknowledge(first_claim) is True
-    assert store.acknowledge(first_claim) is False
-
-    second_claim = store.claim(HandoffChannel.CONSOLE_PROVIDER)
-    assert second_claim is not None
-    assert second_claim.revision == second_revision
-    assert second_claim.value == ConsoleProviderIntent(provider="anthropic")
-
-
-def test_provider_channel_release_retries_the_exact_claim() -> None:
-    store = PendingHandoffStore()
-    store.stage(
-        HandoffChannel.CONSOLE_PROVIDER,
-        ConsoleProviderIntent(provider="OpenRouter"),
-    )
-    claim = store.claim(HandoffChannel.CONSOLE_PROVIDER)
-
-    assert claim is not None
-    assert store.release(claim) is True
-    assert store.release(claim) is False
-
-    retry = store.claim(HandoffChannel.CONSOLE_PROVIDER)
-    assert retry is not None
-    assert retry.revision == claim.revision
-    assert retry is not claim
-    assert retry.value == ConsoleProviderIntent(provider="openrouter")
-
-
-def test_provider_intent_repr_cannot_contain_private_payload_fields() -> None:
-    private_sentinels = {
-        "credential": "PRIVATE_API_KEY",
-        "endpoint": "https://private.example/v1",
-        "prompt": "PRIVATE_SYSTEM_PROMPT",
-        "response": "PRIVATE_RESPONSE_BODY",
-        "catalog": "PRIVATE_CATALOG_PAYLOAD",
-    }
-    store = PendingHandoffStore()
-    intent = ConsoleProviderIntent(provider="OpenAI")
-    store.stage(HandoffChannel.CONSOLE_PROVIDER, intent)
-    claim = store.claim(HandoffChannel.CONSOLE_PROVIDER)
-
-    assert claim is not None
-    rendered = repr(intent) + repr(claim)
-    assert "openai" in rendered
-    for sentinel in private_sentinels.values():
-        assert sentinel not in rendered
+def test_console_provider_channel_is_retired() -> None:
+    """TASK-33001.6: the palette's provider switch was the channel's only producer."""
+    assert "console_provider" not in {channel.value for channel in HandoffChannel}
+    assert not hasattr(pending_handoff_store, "ConsoleProviderIntent")
 
 
 def test_first_chat_intent_has_only_secret_free_target_fields() -> None:

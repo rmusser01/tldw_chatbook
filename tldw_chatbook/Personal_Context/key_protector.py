@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -357,7 +358,14 @@ class PassphraseProfileKeyProtector:
         descriptor = -1
         try:
             descriptor = os.open(temporary, flags, 0o600)
-            os.write(descriptor, payload)
+            # A short write must not reach os.replace: a truncated bundle
+            # replacing a good one is unrecoverable -- _deserialize_material
+            # rejects it and every encrypted object stays locked forever
+            # (tier-2 review, slice S14).
+            if os.write(descriptor, payload) != len(payload):
+                raise OSError(
+                    errno.EIO, "short write persisting profile key material"
+                )
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = -1

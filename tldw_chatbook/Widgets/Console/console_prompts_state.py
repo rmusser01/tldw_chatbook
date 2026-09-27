@@ -7,10 +7,10 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 
-PromptModalMode = Literal["browse", "edit", "improve", "recipe"]
-PromptSource = Literal["local", "server"]
-_MODES = frozenset({"browse", "edit", "improve", "recipe"})
-_SOURCES = frozenset({"local", "server"})
+PromptModalMode = Literal["browse", "edit", "improve", "recipe", "draft_edit"]
+PromptSource = Literal["local", "server", "draft_shelf"]
+_MODES = frozenset({"browse", "edit", "improve", "recipe", "draft_edit"})
+_SOURCES = frozenset({"local", "server", "draft_shelf"})
 
 
 @dataclass(frozen=True)
