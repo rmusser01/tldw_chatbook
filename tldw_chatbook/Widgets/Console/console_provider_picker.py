@@ -48,7 +48,15 @@ class ConsoleProviderPickerInput(Input):
 class ConsoleProviderPicker(Widget):
     """Controlled provider picker with grouped, in-memory search results."""
 
-    MAX_RESULTS = 30
+    #: Empty-query dropdown cap. Sized to clear the full built-in option
+    #: universe (33 settings provider keys + the trailing "New custom
+    #: endpoint…" sentinel, TASK-32919's four engine presets included) plus
+    #: a realistic handful of custom-endpoint entries; it guards against
+    #: pathologically large configured-provider floods, not layout (the
+    #: OptionList scrolls). Truncating below the offered universe would
+    #: silently hide providers -- custom-ep entries sort last and were the
+    #: first to fall off when the cap was 30.
+    MAX_RESULTS = 40
     _GROUP_ORDER = ("Cloud", "Local", "Custom", "Other")
 
     BUNDLED_CSS = """
