@@ -419,13 +419,13 @@ button, the Model section's **Configure** button in the left rail, or the
 
 - A readiness line up top (e.g. "custom is ready. No API key is required.").
 - **Provider and model** — Provider and Model selects, **Custom model** for
-  a name the list doesn't offer, **Discover models** to list what a Base
-  URL serves, and the **Base URL** field for local/self-hosted endpoints.
+  a name the list doesn't offer, **Discover models** to list what an
+  endpoint serves, and the **Endpoint** field for local/self-hosted servers.
 - **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
   related knobs), then **Provider-specific**, **Context**, and **Identity**.
   The modal still shows every sampling field, but a field the selected
   provider's request does not carry is dropped: for Anthropic, Min P, Seed,
-  Presence and Frequency are accepted without error, never sent, and not
+  Presence penalty and Frequency penalty are accepted without error, never sent, and not
   written by **Save as model default**. A value saved for such a field earlier
   stays in `config.toml` untouched.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
@@ -433,7 +433,7 @@ button, the Model section's **Configure** button in the left rail, or the
   streaming defaults to config."
 
 Need another server beyond the built-in providers? **New endpoint…**, next
-to **Base URL**, creates a named custom endpoint without leaving the modal:
+to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
 is saved to `config.toml` immediately and becomes selectable here, so unlike
@@ -634,7 +634,7 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
 
 1. **Set up a provider from the Get started card.** Click **Set up
    provider**, pick a provider in "Provider and model" (for a local server,
-   enter its Base URL, then **Discover models**), pick a model, and press
+   enter its Endpoint, then **Discover models**), pick a model, and press
    **Save**. The card's steps tick off and the composer unlocks.
 2. **Switch model for just this session.** Press **Alt+M**, choose the
    provider/model, and confirm — or open **Settings** and press **Save**
@@ -884,3 +884,14 @@ catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
 widget test with 25 models for each warning
 (`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
 this page's content unchanged from the prior stamp.)*
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.1 —
+2026-09-27: Conversation settings takes its field labels from the same table
+as Settings. Driven live at 211x44 on a scratch llama.cpp profile: the Model
+view reads **Endpoint** (was Base URL), **Max tokens** (was Response max
+tokens), **Presence penalty**, **Frequency penalty**, **Reasoning effort** and
+**Thinking budget** (was Budget); the Context view reads **Budget strategy**
+(was Budget mode), **When limit nears** (was Behavior) and "Max tokens 4,096
+tokens" under Model capacity. The Alt+M popover's Temperature and Streaming
+labels come from the same table (pinned by a mounted test, not driven live).
+The rest of this page's content unchanged from the prior stamp.*

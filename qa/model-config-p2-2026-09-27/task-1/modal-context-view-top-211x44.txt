@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│                                                                                                                                                                                 │────────────────
+                │   Model and generation  Context and memory · Selected                                                                                                                           │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Use: this conversation only. Defaults: F4 Settings > Console behavior.                                                                                                         │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Workspaces     │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Conversations  │  Model capacity                                                                                                                                                                 │     │
+        Archive │  Model window (est.) 32,000 tokens (application fallback)                                                                                                                       │     │
+          Archiv│  Max tokens          4,096 tokens                                                                                                                                               │     │
+        Search a│  Safety margin       640 tokens                                                                                                                                                 │     │
+   Chat 1       │  Safe input ceiling  27,264 tokens                                                                                                                                              │     │
+                │  Estimated fallback only; model capacity is unverified. Set the actual context window in F4 Settings > Providers & Models.                                                      │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                                                                                                                                                                                 │     │
+  ▊  Filter visi│  Conversation budget                                                                                                                                                            │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                          Automatic                                                                                                                     ▼                     ▁  │     │
+                │  Budget strategy                                                                                                                                                                │     │◂ Inspect
+   New conversat│                                                                                                                                                                                 │     │
+  Chats         │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+   Chat 1       │  Conversation max tokens▊ Required in Custom mode                                                                                                       ▎                       │     │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+ ───────────────│  Effective           27,264 tokens                                                                                                                                              │     │
+ Character · No │  Next request        0 tokens                                                                                                                                                   │     │
+ ───────────────│  Request overhead    unknown tokens                                                                                                                                             │     │
+ Model          │                                                                                                                                                                                 │     │
+ ───────────────│  Compaction                                                                                                                                                                     │     │
+ Agent          │                          Ask                                                                                                                           ▼                        │     │
+ ───────────────│  When limit nears                                                                                                                                                               │     │
+ Details        │                                                                                                                                                                                 │     │
+                │                          Text summary                                                                                                                  ▼                        │     │
+                │  Representation                                                                                                                                                                 │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                                           Cancel    Use for this conversation   │urrent $0.00 ·
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

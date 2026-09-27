@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│                                                                                                                                                                                 │────────────────
+                │   Model and generation  Context and memory · Selected                                                                                                                           │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Use: this conversation only. Defaults: F4 Settings > Console behavior.                                                                                                         │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Workspaces     │                                                                                                                                                                                 │     │
+ ───────────────│                          Automatic                                                                                                                     ▼                        │     │
+ Conversations  │  Budget strategy                                                                                                                                                                │     │
+        Archive │                                                                                                                                                                                 │     │
+          Archiv│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                    ▄  │     │
+        Search a│  Conversation max tokens▊ Required in Custom mode                                                                                                       ▎                       │     │
+   Chat 1       │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+                │  Effective           27,264 tokens                                                                                                                                              │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Next request        0 tokens                                                                                                                                                   │     │
+  ▊  Filter visi│  Request overhead    unknown tokens                                                                                                                                             │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                                                                                                                                                                                 │     │
+                │  Compaction                                                                                                                                                                     │     │◂ Inspect
+   New conversat│                          Ask                                                                                                                           ▼                        │     │
+  Chats         │  When limit nears                                                                                                                                                               │     │
+   Chat 1       │                                                                                                                                                                              ▅  │     │
+                │                          Text summary                                                                                                                  ▼                        │     │
+ ───────────────│  Representation                                                                                                                                                                 │     │
+ Character · No │                                                                                                                                                                                 │     │
+ ───────────────│  Visual transcript and Hybrid require a vision-capable model.                                                                                                                   │     │
+ Model          │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+ ───────────────│  Compact at (%)         ▊ 80                                                                                                                            ▎                       │     │
+ Agent          │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+ ───────────────│  Reduce conversation to ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+ Details        │  (%)                    ▊ 55                                                                                                                            ▎                       │     │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+                │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                                           Cancel    Use for this conversation   │urrent $0.00 ·
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

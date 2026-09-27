@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
+from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -423,6 +424,9 @@ class ConsoleModelPopover(
         settings = self._draft.settings
         return f"{settings.provider}/{settings.model or 'No model'}"
 
+    def _streaming_label(self) -> str:
+        return f"{MODEL_FIELD_LABELS['streaming']}: {'on' if self._streaming else 'off'}"
+
     def _default_target_copy(self) -> str:
         return f"Defaults target: {self._target_label()}"
 
@@ -494,7 +498,10 @@ class ConsoleModelPopover(
                     current_model=settings.model,
                     providers_models=self._providers_models,
                 )
-                yield Static("Temperature", classes="console-popover-field-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["temperature"],
+                    classes="console-popover-field-label",
+                )
                 yield ConsolePopoverInput(
                     value=(
                         ""
@@ -511,7 +518,7 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Button(
-                    f"Streaming: {'on' if self._streaming else 'off'}",
+                    self._streaming_label(),
                     id="console-popover-streaming",
                     compact=True,
                 )
@@ -1001,7 +1008,7 @@ class ConsoleModelPopover(
                 )
             self.query_one(
                 "#console-popover-streaming", Button
-            ).label = f"Streaming: {'on' if self._streaming else 'off'}"
+            ).label = self._streaming_label()
             model_select = self.query_one("#console-popover-model", Select)
             options = [
                 (option.label, option.value)
@@ -1147,7 +1154,7 @@ class ConsoleModelPopover(
         """
         event.stop()
         self._streaming = not self._streaming
-        event.button.label = f"Streaming: {'on' if self._streaming else 'off'}"
+        event.button.label = self._streaming_label()
         self._replace_quick_field(
             "streaming",
             self._streaming,

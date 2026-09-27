@@ -12602,7 +12602,7 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
             ".console-settings-modal-label",
             Static,
         )
-        assert str(response_label.renderable) == "Response max tokens"
+        assert str(response_label.renderable) == "Max tokens"  # TASK-33002.1
 
 
 @pytest.mark.asyncio
@@ -15015,7 +15015,7 @@ async def test_console_settings_modal_ready_state_has_one_primary_action() -> No
             ConsoleSessionSettings(
                 provider="llama_cpp", model="model-a", base_url="ftp://127.0.0.1:9099"
             ),
-            "Enter a valid llama.cpp Base URL to continue.",
+            "Enter a valid llama.cpp endpoint to continue.",
         ),
         (
             "missing model",

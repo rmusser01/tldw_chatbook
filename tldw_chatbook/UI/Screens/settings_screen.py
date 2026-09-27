@@ -116,7 +116,10 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
 )
 from ...Chat.console_provider_support import (
+    MODEL_CONFIG_FIELDS,
+    MODEL_FIELD_LABELS,
     ConsoleProviderCatalogEntry,
+    reasoning_effort_values_sent,
     supported_console_provider_catalog,
     supported_generation_fields,
 )
@@ -893,24 +896,6 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_effort": "thinking_effort",
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
-}
-# Generation defaults row labels, as the one-line hidden-rows summary names
-# them (TASK-33001.2). TASK-33002 owns the single field table.
-MODEL_PROFILE_ROW_LABELS = {
-    "model_profile_temperature": "Temperature",
-    "model_profile_top_p": "Top P",
-    "model_profile_min_p": "Min P",
-    "model_profile_top_k": "Top K",
-    "model_profile_max_tokens": "Response max tokens",
-    "model_profile_seed": "Seed",
-    "model_profile_presence_penalty": "Presence",
-    "model_profile_frequency_penalty": "Frequency",
-    "model_profile_reasoning_effort": "Reasoning",
-    "model_profile_reasoning_summary": "Summary",
-    "model_profile_verbosity": "Verbosity",
-    "model_profile_thinking_effort": "Thinking",
-    "model_profile_thinking_budget_tokens": "Think budget",
-    "model_profile_streaming": "Streaming",
 }
 REASONING_EFFORT_OPTIONS = frozenset(
     {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -7010,7 +6995,9 @@ class SettingsScreen(BaseAppScreen):
             provider, draft_key, values.get("model")
         )
         allowed = (
-            self._model_profile_reasoning_effort_options(provider, values.get("model"))
+            self._model_profile_reasoning_effort_options(
+                provider, values.get("model"), self._app_config_mapping()
+            )
             if draft_key == "model_profile_reasoning_effort"
             else CLOSED_ENUM_SELECT_OPTIONS[
                 PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
@@ -10787,10 +10774,12 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=2.0,
-            label="Temperature",
+            label=MODEL_FIELD_LABELS["temperature"],
         )
         if normalized == "":
-            raise ValueError("Temperature must be between 0.0 and 2.0.")
+            raise ValueError(
+                f"{MODEL_FIELD_LABELS['temperature']} must be between 0.0 and 2.0."
+            )
         return float(normalized)
 
     def _normalise_console_default_top_p(self, value: object) -> float:
@@ -10798,10 +10787,10 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Top P",
+            label=MODEL_FIELD_LABELS["top_p"],
         )
         if normalized == "":
-            raise ValueError("Top P must be between 0.0 and 1.0.")
+            raise ValueError(f"{MODEL_FIELD_LABELS['top_p']} must be between 0.0 and 1.0.")
         return float(normalized)
 
     @staticmethod
@@ -10811,7 +10800,7 @@ class SettingsScreen(BaseAppScreen):
             return ""
         if not text_value.isdecimal() or int(text_value) < 1:
             raise ValueError(
-                "Response max tokens must be a whole number of at least 1."
+                f"{MODEL_FIELD_LABELS['max_tokens']} must be a whole number of at least 1."
             )
         return int(text_value)
 
@@ -12343,28 +12332,19 @@ class SettingsScreen(BaseAppScreen):
         draft = self._provider_draft()
         if draft is None:
             return ()
+        # Table fields take their labels from the one field table (TASK-33002.1).
         labels = {
             "provider": "Provider",
             "model": "Model",
-            "endpoint": "Endpoint",
+            "endpoint": MODEL_FIELD_LABELS["endpoint"],
             "api_key": "API key",
             "credential_env_var": "Credential environment variable",
             "model_context_window": "Model context window",
             "model_context_window_reset": "Model context window",
-            "model_profile_temperature": "Temperature",
-            "model_profile_top_p": "Top P",
-            "model_profile_min_p": "Min P",
-            "model_profile_top_k": "Top K",
-            "model_profile_max_tokens": "Max tokens",
-            "model_profile_seed": "Seed",
-            "model_profile_presence_penalty": "Presence penalty",
-            "model_profile_frequency_penalty": "Frequency penalty",
-            "model_profile_reasoning_effort": "Reasoning effort",
-            "model_profile_reasoning_summary": "Reasoning summary",
-            "model_profile_verbosity": "Verbosity",
-            "model_profile_thinking_effort": "Thinking effort",
-            "model_profile_thinking_budget_tokens": "Thinking budget",
-            "model_profile_streaming": "Streaming",
+            **{
+                draft_key: MODEL_FIELD_LABELS[name]
+                for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+            },
         }
         names: list[str] = []
         for key in sorted(draft.dirty_keys):
@@ -12615,7 +12595,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=2.0,
-            label="Temperature",
+            label=MODEL_FIELD_LABELS["temperature"],
         )
 
     def _normalise_model_profile_top_p(self, value: object) -> float | str:
@@ -12623,7 +12603,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Top P",
+            label=MODEL_FIELD_LABELS["top_p"],
         )
 
     def _normalise_model_profile_min_p(self, value: object) -> float | str:
@@ -12631,7 +12611,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Min P",
+            label=MODEL_FIELD_LABELS["min_p"],
         )
 
     def _normalise_optional_int(
@@ -12649,13 +12629,15 @@ class SettingsScreen(BaseAppScreen):
         return int(text)
 
     def _normalise_model_profile_top_k(self, value: object) -> int | str:
-        return self._normalise_optional_int(value, min_value=0, label="Top K")
+        return self._normalise_optional_int(
+            value, min_value=0, label=MODEL_FIELD_LABELS["top_k"]
+        )
 
     def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
         return self._normalise_optional_int(
             value,
             min_value=1,
-            label="Response max tokens",
+            label=MODEL_FIELD_LABELS["max_tokens"],
         )
 
     def _normalise_model_context_window(self, value: object) -> int | str:
@@ -12664,14 +12646,16 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _normalise_model_profile_seed(self, value: object) -> int | str:
-        return self._normalise_optional_int(value, min_value=0, label="Seed")
+        return self._normalise_optional_int(
+            value, min_value=0, label=MODEL_FIELD_LABELS["seed"]
+        )
 
     def _normalise_model_profile_presence_penalty(self, value: object) -> float | str:
         return self._normalise_optional_float(
             value,
             min_value=-2.0,
             max_value=2.0,
-            label="Presence penalty",
+            label=MODEL_FIELD_LABELS["presence_penalty"],
         )
 
     def _normalise_model_profile_frequency_penalty(self, value: object) -> float | str:
@@ -12679,7 +12663,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=-2.0,
             max_value=2.0,
-            label="Frequency penalty",
+            label=MODEL_FIELD_LABELS["frequency_penalty"],
         )
 
     @staticmethod
@@ -12699,28 +12683,28 @@ class SettingsScreen(BaseAppScreen):
         return self._normalise_optional_choice(
             value,
             allowed=REASONING_EFFORT_OPTIONS,
-            label="Reasoning effort",
+            label=MODEL_FIELD_LABELS["reasoning_effort"],
         )
 
     def _normalise_model_profile_reasoning_summary(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=REASONING_SUMMARY_OPTIONS,
-            label="Reasoning summary",
+            label=MODEL_FIELD_LABELS["reasoning_summary"],
         )
 
     def _normalise_model_profile_verbosity(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=VERBOSITY_OPTIONS,
-            label="Verbosity",
+            label=MODEL_FIELD_LABELS["verbosity"],
         )
 
     def _normalise_model_profile_thinking_effort(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=THINKING_EFFORT_OPTIONS,
-            label="Thinking effort",
+            label=MODEL_FIELD_LABELS["thinking_effort"],
         )
 
     def _normalise_model_profile_thinking_budget_tokens(
@@ -12729,7 +12713,7 @@ class SettingsScreen(BaseAppScreen):
         return self._normalise_optional_int(
             value,
             min_value=1024,
-            label="Thinking budget tokens",
+            label=MODEL_FIELD_LABELS["thinking_budget_tokens"],
         )
 
     @staticmethod
@@ -12748,7 +12732,9 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _model_profile_reasoning_effort_options(
-        provider: object, model: object
+        provider: object,
+        model: object,
+        app_config: Mapping[str, object] | None = None,
     ) -> tuple[str, ...]:
         # TASK-19170: derive the curated lists from the 18803 request-side
         # family predicates -- the same gates the builders enforce -- so a
@@ -12762,7 +12748,10 @@ class SettingsScreen(BaseAppScreen):
             return KIMI_REASONING_EFFORT_SELECT_OPTIONS
         if provider_key == "zai" and zai_model_supports_reasoning_effort(model_key):
             return GLM_REASONING_EFFORT_SELECT_OPTIONS
-        return REASONING_EFFORT_SELECT_OPTIONS
+        # TASK-33002.1: never offer a level the local request silently drops.
+        return reasoning_effort_values_sent(
+            str(provider or ""), REASONING_EFFORT_SELECT_OPTIONS, app_config
+        )
 
     def _model_profile_field_supported(
         self, provider: object, draft_key: str, model: object
@@ -12821,8 +12810,8 @@ class SettingsScreen(BaseAppScreen):
         if not provider_label:
             provider_label = "this provider"
         hidden = [
-            label
-            for draft_key, label in MODEL_PROFILE_ROW_LABELS.items()
+            MODEL_FIELD_LABELS[name]
+            for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             if not self._model_profile_field_supported(provider, draft_key, model)
         ]
         if not hidden:
@@ -14393,7 +14382,7 @@ class SettingsScreen(BaseAppScreen):
                         else:
                             allowed = (
                                 self._model_profile_reasoning_effort_options(
-                                    provider, model
+                                    provider, model, self._app_config_mapping()
                                 )
                                 if draft_key == "model_profile_reasoning_effort"
                                 else CLOSED_ENUM_SELECT_OPTIONS[
@@ -15958,14 +15947,12 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         if field_id == "settings-provider-endpoint-value":
+            endpoint = MODEL_CONFIG_FIELDS["endpoint"]
             return (
-                ("Focused setting", "Endpoint"),
-                (
-                    "Purpose",
-                    "Controls the provider endpoint used by Console generation.",
-                ),
+                ("Focused setting", endpoint.label),
+                ("Purpose", endpoint.help),
                 ("Saved as", endpoint_key),
-                ("Validation", "must start with http:// or https:// when set"),
+                ("Validation", f"{endpoint.valid_range} when set"),
             )
         if field_id == "settings-provider-api-mode":
             purpose = (
@@ -16002,113 +15989,18 @@ class SettingsScreen(BaseAppScreen):
                     "environment variable names must start with a letter or underscore",
                 ),
             )
-        if field_id == "settings-model-profile-temperature":
-            return (
-                ("Focused setting", "Temperature"),
-                (
-                    "Purpose",
-                    "Optional creativity default for this provider and model profile.",
-                ),
-                (
-                    "Saved as",
-                    f"{provider_config_prefix}.model_defaults.<model>.temperature",
-                ),
-                (
-                    "Validation",
-                    "number from 0.0 to 2.0, or blank for inherited default",
-                ),
-            )
-        if field_id == "settings-model-profile-top-p":
-            return (
-                ("Focused setting", "Top P"),
-                (
-                    "Purpose",
-                    "Optional token-probability cutoff for this provider and model profile.",
-                ),
-                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.top_p"),
-                (
-                    "Validation",
-                    "number from 0.0 to 1.0, or blank for inherited default",
-                ),
-            )
-        model_profile_guidance = {
-            "settings-model-profile-min-p": (
-                "Min P",
-                "Optional minimum-probability sampling cutoff for local/provider profiles.",
-                "min_p",
-                "number from 0.0 to 1.0, or blank for inherited default",
-            ),
-            "settings-model-profile-top-k": (
-                "Top K",
-                "Optional token candidate count for providers that support top-k sampling.",
-                "top_k",
-                "whole number of at least 0, or blank for inherited default",
-            ),
-            "settings-model-profile-max-tokens": (
-                "Response max tokens",
-                "Optional response length ceiling for this provider and model profile.",
-                "max_tokens",
-                "whole number of at least 1, or blank for inherited default",
-            ),
-            "settings-model-profile-seed": (
-                "Seed",
-                "Optional deterministic generation seed for providers that support it.",
-                "seed",
-                "whole number of at least 0, or blank for inherited default",
-            ),
-            "settings-model-profile-presence-penalty": (
-                "Presence penalty",
-                "Optional penalty for introducing tokens already present in the conversation.",
-                "presence_penalty",
-                "number from -2.0 to 2.0, or blank for inherited default",
-            ),
-            "settings-model-profile-frequency-penalty": (
-                "Frequency penalty",
-                "Optional penalty for repeating frequent tokens in the response.",
-                "frequency_penalty",
-                "number from -2.0 to 2.0, or blank for inherited default",
-            ),
-            "settings-model-profile-reasoning-effort": (
-                "Reasoning effort",
-                "Optional OpenAI Responses reasoning level for reasoning-capable models.",
-                "reasoning_effort",
-                "choose none, minimal, low, medium, high, or xhigh; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-reasoning-summary": (
-                "Reasoning summary",
-                "Optional OpenAI reasoning summary detail for supported models.",
-                "reasoning_summary",
-                "choose auto, concise, detailed, or none; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-verbosity": (
-                "Verbosity",
-                "Optional OpenAI text verbosity hint for GPT-5-style Responses models.",
-                "verbosity",
-                "choose low, medium, or high; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-thinking-effort": (
-                "Thinking effort",
-                "Optional Anthropic-style thinking level mapped to provider token budgets.",
-                "thinking_effort",
-                "choose off, low, medium, high, xhigh, or max; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-thinking-budget-tokens": (
-                "Think budget",
-                "Optional explicit thinking token budget for providers that expose it.",
-                "thinking_budget_tokens",
-                "whole number of at least 1024, or blank for inherited default",
-            ),
-        }
-        if field_id in model_profile_guidance:
-            label, purpose, key, validation = model_profile_guidance[field_id]
-            draft_key = field_id.removeprefix("settings-").replace("-", "_")
+        # TASK-33002.1: every model-default row reads the one field table.
+        draft_key = (field_id or "").removeprefix("settings-").replace("-", "_")
+        if draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            name = PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+            spec = MODEL_CONFIG_FIELDS[name]
             if not self._model_profile_field_supported(
                 provider,
                 draft_key,
                 self._provider_setting_values_mapping().get("model"),
             ):
                 return (
-                    ("Focused setting", label),
+                    ("Focused setting", spec.label),
                     (
                         "Availability",
                         self._unsupported_model_profile_placeholder(provider),
@@ -16120,26 +16012,10 @@ class SettingsScreen(BaseAppScreen):
                     ),
                 )
             return (
-                ("Focused setting", label),
-                ("Purpose", purpose),
-                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{key}"),
-                ("Validation", validation),
-            )
-        if field_id == "settings-model-profile-streaming":
-            return (
-                ("Focused setting", "Streaming"),
-                (
-                    "Purpose",
-                    "Optional streaming preference for this provider and model profile.",
-                ),
-                (
-                    "Saved as",
-                    f"{provider_config_prefix}.model_defaults.<model>.streaming",
-                ),
-                (
-                    "Validation",
-                    "choose On or Off; Inherit default keeps the inherited default",
-                ),
+                ("Focused setting", spec.label),
+                ("Purpose", spec.help),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{name}"),
+                ("Validation", f"{spec.valid_range}; blank inherits the default"),
             )
         if field_id == "settings-model-catalog-stale-hours":
             return (
@@ -17464,7 +17340,9 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Temperature", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_temperature"]
@@ -17479,7 +17357,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_top_p"]
                     ),
                 ):
-                    yield Static("Top P", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_p"]),
                         id="settings-model-profile-top-p",
@@ -17493,7 +17373,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_min_p"]
                     ),
                 ):
-                    yield Static("Min P", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_min_p"]),
                         id="settings-model-profile-min-p",
@@ -17507,7 +17389,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_top_k"]
                     ),
                 ):
-                    yield Static("Top K", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_k"]),
                         id="settings-model-profile-top-k",
@@ -17517,7 +17401,9 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Response max tokens", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_max_tokens"]
@@ -17533,7 +17419,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_seed"]
                     ),
                 ):
-                    yield Static("Seed", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["seed"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_seed"]),
                         id="settings-model-profile-seed",
@@ -17548,7 +17436,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_presence_penalty"]
                     ),
                 ):
-                    yield Static("Presence", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["presence_penalty"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_presence_penalty"]
@@ -17564,7 +17454,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_frequency_penalty"]
                     ),
                 ):
-                    yield Static("Frequency", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["frequency_penalty"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_frequency_penalty"]
@@ -17593,7 +17485,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Reasoning", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["reasoning_effort"], classes="settings-input-label"
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_reasoning_effort",
@@ -17606,7 +17500,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Summary", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["reasoning_summary"], classes="settings-input-label"
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_reasoning_summary",
@@ -17619,7 +17515,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Verbosity", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_verbosity",
@@ -17632,7 +17530,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Thinking", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["thinking_effort"], classes="settings-input-label"
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_thinking_effort",
@@ -17644,7 +17544,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_thinking_budget_tokens"]
                     ),
                 ):
-                    yield Static("Think budget", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["thinking_budget_tokens"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._model_profile_input_value(
                             provider,
@@ -17665,7 +17567,9 @@ class SettingsScreen(BaseAppScreen):
                         ],
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Streaming", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
+                    )
                     yield Select(
                         list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
                         value=self._streaming_select_value(
@@ -17834,7 +17738,9 @@ class SettingsScreen(BaseAppScreen):
                     yield Button("Cancel", id="settings-cep-rename-cancel")
             if self._custom_endpoint_edit_slug == slug:
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Base URL", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["endpoint"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=entry.base_url,
                         id="settings-cep-edit-url",
@@ -18670,7 +18576,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Budget strategy", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["conversation_budget_mode"], classes="settings-input-label"
+                )
                 yield Select(
                     [
                         ("Automatic", ContextBudgetMode.AUTOMATIC.value),
@@ -18694,7 +18602,9 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("When limit nears", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["compaction_mode"], classes="settings-input-label"
+                )
                 yield Select(
                     [
                         ("Ask", ContextCompactionMode.ASK.value),
@@ -18854,7 +18764,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Streaming", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
+                )
                 yield Checkbox(
                     value=coerce_bool_setting(
                         self._console_behavior_value("streaming"), True
@@ -18862,7 +18774,9 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-console-default-streaming",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("temperature")
@@ -18872,7 +18786,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 2.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Top P", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("top_p")
@@ -18882,7 +18798,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Min P", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("min_p")
@@ -18892,7 +18810,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="optional 0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Top K", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("top_k")
@@ -18903,7 +18823,9 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Response max tokens", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("max_tokens")
@@ -18914,7 +18836,7 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Seed", classes="settings-input-label")
+                yield Static(MODEL_FIELD_LABELS["seed"], classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("seed")
@@ -18925,7 +18847,9 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Presence", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["presence_penalty"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("presence_penalty")
@@ -18935,7 +18859,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="-2.0 - 2.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Frequency", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["frequency_penalty"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("frequency_penalty")
@@ -18950,19 +18876,29 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Reasoning", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["reasoning_effort"], classes="settings-input-label"
+                )
                 yield self._console_default_enum_select("reasoning_effort")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Summary", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["reasoning_summary"], classes="settings-input-label"
+                )
                 yield self._console_default_enum_select("reasoning_summary")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Verbosity", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
+                )
                 yield self._console_default_enum_select("verbosity")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Thinking", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["thinking_effort"], classes="settings-input-label"
+                )
                 yield self._console_default_enum_select("thinking_effort")
             with Horizontal(classes="settings-input-row"):
-                yield Static("Think budget", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["thinking_budget_tokens"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("thinking_budget_tokens")
@@ -22600,20 +22536,20 @@ class SettingsScreen(BaseAppScreen):
                 "Speaker label and trusted character-template human name",
             )
             yield self._detail_row(
-                "Streaming",
+                MODEL_FIELD_LABELS["streaming"],
                 "Global fallback for streaming responses when no Console session "
                 "or provider+model profile overrides it",
             )
             yield self._detail_row(
-                "Temperature",
+                MODEL_FIELD_LABELS["temperature"],
                 "Creativity fallback, 0.0 is focused and 2.0 is exploratory",
             )
             yield self._detail_row(
-                "Top P",
+                MODEL_FIELD_LABELS["top_p"],
                 "Probability cutoff fallback; lower values narrow token choices",
             )
             yield self._detail_row(
-                "Response max tokens",
+                MODEL_FIELD_LABELS["max_tokens"],
                 "Optional response cap for new/default Console sends",
             )
             yield self._detail_row(

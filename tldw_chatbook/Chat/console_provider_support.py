@@ -186,6 +186,143 @@ GENERATION_FIELD_REQUEST_KEYS: dict[str, tuple[str, ...]] = {
     "thinking_budget_tokens": ("thinking_budget_tokens",),
     "streaming": ("streaming",),
 }
+
+
+@dataclass(frozen=True)
+class ModelConfigField:
+    """One model-configuration field's user-facing copy (TASK-33002.1).
+
+    Attributes:
+        name: Field name; generation fields use their
+            ``GENERATION_FIELD_REQUEST_KEYS`` name.
+        label: The one label every editor shows.
+        help: A plain-language line saying what the field does. It never
+            names a config key.
+        valid_range: The values the field accepts.
+    """
+
+    name: str
+    label: str
+    help: str
+    valid_range: str
+
+    @property
+    def request_keys(self) -> tuple[str, ...]:
+        """Request keys read from the one definition; ``()`` for non-generation fields."""
+        return GENERATION_FIELD_REQUEST_KEYS.get(self.name, ())
+
+
+#: The one field table: every editor's label, help and range for each field
+#: (Alt+M popover, Conversation settings, Settings model defaults and Console
+#: Behavior fallbacks). Labels stay within the modal's 23-cell label column.
+MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
+    field.name: field
+    for field in (
+        ModelConfigField(
+            "temperature",
+            "Temperature",
+            "How varied replies are: lower is focused, higher is more varied.",
+            "0.0 to 2.0",
+        ),
+        ModelConfigField(
+            "top_p",
+            "Top P",
+            "Sample only from the likeliest tokens whose chances add up to P.",
+            "0.0 to 1.0",
+        ),
+        ModelConfigField(
+            "min_p",
+            "Min P",
+            "Skip tokens far less likely than the top choice.",
+            "0.0 to 1.0",
+        ),
+        ModelConfigField(
+            "top_k",
+            "Top K",
+            "Sample only from the K most likely tokens.",
+            "whole number, 0 or more",
+        ),
+        ModelConfigField(
+            "max_tokens",
+            "Max tokens",
+            "Longest reply the model may write, in tokens.",
+            "whole number, 1 or more",
+        ),
+        ModelConfigField(
+            "seed",
+            "Seed",
+            "Fixed number that makes replies repeatable where the provider allows it.",
+            "whole number, 0 or more",
+        ),
+        ModelConfigField(
+            "presence_penalty",
+            "Presence penalty",
+            "Higher values push the model toward new topics.",
+            "-2.0 to 2.0",
+        ),
+        ModelConfigField(
+            "frequency_penalty",
+            "Frequency penalty",
+            "Higher values make the model repeat the same words less.",
+            "-2.0 to 2.0",
+        ),
+        ModelConfigField(
+            "reasoning_effort",
+            "Reasoning effort",
+            "How much a reasoning model thinks before it answers.",
+            "a level from the list",
+        ),
+        ModelConfigField(
+            "reasoning_summary",
+            "Reasoning summary",
+            "How much of its reasoning the model summarizes for you.",
+            "auto, concise, detailed or none",
+        ),
+        ModelConfigField(
+            "verbosity",
+            "Verbosity",
+            "How long and detailed replies are.",
+            "low, medium or high",
+        ),
+        ModelConfigField(
+            "thinking_effort",
+            "Thinking",
+            "How much extended thinking the model does before it answers.",
+            "off, low, medium, high, xhigh or max",
+        ),
+        ModelConfigField(
+            "thinking_budget_tokens",
+            "Thinking budget",
+            "Tokens reserved for thinking when Thinking is on.",
+            "whole number, 1,024 or more",
+        ),
+        ModelConfigField(
+            "streaming",
+            "Streaming",
+            "Show the reply as it is generated.",
+            "On or Off",
+        ),
+        ModelConfigField(
+            "endpoint",
+            "Endpoint",
+            "Server address the requests go to.",
+            "an http:// or https:// address",
+        ),
+        ModelConfigField(
+            "conversation_budget_mode",
+            "Budget strategy",
+            "How much conversation history each request may carry.",
+            "Automatic or Custom",
+        ),
+        ModelConfigField(
+            "compaction_mode",
+            "When limit nears",
+            "What happens when the conversation nears its token limit.",
+            "Ask, Automatic or Off",
+        ),
+    )
+}
+MODEL_FIELD_LABELS = {name: field.label for name, field in MODEL_CONFIG_FIELDS.items()}
 _PROVIDER_GATED_GENERATION_FIELDS = frozenset(
     {
         "reasoning_effort",
@@ -226,6 +363,59 @@ def _capability_generation_fields(
     return frozenset(supported)
 
 
+def _registry_family_provider(
+    provider: str | None, app_config: Mapping[str, object] | None
+) -> str:
+    """Return a ``custom-ep`` id's family key, as the gateway sends it.
+
+    Without ``app_config`` (or for any other id) the provider is returned
+    unchanged, so a registry id then has no map entry.
+    """
+    if app_config is not None:
+        # Lazy: the registry imports this module via console_session_settings.
+        from tldw_chatbook.Chat.custom_endpoint_registry import (
+            entry_for,
+            family_execution_key,
+        )
+
+        entry = entry_for(app_config, provider)
+        if entry is not None:
+            return family_execution_key(entry.family)
+    return provider or ""
+
+
+def reasoning_effort_values_sent(
+    provider: str | None,
+    values: tuple[str, ...],
+    app_config: Mapping[str, object] | None = None,
+) -> tuple[str, ...]:
+    """Return the reasoning-effort ``values`` a request for ``provider`` carries.
+
+    A local strict-template request drops a level its chat template rejects
+    ("minimal" on llama.cpp) with only a debug log, so an editor offering it
+    would save a value that is never sent (TASK-33002.1). Every other
+    provider keeps ``values`` unchanged.
+
+    Args:
+        provider: Provider identity, config key or ``custom-ep`` id.
+        values: Candidate levels, in display order.
+        app_config: Config holding the ADR-146 endpoint registry.
+
+    Returns:
+        The subset of ``values`` the request builder forwards, in order.
+    """
+    execution_key = resolve_console_provider_identity(
+        provider_config_key(_registry_family_provider(provider, app_config))
+    ).execution_key
+    if not build_local_thinking_payload_fields(execution_key, "low", None):
+        return values
+    return tuple(
+        value
+        for value in values
+        if build_local_thinking_payload_fields(execution_key, value, None)
+    )
+
+
 def supported_generation_fields(
     provider: str | None,
     model: str | None,
@@ -253,17 +443,7 @@ def supported_generation_fields(
     """
     from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
 
-    if app_config is not None:
-        # Lazy: the registry imports this module via console_session_settings.
-        from tldw_chatbook.Chat.custom_endpoint_registry import (
-            entry_for,
-            family_execution_key,
-        )
-
-        entry = entry_for(app_config, provider)
-        if entry is not None:
-            provider = family_execution_key(entry.family)
-    provider_key = provider_config_key(provider or "")
+    provider_key = provider_config_key(_registry_family_provider(provider, app_config))
     capable = _capability_generation_fields(provider_key, model)
     request_keys = PROVIDER_PARAM_MAP.get(
         resolve_console_provider_identity(provider_key).execution_key

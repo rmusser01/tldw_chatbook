@@ -198,7 +198,7 @@ The biggest page, and where to start.
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, Summary, Verbosity."). Global fallbacks live under Console Behavior. |
+| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text, and focusing one shows its plain-language help and range in the inspector. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
 **Space** to check a model. Checked rows survive leaving this category and
@@ -214,7 +214,7 @@ Open **Generation defaults** to edit overrides for the selected provider and
 model. Supported controls remain reachable with **Tab**; unsupported controls
 are hidden. "Supported" is the same answer Console uses: the provider's
 capability rules (reasoning and thinking follow the model, e.g. a Claude model
-that rejects a fixed thinking budget hides **Think budget**) narrowed to the
+that rejects a fixed thinking budget hides **Thinking budget**) narrowed to the
 fields that provider's request actually sends. A value saved earlier for a
 field that is now hidden stays in `config.toml` untouched, and it is never
 sent. Searching **/** for a hidden field (say "seed" with Anthropic) opens
@@ -256,6 +256,23 @@ so does an open chat you have not touched yet: no messages and no edited
 settings. It follows the next time Console shows it, even when its provider
 already reads Ready, and Console tells you if its provider changed. A chat that
 holds any work keeps its own settings.
+
+*Verified against feat/model-config-p2-field-table + TASK-33002.1 —
+2026-09-27: every model-configuration field now has one label from one field
+table, the same in Generation defaults, Console Behavior's global fallbacks
+and the Console's Conversation settings: **Max tokens**, **Presence
+penalty**, **Frequency penalty**, **Reasoning effort**, **Reasoning
+summary**, **Thinking**, **Thinking budget**, **Endpoint**, **Budget
+strategy** and **When limit nears**. Driven live at 211x44 (and once at
+235x52) on a scratch llama.cpp profile: the Generation defaults read "Hidden
+for llama.cpp: Reasoning summary, Verbosity, Thinking."; focusing Thinking
+budget showed "Purpose: Tokens reserved for thinking when Thinking is on." and
+"Validation: whole number, 1,024 or more; blank inherits the default" in the
+inspector; the Reasoning effort list for llama.cpp offered none, low, medium,
+high and xhigh (no "minimal", which llama.cpp's request drops); **/**
+"Thinking budget" found the field in both categories. The old names (Think
+budget, Response max tokens) stay in the search index as aliases; not driven
+live.*
 
 #### QwenCloud
 
@@ -525,11 +542,11 @@ unchanged — what changed is response validation and request strictness:
   with evidence.
 
 **Creating one.** In the Console settings modal, the **New endpoint…**
-button sits with **Base URL** (it appears for providers that take a base
+button sits with **Endpoint** (it appears for providers that take a base
 URL, and whenever named endpoints exist). It opens "New endpoint from
 template": pick a template — the "OpenAI-compatible (blank)" starter, any
 provider, or an existing named entry (as a duplicate) — adjust the prefilled
-**Family**, **Base URL**, and **Models**, give it a **Display name** (the
+**Family**, **Endpoint**, and **Models**, give it a **Display name** (the
 slug is derived from the name), and press **Create**. The entry is written
 to `config.toml` immediately, the modal switches to the new provider, and
 model discovery runs against the new URL; **Cancel** leaves config
@@ -543,7 +560,7 @@ This page's **Custom endpoints** section manages them. Each row reads
 | Action | What it does |
 |---|---|
 | **Rename** | Changes the display name only — the slug (the id conversations reference) never changes. |
-| **Edit** | Rewrites **Base URL**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
+| **Edit** | Rewrites **Endpoint**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
 | **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. |
 
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
@@ -930,7 +947,7 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
 | **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
-| **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
+| **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, with the same labels, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
 | **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Edit summary prompt** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 

@@ -1,0 +1,293 @@
+"""One field table labels every model-configuration field (TASK-33002.1).
+
+The popover, the Conversation settings modal, Settings Providers & Models
+model defaults and Settings Console Behavior fallbacks each rendered their
+own spelling of the same field ("Think budget" / "Budget" / "Thinking
+budget"). These tests pin the table itself and collect every surface's
+rendered labels against it, so a new private spelling fails here.
+"""
+
+from __future__ import annotations
+
+import pytest
+from textual.widget import Widget
+from textual.widgets import Button, Static
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_console_model_popover_geometry import (
+    PopoverGeometryHarness,
+    build_geometry_popover,
+)
+from Tests.UI.test_console_session_settings import StyledModalHarness, _basic_modal
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _active_destination_screen,
+    _build_test_app,
+    _wait_for_selector,
+)
+from tldw_chatbook.Chat.console_provider_support import (
+    GENERATION_FIELD_REQUEST_KEYS,
+    MODEL_CONFIG_FIELDS,
+    MODEL_FIELD_LABELS,
+    build_local_thinking_payload_fields,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    validate_console_session_settings,
+)
+from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.Console.console_settings_modal import MODAL_LABEL_WIDTH
+
+_GENERATION_CONTROL_IDS = {
+    "temperature": "temperature",
+    "top-p": "top_p",
+    "min-p": "min_p",
+    "top-k": "top_k",
+    "max-tokens": "max_tokens",
+    "seed": "seed",
+    "presence-penalty": "presence_penalty",
+    "frequency-penalty": "frequency_penalty",
+    "reasoning-effort": "reasoning_effort",
+    "reasoning-summary": "reasoning_summary",
+    "verbosity": "verbosity",
+    "thinking-effort": "thinking_effort",
+    "thinking-budget-tokens": "thinking_budget_tokens",
+}
+
+
+def _label_before(control: Widget, label_class: str) -> str:
+    """Return the text of the nearest preceding sibling label of ``control``."""
+    siblings = list(control.parent.children)
+    for widget in reversed(siblings[: siblings.index(control)]):
+        if isinstance(widget, Static) and widget.has_class(label_class):
+            renderable = widget.renderable
+            return str(getattr(renderable, "plain", renderable))
+    raise AssertionError(f"no {label_class} label before #{control.id}")
+
+
+def _label_drift(screen, controls: dict[str, str], label_class: str) -> list:
+    """Collect (control id, rendered label, table label) for every mismatch."""
+    drift = []
+    for control_id, field_name in controls.items():
+        control = screen.query_one(f"#{control_id}")
+        rendered = _label_before(control, label_class)
+        if rendered != MODEL_FIELD_LABELS[field_name]:
+            drift.append((control_id, rendered, MODEL_FIELD_LABELS[field_name]))
+    return drift
+
+
+def test_field_table_covers_every_model_configuration_field():
+    """AC#1: every model-default field plus Endpoint and the budget pair."""
+    assert set(MODEL_CONFIG_FIELDS) == set(FULL_MODEL_DEFAULT_FIELDS) | {
+        "endpoint",
+        "conversation_budget_mode",
+        "compaction_mode",
+    }
+    for name, field in MODEL_CONFIG_FIELDS.items():
+        assert field.name == name
+        assert field.label and field.help and field.valid_range, name
+        assert "\n" not in field.help, name
+
+
+def test_generation_fields_carry_phase_one_request_keys_not_a_copy():
+    """AC#1: request keys are read from the one definition, never re-typed."""
+    for name, field in MODEL_CONFIG_FIELDS.items():
+        if name in GENERATION_FIELD_REQUEST_KEYS:
+            assert field.request_keys is GENERATION_FIELD_REQUEST_KEYS[name]
+        else:
+            assert field.request_keys == ()
+
+
+def test_drift_pairs_resolve_to_one_label_each():
+    """AC#4: the table's answer for every pair the editors disagreed on."""
+    assert MODEL_FIELD_LABELS["thinking_budget_tokens"] == "Thinking budget"
+    assert MODEL_FIELD_LABELS["endpoint"] == "Endpoint"
+    assert MODEL_FIELD_LABELS["max_tokens"] == "Max tokens"
+    assert MODEL_FIELD_LABELS["presence_penalty"] == "Presence penalty"
+    assert MODEL_FIELD_LABELS["frequency_penalty"] == "Frequency penalty"
+    assert MODEL_FIELD_LABELS["conversation_budget_mode"] == "Budget strategy"
+    assert MODEL_FIELD_LABELS["compaction_mode"] == "When limit nears"
+
+
+def test_labels_fit_the_existing_label_columns():
+    """Parent AC#8: no label outgrows the modal's 23-cell label column."""
+    for name, label in MODEL_FIELD_LABELS.items():
+        assert len(label) <= MODAL_LABEL_WIDTH, name
+
+
+def test_help_lines_use_plain_words_not_config_keys():
+    """AC#6: no config key, request key or dotted config path in help."""
+    for name, field in MODEL_CONFIG_FIELDS.items():
+        assert "_" not in field.help, name
+        assert "chat_defaults" not in field.help, name
+        for key in field.request_keys:
+            assert key not in field.help.lower().split(), name
+
+
+def test_console_validation_names_fields_by_their_table_labels():
+    """AC#4: the modal's errors name Max tokens and Endpoint as the rows do."""
+    errors = validate_console_session_settings(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            max_tokens=0,
+            base_url="not a url",
+        ),
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+    )
+    assert f"{MODEL_FIELD_LABELS['max_tokens']} must be 1 or greater." in errors
+    assert f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL." in errors
+
+
+@pytest.mark.parametrize(
+    ("provider", "app_config"),
+    [
+        ("llama_cpp", {}),
+        ("local_mlx_lm", {}),
+        (
+            "custom-ep:gpu-box",
+            {
+                "custom_endpoints": {
+                    "gpu-box": {
+                        "display_name": "GPU box",
+                        "base_url": "http://127.0.0.1:8080",
+                        "family": "llama_cpp",
+                    }
+                }
+            },
+        ),
+    ],
+)
+def test_local_reasoning_select_offers_only_levels_the_request_sends(
+    provider, app_config
+):
+    """Phase-1 rider: a strict local template drops "minimal" with only a
+    debug log, so Settings' Reasoning select must not offer it. Checked
+    against the real request builder, not a copied list."""
+    options = SettingsScreen._model_profile_reasoning_effort_options(
+        provider, "qwen", app_config
+    )
+
+    assert "minimal" not in options
+    assert options
+    for value in options:
+        assert build_local_thinking_payload_fields("llama_cpp", value, None), value
+
+
+def test_hosted_reasoning_select_keeps_minimal():
+    """Hosted providers forward "minimal"; their list is unchanged."""
+    options = SettingsScreen._model_profile_reasoning_effort_options
+
+    assert "minimal" in options("openai", "gpt-5")
+    assert "minimal" in options("custom", "any")
+
+
+@pytest.mark.asyncio
+async def test_popover_labels_come_from_the_field_table():
+    """AC#2/#3: the Alt+M popover's Temperature and Streaming labels."""
+    app = PopoverGeometryHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(build_geometry_popover())
+        await pilot.pause()
+        screen = app.screen
+        assert _label_drift(
+            screen,
+            {"console-popover-temperature": "temperature"},
+            "console-popover-field-label",
+        ) == []
+        streaming = screen.query_one("#console-popover-streaming", Button)
+        assert str(streaming.label).startswith(f"{MODEL_FIELD_LABELS['streaming']}: ")
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_modal_labels_come_from_the_field_table():
+    """AC#2/#3: every Model-view and Context-view field label in the modal."""
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
+    )
+    controls = {
+        f"console-settings-{suffix}": name
+        for suffix, name in _GENERATION_CONTROL_IDS.items()
+    }
+    controls |= {
+        "console-settings-streaming": "streaming",
+        "console-settings-base-url": "endpoint",
+        "console-context-budget-mode": "conversation_budget_mode",
+        "console-context-compaction-mode": "compaction_mode",
+    }
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(_basic_modal(settings, app))
+        await pilot.pause()
+        assert _label_drift(app.screen, controls, "console-settings-modal-label") == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_model_default_labels_and_inspector_come_from_the_table(
+    request,
+):
+    """AC#2/#3/#5: P&M form rows, dirty-field names and the inspector."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+    controls = {
+        f"settings-model-profile-{suffix}": name
+        for suffix, name in _GENERATION_CONTROL_IDS.items()
+    }
+    controls |= {
+        "settings-model-profile-streaming": "streaming",
+        "settings-provider-endpoint-value": "endpoint",
+    }
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-profile-temperature")
+        await pilot.pause()
+        assert _label_drift(screen, controls, "settings-input-label") == []
+
+        # Inspector: the focused model-default field shows the table's help
+        # and range (and the dirty-field names reuse the same labels).
+        field = MODEL_CONFIG_FIELDS["presence_penalty"]
+        screen._active_settings_field_id = "settings-model-profile-presence-penalty"
+        rows = dict(screen._provider_field_guidance_rows())
+        assert rows["Focused setting"] == field.label
+        assert rows["Purpose"] == field.help
+        assert field.valid_range in rows["Validation"]
+        # No focused field (the live crash found at 211x44): generic rows.
+        screen._active_settings_field_id = None
+        assert screen._provider_field_guidance_rows()
+
+        screen._stage_provider_value("model_profile_presence_penalty", "0.5")
+        screen._stage_provider_value("model_profile_max_tokens", "512")
+        assert set(screen._provider_return_dirty_field_names()) == {
+            MODEL_FIELD_LABELS["presence_penalty"],
+            MODEL_FIELD_LABELS["max_tokens"],
+        }
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_console_behavior_fallback_labels_come_from_the_table(
+    request,
+):
+    """AC#2/#3: Console Behavior's global fallbacks and context pair."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    controls = {
+        f"settings-console-default-{suffix}": name
+        for suffix, name in _GENERATION_CONTROL_IDS.items()
+    }
+    controls |= {
+        "settings-console-default-streaming": "streaming",
+        "settings-console-context-budget-mode": "conversation_budget_mode",
+        "settings-console-context-compaction-mode": "compaction_mode",
+    }
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await _wait_for_selector(screen, pilot, "#settings-console-default-temperature")
+        await pilot.pause()
+        assert _label_drift(screen, controls, "settings-input-label") == []

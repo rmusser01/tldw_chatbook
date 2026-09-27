@@ -1106,7 +1106,8 @@ def test_adapter_save_sections_batches_sections(monkeypatch):
 def test_settings_console_default_max_tokens_rejects_raw_zero():
     screen = SettingsScreen(_build_test_app())
 
-    with pytest.raises(ValueError, match="Response max tokens"):
+    # TASK-33002.1: the error names the field by its table label.
+    with pytest.raises(ValueError, match="^Max tokens must"):
         screen._normalise_console_default_max_tokens(0)
 
 
@@ -4445,7 +4446,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
         summary = screen.query_one("#settings-provider-generation-support", Static)
         assert (
             str(summary.renderable)
-            == "Hidden for llama.cpp: Summary, Verbosity, Thinking."
+            == "Hidden for llama.cpp: Reasoning summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
         for row_id in (
@@ -4473,7 +4474,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
 
         assert (
             str(summary.renderable)
-            == "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+            == "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
         )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
@@ -4533,15 +4534,15 @@ def test_settings_generation_summary_names_every_hidden_row():
     assert screen._provider_generation_support_copy(
         "anthropic", "claude-sonnet-4-5"
     ) == (
-        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-        "Summary, Verbosity."
+        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
+        "Reasoning effort, Reasoning summary, Verbosity."
     )
     assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
-        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-        "Summary, Verbosity, Think budget."
+        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
+        "Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
     )
     assert screen._provider_generation_support_copy("openai", "gpt-5") == (
-        "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+        "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
     )
 
 
@@ -5101,7 +5102,7 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
             in text
         )
         assert (
-            "Response max tokens: Optional response cap for new/default Console sends"
+            "Max tokens: Optional response cap for new/default Console sends"
             in text
         )
         assert (
@@ -7238,7 +7239,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "#settings-console-default-max-tokens",
             "handle_console_default_max_tokens_changed",
             "0",
-            "Response max tokens must be a whole number of at least 1.",
+            "Max tokens must be a whole number of at least 1.",
         ),
         (
             "#settings-console-default-min-p",
@@ -7250,7 +7251,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "#settings-console-default-thinking-budget-tokens",
             "handle_console_default_thinking_budget_tokens_changed",
             "128",
-            "Thinking budget tokens must be a whole number of at least 1024.",
+            "Thinking budget must be a whole number of at least 1024.",
         ),
     ),
 )
@@ -9110,7 +9111,7 @@ async def test_settings_provider_category_saves_openai_generation_profile(
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
-        assert "Hidden for OpenAI: Min P, Top K, Thinking, Think budget." in text
+        assert "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget." in text
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -9256,8 +9257,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(
         # TASK-33001.2: Anthropic's request carries no Min P, Seed or
         # penalties, and Opus 4.7 rejects a fixed thinking budget.
         assert (
-            "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-            "Summary, Verbosity, Think budget."
+            "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency "
+            "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking "
+            "budget."
         ) in text
         for row_id in (
             "#settings-model-profile-min-p-row",
@@ -10708,12 +10710,13 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
 
         text = _visible_text(screen)
         assert "Focused setting: Endpoint" in text
-        assert "Controls the provider endpoint used by Console generation." in text
+        # TASK-33002.1: Endpoint help and range come from the field table.
+        assert "Purpose: Server address the requests go to." in text
         # task-1716: the in-place refresh folds dotted keys at separators,
         # so the key spans two lines in visible text.
         assert "Saved as: api_settings.ollama." in text
         assert "api_url" in text
-        assert "Validation: must start with http:// or https:// when set" in text
+        assert "Validation: an http:// or https:// address when set" in text
 
 
 @pytest.mark.asyncio
