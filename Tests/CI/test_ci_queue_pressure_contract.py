@@ -360,9 +360,12 @@ def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
 
 
 def test_bundle_and_backlog_checks_run_on_push_events() -> None:
-    """With css-bundle-guard/backlog-guard deleted, the required workflow is the
+    """The bundle and backlog-id checks still run on dev/main pushes.
+
+    With css-bundle-guard/backlog-guard deleted, the required workflow is the
     only place these checks run -- so they must run on dev/main pushes too, not
-    only inside the pull-request-only fast lanes."""
+    only inside the pull-request-only fast lanes.
+    """
     workflow = _workflow("derived-artifacts.yml")
     assert {"dev", "main"} <= set(_triggers(workflow)["push"]["branches"])
     steps = workflow["jobs"]["derived-artifacts"]["steps"]

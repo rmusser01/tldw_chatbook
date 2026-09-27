@@ -154,13 +154,14 @@ cron entry on `dev`.
 - **Guards.** `css-bundle-guard.yml` and `backlog-guard.yml` were deleted. Their
   checks already ran inside the required job on every pull request and on every
   `dev`/`main` push. The Consequences runner count above is updated to match.
-- **GGUF evidence narrowed.** `task-2062-1`/`-2` evidence workflows now fire only on
-  GGUF code and their own tests (not on `pyproject.toml`, `app.py`, `config.py`,
-  `css/**` or the shared conftests). Their UI test files were not added to the PR
-  gate's UI census because neither is green on the fast lane's minimal dependency
-  set (all 11 failures are `RecoveryRequired: raw_source_selection_changed`). So
-  until that harness gate is fixed (CI throughput sub-project 3), a cross-cutting
-  edit to `app.py`, `css/**` or a conftest no longer exercises the GGUF screens on
-  any PR.
+- **GGUF evidence narrowed.** `task-2062-1`/`-2` evidence workflows no longer fire on
+  `app.py`, `config.py` or `css/**` edits (about 244 of the PR merges that triggered
+  them in 30 days). They still fire on GGUF code, their own tests, `pyproject.toml`
+  (the only native macOS/Windows install signal a PR gets) and the shared
+  test-harness files they import. Their UI test files are not in the PR gate's UI
+  census because neither is green on the fast lane's minimal dependency set (all 11
+  failures are `RecoveryRequired: raw_source_selection_changed`). So until that
+  harness gate is fixed (CI throughput sub-project 3), an edit confined to `app.py`,
+  `config.py` or `css/**` does not exercise the GGUF screens on any PR.
 - **Strict.** Restored on 2026-09-27 (see the note under the 2026-08-30 amendment).
 - Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
