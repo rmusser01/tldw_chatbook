@@ -1,329 +1,369 @@
 # CI throughput, sub-project 1: merge-conflict hotspots and wasted runner work
 
 **Date:** 2026-09-27
-**Status:** Draft, awaiting owner review
-**Scope:** `rmusser01/tldw_chatbook` only (sub-project 1 of 5; see "Program context")
+**Status:** Draft, revision 2 (after an independent adversarial review the same day). Awaiting
+owner review.
+**Scope:** `rmusser01/tldw_chatbook` only. This is sub-project 1 of 5; see "Program context".
 
 ## Why
 
-The owner's per-PR procedure is: rebase on the latest `dev`, address Qodo's review, merge.
-With `dev` absorbing 23-50 merges a day, every merge makes the other open PRs stale, and
-every rebase is a new head that goes to the back of the CI queue. Two things turn that
-treadmill into a stall, and this sub-project removes as much of both as it can:
+The owner's procedure for each PR is: rebase on the latest `dev`, address Qodo's review, merge.
+`dev` absorbs 23-50 merges a day, and since 2026-09-27 it is **strict** again: a PR must be up to
+date to merge. So every merge makes each other ready PR re-sync, and every re-sync is a new head
+that needs a fresh CI verdict. Two things turn that into a stall:
 
-1. **Rebases that conflict.** A PR in conflict gets **no CI runs at all** (DIRTY), and the
-   resolution is manual.
-2. **Runner work that produces no signal**, competing for the account's shared runner pool.
+1. **Re-syncs that conflict.** A conflicting (DIRTY) PR gets **no CI runs at all**, and resolving
+   the conflict is manual.
+2. **Runner work that produces no signal**, competing for the account's shared pool of 40 jobs
+   (5 macOS).
 
-It also removes the one flaky test group that fails the required check on unrelated PRs.
+A third problem, a flaky test in the required fast lane, costs whole CI cycles on unrelated PRs.
 
 ## Evidence (measured 2026-09-27)
 
-All numbers come from real history on `origin/dev` and the Actions API for 09-19..09-26.
+These numbers come from real history on `origin/dev` and from the Actions API for 09-19..26.
 
-**Conflicts.** We replayed the 547 real `dev -> PR branch` sync merges found in the last 300
-merged PRs with `git merge-tree`. **263 (48%) conflicted.** The files involved:
+**Conflicts.** We replayed the 547 real `dev -> PR branch` sync merges from the last 300 merged
+PRs with `git merge-tree`. **263 (48%) conflicted.**
 
 | File | Syncs conflicting |
 |---|---|
 | `Docs/security/production-diagnostic-inventory.json` | 102 |
 | `Docs/User_Guide/library/notes.md` | 74 |
 | `backlog/docs/lessons-testing-evidence.md` | 43 |
-| Other `Docs/User_Guide/**/*.md` | 47 |
+| other `Docs/User_Guide/**/*.md` | 47 |
 | `backlog/docs/lessons-live-verification.md` | 12 |
 
-**186 of the 263 (71%)** conflicted only on these three kinds of file. In those syncs, every
-other file merged cleanly.
-
-**The inventory.** 127 real syncs had both sides change the inventory. Replaying them with the
+**The inventory.** 127 real syncs had both sides change the inventory. We replayed them with the
 top-level `summary` block stripped from base, ours and theirs:
 
-| Outcome | With `summary` (today) | Without `summary` |
+| | With `summary` (today) | Without `summary` |
 |---|---|---|
-| Conflict | 102 | 17 |
-| Clean, but differs from the committed resolution | n/a | 7 |
+| Conflicts | 102 | 17 |
+| Clean, but different from the committed resolution | – | 7 |
 
-The remaining 17 are real overlaps: both sides changed diagnostics in the same source file,
-and a human should look at those. The 7 are caught by the required check (below).
+- **The 17** are real overlaps: both sides changed diagnostics in the same source file.
+- **The 7** fail the required check and preflight, which run on the merged head.
+- **Why `summary` causes it:** its six totals change whenever any logger call changes, so two
+  PRs that each touch any logger call both edit the same lines.
+- Inventory drift also caused 41 of the required check's 84 failures, across 21 branches.
 
-The six `summary` totals are the cause: any two PRs that touch any logger call both edit
-the same lines. Inventory drift also caused 41 of the required check's 84 failures, across 21
-branches (including 4 pushes to `dev`).
+**The User Guide.** The conflicting hunks are "Verified against ..." paragraphs. `CLAUDE.md`
+("UI changes") asks UI PRs to update a page "or at least its 'Verified against' stamp", so
+parallel PRs add their paragraphs at the same spot on the same page. Many of these paragraphs
+are now multi-paragraph change logs.
 
-**The User Guide.** The conflicts are "Verified against ..." paragraphs. `CLAUDE.md:143-144`
-asks UI PRs to update the page "or at least its 'Verified against' stamp", and parallel PRs
-append those paragraphs at the same spot on the same page. Many are now multi-paragraph
-change logs.
+**Runner waste.** About 22.5k runner-minutes over 8 days, roughly 2.8k per day.
 
-**Runner waste.** Over 8 days, about 22.5k runner-minutes (about 2.8k/day):
+- **GGUF evidence (TASK-2062.1/.2):** 16% of all minutes and **81% of Windows minutes**. Each
+  triggering PR starts 3 OS jobs. Both tasks have been Done since 2026-08-13. The workflows fire
+  on `pyproject.toml`, `app.py`, `config.py`, `css/**`, `Tests/conftest.py`,
+  `Tests/UI/conftest.py` and `Tests/UI/app_factory.py`.
+- **`Nightly Deep`:** 22% of all minutes and 64% of macOS minutes, with **0 complete results in 8
+  nights**. Run serially it reaches about 11% of the suite in 240 min.
+- **`css-bundle-guard.yml` and `backlog-guard.yml`:** they re-run `check_bundle_sync` and
+  `check_backlog_task_ids`. `derived-artifacts.yml` already runs both in the required job, on
+  every PR and every push to `dev`/`main`. The guards are path-filtered, but together they
+  started 978 runs in 8 days, each taking a runner slot.
 
-- **GGUF evidence workflows (TASK-2062.1/.2):** 16% of all runner-minutes and **81% of all
-  Windows minutes**. Each triggering PR starts 3 OS jobs. Both tasks have been Done since
-  2026-08-13. The workflows fire on broad paths: `pyproject.toml`, `app.py`, `config.py`,
-  `css/**`, `Tests/conftest.py`, `Tests/UI/conftest.py`, `Tests/UI/app_factory.py`.
-- **Duplicated guards:** `css-bundle-guard.yml` (612 runs, 0 failures) and `backlog-guard.yml`
-  (366 runs) run checks that `derived-artifacts.yml` already runs in the required job, on every
-  PR and every push to `dev`/`main` (`check_bundle_sync`, `check_backlog_task_ids`;
-  `derived-artifacts.yml:255` says so). Each still takes a runner slot per PR.
-- **Evidence-only runs:** 883 skipped-at-job-level runs a week come from `task-19637` (462) and
-  `task-32011` (421), both triggered on every `synchronize`.
+**Flake.** The error `KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"` in
+`Tests/UI/test_mcp_workbench.py` fails the required fast lane on unrelated PRs:
 
-**Flakes.** Four tests in `Tests/UI/test_mcp_workbench.py` failed across 16 of the 37 failed
-`PR Fast Lane` jobs, on unrelated branches, and pass on rerun and locally on `dev`.
-TASK-32049 already records the root cause of one of them: a TextArea `COMPONENT_CLASSES`
-registration race.
+- 16 of 37 failed fast-lane jobs had it, across 4 or more distinct tests.
+- TASK-32049 recorded it first, in `test_test_tool_preview_*`, as a TextArea component-class
+  registration race.
+- It hit #2816 and #2815 again on 2026-09-26/27.
 
 ## Goals
 
-- Cut sync-merge conflicts on these hotspots at the source, while keeping the privacy review the
+- Stop re-syncs from conflicting where the conflicts are artificial. Keep the privacy review the
   inventory exists for (ADR-029).
-- Remove runner jobs per PR that produce no signal.
-- Stop the flaky group from failing the required check on unrelated PRs, without losing it.
+- Remove runner work that produces no signal.
+- Remove the fast-lane flake at its root cause, without weakening the gate's
+  no-selection-suppression contract.
 
 ## Non-goals
 
-This sub-project does not touch:
+- The required check's name and `needs` wiring. These are unchanged; cadence changes are handled
+  under E.
+- `tldw_server` (sub-project 2), widening the PR gate (sub-project 4), and restoring the nightly
+  (sub-project 3).
+- **Lessons-file conflicts (deferred).** `merge=union` was considered and dropped:
+  - GitHub's server-side merge, and so `gh pr update-branch`, is expected to ignore it.
+  - A scratch repro showed it losing the blank line and `---` separator between entries.
+  - The files are not append-only. DoD #10 says "add or update", and 13 of the last 200 commits
+    to the two big lessons files delete lines.
+  - It would also flatter the replay metric, because `git merge-tree` honours the local
+    attribute.
 
-- The required check's name, `needs` wiring, dependency boundary or cadence (ADR-103).
-- `tldw_server`'s workflows (sub-project 2).
-- The nightly (sub-project 3).
-- Widening the PR gate (sub-project 4).
-- Existing "Verified against" paragraphs already in the User Guide. They stay; only new ones
-  stop. Deleting them now would conflict with every open PR that appends one.
-- The generated CSS bundle: it did not appear among conflict hotspots.
+  Revisit after A and B land, with GitHub's behaviour verified first.
+- Existing "Verified against" paragraphs stay in place. Only new ones stop.
 
 ## Design
 
 ### A. Diagnostic inventory: stop committing the `summary` totals
 
-`scripts/check_persistent_diagnostic_inventory.py` changes as follows:
+**Changes to `scripts/check_persistent_diagnostic_inventory.py`:**
 
-- **`--write`** no longer emits the top-level `summary` object. `schema_version` goes from 3
-  to 4.
-- **Totals are derived, not stored.** The six totals (`owner_files`,
-  `path_privacy_candidate_calls`, `persistent_sink_files`, `task_31551_calls`,
-  `task_492_calls`, `task_494_calls`) are computed from the rows whenever they are needed:
-  - for the drift report (`_summary_lines`, around line 1241), which now compares totals
-    derived from the committed rows against totals derived from the rebuilt rows;
-  - for the stdout lines around 1773 and 1788.
-- **Old-format files are rejected.** Check mode fails a committed file that still has
-  `schema_version` 3 or a `summary` key, and names the fix:
-  `python scripts/check_persistent_diagnostic_inventory.py --write`.
-- **Everything else is unchanged:** every row, the rules, the ordering, and the requirement
-  that a PR's diff shows each added, removed or changed diagnostic for review.
+- `--write` no longer emits the top-level `summary` object, and `schema_version` goes from 3 to 4.
+- The six totals are derived from the rows wherever they are needed:
+  - the drift report (`_summary_lines`, around line 1241), which now compares totals derived
+    from the committed rows against totals derived from the rebuilt rows;
+  - the stdout lines at around 1773 and 1788.
+- Everything else is unchanged: every row, the rules, the ordering, and the requirement that a
+  PR's diff shows each added, removed or changed diagnostic for review.
+- **No separate schema-3 rejection.** The existing byte comparison plus `_metadata_lines`
+  already reports `schema_version 3 -> 4` as drift. Implementation confirms this with a
+  negative control. It adds a check only if that control fails.
 
-Tests to update:
+**Every consumer that must change** (verified on `origin/dev`):
 
-- `Tests/Architecture/test_derived_artifact_checkers.py:77` edits `rebuilt["summary"]`. It
-  becomes a row edit that shifts a derived total.
-- `Tests/Architecture/test_diagnostic_path_privacy.py:1004` builds a `summary` fixture. It
-  becomes a derived-total assertion.
+| File | What uses `summary` / schema 3 |
+|---|---|
+| `Tests/Architecture/test_persistent_diagnostic_inventory.py` | `:1147-1149` asserts `schema_version == 3` and reads `summary`; `:3455-3462` asserts the whole `summary` dict |
+| `Tests/Architecture/test_derived_artifact_checkers.py:77` | edits `rebuilt["summary"]` |
+| `Tests/Architecture/test_diagnostic_path_privacy.py:1004` | builds a `summary` fixture |
+| `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py` | `normalized["summary"]` and `_assert_task_492_summary` (`:1067-1101`, `:2291-2293`); two mutant tests edit `summary` (`:2388-2415`) |
+| `Tests/fixtures/summarization_diagnostic_review.json:4-5` | pins SHAs of the normalized inventory; regenerate |
 
-New test: the drift report still shows total deltas, and a schema-3 file fails with the
-regenerate instruction.
+None of these files run in preflight or the fast lane, so A's verification runs all of them
+explicitly.
 
-**Why the 7 clean-but-different merges stay safe.** The required check runs the inventory
-checker on every PR head (the merged ref) and on every push to `dev`. A clean merge whose
-rows don't match the merged source fails the check, and `scripts/preflight.sh` catches the
-same thing locally. Today those cases surface as a conflict; after this change they surface
-as a failing required check, and the fix is the same regeneration.
+**Why the 7 clean-but-different merges stay safe.** Strict protection means every merge has a
+green required check on a head that contains the current `dev`, and that check runs the
+inventory checker. `scripts/preflight.sh` catches the same thing locally.
 
-**Rollout.** Every open PR that touches the inventory will conflict or fail once after this
-lands, and needs one `--write` on its merged head. That is the same work a single summary
-conflict costs today.
+**Rollout.** After A lands, each open PR that touched the inventory (7 on 2026-09-27: #2842,
+#2838, #2834, #2817, #2563, #2427, #2196) conflicts once and needs one `--write` on its merged
+head. That is the same cost one summary conflict has today.
 
 **ADR.** Append a dated amendment to `backlog/decisions/029-local-private-data-boundary.md`:
-the inventory stores per-file rows only; totals are derived at check time; this was done
-because of merge-conflict churn (the evidence above). The review guarantee is unchanged.
+per-file rows only, totals derived at check time, the evidence above, and an unchanged review
+guarantee.
 
-**Alternatives rejected.**
+**Rejected alternatives.**
 
-- *One file per source file* (about 600 files). The same 17 real overlaps still conflict, so
-  it adds nothing over removing `summary`, at a much larger diff and tooling cost.
-- *Don't commit the inventory; derive it in CI.* This removes the reviewed diff ADR-029
-  depends on. Lesson TASK-14651 records how a generator-resolved conflict silently blessed 16
-  privacy-relevant diagnostics.
+- *One file per source file.* The same 17 real overlaps still conflict, at a far larger diff.
+- *Don't commit the inventory.* This removes the reviewed diff ADR-029 depends on (see lesson
+  TASK-14651).
 
-### B. Append-only prose
+### B. User Guide verification stamps
 
-**B1. Lessons files.** Add a root `.gitattributes` entry:
-
-```
-backlog/docs/lessons-*.md merge=union
-```
-
-With this, local merges and rebases keep both sides' appended entries without a conflict.
-Lessons are append-only by convention, which is the case `union` is meant for.
-
-Known limit: GitHub's server-side mergeability check is expected to ignore merge attributes.
-A PR may therefore still show "conflicts" on GitHub until it is rebased or merged locally,
-which the owner's procedure does anyway. Implementation verifies two things and records the
-result as a lesson:
-
-1. A local `git rebase` with two appended entries resolves cleanly.
-2. How GitHub reports such a PR, using a throwaway branch, only with the owner's OK because it
-   is outward-facing.
-
-**B2. User Guide verification stamps.** Change the `CLAUDE.md` rule at `CLAUDE.md:143-144` to:
+Replace the `CLAUDE.md` "UI changes" rule with:
 
 > **UI changes:** PRs that change a screen's UI update the matching `Docs/User_Guide/` page's
-> content where behaviour changed. Record what was verified, and against which branch and
-> date, in the task's Implementation Notes, not in the User Guide page. Do not append
-> "Verified against" paragraphs to User Guide pages.
+> content where behaviour changed. Record what was verified, and against which branch and date,
+> in the task's Implementation Notes, not in the User Guide page. Do not add "Verified against"
+> paragraphs to User Guide pages.
 
-Only `CLAUDE.md` carries this rule on `origin/dev` (checked 2026-09-27), so no other
-instruction file changes.
+The stamp practice is also taught at `backlog/docs/lessons-live-verification.md:3124-3180`
+("run it before you stamp anything"). That lesson gets a dated note pointing at the new rule.
+Historical plan documents that mention stamps (for example
+`plan-2026-09-02-schedules-handoff-pr5.md:26`) stay as they are.
 
 ### C. Runner work that produces no signal
 
-| Workflow | Change | Why |
-|---|---|---|
-| `css-bundle-guard.yml` | Delete | `derived-artifacts.yml` runs `check_bundle_sync` in the required job on every PR and every push to `dev`/`main`. |
-| `backlog-guard.yml` | Delete | Same for `check_backlog_task_ids` (`derived-artifacts.yml:255`). |
-| `task-2062-1-gguf-import-evidence.yml` | Narrow `paths` to its own file, `tldw_chatbook/Model_Artifacts/**`, `tldw_chatbook/UI/Screens/model_installed_view.py`, `Tests/Model_Artifacts/**`, `Tests/UI/test_model_installed_view.py`. Drop `pyproject.toml`, `app.py`, `css/**`, `Tests/conftest.py`, `Tests/UI/conftest.py`, `Tests/UI/consolidated_css.py`. Keep `workflow_dispatch`. | Keeps the three-OS GGUF guard where GGUF code changes, and stops it firing on unrelated app-wide edits. Not a required check, so a path filter is safe. |
-| `task-2062-2-gguf-source-evidence.yml` | Narrow `paths` to its own file, `Model_Artifacts/**`, `Event_Handlers/LLM_Management_Events/**`, `UI/LLM_Management_Window.py`, `UI/Screens/llm_screen.py`, `Tests/LLM_Management/**`, `Tests/Model_Artifacts/**`, `Tests/UI/test_llm_gguf_source_modes.py`. Drop `pyproject.toml`, `app.py`, `config.py`, `Tests/conftest.py`, `Tests/private_profile.py`, `Tests/UI/app_factory.py`, `Tests/UI/conftest.py`. Keep `workflow_dispatch`. | Same reasoning. |
-| `task-32011-linux-storage-evidence.yml` | Replace the `pull_request` trigger with `workflow_dispatch` | TASK-32011 is Done. This stops a skipped run on every push. |
-| `task-19637-platform-evidence.yml` | No change | TASK-19637 is In Progress. Its label-gated re-run on `synchronize` is still wanted, and its skipped runs cost no runner time. |
-| `nightly-deep.yml` | **Pause:** remove the `schedule:` trigger and keep `workflow_dispatch`. Add a header comment naming this spec and the condition for restoring the schedule (phase 3: the run can finish and report). | Owner decision, 2026-09-27. It uses about 22% of all runner-minutes and 64% of macOS minutes, and produced no complete result in 8/8 nights: a serial run reaches about 11% in 240 min. It can still be run by hand. |
+**C1. Delete `css-bundle-guard.yml` and `backlog-guard.yml`.** These pins and references must be
+updated in the same change. Otherwise the required check goes red, because `Tests/CI` is a
+fast-lane target and PyYAML is a core dependency.
 
-Also update the comments that name the deleted guards: `derived-artifacts.yml:26` and `:255`,
-and `perf-guard.yml:9` and `:43`. No test pins the guard or evidence workflows (grep of
-`origin/dev`, 2026-09-27).
+- **`Tests/CI/test_ci_queue_pressure_contract.py:47-52`:** drop both files from
+  `STANDALONE_WORKFLOWS`. The tests at `:343-357` iterate over it.
+- **`Tests/CI/test_derived_artifacts_workflow.py:219-226`:** the test that keeps
+  `backlog-guard.yml` and `derived-artifacts.yml` from carrying divergent copies of the check
+  becomes moot. Delete it and keep the `derived-artifacts.yml` side.
+- **`Tests/Packaging/test_python_runtime_floor.py:94`:** it reads `css-bundle-guard.yml`, so
+  retarget it to `derived-artifacts.yml`.
+- **Comment and docs references:**
+  - `Tests/CI/test_backlog_task_id_uniqueness.py:8`;
+  - `Tests/README.md:363-368`;
+  - `test.yml` comments at 31/56/69;
+  - `derived-artifacts.yml:26`, `:128`, `:255`;
+  - `perf-guard.yml:9`, `:43`;
+  - `scripts/check_backlog_task_ids.py:20`, `:209`;
+  - `scripts/check_bundle_sync.py:15`.
+- **Conflict warning:** open PR #2026 edits `backlog-guard.yml` and so will hit a
+  modify/delete conflict. Tell its owner.
 
-**Pausing the nightly: where it lands and which tests change.**
+**C2. Narrow the GGUF evidence triggers.**
 
-- **Two branches.** Schedules register from the default branch, and the file's header
-  requires it to stay identical on `dev` and `main`. So the change lands on `dev` (this
-  sub-project's PR) and on `main`.
-- **The `main` change ships `dev`'s entire paused file.** `main`'s copy is 25 lines behind
-  `dev`'s, which is what open PR #2819 fixes, so this supersedes #2819. Merging to `main` is
-  the owner's call.
-- **Contract tests.** Two tests pin the cron:
-  - `Tests/CI/test_ci_queue_pressure_contract.py:153-154` (`triggers == {"schedule",
-    "workflow_dispatch"}`, cron `30 8 * * *`);
-  - `Tests/CI/test_github_actions_test_workflow.py:391`.
+- **`task-2062-1-gguf-import-evidence.yml` `paths`:** its own file,
+  `tldw_chatbook/Model_Artifacts/**`, `tldw_chatbook/UI/Screens/model_installed_view.py`,
+  `Tests/Model_Artifacts/**`, `Tests/UI/test_model_installed_view.py`.
+- **`task-2062-2-gguf-source-evidence.yml` `paths`:** its own file, `Model_Artifacts/**`,
+  `Event_Handlers/LLM_Management_Events/**`, `UI/LLM_Management_Window.py`,
+  `UI/Screens/llm_screen.py`, `Tests/LLM_Management/**`, `Tests/Model_Artifacts/**`,
+  `Tests/UI/test_llm_gguf_source_modes.py`.
+- **Both keep `workflow_dispatch`.**
+- **Pinned tests:** update `Tests/CI/test_task2062_1_gguf_import_evidence.py:35-47` and
+  `test_task2062_2_gguf_source_evidence.py:42-58`, which pin the exact lists.
+- **Keeping cross-cutting edits covered:** add `Tests/UI/test_model_installed_view.py` and
+  `Tests/UI/test_llm_gguf_source_modes.py` to `scripts/ui_pr_gate_census.txt`, if both are green
+  on the fast lane's minimal dependency set. That keeps Linux coverage of those screens when
+  `app.py`, `css/**` or `conftest.py` change. If either file is not green, record it and leave it
+  out; don't gate on red.
 
-  They change to assert the paused shape (dispatch only), with a comment pointing at phase 3,
-  which restores both the schedule and these assertions.
+**C3. Disable `Nightly Deep` (owner action, zero diff).** Run
+`gh workflow disable nightly-deep.yml --repo rmusser01/tldw_chatbook`.
 
-### D. Quarantine the flaky MCP workbench tests from the fast lane
+- **Reversible** with `gh workflow enable`.
+- **Needs no push to `main`,** where the schedule is registered and where any push starts the full
+  `test.yml` run.
+- **Leaves alone:** contract tests, `nightly-deep.yml`, and open PR #2819.
+- **Recorded** in `backlog/docs/branch-protection-baseline.md` and in the ADR-103 amendment (E).
+- **Restored** by sub-project 3 once a run can finish and report.
 
-In `derived-artifacts.yml`'s "Run fast PR contract" step, add one `--deselect` per test, with
-a comment naming TASK-32049:
+The task-32011 trigger change from revision 1 is dropped: it saved zero runner-minutes.
 
-```
---deselect "Tests/UI/test_mcp_workbench.py::test_render_failure_in_show_tool_test_result_notifies_instead_of_only_logging"
---deselect "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount"
---deselect "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel"
---deselect "Tests/UI/test_mcp_workbench.py::test_set_initial_view_state_during_inflight_reload_applies_pending_state_once"
-```
+### D. Fix the fast-lane flake at its root cause
 
-`--deselect` matches node-id prefixes, so the parametrized test is covered by its base id.
-Implementation confirms each id against `origin/dev`, and confirms that each id deselects the
-intended node and nothing else (compare `--collect-only` counts before and after).
+The fast-lane contract deliberately forbids selection-suppressing flags:
 
-- **Contract test.** `Tests/CI/test_ci_queue_pressure_contract.py` pins the fast-lane targets
-  (`FAST_LANE_TARGETS`). Extend it to pin the quarantine set too, so an entry can't be added
-  silently.
-- **Check whether the contract test runs in CI at all.** It does
-  `pytest.importorskip("yaml")`, and the fast lane installs only
-  `-e . pytest pytest-asyncio pytest-timeout packaging`. Implementation checks whether `yaml`
-  is present in that environment. If it isn't, the contract test is silently skipped in CI;
-  report that as a finding, not a fix in scope.
-- **The tests are not dropped.** They still run in `test.yml` and the nightly. TASK-32049
-  (extended to cover all four tests) owns the root-cause fix and removing the `--deselect`
-  lines.
+- `Tests/CI/test_ci_queue_pressure_contract.py:325-340` rejects `--deselect`.
+- The design doc (`2026-08-29-fast-pr-lane-design.md:253-254`) says selection-suppressing flags
+  must not be able to turn a subset into a pass.
+
+The four failing tests also share one error with the tests TASK-32049 already records, so
+deselecting them would most likely move the flake, not remove it. So D does not quarantine.
+
+- **Scope:** find and fix the TextArea `text-area--gutter` `COMPONENT_CLASSES` race, whether it
+  lives in the MCP workbench's preview code (a latent production bug) or in the tests' timing.
+  Extend TASK-32049 to cover every test showing this error. Time-box it to one working session.
+- **Evidence:** run `Tests/UI/test_mcp_workbench.py` 20 times on the minimal dependency set,
+  before and after the fix. The failure count goes from N > 0 to 0, and the before-run shows the
+  flake actually reproduces.
+- **Fallback if the time box runs out:** bring the owner options, for example moving the file
+  into a separate non-required job. That changes the fast-lane target list, so it needs an
+  ADR-103 amendment. Don't pick one without the owner.
+
+### E. ADR-103 amendment
+
+ADR-103 says full-tree coverage "remains mandatory" through `main` pushes, manual dispatch and the
+nightly. It also says any change to "event cadence" must update it. Append a dated amendment
+recording:
+
+- **The nightly:** disabled on 2026-09-27 by the owner. It had 0 of 8 complete runs, and its
+  budget went to other work.
+- **What full-tree coverage remains:** `main` pushes (last push 2026-09-14) and manual dispatch.
+  Sub-project 3 restores the nightly.
+- **The deleted guards,** with the Consequences line on routine path-scoped guards and runner
+  counts updated to match.
+- **The strict re-enable** (already noted in revision 1's docs PR).
+
+## Coverage after this change (stated, not implied)
+
+- **Full suite, any OS:** only on `main` pushes and manual dispatch, until sub-project 3.
+  Nothing ran to completion before this change either; the nightly produced no complete result
+  in 8 nights.
+- **macOS/Windows, any automatic cadence:**
+  - `test.yml`'s `artifact-lease-spike` (3 OSes) on `main` pushes;
+  - the narrowed GGUF workflows;
+  - label-gated evidence workflows (19637, 598-603);
+  - `voice-aec-wheels` on its paths.
+- **Windows collection failures:** the kind that aborted the nightly (the cp1252 errors of
+  #2818 / task-32916) would go unnoticed. A cheap weekly Windows `--collect-only` canary is
+  listed for sub-project 3.
+- **GGUF screens:** covered on Linux in the PR gate through C2's census additions, and
+  cross-OS when GGUF code changes.
+
+## Rollout order under strict protection
+
+Each step is its own PR, and each merges before the next is started:
+
+1. **#2848** (this spec plus the merge-gate docs). B edits the same `CLAUDE.md` lines, so this
+   lands first.
+2. **A alone:** small and fast, in a quiet window. It touches the inventory, which is the file
+   everything conflicts on, so it goes first of the implementation PRs.
+3. **C1 + C2 + E,** plus the C3 owner action, recorded.
+4. **D:** the root-cause fix.
+5. **B:** the `CLAUDE.md` rule and the lesson note.
 
 ## Verification
 
-Each item needs evidence, not assertion:
-
 - **A:**
-  - The sync-merge replay, re-run on schema-4 files, reproduces "102 -> about 17". The replay
-    is committed as a small stdlib script, `scripts/measure_sync_merge_conflicts.py`, so the
-    2-week success review re-runs the same method.
-  - The checker round-trips: `--write` then check passes. A deliberate row edit fails with
-    total deltas shown.
-  - A schema-3 file fails with the regenerate instruction.
-  - `./scripts/preflight.sh` rc=0.
-- **B1:** a local two-branch rebase test resolves both appended lessons entries without a
-  conflict, and a negative control without the attribute conflicts.
-- **C:** `gh pr checks` on the implementation PR shows no CSS/Backlog Guard runs. The task
-  notes carry a table of sample changed-path sets (`app.py` only; `css/**` only;
-  `Tests/conftest.py` only; `Model_Artifacts/**`; `pyproject.toml` only) against each edited
-  workflow's new `paths`. It shows GGUF evidence fires only for the GGUF rows.
-- **D:** `--collect-only` shows exactly the four ids removed from the fast lane, and the
-  contract test fails if an entry is added without updating it.
-- **Full:** preflight rc=0; the fast-lane files pass locally on the minimal dependency set.
+  - the five consumer files above pass;
+  - `--write` then check round-trips;
+  - a row edit fails with total deltas shown;
+  - a schema-3 file is reported (negative control);
+  - preflight rc=0;
+  - the sync-merge replay re-run on schema-4 files reproduces roughly 102 → 17, using the
+    committed `scripts/measure_sync_merge_conflicts.py`.
+- **C:**
+  - every pin listed in C1 and C2 updated, and `Tests/CI` passing on the minimal dependency set;
+  - the census additions green;
+  - `gh workflow view nightly-deep.yml` shows `disabled_manually`;
+  - a table of sample changed-path sets (`app.py` only, `css/**` only, `Tests/conftest.py` only,
+    `Model_Artifacts/**`, `pyproject.toml` only) showing which workflows fire.
+- **D:** the 20-run before/after counts, and the flake's root cause named with file:line.
 
-## Success measures (review about 2 weeks after merge)
+## Success measures (review about 2 weeks after rollout step 5)
+
+The baseline (09-19..26) was taken under `strict=false`, and with the `tldw_server` duplicate lane
+still running. That lane was removed on 2026-09-27. So end-to-end numbers mix this
+sub-project's effect with the `tldw_server` fix, and the attributable measures are separated
+out below.
+
+**Throughput (the owner's goal; not attributable to this sub-project alone):**
+
+- merges per day;
+- median time from ready to merged;
+- required-check push-to-verdict p50/p90, split into queue time and run time;
+- re-sync cycles per merged PR;
+- DIRTY share of open PRs, sampled daily.
+
+**Attributable to this sub-project:**
 
 | Measure | Baseline | Target |
 |---|---|---|
-| Share of `dev -> branch` sync merges with any conflict (same replay method) | 48% | ≤ 20% |
-| Inventory share of required-check failures | 41 of 84 | ≤ 10% |
-| Runner-minutes per day | ~2.8k | Down by ≥ 35% (GGUF about 16% plus the nightly about 22%) |
-| macOS minutes per day | ~290 | Down by ≥ 60% |
-| Windows minutes | – | Down by ≥ 70% |
-| Runs per PR head SHA | 5.47 | ≤ 4 |
-| Spurious `PR Fast Lane` failures from the MCP group | 16 of 37 failed jobs | 0 |
+| Sync merges with any conflict (replay, no local merge attributes) | 48% | ≤ 25% |
+| Runner-minutes per day for the changed workflows (GGUF ×2, guards ×2, nightly) | ~1,100 | ≥ 80% lower |
+| Fast-lane failures carrying the `text-area--gutter` error | 16 of 37 failed jobs | 0 |
 
 ## Risks
 
-- **A clean-but-wrong inventory merge lands on `dev`.** This happens only if a PR merges
-  without its required check running on the merged ref. Branch protection prevents that, and
-  the push-to-`dev` run catches it after the fact.
-- **`merge=union` duplicates a line.** This happens if someone edits an existing lessons entry
-  on two branches. That is rare for append-only files and visible in review.
-- **A quarantine outlives its fix.** Mitigated by pinning the set in the contract test and
-  tracking removal in TASK-32049.
+- **A clean-but-wrong inventory merge lands on `dev`.** Strict protection prevents that: the
+  required check always runs on a head that contains the current `dev`.
+- **D's time box runs out.** This falls back to an owner decision; nothing is quarantined
+  silently.
+- **Full-suite coverage is effectively zero until sub-project 3.** That is stated in the ADR-103
+  amendment rather than hidden. The nightly produced nothing either.
 
 ## Program context
 
 **Owner priority order (2026-09-27):**
 
 1. CI throughput: sub-projects 1, 2 and 5.
-2. Clear the open-PR backlog: 34 open PRs on 2026-09-27; 30 to `dev`, 5 drafts, 4
-   conflicting, 10 idle for more than 14 days.
-3. Tests and issues: sub-projects 3 and 4, plus TASK-32049.
+2. Clear the open-PR backlog. On 2026-09-27 there were 34 open PRs: 30 to `dev`, 5 drafts, 4
+   conflicting, and 10 idle for more than 14 days.
+3. Tests and issues: sub-projects 3 and 4, plus TASK-32049 if D's fallback applies.
 
-Sub-project 4 widens the PR gate, which adds CI work per PR, so it deliberately waits for
-phase 3.
+Sub-project 4 widens the gate, which adds CI work per PR, so it waits for phase 3.
 
-**Merge gate: strict is back on (owner decision, 2026-09-27; applied the same day).** `dev`
-again requires PRs to be up to date before merging, so a stale-base merge is now refused
-server-side for every merger. The rationale is recorded in
-`backlog/docs/branch-protection-baseline.md` and noted on ADR-103.
+**Merge gate (owner decisions, applied 2026-09-27):**
 
-Strict makes part A a prerequisite for throughput, not just a nicety. Every merge forces
-each other ready PR to re-sync. Before part A, 80% of re-syncs where both sides touch the
-inventory conflict, and a conflicting PR gets no CI. After part A, most re-syncs are clean,
-so the only serial cost left is one CI run per re-sync.
+- `dev` is strict again.
+- `allow_update_branch` and `allow_auto_merge` are on.
+- Required conversation resolution is on.
 
-The nightly's red is mostly one harness cause, not product bugs. A local re-run of its three
-worst files on `origin/dev`, 2026-09-27:
+These are recorded in `backlog/docs/branch-protection-baseline.md`, and ADR-103 has a note. Under
+strict, A is a throughput prerequisite. Before A, 80% of re-syncs where both sides touch the
+inventory conflict, and a conflicting PR gets no CI.
 
-- `Tests/Agents/test_local_tool_provider.py`: 248 of 263 fail, all with
-  `RecoveryRequired: raw_source_selection_changed` from the backup/recovery gate.
-- `Tests/Agents/test_fleet_runtime.py` and `Tests/Agents/test_agent_service.py`: 146 and 79
-  fail, matching the nightly's counts. They are dominated by the same gate
-  (`raw_source_selection_changed`, `raw_participant_not_installed`,
-  `config_source_not_installed`), surfacing directly or as agent runs that end in `error`.
-- A small remainder looks like real test drift.
+**The nightly's red is mostly one harness cause, not product bugs.** Its three worst files,
+re-run locally on `origin/dev` on 2026-09-27:
 
-The sub-projects not designed here:
+- `Tests/Agents/test_local_tool_provider.py` fails 248 of 263, all with
+  `RecoveryRequired: raw_source_selection_changed`.
+- `test_fleet_runtime.py` fails 146 and `test_agent_service.py` fails 79, matching the nightly's
+  counts. Both are dominated by the same backup/recovery gate.
 
-2. **Account-wide runner queue.** `tldw_server` creates 3-6× this repo's runs, mostly from
-   `workflow_run` fan-out. At 2026-09-27 04:00Z it had 366 runs queued and 0 in progress; this
-   repo's median push-to-verdict was 425-745 min on 09-24..26. Survey in progress.
-3. **A nightly that produces a result.** `Nightly Deep` produced no complete result in 8/8
-   nights:
-   - Serially it reaches about 11% in 240 min.
-   - Windows fails with a cp1252 collection error and an `os.write` hang.
-   - It shows about 2,050 deterministic failures in Agents, Backup_Recovery and Audio.
-   - It burns 22% of runner-minutes and 64% of macOS minutes.
-4. **A wider PR gate.** Change-aware selection inside the one required context. This amends
-   ADR-103, which rejected path-based selection because `Docs/` and `backlog/` files are test
-   inputs, so any selector must treat them conservatively.
-5. **Fewer cycles per PR.** Batch the Qodo fixes into the rebase push; optionally skip CI on
-   draft PRs.
+**Sub-project 2, the account queue.** The main cause was removed on 2026-09-27: `tldw_server`'s
+`LICENSE_FIRST_CI_ENABLED` duplicate lane of 750-job runs, which filled the account's 40-job cap.
+What remains is `tldw_server`-side:
+
+- each audit still creates 28 no-op `workflow_run` runs and 1 ungated `ci.yml` preflight job;
+- finish its TASK-12986 cutover.
+
+**Sub-projects 3-5:** the nightly (starting with the `RecoveryRequired` harness cause, plus a
+Windows collection canary); a wider PR gate (amends ADR-103, which rejected path-based selection
+because `Docs/` and `backlog/` are test inputs); fewer cycles per PR.
