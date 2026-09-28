@@ -2,11 +2,12 @@
 
 One story's full surface on the Artifacts screen: title, source URL,
 body, provenance, a "what we'll look for" preview of the NEXT cycle's
-queries, and the Phase-1 action set -- keep/unkeep, dive deeper (stage a
+queries, and the action set -- keep/unkeep, dive deeper (stage a
 ``ChatHandoffPayload`` into Chat), export to Markdown, ingest into the
 read-it-later capture queue (Task 8, via
 ``Dreams.ingest_action.ingest_story_url`` bound to the app's capture
-service), more/less feedback, close.
+service), more/less feedback, goals & privacy (Phase 2 Task 1: pushes
+``DreamsGoalsModal``), close.
 
 Modal structure follows this stream's own modal idioms:
 
@@ -74,6 +75,7 @@ from textual.widgets import Button, Static
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.path_validation import validate_filename, validate_path_simple
 from ...Utils.timestamps import utc_now_iso
+from .artifacts_dreams_goals_modal import DreamsGoalsModal
 
 #: Same refusal as ``kept_briefings_modal._MARKDOWN_HYPERLINKS`` and the
 #: Artifacts screen's own report preview: story bodies are LLM-written
@@ -237,9 +239,10 @@ class DreamsStoryModal(ModalScreen[None]):
         ("i", "ingest", "Ingest"),
         ("m", "more", "More like this"),
         ("l", "less", "Less like this"),
+        ("g", "goals", "Goals & privacy"),
         ("q", "close", "Close"),
         # Hidden: Escape is the safe-dismissal grammar (task-16211), not a
-        # footer-advertised action -- the hint line stays exactly the seven.
+        # footer-advertised action -- the hint line stays exactly the eight.
         Binding("escape", "close", "Close", show=False),
     )
 
@@ -305,7 +308,7 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all seven for a story with an http(s)
+            # implemented actions -- all eight for a story with an http(s)
             # URL, Close only for a synthetic failed-cycle row, and no
             # Ingest for a dreams://llm row whose action is gated off.
             yield Static(self._hints_text(), id="dsm-hints")
@@ -316,7 +319,8 @@ class DreamsStoryModal(ModalScreen[None]):
             hints.append("k Keep · d Dive deeper · e Export")
             if _ingestable(self._story):
                 hints.append(" · i Ingest")
-            hints.append(" · m More like this · l Less like this · ")
+            hints.append(" · m More like this · l Less like this · "
+                         "g Goals & privacy · ")
         hints.append("q Close")
         return hints
 
@@ -333,14 +337,17 @@ class DreamsStoryModal(ModalScreen[None]):
         text.append(f"({_PREVIEW_LABEL})", style="dim")
         text.append("\n")
         if queries:
-            for query in queries:
-                text.append(f"- {query}\n")
+            for row in queries:
+                line = f"- {row['query']}"
+                if row.get("goal_derived"):
+                    line += " (goal-derived)"
+                text.append(f"{line}\n")
         else:
             text.append("No interest profile yet; nothing to preview.", style="dim")
         self.query_one("#dsm-preview", Static).update(text)
 
-    def _preview_queries(self) -> list[str]:
-        """Fallback queries for the current snapshot, via the public seam."""
+    def _preview_queries(self) -> list[dict]:
+        """Labeled fallback queries for the current snapshot (public seam)."""
         db = self._db()
         if db is None:
             return []
@@ -351,11 +358,12 @@ class DreamsStoryModal(ModalScreen[None]):
 
             snap = snapshot(db, now_epoch=time.time())
             topics = [str(topic["text"]) for topic in snap.get("topics", [])]
+            goals = snap.get("goals", [])
             try:
                 count = int(dreams_setting("queries_per_cycle") or 3)
             except (TypeError, ValueError):
                 count = 3
-            return preview_queries(topics, max(1, count))
+            return preview_queries(topics, goals, count=max(1, count))
         except Exception as exc:  # noqa: BLE001 - degrade the section, not the modal
             logger.warning(
                 f"Dreams query preview failed: {type(exc).__name__}"
@@ -611,6 +619,28 @@ class DreamsStoryModal(ModalScreen[None]):
         )
         self._changed()
         self.dismiss(None)
+
+    def action_goals(self) -> None:
+        """Open the goals & privacy modal; refresh the preview on return.
+
+        Not a story action: it is the profile's own management surface, so
+        it works from a synthetic failed-cycle row too (whose hint line
+        still advertises Close only). Goal edits flow ``on_changed`` through
+        this modal's own callback, so the Artifacts screen refreshes; the
+        dismiss callback repaints this modal's preview, which may have
+        changed (goals drive labeled preview lines).
+        """
+        def _after_goals(_result: None) -> None:
+            if not self._synthetic and self.is_attached:
+                self._render_preview()
+
+        self.app.push_screen(
+            DreamsGoalsModal(
+                dreams_db_getter=self._dreams_db_getter,
+                on_changed=self._on_changed,
+            ),
+            _after_goals,
+        )
 
     def action_close(self) -> None:
         self.dismiss(None)

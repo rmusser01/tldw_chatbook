@@ -505,7 +505,7 @@ async def test_http_story_still_offers_ingest(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_seven_actions(tmp_path):
+async def test_footer_hints_advertise_exactly_the_eight_actions(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()
@@ -527,6 +527,7 @@ async def test_footer_hints_advertise_exactly_the_seven_actions(tmp_path):
             "Ingest",
             "More like this",
             "Less like this",
+            "Goals & privacy",
             "Close",
         ):
             assert word in hints, f"hint must advertise {word!r}"
@@ -535,9 +536,48 @@ async def test_footer_hints_advertise_exactly_the_seven_actions(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_g_opens_goals_modal(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("g")
+        await pilot.pause()
+
+        from tldw_chatbook.UI.Screens.artifacts_dreams_goals_modal import (
+            DreamsGoalsModal,
+        )
+
+        goals_modal = app.screen
+        assert isinstance(goals_modal, DreamsGoalsModal), "g pushes the goals modal"
+        assert app.screen_stack[-2] is modal, "the story modal stays underneath"
+
+        await pilot.press("q")
+        await pilot.pause()
+        assert app.screen is modal, "closing the goals modal returns to the story"
+
+
+@pytest.mark.asyncio
 async def test_story_detail_renders_provenance_and_query_preview(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
     db = _seed_db(tmp_path)
+    # Phase 2 Task 1: goals join the preview -- searchable ones labeled as
+    # goal-derived, private ones never rendered at all.
+    db.upsert_profile_entry(
+        "goal", "see a jazz show", weight=1.0, searchable=1, source="user"
+    )
+    db.upsert_profile_entry(
+        "goal", "secret plan", weight=1.0, searchable=0, source="user"
+    )
     story = _story_row(db)
     app = App()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -559,6 +599,8 @@ async def test_story_detail_renders_provenance_and_query_preview(tmp_path, monke
         assert "preview (fallback queries until next cycle)" in text
         assert "visit japan recent developments" in text
         assert "surprising adjacent to visit japan" in text
+        assert "see a jazz show events and tickets (goal-derived)" in text
+        assert "secret plan" not in text, "a searchable=0 goal never renders"
 
 
 @pytest.mark.asyncio
