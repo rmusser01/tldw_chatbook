@@ -144,6 +144,36 @@ for `Application quit initiated`. If it is missing, input is probably queued beh
 check `console_send_stage ... status=entered` with no outcome line, and retry with a different
 send path before blaming the harness. Before filing it as yours, reproduce it on the merge base.
 
+## A client timeout does not cancel work on a serialized local inference server
+
+**TASK-32931, 2026-09-27.** Console speech stopped working for ~15 minutes after
+one long reply. The app requests the whole utterance in a single call and gives
+up at its 60s HTTP timeout (`TTS/base_backends.py`, `build_httpx_async_client(
+timeout=60.0)`); the local Qwen3-TTS server needed far longer than that for a
+2099-character message. The abandonment is one-sided: the server has no cancel
+path and holds one global inference lock (`_infer_lock` in its own
+`qwen3_tts_clone_server.py`), so the orphaned generation kept the GPU while
+every later request -- 416 characters, 451 characters, and a five-character
+probe -- queued behind it and timed out in turn. It looked like the whole
+feature was broken; it recovered by itself when the orphan finally finished.
+
+The misleading part is the reporting, not just the wait: the failure surfaces as
+`outcome_code=connection_unavailable` (TASK-15530's reachability copy), because
+`httpx.ReadTimeout` subclasses `RequestError`, while `/health` on the same
+server answered in under a millisecond throughout. A busy-but-alive server and a
+dead port are indistinguishable to the client at that layer.
+
+**What to do.** When a locally-hosted model server serializes inference, treat
+its queue as a shared resource that outlives your request: never abandon a long
+call and assume the resource was freed, and keep requests short enough to finish
+inside the client timeout rather than raising the timeout alone. Measure an
+endpoint's actual throughput before sizing a request against a deadline. Tell
+"hung" from "busy" cheaply: an invalid body returning 400 in 0.4ms while a valid
+one hangs forever localizes the stall to the inference lock rather than the
+process, which is how this was diagnosed. And read the outcome code as a
+symptom, not a diagnosis -- a read timeout on a reachable endpoint is not a
+connectivity failure.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container
