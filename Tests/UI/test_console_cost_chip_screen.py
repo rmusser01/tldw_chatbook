@@ -114,6 +114,14 @@ class _AnthropicCostGateway:
         self._reply = reply
         self.sent_messages: list[list[dict]] = []
 
+    def cached_context_window(self, settings):
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
+    async def resolve_context_window(self, settings):
+        return self.cached_context_window(settings)
+
     async def resolve_for_send(self, selection):
         return provider_resolution(
             provider="anthropic",

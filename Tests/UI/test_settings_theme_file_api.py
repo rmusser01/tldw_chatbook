@@ -129,13 +129,31 @@ async def test_list_user_themes_raises_through_on_pause(request, tmp_path, monke
             editor.list_user_theme_names()
 
 
+async def _accept_export(pilot, app, path=None):
+    """TASK-33076: Export asks where; accept the prefilled Downloads path
+    (or type ``path``). Returns the prompt's prefilled value."""
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    await pilot.pause()
+    assert isinstance(app.screen, RagProfileNameModal)
+    field = app.screen.query_one("#settings-rag-profile-name-input", Input)
+    prefilled = field.value
+    if path is not None:
+        field.value = str(path)
+    await pilot.click("#settings-rag-profile-name-confirm")
+    await pilot.pause()
+    return prefilled
+
+
 async def _confirm_delete(pilot, app, editor, name):
     editor.request_delete(name)
     await pilot.pause()
     assert isinstance(app.screen, ConfirmationDialog)
     assert app.screen.confirm_label == "Delete theme"
+    message = app.screen.message
     await pilot.click("#confirm-button")
     await pilot.pause()
+    return message
 
 
 @pytest.mark.asyncio
@@ -151,8 +169,15 @@ async def test_delete_active_launch_default_falls_back_to_textual_dark(
         await _mounted(pilot, app, editor, tmp_path)
         app.register_theme(create_theme_from_dict("mine", {**MINE, "dark": True}))
         app.theme = "mine"
-        await _confirm_delete(pilot, app, editor, "mine")
+        message = await _confirm_delete(pilot, app, editor, "mine")
 
+        # TASK-33071/33073: the dialog names the list name, the file, and
+        # what happens next.
+        assert "'Mine' (mine.toml)" in message
+        assert (
+            "It is your current and launch theme; the app will switch to Textual Dark and launch with it."
+            in message
+        )
         assert not path.exists()
         assert "mine" not in app.available_themes
         assert app.theme == "textual-dark"
@@ -173,8 +198,10 @@ async def test_delete_active_non_default_switches_to_launch_default(
         await _mounted(pilot, app, editor, tmp_path)
         app.register_theme(create_theme_from_dict("mine", {**MINE, "dark": True}))
         app.theme = "mine"
-        await _confirm_delete(pilot, app, editor, "mine")
+        message = await _confirm_delete(pilot, app, editor, "mine")
 
+        assert "It is your current theme; the app will switch to your launch theme, Nord." in message
+        assert "launch with" not in message
         assert app.theme == "nord"
         assert config_writes == []
 
@@ -194,7 +221,10 @@ async def test_delete_non_active_launch_default_only_changes_setting(
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         app.theme = "nord"
-        await _confirm_delete(pilot, app, editor, "mine")
+        message = await _confirm_delete(pilot, app, editor, "mine")
+
+        assert "It is your launch theme; the app will launch with Textual Dark from now on." in message
+        assert "switch to" not in message
 
         assert not path.exists()
         assert "mine" not in app.available_themes
@@ -295,7 +325,8 @@ async def test_export_theme_writes_saved_file_data(request, tmp_path, monkeypatc
         editor.load_theme("nord")  # a different palette in the editor
         await pilot.pause()
         editor.export_theme("mine")
-        await pilot.pause()
+        prefilled = await _accept_export(pilot, app)
+        assert prefilled == str(tmp_path / "Downloads" / "mine_theme.toml")
         exported = toml.load(tmp_path / "Downloads" / "mine_theme.toml")
         assert exported["colors"] == MINE
         assert exported["theme"]["name"] == "mine"
@@ -343,10 +374,13 @@ async def test_delete_and_export_resolve_by_theme_name_not_stem(
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         editor.export_theme("b")
-        await pilot.pause()
+        await _accept_export(pilot, app)
         assert toml.load(tmp_path / "Downloads" / "b_theme.toml")["colors"] == MINE
 
-        await _confirm_delete(pilot, app, editor, "b")
+        message = await _confirm_delete(pilot, app, editor, "b")
+        # TASK-33073: the list name with the real file; nothing falls back.
+        assert "'B' (a.toml)" in message
+        assert "It is your" not in message
         assert not path.exists()
 
 
@@ -469,7 +503,7 @@ async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_p
         readable, unreadable = editor.user_theme_listing()
         assert readable == {"mine": tmp_path / "mine.toml"}
         assert unreadable == {
-            "a": "not valid TOML",
+            "a": "not valid TOML (line 1, column 9)",
             "b": "missing [colors].primary",
             "c": "bogus is not a theme colour",
             "d": "variables is not a theme colour",
@@ -1050,3 +1084,216 @@ async def test_save_save_as_import_and_rename_refuse_a_linked_target(request, tm
             assert "not a regular file" in app.notify.call_args.args[0]
         _links_untouched(linked, gone, outside, before)
         assert (tmp_path / "mine.toml").exists()
+
+
+# -- TASK-33076: Export asks for a destination --------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_writes_to_the_chosen_destination_only(request, tmp_path, monkeypatch, tmp_path_factory):
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    elsewhere = tmp_path_factory.mktemp("export-elsewhere")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("mine")
+        prefilled = await _accept_export(pilot, app, elsewhere / "picked.toml")
+        assert prefilled == str(home / "Downloads" / "mine_theme.toml")
+        assert toml.load(elsewhere / "picked.toml")["colors"] == MINE
+        assert not (home / "Downloads").exists()  # nothing written to the default
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_refusals_show_in_the_prompt_and_write_nothing(
+    request, tmp_path, monkeypatch, tmp_path_factory
+):
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    (out / "adir.toml").mkdir()
+    (out / "link.toml").symlink_to(out / "target.toml")
+    (out / "themes-link").symlink_to(tmp_path, target_is_directory=True)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("mine")
+        await pilot.pause()
+        field = app.screen.query_one("#settings-rag-profile-name-input", Input)
+        cases = [
+            ("relative/x.toml", "Export needs the full path to a .toml file"),
+            (str(out / "x.txt"), "Export needs a file name ending in .toml"),
+            (str(out / "missing" / "x.toml"), "That folder does not exist"),
+            (str(tmp_path / "x.toml"), "Export to a folder other than the themes folder"),
+            # P3 review M1: other spellings of the themes folder are refused too.
+            (str(tmp_path / ".." / tmp_path.name / "x.toml"), "Export to a folder other than the themes folder"),
+            (str(out / "themes-link" / "x.toml"), "Export to a folder other than the themes folder"),
+            (str(out / "adir.toml"), "Export needs a file name, not a folder or link"),
+            (str(out / "link.toml"), "Export needs a file name, not a folder or link"),
+        ]
+        for typed, reason in cases:
+            field.value = typed
+            field.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, RagProfileNameModal), typed
+            error = app.screen.query_one("#settings-rag-profile-name-error")
+            assert error.display and reason in str(error.render()), typed
+            assert str(out) not in str(error.render())  # R16
+            assert field.value == typed
+        assert sorted(p.name for p in out.iterdir()) == ["adir.toml", "link.toml", "themes-link"]
+        assert not (out / "target.toml").exists()
+        assert not (tmp_path / "x.toml").exists()
+        assert not (home / "Downloads").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_to_an_existing_file_still_confirms(request, tmp_path, monkeypatch, tmp_path_factory):
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    existing = out / "keep.toml"
+    existing.write_text("old", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, existing)
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert existing.read_text(encoding="utf-8") == "old"
+
+
+# -- Qodo 4118068772 / 4118068777: the write itself enforces the export checks --
+
+
+def _export_notices(app) -> str:
+    return " ".join(str(call.args[0]) for call in app.notify.call_args_list)
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["pinned", "unpinned"])
+@pytest.mark.parametrize("swap", ["parent", "ancestor"])
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_write_refuses_a_folder_swapped_for_the_themes_folder(
+    request, tmp_path, monkeypatch, tmp_path_factory, swap, pinned
+):
+    """The folder is validated when typed; if a link swapped in before the
+    write makes it the themes folder, the write itself refuses it. Pinned
+    POSIX IO already refuses the link; unpinned IO (no dir_fd, e.g. Windows)
+    relied on the typed-path check alone."""
+    if not pinned:
+        monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: False)
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    # "parent": out/a/<themes name> becomes a link to the themes folder.
+    # "ancestor": out/a becomes a link to the folder holding the themes
+    # folder, so out/a/<themes name> is the themes folder by a real name.
+    (out / "a" / tmp_path.name).mkdir(parents=True)
+    target = out / "a" / tmp_path.name / "x.toml"
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor._export_target(str(target)) == target  # valid when typed
+        if swap == "parent":
+            target.parent.rmdir()
+            target.parent.symlink_to(tmp_path, target_is_directory=True)
+        else:
+            target.parent.rmdir()
+            (out / "a").rmdir()
+            (out / "a").symlink_to(tmp_path.parent, target_is_directory=True)
+        assert target.parent.samefile(tmp_path)
+        app.notify.reset_mock()
+        editor._export(target, {"colors": MINE})
+        await pilot.pause()
+        assert "Failed to export theme" in _export_notices(app)
+        assert not (tmp_path / "x.toml").exists()
+        assert not (tmp_path / "x.toml.tmp").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_refuses_a_file_that_appears_before_the_write(
+    request, tmp_path, monkeypatch, tmp_path_factory
+):
+    """An absent destination is created exclusively: a file another process
+    creates after the check is kept, not silently replaced."""
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    target = out / "new.toml"
+    real_file = raw_participants._file
+
+    def racing_file(operation, path, mode):
+        if Path(path).name == "new.toml.tmp":
+            target.write_text("intruder", encoding="utf-8")
+        return real_file(operation, path, mode)
+
+    monkeypatch.setattr(raw_participants, "_file", racing_file)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, target)
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "nothing was replaced" in _export_notices(app)
+        assert target.read_text(encoding="utf-8") == "intruder"
+        assert sorted(p.name for p in out.iterdir()) == ["new.toml"]  # no stray .tmp
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
+    request, tmp_path, monkeypatch, tmp_path_factory
+):
+    """Overwrite replaces the file seen when the user confirmed; a different
+    file put there while the dialog was open is kept."""
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    existing = out / "keep.toml"
+    existing.write_text("old", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # The unchanged file: a confirmed overwrite still replaces it.
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, existing)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert toml.load(existing)["colors"] == MINE
+
+        # A different file swapped in while the dialog is open: kept.
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, existing)
+        assert app.screen.confirm_label == "Overwrite"
+        newer = out / "newer"
+        newer.write_text("newer", encoding="utf-8")
+        newer.replace(existing)
+        app.notify.reset_mock()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert "nothing was replaced" in _export_notices(app)
+        assert existing.read_text(encoding="utf-8") == "newer"
+        assert sorted(p.name for p in out.iterdir()) == ["keep.toml"]

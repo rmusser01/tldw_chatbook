@@ -25,6 +25,7 @@ from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
+    ORIGIN_LABELS,
     ThemeChange,
     ThemeEntry,
     build_catalog,
@@ -46,24 +47,63 @@ from .settings_theme_editor import (
 )
 from .theme_preview import ThemePreview
 
-_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
+_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "BUILT-IN"}  # TASK-33073
 THEMES_LOADING_LABEL = "Loading your themes…"
 # TASK-32957: one exclusive group per picker for the off-thread folder scan.
 _SCAN_GROUP = "settings-theme-scan"
 
 
-def _row(entry: ThemeEntry) -> Text:
-    text = Text(f"{entry.display_name}  ")
-    for colour in entry.strip:
-        # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
-        # resolves alpha hex and ANSI colour names before they reach here).
-        text.append("▮", Style(color=colour))
-    markers = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
-    if entry.overrides:
-        markers.append(f"overrides {entry.overrides}")
-    if markers:
-        text.append("  " + " · ".join(markers))
-    return text
+def _bare_name(entry: ThemeEntry) -> str:
+    """The entry's label without the origin word a shared name carries.
+
+    build_catalog tells "Solarized Light" apart as "Solarized Light ·
+    built-in"; the card title already names the origin, and the filter
+    matches names only (P3 review M3/M4).
+    """
+    return entry.display_name.removesuffix(f" · {ORIGIN_LABELS[entry.origin]}")
+
+
+_MIN_NAME_CELLS = 10  # a narrow row keeps at least this much of the name
+
+
+def _row(entry: ThemeEntry, width: int | None = None) -> Text:
+    """One list row: name, colour strip, then the active/launch/overrides markers.
+
+    Args:
+        entry: The theme to show.
+        width: The cells the row may take. When the whole row doesn't fit,
+            the tail gives way first, least important part first, until the
+            name keeps ``_MIN_NAME_CELLS`` (TASK-33074): "overrides built-in"
+            becomes "overrides", then goes, then the strip shrinks to three
+            swatches, then "launch" goes. "active" always stays. Only then
+            does the name take an ellipsis. None means no limit.
+    """
+    flags = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    strip = list(entry.strip)
+    tails = [(strip, flags + overrides)]
+    if width is not None:
+        short = ["overrides"] if overrides else []
+        tails += [(strip, flags + short), (strip, flags), (strip[:3], flags), (strip[:3], ["active"] if entry.is_active else [])]
+
+    def build(colours: list[str], markers: list[str]) -> Text:
+        tail = Text("  ")
+        for colour in colours:
+            # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
+            # resolves alpha hex and ANSI colour names before they reach here).
+            tail.append("▮", Style(color=colour))
+        if markers:
+            tail.append("  " + " · ".join(markers))
+        return tail
+
+    name = Text(entry.display_name)
+    if width is None:
+        return name + build(*tails[0])
+    need = min(name.cell_len, _MIN_NAME_CELLS)
+    built = [build(*t) for t in tails]
+    tail = next((t for t in built if t.cell_len + need <= width), built[-1])
+    name.truncate(max(width - tail.cell_len, 1), overflow="ellipsis")
+    return name + tail
 
 
 class ThemeFilterInput(Input):
@@ -78,6 +118,10 @@ class ThemeFilterInput(Input):
 
 class ThemeOptionList(OptionList):
     BINDINGS: ClassVar[list[Binding]] = [
+        # TASK-33072: vim keys too. The Settings screen's own j/k rail
+        # handler stands aside while focus is in the detail pane.
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
         Binding("t", "try_theme", "Try"),
         Binding("c", "clone_theme", "Clone"),
         Binding("n", "new_theme", "New"),
@@ -86,6 +130,24 @@ class ThemeOptionList(OptionList):
         Binding("delete", "delete_theme", "Delete"),
         Binding("i", "import_theme", "Import"),
     ]
+
+    def row_width(self) -> int | None:
+        """Cells a row may take (TASK-33074).
+
+        The vertical scrollbar is always reserved: the ~95-row catalog
+        overflows at every size, and it appearing sends no Resize.
+
+        Returns:
+            The width in cells left for a row's text after the scrollbar and
+            the option padding; None before layout gives the list a width.
+        """
+        padding = self.get_component_styles("option-list--option").padding
+        width = self.content_region.width - self.styles.scrollbar_size_vertical - padding.width
+        return width if width > 0 else None
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Refit the rows' names to the new width."""
+        self.query_ancestor(ThemePicker).refit_rows()
 
     def _first_enabled_index(self) -> int | None:
         for index in range(self.option_count):
@@ -206,6 +268,14 @@ class ThemePicker(Vertical):
         # YOUR THEMES shows a loading row. The pending highlight is
         # (requested id, the highlight when requested): a user move in
         # between wins over it (Qodo 4116061873).
+        # TASK-33069: the highlight from before the filter was typed, so
+        # clearing it returns there instead of to row 1.
+        self._prefilter_highlight: str | None = None
+        # Qodo 4118068766: the row the list fell back to because the filter
+        # hid the highlight. Still on it when the filter clears = the user
+        # never moved, so the pre-filter highlight wins; moved = theirs sticks.
+        self._filter_fallback: str | None = None
+        self._filtering = False
         self._scan_generation = 0
         self._pending_highlight: tuple[str, str | None] | None = None
         self._scanned = False
@@ -257,6 +327,9 @@ class ThemePicker(Vertical):
                 )
                 yield ThemeOptionList(id="settings-theme-list")
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
+                # Spec §9: a no-match filter offers a way back.
+                with Horizontal(id="settings-theme-clear-filter-row", classes="settings-action-row"):
+                    yield Button("Clear filter", id="settings-theme-clear-filter", classes="theme-editor-action")
             with Vertical(id="settings-theme-card-column"):
                 yield Static("", id="settings-theme-card-title", classes="destination-section", markup=False)
                 yield Static("", id="settings-theme-card-error", classes="settings-help-copy", markup=False)
@@ -389,7 +462,12 @@ class ThemePicker(Vertical):
 
     def _render_list(self, highlight: str | None) -> None:
         query = self.query_one("#settings-theme-filter", Input).value.strip().casefold()
-        shown = [e for e in self.entries if not query or query in e.display_name.casefold() or query in e.id.casefold()]
+        # Names only, never origin words (P3 review M4): the group headers
+        # already sort by origin, and matching "built-in"/"shipped" would make
+        # every short query ("i", "p") list whole groups.
+        shown = [e for e in self.entries if not query or query in _bare_name(e).casefold() or query in e.id.casefold()]
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        width = lst.row_width()
         options: list[Option] = []
         for origin, title in _GROUP_TITLES.items():
             group = [e for e in shown if e.origin == origin]
@@ -405,17 +483,27 @@ class ThemePicker(Vertical):
                 continue
             header = f"{title} ({len(group)})" if query else title
             options.append(Option(header, disabled=True))
-            options.extend(Option(_row(e), id=e.id) for e in group)
+            options.extend(Option(_row(e, width), id=e.id) for e in group)
             if placeholder is not None:
                 options.append(Option(placeholder, disabled=True))
-        lst = self.query_one("#settings-theme-list", OptionList)
         lst.clear_options()
         lst.add_options(options)
         empty = self.query_one("#settings-theme-empty", Static)
         empty.display = not shown
         empty.update(f"No themes match '{query}'" if not shown else "")
+        # The button too: its own display doesn't follow a hidden row's
+        # (see _show's export-result note).
+        self.query_one("#settings-theme-clear-filter-row").display = not shown
+        self.query_one("#settings-theme-clear-filter", Button).display = not shown
         ids = [e.id for e in shown]
-        target = highlight if highlight in ids else (ids[0] if ids else None)
+        # TASK-33069: a highlight the filter hid comes back when it shows
+        # again; failing that the active theme, and only then row 1.
+        target = next(
+            (c for c in (highlight, self._prefilter_highlight, str(self.app.theme)) if c in ids),
+            ids[0] if ids else None,
+        )
+        if target != highlight:
+            self._filter_fallback = target
         if target is not None:
             lst.highlighted = lst.get_option_index(target)
         pending = self._pending_highlight
@@ -423,6 +511,16 @@ class ThemePicker(Vertical):
             # A re-render's move is not the user's: the request still stands.
             self._pending_highlight = (pending[0], target)
         self._show(target)
+
+    def refit_rows(self) -> None:
+        """Re-truncate the rows' names for the list's current width, in place."""
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        width = lst.row_width()
+        by_id = {e.id: e for e in self.entries}
+        for index in range(lst.option_count):
+            entry = by_id.get(lst.get_option_at_index(index).id)
+            if entry is not None:
+                lst.replace_option_prompt_at_index(index, _row(entry, width))
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
@@ -471,6 +569,10 @@ class ThemePicker(Vertical):
         card_error = self.query_one("#settings-theme-card-error", Static)
         card_error.display = error is not None
         card_error.update(error or "")
+        # TASK-33067/33069: no preview for nothing, and an unreadable file's
+        # error stands in its place (its palette is all grey, 1:1).
+        preview = self.query_one(ThemePreview)
+        preview.display = entry is not None and error is None
         if entry is None:
             title.update("")
             return
@@ -478,8 +580,9 @@ class ThemePicker(Vertical):
             title.update(entry.display_name)
         else:
             tone = "dark" if entry.dark else "light"
-            title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
-        self.query_one(ThemePreview).paint(dict(entry.colours))
+            title.update(f"{_bare_name(entry)}  ·  {tone} · {ORIGIN_LABELS[entry.origin]}")
+        if preview.display:
+            preview.paint(dict(entry.colours))
 
     def _highlighted_entry(self) -> ThemeEntry | None:
         return next((e for e in self.entries if e.id == self.highlighted_id), None)
@@ -505,7 +608,30 @@ class ThemePicker(Vertical):
     @on(Input.Changed, "#settings-theme-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
+        if not event.value.strip():
+            self._end_filter()
+            return
+        if not self._filtering:
+            self._filtering = True
+            self._prefilter_highlight = self.highlighted_id
+            self._filter_fallback = None
         self._render_list(self.highlighted_id)
+
+    def _end_filter(self) -> None:
+        """Re-list every theme once the filter is empty: back on the
+        pre-filter highlight, unless the user moved while filtering."""
+        moved = self.highlighted_id != self._filter_fallback
+        self._render_list(self.highlighted_id if moved else None)
+        self._prefilter_highlight = self._filter_fallback = None
+        self._filtering = False
+
+    @on(Button.Pressed, "#settings-theme-clear-filter")
+    def _clear_filter_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        with self.prevent(Input.Changed):
+            self.query_one("#settings-theme-filter", Input).value = ""
+        self._end_filter()
+        self.focus_list()
 
     @on(Input.Submitted, "#settings-theme-filter")
     def _filter_submitted(self, event: Input.Submitted) -> None:
