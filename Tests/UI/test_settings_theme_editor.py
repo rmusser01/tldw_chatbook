@@ -834,6 +834,9 @@ async def test_settings_theme_editor_export_confirms_before_overwriting(
         await pilot.pause()
         editor.export_theme("ocean")
         await pilot.pause()
+        # TASK-33076: the destination prompt comes first, prefilled.
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert app.screen.confirm_label == "Overwrite"
         await pilot.click("#cancel-button")

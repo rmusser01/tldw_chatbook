@@ -17,6 +17,7 @@ from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from Tests.UI.theme_editor_helpers import open_theme_editor
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.Widgets.settings_theme_picker import _GROUP_TITLES
 
 THEMES = ("textual-dark", "textual-light", "gruvbox_dark", "solarized_light")
 # TASK-32948 PR 2: New/Clone/Delete/Export moved to the picker; the editor
@@ -394,3 +395,38 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
         assert _contrast(glyph.color, glyph.bgcolor) >= 3.0, (
             f"{theme} off glyph {glyph.color} on {glyph.bgcolor}"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_theme_list_group_headers_meet_text_contrast(theme, request):
+    """TASK-33077: the group headers rendered as disabled options, 2.54:1
+    (light) and 3.43:1 (dark)."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        lst = picker.query_one("#settings-theme-list")
+        # P3 review M2: measure every header the picker defines (a rename
+        # can't silently skip one), scrolling a screenful at a time — BUILT-IN
+        # sits below the fold.
+        titles = set(_GROUP_TITLES.values())
+        seen = set()
+        y = 0
+        while True:
+            lst.scroll_to(y=y, animate=False, immediate=True)
+            await _show(pilot, lst)
+            for dy in range(lst.region.height):
+                row = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
+                cells = list(_cells(host, row))
+                text = "".join(c for _, c, _ in cells)
+                for title in titles - seen:
+                    if title in text:
+                        seen.add(title)
+                        style = next(s for _, c, s in cells if c.isalpha())
+                        ratio = _contrast(style.color, style.bgcolor)
+                        assert ratio >= 4.5, f"{theme}/{title} header {ratio:.2f}:1"
+            if seen == titles or y >= lst.max_scroll_y:
+                break
+            y += max(lst.region.height - 1, 1)
+        assert seen == titles, f"{theme}: headers never seen: {sorted(titles - seen)}"
