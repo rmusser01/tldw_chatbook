@@ -132,7 +132,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
-| [ADR-197](197-console-hook-configuration-review.md) | Proposed | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
+| [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
 
 ## Historical Decision Material
 

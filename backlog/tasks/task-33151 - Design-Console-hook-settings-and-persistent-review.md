@@ -1,11 +1,11 @@
 ---
 id: TASK-33151
 title: Design Console hook settings and persistent review
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-09-28 01:40'
-updated_date: '2026-09-28 01:45'
+updated_date: '2026-09-28 02:50'
 labels:
   - hooks
   - design
@@ -28,7 +28,7 @@ Define native Console access to hook permissions and guided hook configuration i
 - [x] #1 The written design matches the approved native Console toolbar, review modal, and three-pane Settings layout.
 - [x] #2 The design defines next-Send review, preserved drafts, persistent exact-definition approval, revocation, and runtime enforcement across foreground and background paths.
 - [x] #3 A new ADR records configuration ownership, consent storage, and the preserved legacy hook contract; the spec and task link it.
-- [ ] #4 The written spec passes a consistency and link review and is presented for user review before implementation planning.
+- [x] #4 The written spec passes a consistency and link review and is presented for user review before implementation planning.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,5 +47,5 @@ Reason: persistent hook consent changes execution admission, private state owner
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Recorded the approved native Console toolbar, expandable review modal, and canonical three-pane Hooks Settings design. ADR-197 defines local exact-definition consent, next-Send admission, shared-runtime launch checks, and preserved ADR-148 semantics. The written spec awaits user review; no product implementation or implementation plan has started. Documentation link and placeholder checks pass. Changed only the design spec, proposed ADR, ADR index, and this task. Renumbering provenance: the CLI assigned TASK-33097; the live all-ref/history and 86-worktree sweep found TASK-33150 as the maximum, so this new task was moved to TASK-33151 before cross-references were added. No existing task was changed.
+Authored the approved native Console Hooks toolbar action, expandable review modal, and canonical three-pane Settings design. The user reviewed the written spec positively and requested an audit on 2026-09-27. Traced the actual parser, runtime singleton, async subprocess launch, notification queue, prompt-queue refusal state, config locks, and structured save outcomes. Corrected legacy duplicate grant inheritance; consent-versus-spawn ordering; revoke/disable failure fencing; authoritative lossless config refresh; cancelled/delayed modal continuation; stale cross-process decisions; frozen notification targets; invalid/recovery row visibility; contextual Enable/Disable; safe command rendering and narrow-toolbar requirements. ADR-197 is accepted and linked from the spec, task, and index. All 12 local document links, placeholder/fence checks, scoped whitespace checks, and self-review passed. This is documentation-only verification; targeted runtime races remain required for implementation. Product files were not changed and no full suite was run. Renumbering provenance: the CLI assigned TASK-33097; the all-ref/history and 86-worktree sweep found TASK-33150 as maximum, so this new task became TASK-33151 before references were added; no existing task was changed.
 <!-- SECTION:NOTES:END -->
