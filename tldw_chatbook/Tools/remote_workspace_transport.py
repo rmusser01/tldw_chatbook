@@ -1347,6 +1347,16 @@ class RemoteWorkspaceTransport:
 
     # -- taxonomy ----------------------------------------------------------
 
+    def classify_exchange_failure(
+        self, loc: RemoteLocator, **kwargs: object
+    ) -> TransportFailure:
+        """Public alias of :meth:`_classify_failure` (same keywords).
+
+        The session worker classifies its failures through this so both
+        transports share the taxonomy verbatim.
+        """
+        return self._classify_failure(loc, **kwargs)  # type: ignore[arg-type]
+
     def _classify_failure(
         self,
         loc: RemoteLocator,
