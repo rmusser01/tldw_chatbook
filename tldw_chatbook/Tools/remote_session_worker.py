@@ -51,7 +51,8 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
     _frame_is_admitted_marker,
     _remote_command,
 )
-from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
+from tldw_chatbook.Tools.workspace_tool_protocol import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
+from tldw_chatbook.Tools.workspace_wire_decode import WIRE_VERSION, encode_response
 
 #: Leading stdout garbage tolerated before a handshake line's magic (same
 #: 4 KiB bound as the one-shot transport).
@@ -61,6 +62,19 @@ _HANDSHAKE_LINE_CAP = 256
 #: Wall-clock ceiling on the whole handshake (connect + loader + bundle).
 _HANDSHAKE_TIMEOUT_S = 30.0
 _STDERR_CAP = 64 * 1024
+#: What the one-shot worker answers a request over MAX_REQUEST_BYTES with
+#: (unadmitted ``invalid_request`` failure; see ``run_workspace_worker``).
+_OVERSIZED_REQUEST_FRAME = encode_response({
+    "version": WIRE_VERSION,
+    "operation_id": "unknown",
+    "outcome": "failure",
+    "code": "invalid_request",
+    "result": None,
+    "error": "workspace operation failed",
+    "elapsed_ms": 0,
+    "truncated": False,
+    "cleanup_proven": True,
+})
 _CLOSE_WAIT_S = 2.0
 
 #: Start failures the status cache records as transport-class (R3).
@@ -176,6 +190,7 @@ class RemoteSessionWorker:
         self._proc: subprocess.Popen[bytes] | None = None
         self._stderr = _BoundedCapture(_STDERR_CAP)
         self._stderr_thread: threading.Thread | None = None
+        self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()
         self._pending: dict[int, _Pending] = {}
         self._lock = threading.Lock()  # guards _pending, _next_id, _idle_since, _alive
@@ -273,7 +288,10 @@ class RemoteSessionWorker:
         with self._lock:
             self._alive = True
             self._idle_since = time.monotonic()
-        threading.Thread(target=self._reader, name="ssh-session-reader", daemon=True).start()
+        self._reader_thread = threading.Thread(
+            target=self._reader, name="ssh-session-reader", daemon=True
+        )
+        self._reader_thread.start()
         logger.debug(
             "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
         )
@@ -483,7 +501,15 @@ class RemoteSessionWorker:
         Deadline: (admitted_at or send time) + budget + grace, then CANCEL;
         a STATUS still missing after another grace means the parent is
         stuck and the whole session is killed.
+
+        A request over ``MAX_REQUEST_BYTES`` never touches the session (the
+        host would reject the frame and end the session): it gets the
+        one-shot path's answer at once -- the worker's unadmitted
+        ``invalid_request`` failure frame. The executor already refuses
+        such requests while building them, so this is a defensive bound.
         """
+        if len(request_bytes) > MAX_REQUEST_BYTES:
+            return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
         with self._lock:
             alive = self._alive
             if alive:
@@ -587,9 +613,12 @@ class RemoteSessionWorker:
         else:
             exit_code, signal_no = pending.status
             code = exit_code if exit_code is not None else -(signal_no or 9)
-            if killed and not admitted:
+            refused = exit_code is None and signal_no == signal.SIGKILL
+            if (killed or refused) and not admitted:
                 # R8: our CANCEL ended a never-admitted (e.g. queued) request
-                # on a live session — an op timeout, never UNREACHABLE.
+                # on a live session — an op timeout, never UNREACHABLE. The
+                # host refuses a request its bounded queue cannot take (or a
+                # duplicate id) with the same STATUS, so it maps the same.
                 return RemoteCallResult(
                     False,
                     None,
@@ -639,7 +668,9 @@ class RemoteSessionWorker:
         stdin is closed only under the write lock, so a writer mid-frame
         never sees its fd number closed (and reused) under it. A writer that
         holds the lock past the grace is stuck on a stalled host: the kill
-        breaks its pipe (EPIPE) and it releases the lock.
+        breaks its pipe (EPIPE) and it releases the lock. Once the child is
+        reaped and the reader/stderr threads have finished (bounded joins),
+        stdout and stderr are closed too.
         """
         with self._lock:
             if self._death_natural is None:
@@ -667,3 +698,20 @@ class RemoteSessionWorker:
             proc.wait(timeout=_CLOSE_WAIT_S)
         except subprocess.TimeoutExpired:
             self._kill_and_reap()
+        # Close the output pipes only once no thread can still be in an
+        # os.read on them (a closed fd number can be reused by another
+        # open). A thread still running after its bounded join keeps its
+        # pipe: that one is left to GC rather than closed under it.
+        current = threading.current_thread()
+        for thread, stream in (
+            (self._reader_thread, proc.stdout),
+            (self._stderr_thread, proc.stderr),
+        ):
+            if thread is not None and thread is not current:
+                thread.join(_CLOSE_WAIT_S)
+            if stream is None or (thread is not None and thread.is_alive()):
+                continue
+            try:
+                stream.close()
+            except OSError:
+                pass

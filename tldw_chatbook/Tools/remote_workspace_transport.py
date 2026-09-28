@@ -1354,6 +1354,18 @@ class RemoteWorkspaceTransport:
 
         The session worker classifies its failures through this so both
         transports share the taxonomy verbatim.
+
+        Args:
+            loc: The binding's validated locator (a mux failure restarts
+                its master for the next call).
+            **kwargs: Exactly :meth:`_classify_failure`'s keyword-only
+                arguments: ``exit_code`` (int), ``admitted`` (bool),
+                ``admitted_at`` (monotonic float or ``None``), ``budget``
+                (seconds), ``killed`` (bool, our deadline kill),
+                ``noise_capped`` (bool) and ``stderr`` (bytes).
+
+        Returns:
+            The :class:`TransportFailure` bucketing the failed exchange.
         """
         return self._classify_failure(loc, **kwargs)  # type: ignore[arg-type]
 

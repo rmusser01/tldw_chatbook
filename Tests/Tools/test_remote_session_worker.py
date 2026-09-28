@@ -36,6 +36,7 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
     SshMasterManager,
     TransportFailureKind,
 )
+from tldw_chatbook.Tools.workspace_tool_protocol import MAX_REQUEST_BYTES
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 _LOC = parse_remote_locator("ssh://ops@build-box.internal:2222/srv/work/workspace")
@@ -573,3 +574,34 @@ def test_bundle_write_is_bounded_by_the_handshake_deadline(worker_factory, monke
         worker.start()
     assert time.monotonic() - started < 8
     assert err.value.transport is False and "write stalled" in str(err.value)
+
+
+def test_close_closes_the_output_pipes_after_the_threads_finish(worker_factory, workspace):
+    worker, spawns = worker_factory()
+    worker.start()
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+    worker.close()
+    assert spawns[0].stdout.closed and spawns[0].stderr.closed
+    assert not worker._reader_thread.is_alive() and not worker._stderr_thread.is_alive()
+
+
+def test_oversized_request_is_refused_without_touching_the_session(worker_factory, workspace):
+    worker, _ = worker_factory()
+    worker.start()
+    result = worker.call(b"x" * (MAX_REQUEST_BYTES + 1), budget=10)
+    # The one-shot worker's answer: an unadmitted invalid_request frame.
+    assert not result.admitted and result.failure is None
+    frame = json.loads(result.response)
+    assert (frame["outcome"], frame["code"]) == ("failure", "invalid_request")
+    assert worker.alive
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+
+
+def test_host_refusal_status_maps_to_op_timeout(worker_factory):
+    """A queue-full / duplicate-id refusal is STATUS(None, SIGKILL) with no
+    CANCEL from us: same R8 mapping as an unadmitted cancel."""
+    worker, _ = worker_factory()
+    pending = worker_module._Pending(status=(None, signal.SIGKILL))
+    result = worker._result(pending, 5.0, killed=False)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.OP_TIMEOUT
