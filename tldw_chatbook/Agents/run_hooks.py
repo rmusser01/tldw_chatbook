@@ -99,79 +99,157 @@ class RunHooksConfig:
     hooks: tuple[HookSpec, ...] = ()
 
 
-def _parse_hook(raw: object) -> HookSpec | None:
-    if not isinstance(raw, dict):
-        logger.warning("run-hooks: hook entry is not a table; disabled")
-        return None
+@dataclass(frozen=True, slots=True)
+class HookInventoryRow:
+    """One source row; invalid definitions remain visible for repair."""
+
+    index: int
+    key: str
+    spec: HookSpec | None
+    enabled: bool | None
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HookInventory:
+    """Lossless inventory, independent of the executable projection."""
+
+    master_enabled: bool | None
+    container_error: str | None
+    rows: tuple[HookInventoryRow, ...] = ()
+
+    @property
+    def requires_authority(self) -> bool:
+        """Require review unless absence/disable is explicitly verified."""
+        if self.master_enabled is False:
+            return False
+        return bool(
+            self.container_error or any(row.enabled is not False for row in self.rows)
+        )
+
+
+def fingerprint_hook(spec: HookSpec) -> str:
+    """Hash an exact normalized execution definition, without enable switches."""
+    encoded = json.dumps(
+        {
+            "version": 1,
+            "event": spec.event,
+            "command": list(spec.command),
+            "matcher": spec.matcher,
+            "timeout_s": float(spec.timeout_s),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_hook_definition(raw: object) -> tuple[HookSpec | None, str | None]:
+    """Validate execution fields and return a content-free repair message."""
+    if not isinstance(raw, Mapping):
+        return None, "Hook entry must be a table."
     event = raw.get("event")
     if not isinstance(event, str) or event not in HOOK_EVENTS:
-        logger.warning("run-hooks: unknown event; hook disabled")
-        return None
+        return None, "Choose a supported hook event."
     command = raw.get("command")
     if (
         not isinstance(command, list)
         or not command
-        or not all(isinstance(a, str) and "\x00" not in a for a in command)
+        or not all(isinstance(arg, str) and "\x00" not in arg for arg in command)
         or not command[0]
     ):
-        logger.warning(
-            "run-hooks: command must be a non-empty list of strings; hook disabled"
-        )
-        return None
+        return None, "Command must be a nonempty argv list of NUL-free strings."
     matcher = raw.get("matcher")
     if matcher is not None:
         if event not in TOOL_NAME_EVENTS:
-            logger.warning(
-                "run-hooks: matcher is only valid on {}, got {}; hook disabled",
-                sorted(TOOL_NAME_EVENTS),
-                event,
-            )
-            return None
+            return None, "Matcher is only valid for PreToolUse or PostToolUse."
         if not isinstance(matcher, str) or not matcher:
-            logger.warning(
-                "run-hooks: matcher must be a non-empty string; hook disabled"
-            )
-            return None
+            return None, "Matcher must be a nonempty glob string."
     timeout = raw.get("timeout_s", HOOK_DEFAULT_TIMEOUT_S)
-    if (
-        isinstance(timeout, bool)
-        or not isinstance(timeout, (int, float))
-        or not math.isfinite(timeout)
-        or timeout <= 0
-    ):
-        logger.warning(
-            "run-hooks: timeout_s must be a positive finite number; hook disabled"
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        return None, "Timeout must be a positive finite number."
+    try:
+        timeout = float(timeout)
+    except (OverflowError, ValueError):
+        return None, "Timeout must be a positive finite number."
+    if not math.isfinite(timeout) or timeout <= 0:
+        return None, "Timeout must be a positive finite number."
+    return HookSpec(event, tuple(command), matcher, timeout), None
+
+
+def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
+    """Inspect every raw row and retain malformed containers for recovery."""
+    if not isinstance(config, Mapping):
+        return HookInventory(None, "Configuration must be a table.")
+    if "hooks" not in config:
+        return HookInventory(True, None)
+    section = config["hooks"]
+    if not isinstance(section, Mapping):
+        return HookInventory(
+            None, "Hooks section must be a table; repair in Advanced Config."
         )
-        return None
-    return HookSpec(
-        event=event, command=tuple(command), matcher=matcher, timeout_s=float(timeout)
-    )
+    master = section.get("enabled", True)
+    container_error = None
+    if type(master) is not bool:
+        master = None
+        container_error = "Hooks enabled must be a boolean."
+    raw_hooks = section.get("hook", [])
+    if not isinstance(raw_hooks, list):
+        return HookInventory(master, "Hooks list must be an array of tables.")
+    ids: dict[str, int] = {}
+    for raw in raw_hooks:
+        if isinstance(raw, Mapping) and isinstance(raw.get("id"), str) and raw["id"]:
+            ids[raw["id"]] = ids.get(raw["id"], 0) + 1
+    occurrences: dict[str, int] = {}
+    rows = []
+    for index, raw in enumerate(raw_hooks):
+        spec, error = validate_hook_definition(raw)
+        enabled = raw.get("enabled", True) if isinstance(raw, Mapping) else None
+        hook_id = raw.get("id") if isinstance(raw, Mapping) else None
+        if type(enabled) is not bool:
+            enabled = None
+            error = "Hook enabled must be a boolean."
+        if (
+            isinstance(raw, Mapping)
+            and "id" in raw
+            and (not isinstance(hook_id, str) or not hook_id)
+        ):
+            error = "Hook ID must be a nonempty string."
+        if isinstance(hook_id, str) and ids.get(hook_id, 0) > 1:
+            error = "Duplicate hook ID; assign distinct IDs."
+        if error:
+            spec = None
+        if spec is None:
+            key = f"invalid:{index}"
+        elif hook_id is not None:
+            key = f"id:{hook_id}"
+        else:
+            fingerprint = fingerprint_hook(spec)
+            occurrence = occurrences.get(fingerprint, 0)
+            occurrences[fingerprint] = occurrence + 1
+            key = f"legacy:{fingerprint}:{occurrence}"
+        rows.append(HookInventoryRow(index, key, spec, enabled, error))
+    return HookInventory(master, container_error, tuple(rows))
 
 
 def load_hooks_config(config: Mapping) -> RunHooksConfig:
-    """Parse user configuration, logging invalid entries without their contents.
-
-    Args:
-        config: Loaded application configuration containing the optional hooks section.
-
-    Returns:
-        Valid hooks, with invalid master switches disabled and invalid entries omitted.
-    """
-    section = config.get("hooks") if isinstance(config, Mapping) else None
-    if not isinstance(section, Mapping):
-        return RunHooksConfig(enabled=True, hooks=())
-    enabled = section.get("enabled", True)
-    if type(enabled) is not bool:
-        logger.warning("run-hooks: enabled must be a boolean; hooks disabled")
-        enabled = False
-    raw_hooks = section.get("hook", [])
-    if not isinstance(raw_hooks, list):
-        logger.warning(
-            "run-hooks: [hooks] hook must be a list of tables; hooks disabled"
-        )
-        raw_hooks = []
-    hooks = tuple(h for h in (_parse_hook(r) for r in raw_hooks) if h is not None)
-    return RunHooksConfig(enabled=enabled, hooks=hooks)
+    """Project valid enabled rows; inventory remains the consent authority."""
+    inventory = inspect_hooks_config(config)
+    if inventory.container_error:
+        logger.warning("run-hooks: {}", inventory.container_error)
+    for row in inventory.rows:
+        if row.error:
+            logger.warning("run-hooks: {}; hook disabled", row.error)
+    return RunHooksConfig(
+        enabled=inventory.master_enabled is True,
+        hooks=tuple(
+            row.spec
+            for row in inventory.rows
+            if row.spec is not None and row.enabled is True
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

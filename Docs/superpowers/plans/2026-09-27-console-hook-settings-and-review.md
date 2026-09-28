@@ -1,6 +1,6 @@
 # Console Hook Settings and Review Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Dispatch subagents only after the user chooses that execution option.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Dispatch subagents only after the user chooses that execution option.
 
 **Goal:** Give Console users persistent, exact-definition hook consent, a native review modal on next Send, and a staged editor in canonical Settings.
 
@@ -36,10 +36,10 @@
 
 The inspected checkout is `/Users/macbook-dev/Documents/GitHub/tldw_chatbook` and contains unrelated changes. The plan's file names below are relative to the executor's checkout; commands run from that checkout.
 
-- [ ] Read TASK-33163, the spec, ADR-197, `backlog/docs/design-language.md`, `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, and `backlog/docs/lessons-console-wiring.md` before editing.
-- [ ] Inspect this chat's managed worktrees with `list_artifacts`; reuse a suitable free checkout or use `create_worktree` from the committed plan baseline. Use a `codex/` branch. Do not copy or commit unrelated shared changes.
-- [ ] Recheck the named symbols on the selected baseline. The plan was informed by a dirty checkout; line numbers are not authoritative. Preserve any newer caller contracts.
-- [ ] Reuse the existing Python environment without installing into it. If the worktree has no `.venv`, create an ignored symlink to the checked environment, then prove imports resolve from this checkout.
+- [x] Read TASK-33163, the spec, ADR-197, `backlog/docs/design-language.md`, `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, and `backlog/docs/lessons-console-wiring.md` before editing.
+- [x] Inspect this chat's managed worktrees with `list_artifacts`; reuse a suitable free checkout or use `create_worktree` from the committed plan baseline. Use a `codex/` branch. Do not copy or commit unrelated shared changes.
+- [x] Recheck the named symbols on the selected baseline. The plan was informed by a dirty checkout; line numbers are not authoritative. Preserve any newer caller contracts.
+- [x] Reuse the existing Python environment without installing into it. If the worktree has no `.venv`, create an ignored symlink to the checked environment, then prove imports resolve from this checkout.
 
 ```bash
 # Machine-agnostic: resolve any existing tldw_chatbook checkout's environment
@@ -87,6 +87,7 @@ Keep consent storage and policy in one file/class; do not add a generic permissi
 
 **Interfaces produced:**
 
+- The literal mutation snapshot now includes the actual writer `config_path`, avoiding a second effective-path lookup when checking scope.
 - Keep the existing four-field `HookSpec` constructor unchanged.
 - `HookInventoryRow(index: int, key: str, spec: HookSpec | None, enabled: bool | None, error: str | None)` retains source position for editing, never for grants.
 - `HookInventory(master_enabled: bool | None, container_error: str | None, rows: tuple[HookInventoryRow, ...])` exposes `requires_authority: bool`. A verified absent/empty section or valid master false needs no authority; malformed enabled state does.
@@ -96,7 +97,7 @@ Keep consent storage and policy in one file/class; do not add a generic permissi
 - `locked_hooks_config_snapshot() -> ContextManager[HookConfigSnapshot]` owns the config lock through its caller's critical section; `read_hooks_config_snapshot() -> HookConfigSnapshot` returns a detached snapshot.
 - `replace_hooks_config_snapshot(expected: HookConfigSnapshot, replacement: Mapping[str, object]) -> LiteralConfigMutationResult` compares effective path and original section under the existing transaction lock. It replaces the complete hook list and returns the existing structured outcome.
 
-- [ ] **Step 1: Add the failing identity/inventory tests.** Use the existing HookSpec and new functions; no subprocess is needed for parsing.
+- [x] **Step 1: Add the failing identity/inventory tests.** Use the existing HookSpec and new functions; no subprocess is needed for parsing.
 
 ```python
 from tldw_chatbook.Agents.run_hooks import (
@@ -119,13 +120,13 @@ def test_fingerprint_ignores_numeric_spelling_but_preserves_arguments():
     assert fingerprint_hook(first) != fingerprint_hook(changed)
 ```
 
-- [ ] **Step 2: Run the red checks.** Expected failure is a missing new import, not an environment failure.
+- [x] **Step 2: Run the red checks.** Expected failure is a missing new import, not an environment failure.
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_config_inventory.py -q
 ```
 
-- [ ] **Step 3: Add the inventory and deterministic fingerprint.** Refactor `_parse_hook` into a reusable validation result and preserve its sanitized warning wrapper. `load_hooks_config` projects only valid enabled rows. Keep invalid rows in inventory, even when master false. Explicit false suppresses execution despite an invalid command; non-boolean switches remain invalid. Keep the current case-sensitive glob matcher.
+- [x] **Step 3: Add the inventory and deterministic fingerprint.** Refactor `_parse_hook` into a reusable validation result and preserve its sanitized warning wrapper. `load_hooks_config` projects only valid enabled rows. Keep invalid rows in inventory, even when master false. Explicit false suppresses execution despite an invalid command; non-boolean switches remain invalid. Keep the current case-sensitive glob matcher.
 
 ```python
 import hashlib
@@ -142,7 +143,7 @@ def fingerprint_hook(spec: HookSpec) -> str:
 
 Use `id:<explicit-id>` keys or `legacy:<fingerprint>:<duplicate-occurrence>` keys; reserve separate invalid-row keys. Never derive authority from a display label or array index. Add parametrized tests for every execution field, duplicate IDs, malformed master/table/list, absent versus empty sections, NUL, bool/nonfinite timeout and matcher misuse.
 
-- [ ] **Step 4: Add locked snapshot/save tests, then the config functions.** Use `TLDW_CONFIG_PATH` and `tmp_path` under the existing isolated test fixture. Compare a section stamp based on presence and its stable TOML representation; this handles NaN in invalid originals without Python NaN equality. Do not include unrelated provider changes in this stamp.
+- [x] **Step 4: Add locked snapshot/save tests, then the config functions.** Use `TLDW_CONFIG_PATH` and `tmp_path` under the existing isolated test fixture. Compare a section stamp based on presence and its stable TOML representation; this handles NaN in invalid originals without Python NaN equality. Do not include unrelated provider changes in this stamp.
 
 ```python
 import toml
@@ -164,7 +165,7 @@ def test_hooks_save_rejects_stale_section_without_replacing_file(tmp_path, monke
 
 Reuse `apply_literal_settings_transaction_to_cli_config` and its authoritative `raw_values` builder. Compare path/section in that lock, retain unknown keys, and assign the whole `hook` list at once. Do not add a hooks revision-owned section. Explicit repair of a malformed non-table section belongs to guarded Advanced Config; the guided editor must not discard it automatically. Test unchanged-revision raw edits, unrelated-section preservation, unknown fields, reassigned config path, source/draft deep-copy separation and post-write refresh failure.
 
-- [ ] **Step 5: Run green checks, review, and commit this unit.**
+- [x] **Step 5: Run green checks, review, and commit this unit.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_config_inventory.py Tests/Agents/test_run_hooks.py Tests/test_hooks_config_snapshot.py Tests/test_config_raw_snapshot.py -q
@@ -172,6 +173,8 @@ git diff --check
 git add tldw_chatbook/Agents/run_hooks.py tldw_chatbook/config.py Tests/Agents/test_hook_config_inventory.py Tests/Agents/test_run_hooks.py Tests/test_hooks_config_snapshot.py
 git commit -m "feat: add lossless hook identity and guarded config saves"
 ```
+
+Task 1 evidence: 129 targeted checks passed, including existing hook execution and raw-config snapshot coverage. New Python files and run_hooks pass Ruff; config changes were checked against the existing whole-file findings. Unknown section keys are retained by the guided writer.
 
 ## Task 2: Persistent consent and serialized process launch
 
