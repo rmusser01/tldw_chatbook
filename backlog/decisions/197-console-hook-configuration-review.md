@@ -4,6 +4,7 @@ Date: 2026-09-27
 Status: Accepted following written-spec review and requested audit (2026-09-27)
 Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
+Implementation: [TASK-33163](../tasks/task-33163%20-%20Add-Console-hook-settings-and-consent-review.md), [plan](../../Docs/superpowers/plans/2026-09-27-console-hook-settings-and-review.md)
 Extends: [ADR-148](148-console-run-hooks.md)
 Follows: [ADR-033](033-settings-commit-models-three-honestly-labeled.md),
 [ADR-029](029-local-private-data-boundary.md),

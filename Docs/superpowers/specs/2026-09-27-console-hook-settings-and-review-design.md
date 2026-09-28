@@ -4,6 +4,8 @@ Date: 2026-09-27
 Status: Written spec reviewed positively by the user; requested audit addressed
 Task: [TASK-33151](../../../backlog/tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 ADR: [ADR-197](../../../backlog/decisions/197-console-hook-configuration-review.md)
+Implementation plan: [Console hook settings and review](../plans/2026-09-27-console-hook-settings-and-review.md)
+Implementation task: [TASK-33163](../../../backlog/tasks/task-33163%20-%20Add-Console-hook-settings-and-consent-review.md)
 
 ## Purpose and agreed behavior
 
