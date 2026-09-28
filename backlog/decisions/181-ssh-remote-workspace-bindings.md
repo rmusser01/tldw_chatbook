@@ -116,6 +116,7 @@ tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 
 ## Amendment 2026-09-27: session worker and bundle cache
 
+Related Task: [TASK-33202](../tasks/task-33202%20-%20SSH-session-worker-and-host-bundle-cache.md)
 Design: [SSH Session Worker and Bundle Cache — Design](../../Docs/superpowers/specs/2026-09-27-ssh-session-worker-and-bundle-cache-design.md).
 Motivation: a warm `fs_*` call cost ~0.7 s on a LAN host, almost all of it
 round trips (a new ssh channel per call plus shipping the bundle). The
