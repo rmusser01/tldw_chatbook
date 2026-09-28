@@ -4250,8 +4250,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 350,
-      "diagnostic_digest": "291403852ae64b7513f0",
+      "call_count": 302,
+      "diagnostic_digest": "b80f28bb7c8e89376c26",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4268,6 +4268,13 @@
       "diagnostic_digest": "3ee90cdaafc682f9f563",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_entry.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 48,
+      "diagnostic_digest": "1f026d93569682c394ef",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_ingest_queue.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10568,42 +10575,6 @@
     {
       "candidates": [
         {
-          "call_digest": "3aef1d3ee8d4bed1",
-          "method": "warning",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "5fcc24e58b863179",
-          "method": "error",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "edd2f12aaf46a1f7",
-          "method": "warning",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "3a5b5b3fe0493385",
-          "method": "error",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "223c765bca0719fa",
           "method": "error",
           "path_expressions": [
@@ -10709,6 +10680,47 @@
         }
       ],
       "path": "tldw_chatbook/app_entry.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "3aef1d3ee8d4bed1",
+          "method": "warning",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "5fcc24e58b863179",
+          "method": "error",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "edd2f12aaf46a1f7",
+          "method": "warning",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "3a5b5b3fe0493385",
+          "method": "error",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app_ingest_queue.py"
     },
     {
       "candidates": [

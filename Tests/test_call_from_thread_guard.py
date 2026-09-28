@@ -18,8 +18,9 @@ six files, all now using ``self.app.call_from_thread(...)``. This test is
 the repo-wide backstop that keeps the bug class from coming back anywhere in
 the package.
 
-``tldw_chatbook/app.py`` is special-cased -- see ``ALLOWLISTED_RELATIVE_PATHS``
-and ``test_app_py_allowlisted_sites_are_still_safe`` below for why its
+``tldw_chatbook/app.py`` and ``tldw_chatbook/app_ingest_queue.py`` are
+special-cased -- see ``ALLOWLISTED_RELATIVE_PATHS`` and
+``test_app_py_allowlisted_sites_are_still_safe`` below for why their
 remaining bare sites are not bugs.
 """
 from __future__ import annotations
@@ -33,17 +34,23 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "tldw_chatbook"
 
-# app.py defines `LibraryIngestQueueMixin`, a mixin that is *only* ever
+# app_ingest_queue.py (moved out of app.py by TASK-33011) defines
+# `LibraryIngestQueueMixin`, a mixin that is *only* ever
 # combined with `App` -- production: `TldwCli(LibraryIngestQueueMixin,
 # App[None])`; tests: `_LibraryIngestCanvasHarness(LibraryIngestQueueMixin,
 # App)` (Tests/UI/test_library_shell.py) and `_IngestRunnerHarness(
 # LibraryIngestQueueMixin, App)` (Tests/Library/test_library_ingest_runner.py).
 # Python attribute lookup resolves `self.call_from_thread` through the
 # *instance's* full MRO, not the class whose body contains the call, so
-# those sites are safe despite the mixin itself not subclassing App. The
-# file's remaining bare sites sit directly on `TldwCli(App)`, also safe.
+# those sites are safe despite the mixin itself not subclassing App.
+# app.py's remaining bare sites sit directly on `TldwCli(App)`, also safe.
 # Everywhere else in the package a bare call is a real bug -- see TASK-929.
-ALLOWLISTED_RELATIVE_PATHS = {"app.py"}
+# Each allowlisted file may hold bare sites ONLY inside its own safe classes.
+_SAFE_CLASSES_BY_ALLOWLISTED_PATH = {
+    "app.py": frozenset({"TldwCli"}),
+    "app_ingest_queue.py": frozenset({"LibraryIngestQueueMixin"}),
+}
+ALLOWLISTED_RELATIVE_PATHS = set(_SAFE_CLASSES_BY_ALLOWLISTED_PATH)
 
 # Non-structural token types to drop before pattern-matching. Comments are
 # excluded so a `#` remark that merely *mentions* `self.call_from_thread(`
@@ -124,23 +131,25 @@ def test_no_bare_self_call_from_thread_outside_app() -> None:
     )
 
 
-def test_app_py_allowlisted_sites_are_still_safe() -> None:
-    """Pin down *why* app.py is exempt so the exemption cannot silently
-    rot into a hole. Every bare `self.call_from_thread(` line remaining in
-    app.py must sit inside `LibraryIngestQueueMixin` (always mixed with App)
-    or `TldwCli` itself (a genuine App subclass) -- never inside a class
-    that can be instantiated on its own, such as `TabDropdown(Widget)`.
+@pytest.mark.parametrize("rel_path", sorted(_SAFE_CLASSES_BY_ALLOWLISTED_PATH))
+def test_app_py_allowlisted_sites_are_still_safe(rel_path: str) -> None:
+    """Pin down *why* each allowlisted file is exempt so the exemption cannot
+    silently rot into a hole. Every bare `self.call_from_thread(` line
+    remaining in app.py must sit inside `TldwCli` (a genuine App subclass),
+    and every one in app_ingest_queue.py inside `LibraryIngestQueueMixin`
+    (always mixed with App) -- never inside a class that can be
+    instantiated on its own, such as `TabDropdown(Widget)`.
     """
-    app_py = PACKAGE_ROOT / "app.py"
+    app_py = PACKAGE_ROOT / rel_path
     lines = _bare_call_from_thread_lines(app_py)
     assert lines, (
-        "app.py no longer contains any bare 'self.call_from_thread(' sites "
-        "-- remove it from ALLOWLISTED_RELATIVE_PATHS and this test"
+        f"{rel_path} no longer contains any bare 'self.call_from_thread(' "
+        "sites -- remove it from _SAFE_CLASSES_BY_ALLOWLISTED_PATH"
     )
 
     tree = ast.parse(app_py.read_text(encoding="utf-8"))
     class_defs = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-    safe_class_names = {"LibraryIngestQueueMixin", "TldwCli"}
+    safe_class_names = _SAFE_CLASSES_BY_ALLOWLISTED_PATH[rel_path]
 
     def enclosing_class(lineno: int) -> str | None:
         # Innermost (highest start-line) enclosing ClassDef that spans lineno.
@@ -156,7 +165,7 @@ def test_app_py_allowlisted_sites_are_still_safe() -> None:
     for lineno in lines:
         cls = enclosing_class(lineno)
         assert cls in safe_class_names, (
-            f"app.py:{lineno} 'self.call_from_thread(' sits inside "
+            f"{rel_path}:{lineno} 'self.call_from_thread(' sits inside "
             f"{cls!r}, which is not one of the documented safe classes "
             f"{sorted(safe_class_names)} -- this may be a real bug, not "
             f"the LibraryIngestQueueMixin/App exemption"

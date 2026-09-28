@@ -6,7 +6,7 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
-import tldw_chatbook.app as app_module
+import tldw_chatbook.app_ingest_queue as ingest_queue_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Local_Ingestion import local_file_ingestion
 from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
@@ -325,7 +325,7 @@ def test_manual_library_job_reaches_fake_native_model_and_parent_writer(
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        ingest_queue_module,
         "get_cli_setting",
         lambda key, *args: (
             str(model_path)

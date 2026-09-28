@@ -47,6 +47,7 @@ from tldw_chatbook.runtime_policy.server_event_scope import (
 from tldw_chatbook.UI.Screens.library_screen import LibraryIngestState, LibraryScreen
 from tldw_chatbook.app import TldwCli
 import tldw_chatbook.app as app_module
+import tldw_chatbook.app_ingest_queue as ingest_queue_module
 from Tests.UI.test_library_shell import wire_bypass_ingest_controller
 
 
@@ -467,7 +468,7 @@ def test_research_local_classification_warning_omits_managed_path(
     app = _minimal_app(media_db="present")
     managed_path = str(tmp_path / "research" / "paste" / "PRIVATE-name.txt")
     monkeypatch.setattr(
-        app_module,
+        ingest_queue_module,
         "classify_ingest_source",
         MagicMock(side_effect=RuntimeError(f"classifier broke for {managed_path!r}")),
     )
@@ -2050,7 +2051,7 @@ class TestIngestJobOptions:
     ) -> None:
         secret_path = "/private/models/speech.gguf"
         monkeypatch.setattr(
-            app_module,
+            ingest_queue_module,
             "get_cli_setting",
             lambda key, *args: (
                 secret_path

@@ -38,7 +38,8 @@ process boundary -- workers never touch the media DB):
     }
 
 The Library ingest queue coordinator (F3 Task 4) builds this dict from a
-``LibraryIngestJob``'s fields via ``app.py``'s ``_ingest_job_options``.
+``LibraryIngestJob``'s fields via ``app_ingest_queue.py``'s
+``_ingest_job_options``.
 (task-3301) Since the ingest-controls wiring, that builder also resolves
 the live option values the schema above carries:
 
@@ -141,7 +142,7 @@ def classify_parse_failure(exc: Exception) -> bool:
 
     This is the single source of truth for that classification -- used
     both by ``run_parse_job`` (for parse-stage failures, inside the worker
-    process) and by ``app.py``'s queue-runner (for write-stage failures,
+    process) and by ``app_ingest_queue.py``'s queue-runner (for write-stage failures,
     on the writer thread).
 
     Args:

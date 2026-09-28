@@ -2,6 +2,7 @@ import sqlite3
 
 import tldw_chatbook.DB.Library_Ingest_Jobs_DB as jobs_db_module
 import tldw_chatbook.app as app_module
+import tldw_chatbook.app_ingest_queue as ingest_queue_module
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
@@ -219,7 +220,7 @@ def test_a_failed_restore_closes_the_store_it_opened(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jobs_db_module, "LibraryIngestJobsDB", _ExplodingStore)
     monkeypatch.setattr(
-        app_module,
+        ingest_queue_module,
         "get_library_ingest_jobs_db_path",
         lambda: tmp_path / "jobs.db",
     )

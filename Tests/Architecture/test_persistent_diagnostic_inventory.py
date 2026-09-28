@@ -374,13 +374,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Instance lock acquisition failed unexpectedly": (
             "type(_instance_lock_exc).__name__",
         ),
-        "Error closing the Parakeet source service": (),
-        "Error closing the local STT dispatch coordinator": (),
-        "Error joining the Library ingest progress drain thread": (),
-        "Error cleaning up a partially constructed Library ingest": (
-            "method_name",
-            "type(progress_queue).__name__",
-        ),
         "Screen pre-import failed": (
             "route.screen_name",
             "type(exc).__name__",
@@ -395,6 +388,16 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Workspace agent backfill provisioned": ("provisioned",),
+    },
+    # TASK-33011: moved verbatim out of app.py with LibraryIngestQueueMixin.
+    "tldw_chatbook/app_ingest_queue.py": {
+        "Error closing the Parakeet source service": (),
+        "Error closing the local STT dispatch coordinator": (),
+        "Error joining the Library ingest progress drain thread": (),
+        "Error cleaning up a partially constructed Library ingest": (
+            "method_name",
+            "type(progress_queue).__name__",
+        ),
     },
     "tldw_chatbook/Workspaces/agent_provisioning.py": {
         "Workspace agent provisioning failed": ("type(exc).__name__",),
